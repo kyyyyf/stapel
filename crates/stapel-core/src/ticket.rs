@@ -116,3 +116,13 @@ fn heading_title(line: &str) -> Option<String> {
     };
     (!title.is_empty()).then(|| title.to_string())
 }
+
+impl<'a> Lookup<'a> {
+    /// The body when the section was found exactly once.
+    pub fn found(&self) -> Option<&'a str> {
+        match self {
+            Lookup::Found(body) => Some(body),
+            _ => None,
+        }
+    }
+}

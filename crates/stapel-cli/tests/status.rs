@@ -8,7 +8,11 @@ use predicates::str::contains;
 use std::path::Path;
 
 fn write_state(dir: &Path, key: &str, v: &serde_json::Value) {
-    std::fs::write(dir.join(format!(".stapel/tickets/{key}/state.json")), v.to_string()).unwrap();
+    std::fs::write(
+        dir.join(format!(".stapel/tickets/{key}/state.json")),
+        v.to_string(),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -27,7 +31,11 @@ fn fresh_ticket_waits_for_spec() {
 #[test]
 fn key_matched_without_case() {
     let repo = repo_with_ticket();
-    stapel(repo.path()).args(["status", "abc-1"]).assert().success().stdout(contains("ticket: ABC-1"));
+    stapel(repo.path())
+        .args(["status", "abc-1"])
+        .assert()
+        .success()
+        .stdout(contains("ticket: ABC-1"));
 }
 
 #[test]
@@ -48,8 +56,16 @@ fn legacy_ticket_is_not_open() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     std::fs::create_dir_all(dir.join(".stapel/tickets/ABC-9")).unwrap();
-    std::fs::write(dir.join(".stapel/tickets/ABC-9/state.json"), r#"{"key":"ABC-9","build":{"allowed":false}}"#).unwrap();
-    stapel(dir).arg("status").assert().success().stdout(contains("ticket: ABC-1"));
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-9/state.json"),
+        r#"{"key":"ABC-9","build":{"allowed":false}}"#,
+    )
+    .unwrap();
+    stapel(dir)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("ticket: ABC-1"));
     stapel(dir)
         .args(["status", "ABC-9"])
         .assert()
@@ -65,7 +81,11 @@ fn refuses_ambiguous_case_variant_keys() {
     if !dir.join(".stapel/tickets/ABC-1/ticket.md").exists() {
         return; // case-insensitive file system: the two names are one folder
     }
-    stapel(dir).args(["status", "abc-1"]).assert().code(1).stderr(contains("differ only in case"));
+    stapel(dir)
+        .args(["status", "abc-1"])
+        .assert()
+        .code(1)
+        .stderr(contains("differ only in case"));
 }
 
 #[test]
@@ -78,7 +98,9 @@ fn edit_makes_confirmation_stale_with_diff() {
         .arg("status")
         .assert()
         .success()
-        .stdout(contains("stale: spec — changed since confirmed by test-user at "))
+        .stdout(contains(
+            "stale: spec — changed since confirmed by test-user at ",
+        ))
         .stdout(contains("-The spec."))
         .stdout(contains("+The spec, edited."));
 }
@@ -120,9 +142,17 @@ fn missing_or_duplicate_section_is_stale() {
     let path = dir.join(".stapel/tickets/ABC-1/ticket.md");
     let original = std::fs::read_to_string(&path).unwrap();
     std::fs::write(&path, original.replace("## Spec\n", "## Specification\n")).unwrap();
-    stapel(dir).arg("status").assert().success().stdout(contains("stale: spec — section missing"));
+    stapel(dir)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("stale: spec — section missing"));
     std::fs::write(&path, format!("{original}\n## Spec\n\nagain\n")).unwrap();
-    stapel(dir).arg("status").assert().success().stdout(contains("stale: spec — section duplicated"));
+    stapel(dir)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("stale: spec — section duplicated"));
 }
 
 #[test]
@@ -137,7 +167,9 @@ fn removed_dependency_is_stale() {
         .arg("status")
         .assert()
         .success()
-        .stdout(contains("stale: spec — depends on gone, which is no longer configured"));
+        .stdout(contains(
+            "stale: spec — depends on gone, which is no longer configured",
+        ));
 }
 
 #[test]
@@ -148,7 +180,11 @@ fn older_normal_form_is_reported() {
     let mut state = state_json(dir, "ABC-1");
     state["confirmations"][0]["normal_form"] = serde_json::json!(0);
     write_state(dir, "ABC-1", &state);
-    stapel(dir).arg("status").assert().success().stdout(contains("stale: spec — confirmed under normal form 0"));
+    stapel(dir)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("stale: spec — confirmed under normal form 0"));
 }
 
 #[test]
@@ -156,12 +192,20 @@ fn waiting_for_is_first_unconfirmed() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     stapel(dir).args(["ok", "spec"]).assert().success();
-    stapel(dir).arg("status").assert().success().stdout(contains("waiting for: design (owner: engineer)"));
+    stapel(dir)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("waiting for: design (owner: engineer)"));
     set_section(dir, "ABC-1", "Plan", "The plan.");
     for s in ["design", "proof", "plan"] {
         stapel(dir).args(["ok", s]).assert().success();
     }
-    stapel(dir).arg("status").assert().success().stdout(contains("waiting for: none"));
+    stapel(dir)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("waiting for: none"));
 }
 
 #[test]
@@ -171,14 +215,22 @@ fn build_line_names_the_granting_ticket() {
     for s in ["spec", "design", "proof"] {
         stapel(dir).args(["ok", s]).assert().success();
     }
-    stapel(dir).arg("status").assert().success().stdout(contains("build: allowed (by ABC-1)"));
+    stapel(dir)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("build: allowed (by ABC-1)"));
 
     let repo = repo_with_ticket();
     let dir = repo.path();
     let mut state = state_json(dir, "ABC-1");
     state["build"] = serde_json::json!({"allowed": true});
     write_state(dir, "ABC-1", &state);
-    stapel(dir).arg("status").assert().success().stdout(contains("build: allowed by hand (phase 0, ABC-1)"));
+    stapel(dir)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("build: allowed by hand (phase 0, ABC-1)"));
 }
 
 #[test]
@@ -189,7 +241,11 @@ fn exit_codes() {
     set_section(dir, "ABC-1", "Spec", "edited");
     stapel(dir).arg("status").assert().code(0);
     std::fs::write(dir.join(".stapel/tickets/ABC-1/state.json"), "{ broken").unwrap();
-    stapel(dir).args(["status", "ABC-1"]).assert().code(1).stdout(contains("ticket: ABC-1"));
+    stapel(dir)
+        .args(["status", "ABC-1"])
+        .assert()
+        .code(1)
+        .stdout(contains("ticket: ABC-1"));
 }
 
 #[test]
@@ -210,5 +266,9 @@ fn missing_ticket_md_is_reported() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     std::fs::remove_file(dir.join(".stapel/tickets/ABC-1/ticket.md")).unwrap();
-    stapel(dir).arg("status").assert().code(1).stdout(contains("ticket.md"));
+    stapel(dir)
+        .arg("status")
+        .assert()
+        .code(1)
+        .stdout(contains("ticket.md"));
 }

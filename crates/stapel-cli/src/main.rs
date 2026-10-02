@@ -3,6 +3,7 @@ mod init;
 mod new;
 mod ok;
 mod repo;
+mod status;
 
 use clap::{Parser, Subcommand};
 use std::process::ExitCode;
@@ -38,6 +39,11 @@ enum Command {
         #[arg(num_args = 1..=2, required = true, value_names = ["KEY", "SECTION"])]
         args: Vec<String>,
     },
+    /// Show whose decision a ticket waits for and which confirmations went stale.
+    Status {
+        /// The ticket key; without it, the only open ticket.
+        key: Option<String>,
+    },
     /// Hook entry points called by Claude Code; not meant to be run by hand.
     #[command(subcommand)]
     Hook(HookCommand),
@@ -60,6 +66,10 @@ fn main() -> ExitCode {
             _ => unreachable!("clap limits the arguments"),
         },
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),
+        Command::Status { key } => match status::run(key.as_deref()) {
+            Ok(code) => return code,
+            Err(message) => Err(message),
+        },
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

@@ -4,6 +4,7 @@ pub mod confirm;
 pub mod guard;
 pub mod hash;
 pub mod identity;
+pub mod stage;
 pub mod state;
 pub mod ticket;
 pub mod tickets;
