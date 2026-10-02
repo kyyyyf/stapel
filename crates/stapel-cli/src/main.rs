@@ -1,3 +1,4 @@
+mod close;
 mod hook;
 mod init;
 mod new;
@@ -44,6 +45,14 @@ enum Command {
         /// The ticket key; without it, the only open ticket.
         key: Option<String>,
     },
+    /// Close a ticket: its confirmations stop permitting code writes. Only a person closes.
+    Close {
+        /// The ticket key; without it, the only open ticket.
+        key: Option<String>,
+        /// Why the ticket is done.
+        #[arg(long)]
+        reason: String,
+    },
     /// Hook entry points called by Claude Code; not meant to be run by hand.
     #[command(subcommand)]
     Hook(HookCommand),
@@ -60,6 +69,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Init { prefix } => init::run(prefix),
         Command::New { title, tracker } => new::run(&title, tracker.as_deref()),
+        Command::Close { key, reason } => close::run(key.as_deref(), &reason),
         Command::Ok { args } => match args.as_slice() {
             [section] => ok::run(None, section),
             [key, section] => ok::run(Some(key), section),

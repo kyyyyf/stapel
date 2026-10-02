@@ -18,7 +18,11 @@ fn records_closed_fact() {
     assert_eq!(closed["by"], "test-user");
     assert_eq!(closed["reason"], "merged");
     assert!(closed["at"].as_str().unwrap().ends_with('Z'));
-    stapel(dir).args(["status", "ABC-1"]).assert().success().stdout(contains("state: closed by test-user"));
+    stapel(dir)
+        .args(["status", "ABC-1"])
+        .assert()
+        .success()
+        .stdout(contains("state: closed by test-user"));
 }
 
 #[test]
@@ -27,7 +31,11 @@ fn drops_hand_build_flag() {
     let dir = repo.path();
     let mut state = state_json(dir, "ABC-1");
     state["build"] = serde_json::json!({"allowed": true, "by": "human"});
-    std::fs::write(dir.join(".stapel/tickets/ABC-1/state.json"), state.to_string()).unwrap();
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-1/state.json"),
+        state.to_string(),
+    )
+    .unwrap();
     stapel(dir)
         .args(["close", "--reason", "merged"])
         .assert()
@@ -41,10 +49,21 @@ fn refuses_twice_and_without_reason() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     for empty in ["", "   "] {
-        stapel(dir).args(["close", "--reason", empty]).assert().code(1).stderr(contains("reason"));
+        stapel(dir)
+            .args(["close", "--reason", empty])
+            .assert()
+            .code(1)
+            .stderr(contains("reason"));
     }
-    stapel(dir).args(["close", "ABC-1", "--reason", "merged"]).assert().success();
-    stapel(dir).args(["close", "ABC-1", "--reason", "again"]).assert().code(1).stderr(contains("closed"));
+    stapel(dir)
+        .args(["close", "ABC-1", "--reason", "merged"])
+        .assert()
+        .success();
+    stapel(dir)
+        .args(["close", "ABC-1", "--reason", "again"])
+        .assert()
+        .code(1)
+        .stderr(contains("closed"));
     assert_eq!(state_json(dir, "ABC-1")["closed"]["reason"], "merged");
 }
 
