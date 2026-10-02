@@ -115,6 +115,7 @@ pub fn consume(root: &Path, token: &str, facts: &Facts) -> Result<(), String> {
     }
     let expires = expires_at(&path);
     let _ = std::fs::remove_file(&path);
+    sweep(path.parent().expect("grants dir"));
     match expires {
         Some(t) if t > now() => Ok(()),
         _ => Err("the grant expired; ask the agent to run the command again".into()),

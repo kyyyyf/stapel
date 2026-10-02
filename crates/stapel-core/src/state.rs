@@ -12,6 +12,23 @@ use std::path::Path;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Files above this size are not read (STP-2 AC-11): the guard must answer within the hook timeout.
+pub const MAX_FILE: u64 = 4 * 1024 * 1024;
+
+/// Reads a regular file of at most `MAX_FILE` bytes; symlinks, FIFOs, devices and larger files are
+/// refused with a reason, so a reader can never block or run long on them.
+pub fn read_bounded(path: &Path) -> Result<String, String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !meta.file_type().is_file() {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    if meta.len() > MAX_FILE {
+        return Err(format!("{} is larger than 4 MiB", path.display()));
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    String::from_utf8(bytes).map_err(|_| format!("{} is not valid UTF-8", path.display()))
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct State {
     pub schema_version: u32,
@@ -78,9 +95,9 @@ impl State {
 }
 
 pub fn load(path: &Path) -> Loaded {
-    let text = match std::fs::read_to_string(path) {
+    let text = match read_bounded(path) {
         Ok(text) => text,
-        Err(e) => return Loaded::Unreadable(format!("{}: {e}", path.display())),
+        Err(reason) => return Loaded::Unreadable(reason),
     };
     let value: Value = match serde_json::from_str(&text) {
         Ok(v) => v,

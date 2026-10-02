@@ -22,11 +22,12 @@ pub enum Lookup<'a> {
 
 /// Reads `ticket.md`; a missing or non-UTF-8 file is an error that names the file.
 pub fn read(path: &Path) -> Result<String, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    String::from_utf8(bytes).map_err(|_| format!("{} is not valid UTF-8", path.display()))
+    crate::state::read_bounded(path)
 }
 
 pub fn parse(text: &str) -> Vec<Section> {
+    // Lone CR (old Mac editors) ends a line too.
+    let text = &text.replace("\r\n", "\n").replace('\r', "\n");
     let mut sections: Vec<Section> = Vec::new();
     let mut fence: Option<(char, usize)> = None;
     let mut in_comment = false;

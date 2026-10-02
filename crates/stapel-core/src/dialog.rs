@@ -58,13 +58,6 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
         ));
     }
     let root = stapel_root(cwd).ok_or("not inside a stapel repository")?;
-    if let Some(rule) = allow_rule(&root) {
-        return Err(format!(
-            "the permission allow rule \"{rule}\" would let stapel {} run without the dialog; \
-             remove it from .claude/settings.json or .claude/settings.local.json",
-            inv.action
-        ));
-    }
     let text = std::fs::read_to_string(root.join(".stapel/stapel.toml"))
         .map_err(|e| format!(".stapel/stapel.toml: {e}"))?;
     let config = Config::parse(&text).map_err(|e| format!(".stapel/stapel.toml: {e}"))?;
@@ -79,15 +72,16 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
         };
         let p = prepare(&root, &config, key, section)?;
         let reason = format!(
-            "stapel: confirm section `{}` of {} — {}…, {}, {}. Answer Yes or No; do not choose \
-             \"don't ask again\".",
+            "stapel: confirm section `{}` of {} — {}…, {}, {}; runs: {}. Answer Yes or No; do \
+             not choose \"don't ask again\".",
             p.section,
             p.key,
             &p.hash[..p.hash.len().min("sha256:".len() + 12)],
             lines(&p.text),
-            against_head(&root, &config, &p)
+            against_head(&root, &config, &p),
+            program(inv).join(" ")
         );
-        let tail = format!("ok {} {}", p.key, p.section);
+        let tail = format!("ok {} {}", quote(&p.key), quote(&p.section));
         (ok_facts(&p), reason, tail)
     } else {
         let (key, reason_text) = close_args(inv)?;
@@ -97,17 +91,30 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
         }
         let reason = format!(
             "stapel: close ticket {} with the reason \"{reason_text}\"; its confirmations stop \
-             permitting code writes. Answer Yes or No; do not choose \"don't ask again\".",
-            ticket.key
+             permitting code writes; runs: {}. Answer Yes or No; do not choose \"don't ask \
+             again\".",
+            ticket.key,
+            program(inv).join(" ")
         );
-        let tail = format!("close {} --reason {}", ticket.key, quote(&reason_text));
+        let tail = format!(
+            "close {} {}",
+            quote(&ticket.key),
+            quote(&format!("--reason={reason_text}"))
+        );
         (close_facts(&ticket.key, &reason_text), reason, tail)
     };
+    let command_without_grant = format!("{} {tail}", program(inv).join(" "));
+    if let Some(rule) = allow_rule(&root, &command_without_grant) {
+        return Err(format!(
+            "the permission allow rule \"{rule}\" would let stapel {} run without the dialog; \
+             remove it from the Claude Code settings",
+            inv.action
+        ));
+    }
     let token = issue(&root, &facts)?;
-    let program: Vec<String> = inv.program.iter().map(|w| quote(w)).collect();
     Ok(Decision::Ask {
         reason,
-        command: format!("{} {tail} --grant {token}", program.join(" ")),
+        command: format!("{command_without_grant} --grant {token}"),
     })
 }
 
@@ -200,10 +207,32 @@ fn quote(word: &str) -> String {
     }
 }
 
-/// A permission allow rule in the project settings that would skip the dialog for stapel.
-fn allow_rule(root: &Path) -> Option<String> {
-    for file in [".claude/settings.json", ".claude/settings.local.json"] {
-        let Some(text) = crate::stage::read_bounded(&root.join(file)) else {
+/// The program words of the replaced command: the installed `stapel` (the build that ran these
+/// checks), or the `cargo run ... --` form as written.
+fn program(inv: &Invocation) -> Vec<String> {
+    let first = inv.program.first().map(String::as_str).unwrap_or("stapel");
+    if first.rsplit('/').next() == Some("stapel") {
+        vec!["stapel".into()]
+    } else {
+        inv.program.iter().map(|w| quote(w)).collect()
+    }
+}
+
+/// A Bash permission allow rule, in the project or user settings, that matches `command` and so
+/// would let it run without the dialog. Rules follow Claude Code's forms: `Bash`, `Bash(*)`,
+/// `Bash(prefix:*)`, and patterns with `*`.
+fn allow_rule(root: &Path, command: &str) -> Option<String> {
+    let mut files = vec![
+        root.join(".claude/settings.json"),
+        root.join(".claude/settings.local.json"),
+    ];
+    if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
+        let home = std::path::PathBuf::from(home);
+        files.push(home.join(".claude/settings.json"));
+        files.push(home.join(".claude/settings.local.json"));
+    }
+    for file in files {
+        let Some(text) = crate::stage::read_bounded(&file) else {
             continue;
         };
         let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
@@ -211,14 +240,47 @@ fn allow_rule(root: &Path) -> Option<String> {
         };
         for rule in v["permissions"]["allow"].as_array().into_iter().flatten() {
             let Some(rule) = rule.as_str() else { continue };
-            let lower = rule.to_ascii_lowercase();
-            if lower.contains("stapel ok")
-                || lower.contains("stapel close")
-                || lower.contains("(stapel")
-            {
+            if bash_rule_matches(rule.trim(), command) {
                 return Some(rule.to_string());
             }
         }
     }
     None
+}
+
+fn bash_rule_matches(rule: &str, command: &str) -> bool {
+    if rule == "Bash" {
+        return true;
+    }
+    let Some(pattern) = rule.strip_prefix("Bash(").and_then(|r| r.strip_suffix(')')) else {
+        return false;
+    };
+    let pattern = pattern.trim();
+    if pattern.is_empty() || pattern == "*" {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix(":*") {
+        return command.starts_with(prefix);
+    }
+    glob(pattern, command)
+}
+
+/// `*` matches any run of characters; everything else matches itself.
+fn glob(pattern: &str, text: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() == 1 {
+        return pattern == text;
+    }
+    let (first, last) = (parts[0], parts[parts.len() - 1]);
+    if !text.starts_with(first) || !text[first.len()..].ends_with(last) {
+        return false;
+    }
+    let mut rest = &text[first.len()..text.len() - last.len()];
+    for part in &parts[1..parts.len() - 1] {
+        match rest.find(part) {
+            Some(i) => rest = &rest[i + part.len()..],
+            None => return false,
+        }
+    }
+    true
 }

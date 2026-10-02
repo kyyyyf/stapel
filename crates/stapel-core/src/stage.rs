@@ -13,6 +13,8 @@ pub enum Reason {
     Changed,
     DependencyChanged(String),
     DependencyRemoved(String),
+    DependencyMissing(String),
+    DependencyDuplicated(String),
     Missing,
     Duplicated,
     NormalForm(u32),
@@ -26,6 +28,8 @@ impl Reason {
             Reason::DependencyRemoved(id) => {
                 format!("depends on {id}, which is no longer configured")
             }
+            Reason::DependencyMissing(id) => format!("depends on {id}, which is missing"),
+            Reason::DependencyDuplicated(id) => format!("depends on {id}, which is duplicated"),
             Reason::Missing => "section missing".into(),
             Reason::Duplicated => "section duplicated".into(),
             Reason::NormalForm(n) => format!("confirmed under normal form {n}"),
@@ -71,7 +75,8 @@ pub fn freshness(config: &Config, sections: &[Section], c: &Confirmation) -> Vec
             Ok(h) if &h != recorded => reasons.push(Reason::DependencyChanged(dep.clone())),
             Ok(_) => {}
             Err(Reason::DependencyRemoved(id)) => reasons.push(Reason::DependencyRemoved(id)),
-            Err(_) => reasons.push(Reason::DependencyChanged(dep.clone())),
+            Err(Reason::Duplicated) => reasons.push(Reason::DependencyDuplicated(dep.clone())),
+            Err(_) => reasons.push(Reason::DependencyMissing(dep.clone())),
         }
     }
     reasons
@@ -121,16 +126,43 @@ pub enum Permit {
     ByHand(String),
 }
 
-/// Files above this size give no permit (STP-2 AC-11).
-pub const MAX_FILE: u64 = 4 * 1024 * 1024;
-
-/// Reads a regular file of at most `MAX_FILE` bytes.
+/// Reads a regular file of at most 4 MiB, or nothing.
 pub fn read_bounded(path: &Path) -> Option<String> {
-    let meta = std::fs::symlink_metadata(path).ok()?;
-    if !meta.file_type().is_file() || meta.len() > MAX_FILE {
-        return None;
+    crate::state::read_bounded(path).ok()
+}
+
+/// Per open ticket, which required sections are not confirmed or are stale, for the guard's
+/// denial (STP-2 AC-11).
+pub fn permit_report(root: &Path, config: &Config) -> String {
+    let mut parts = Vec::new();
+    for ticket in list(root) {
+        let Status::Open(state) = &ticket.status else {
+            continue;
+        };
+        let Some(text) = read_bounded(&ticket.dir.join("ticket.md")) else {
+            parts.push(format!("{}: ticket.md cannot be read", ticket.key));
+            continue;
+        };
+        let sections = parse(&text);
+        let missing: Vec<String> = config
+            .build
+            .requires
+            .iter()
+            .filter_map(|id| match latest(state, id) {
+                None => Some(format!("{id} not confirmed")),
+                Some(c) if !freshness(config, &sections, c).is_empty() => {
+                    Some(format!("{id} stale"))
+                }
+                Some(_) => None,
+            })
+            .collect();
+        parts.push(format!("{}: {}", ticket.key, missing.join(", ")));
     }
-    std::fs::read_to_string(path).ok()
+    if parts.is_empty() {
+        "there is no open ticket".into()
+    } else {
+        parts.join("; ")
+    }
 }
 
 /// The repository-wide permit: the first open ticket whose required sections are fresh, else the

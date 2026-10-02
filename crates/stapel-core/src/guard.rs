@@ -64,8 +64,11 @@ const UNREADABLE_REASON: &str = "the command is too long, too deeply nested or t
 
 const INJECT_REASON: &str = "the command can type into the terminal where the permission dialog \
                              is answered; only a person answers it";
-const GRANT_REASON: &str = "a --grant comes only from the permission dialog; a command may not \
-                            carry one of its own";
+const GRANT_REASON: &str = "a --grant comes only from the permission dialog; stapel ok and \
+                            stapel close may not carry one of their own or words filled in at \
+                            run time";
+const HOOK_SELF_REASON: &str = "stapel hook is run only by Claude Code; an agent may not run the \
+                                hook entry point itself";
 
 /// Longer commands are denied rather than parsed.
 const MAX_COMMAND_LEN: usize = 64 * 1024;
@@ -182,14 +185,13 @@ fn decide_write(target: &Path) -> Decision {
     if crate::stage::build_permit(&root, config.as_ref()).is_some() {
         return Decision::Allow;
     }
-    let requires = config
-        .as_ref()
-        .map(|c| c.build.requires.join(", "))
-        .unwrap_or_else(|| "the required sections (stapel.toml is invalid)".into());
+    let report = match &config {
+        Some(config) => crate::stage::permit_report(&root, config),
+        None => ".stapel/stapel.toml is invalid, so no confirmation counts".into(),
+    };
     Decision::Deny(format!(
-        "writing {} is denied: the build is not allowed — no open ticket has fresh, \
-         person-made confirmations of {requires}, so they are not confirmed yet; \
-         `stapel status` shows what is waiting",
+        "writing {} is denied: the build is not allowed, because the required sections are \
+         not confirmed or are stale — {report}; `stapel status` shows what is waiting",
         rel.display()
     ))
 }
@@ -285,6 +287,8 @@ pub fn check_command(command: &str) -> Option<&'static str> {
         Some(UNREADABLE_REASON)
     } else if found.bypass {
         Some(BYPASS_REASON)
+    } else if found.hook {
+        Some(HOOK_SELF_REASON)
     } else if found.inject {
         Some(INJECT_REASON)
     } else if found.grant {
@@ -310,6 +314,8 @@ struct Found {
     inject: bool,
     /// A `--grant` written by the agent rather than by the dialog (AC-15).
     grant: bool,
+    /// The agent runs the hook entry point itself.
+    hook: bool,
     /// Units of work left; nested scripts can multiply the work, so it is capped.
     budget: usize,
 }
@@ -429,12 +435,44 @@ fn check_words(words: &[String], found: &mut Found) {
         if HOOKLESS_PUSH_WORDS.iter().any(|w| lower.contains(w)) {
             found.push = true;
         }
-        if word.contains("TIOCSTI") || word.starts_with("/dev/pts/") || word == "/dev/tty" {
+        if word.contains("TIOCSTI")
+            || word.contains("0x5412")
+            || word.contains("21522")
+            || word.starts_with("/dev/pts/")
+            || word == "/dev/tty"
+        {
             found.inject = true;
         }
-        if word.starts_with("--grant") {
-            found.grant = true;
+    }
+}
+
+/// `stapel hook ...` run by an agent, and `stapel ok|close` with a `--grant` or a run-time word
+/// (`$`), whether as `stapel` or `cargo run ... --`.
+fn check_stapel(name: &str, args: &[String], found: &mut Found) {
+    let rest = match name {
+        "stapel" => args,
+        "cargo" if args.first().is_some_and(|a| a == "run") => {
+            match args.iter().position(|a| a == "--") {
+                Some(sep) => &args[sep + 1..],
+                None => return,
+            }
         }
+        _ => return,
+    };
+    let Some(at) = rest.iter().position(|w| !w.starts_with('-')) else {
+        return;
+    };
+    match rest[at].to_ascii_lowercase().as_str() {
+        "hook" => found.hook = true,
+        "ok" | "close" => {
+            if rest[at + 1..]
+                .iter()
+                .any(|w| w.starts_with("--grant") || w.contains('$'))
+            {
+                found.grant = true;
+            }
+        }
+        _ => {}
     }
 }
 
@@ -442,7 +480,18 @@ fn check_words(words: &[String], found: &mut Found) {
 fn injects_input(name: &str, args: &[String]) -> bool {
     match name {
         "xdotool" | "ydotool" | "wtype" => true,
-        "tmux" => args.iter().any(|a| a == "send-keys" || a == "send"),
+        "tmux" => args.iter().any(|a| {
+            a.starts_with("send")
+                || [
+                    "paste-buffer",
+                    "pasteb",
+                    "load-buffer",
+                    "loadb",
+                    "set-buffer",
+                    "setb",
+                ]
+                .contains(&a.as_str())
+        }),
         "screen" => args.iter().any(|a| a == "-X") && args.iter().any(|a| a == "stuff"),
         _ => false,
     }
@@ -491,6 +540,7 @@ fn check_program(words: &[String], full: &str, depth: usize, under_xargs: bool, 
     if injects_input(name, args) {
         found.inject = true;
     }
+    check_stapel(name, args, found);
     if WRAPPERS.contains(&name) {
         for arg in args.iter().filter(|a| a.contains(char::is_whitespace)) {
             scan(arg, full, depth + 1, found);

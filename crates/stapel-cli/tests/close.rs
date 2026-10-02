@@ -96,7 +96,7 @@ fn accepts_valid_grant_once() {
         "{reason}"
     );
     assert!(
-        replaced.contains("close ABC-1 --reason merged --grant "),
+        replaced.contains("close ABC-1 --reason=merged --grant "),
         "{replaced}"
     );
     let token = token_of(&replaced);
