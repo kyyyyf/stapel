@@ -1,5 +1,7 @@
 mod hook;
 mod init;
+mod new;
+mod repo;
 
 use clap::{Parser, Subcommand};
 use std::process::ExitCode;
@@ -21,6 +23,14 @@ enum Command {
         #[arg(long)]
         prefix: Option<String>,
     },
+    /// Create a ticket: a folder with ticket.md and state.json.
+    New {
+        /// The ticket title.
+        title: String,
+        /// Link to the ticket in an external tracker.
+        #[arg(long)]
+        tracker: Option<String>,
+    },
     /// Hook entry points called by Claude Code; not meant to be run by hand.
     #[command(subcommand)]
     Hook(HookCommand),
@@ -36,6 +46,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Init { prefix } => init::run(prefix),
+        Command::New { title, tracker } => new::run(&title, tracker.as_deref()),
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),
     };
     match result {

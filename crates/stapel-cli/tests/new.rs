@@ -30,11 +30,23 @@ fn creates_ticket_files() {
     let headings: Vec<&str> = ticket.lines().filter(|l| l.starts_with("## ")).collect();
     assert_eq!(
         headings,
-        ["## Description", "## Spec", "## Design", "## Proof", "## Plan", "## Review", "## Summary"]
+        [
+            "## Description",
+            "## Spec",
+            "## Design",
+            "## Proof",
+            "## Plan",
+            "## Review",
+            "## Summary"
+        ]
     );
     for heading in headings {
         let after = ticket.split(&format!("{heading}\n")).nth(1).unwrap();
-        assert_eq!(after.lines().find(|l| !l.is_empty()), Some("TODO"), "{heading}");
+        assert_eq!(
+            after.lines().find(|l| !l.is_empty()),
+            Some("TODO"),
+            "{heading}"
+        );
     }
     let state = state_json(dir, "ABC-1");
     assert_eq!(state["schema_version"], 1);
@@ -51,7 +63,11 @@ fn numbers_after_largest_existing() {
     for key in ["ABC-1", "ABC-7"] {
         std::fs::create_dir_all(dir.join(".stapel/tickets").join(key)).unwrap();
     }
-    stapel(dir).args(["new", "x"]).assert().success().stdout(contains("created: ABC-8"));
+    stapel(dir)
+        .args(["new", "x"])
+        .assert()
+        .success()
+        .stdout(contains("created: ABC-8"));
 }
 
 #[test]
@@ -61,7 +77,11 @@ fn numbering_ignores_case_and_zero_padding() {
     for key in ["abc-3", "ABC-005", "XYZ-90", "ABC-x"] {
         std::fs::create_dir_all(dir.join(".stapel/tickets").join(key)).unwrap();
     }
-    stapel(dir).args(["new", "x"]).assert().success().stdout(contains("created: ABC-6"));
+    stapel(dir)
+        .args(["new", "x"])
+        .assert()
+        .success()
+        .stdout(contains("created: ABC-6"));
 }
 
 #[test]
@@ -69,7 +89,11 @@ fn refuses_bad_title() {
     let repo = stapel_repo();
     let dir = repo.path();
     for bad in ["", "   ", "a\nb", "a\tb", "a\u{7}b"] {
-        stapel(dir).args(["new", bad]).assert().code(1).stderr(contains("title"));
+        stapel(dir)
+            .args(["new", bad])
+            .assert()
+            .code(1)
+            .stderr(contains("title"));
     }
     assert!(tickets(dir).is_empty(), "{:?}", tickets(dir));
 }
@@ -82,7 +106,10 @@ fn stores_tracker_link() {
         .args(["new", "x", "--tracker", "https://example.com/T-1"])
         .assert()
         .success();
-    assert_eq!(state_json(dir, "ABC-1")["tracker"], "https://example.com/T-1");
+    assert_eq!(
+        state_json(dir, "ABC-1")["tracker"],
+        "https://example.com/T-1"
+    );
     let ticket = read(dir, ".stapel/tickets/ABC-1/ticket.md");
     let description = ticket.split("## Description\n").nth(1).unwrap();
     assert_eq!(
@@ -95,7 +122,13 @@ fn stores_tracker_link() {
 fn refuses_bad_tracker_url() {
     let repo = stapel_repo();
     let dir = repo.path();
-    for bad in ["ftp://example.com/x", "https://a b", "javascript:alert(1)", "https://x\ny", ""] {
+    for bad in [
+        "ftp://example.com/x",
+        "https://a b",
+        "javascript:alert(1)",
+        "https://x\ny",
+        "",
+    ] {
         stapel(dir)
             .args(["new", "x", "--tracker", bad])
             .assert()
@@ -111,7 +144,11 @@ fn refuses_existing_key() {
     let dir = repo.path();
     // A plain file takes the name the next ticket folder would get.
     std::fs::write(dir.join(".stapel/tickets/ABC-1"), "").unwrap();
-    stapel(dir).args(["new", "x"]).assert().code(1).stderr(contains("ABC-1"));
+    stapel(dir)
+        .args(["new", "x"])
+        .assert()
+        .code(1)
+        .stderr(contains("ABC-1"));
 }
 
 #[test]

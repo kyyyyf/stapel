@@ -4,3 +4,4 @@ pub mod guard;
 pub mod hash;
 pub mod state;
 pub mod ticket;
+pub mod tickets;
