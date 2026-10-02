@@ -9,3 +9,5 @@
 - План фаз: [docs/PHASES.md](docs/PHASES.md)
 
 Статус: фаза 0, загрузка.
+
+Лицензия: MIT, см. [LICENSE](LICENSE).
