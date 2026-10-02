@@ -1,4 +1,8 @@
 //! The PreToolUse guard behind `stapel hook pre-tool-use`.
+//!
+//! The push check reads only the literal command text. It is the first layer; the second is the
+//! git `pre-push` hook that `stapel init` installs, which refuses any push from a shell where
+//! Claude Code has set `CLAUDECODE`, however the push was started.
 
 use crate::config::Config;
 use serde::Deserialize;
@@ -42,6 +46,17 @@ const MACHINE_FILES: [&str; 5] = [
     "tokens.jsonl",
 ];
 
+const PUSH_REASON: &str = "git push агентам запрещён: пушит человек или оркестратор после ревью";
+const BYPASS_REASON: &str = "команда отключает второй слой защиты от push (git-хук pre-push или \
+                             переменную CLAUDECODE); агентам это запрещено";
+const UNREADABLE_REASON: &str = "команда слишком длинная или слишком глубоко вложена, чтобы \
+                                 проверить её на git push; вызов отклонён";
+
+/// Longer commands are denied rather than parsed.
+const MAX_COMMAND_LEN: usize = 64 * 1024;
+/// Deeper nesting of `$( )`, backticks, `eval` and `sh -c` is denied rather than parsed.
+const MAX_DEPTH: usize = 16;
+
 /// Decides on a tool call. `cwd` is where the agent runs; `project_dir` is the Claude Code
 /// project (`CLAUDE_PROJECT_DIR`), which still counts when the agent has `cd`-ed elsewhere.
 pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Decision {
@@ -51,12 +66,10 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
             let in_stapel_repo =
                 stapel_root(cwd).is_some() || project_dir.and_then(stapel_root).is_some();
             let command = input.tool_input["command"].as_str().unwrap_or_default();
-            if in_stapel_repo && is_git_push(command) {
-                return Decision::Deny(
-                    "git push агентам запрещён: пушит человек или оркестратор после ревью".into(),
-                );
+            match in_stapel_repo.then(|| check_command(command)).flatten() {
+                Some(reason) => Decision::Deny(reason.into()),
+                None => Decision::Allow,
             }
-            Decision::Allow
         }
         "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => {
             let field = if input.tool_name == "NotebookEdit" {
@@ -112,16 +125,19 @@ fn decide_write(target: &Path) -> Decision {
     ))
 }
 
+/// Machine files, compared without case so that case-insensitive file systems are covered.
 fn is_machine_file(rel: &Path) -> bool {
-    if rel == Path::new(".stapel/stapel.toml") {
-        return true;
+    let parts: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+        .collect();
+    match parts.as_slice() {
+        [a, b] => {
+            (a == ".stapel" && b == "stapel.toml") || (a == ".claude" && b == "settings.json")
+        }
+        [a, b, _, f] => a == ".stapel" && b == "tickets" && MACHINE_FILES.contains(&f.as_str()),
+        _ => false,
     }
-    let parts: Vec<_> = rel.components().collect();
-    matches!(
-        parts.as_slice(),
-        [Component::Normal(a), Component::Normal(b), Component::Normal(_), Component::Normal(f)]
-            if *a == ".stapel" && *b == "tickets" && MACHINE_FILES.iter().any(|m| f == m)
-    )
 }
 
 /// True when some ticket's `state.json` has `build.allowed = true`.
@@ -137,42 +153,82 @@ fn build_allowed(root: &Path) -> bool {
     })
 }
 
-/// Canonicalizes the longest existing ancestor of `path`, so symlinks on the way are followed,
-/// and appends the not-yet-existing rest with `.` and `..` resolved lexically.
+/// Follows every symlink on the way, dangling ones included, and resolves `.` and `..` in
+/// order, so the result is where a write to `path` would land.
 fn resolve(path: &Path) -> PathBuf {
-    let existing = path
-        .ancestors()
-        .find(|a| !a.as_os_str().is_empty() && a.exists());
-    let (mut out, rest) = match existing.and_then(|a| Some((a.canonicalize().ok()?, a))) {
-        Some((canonical, ancestor)) => (canonical, path.strip_prefix(ancestor).unwrap_or(path)),
-        None => (PathBuf::new(), path),
-    };
-    for component in rest.components() {
+    resolve_hops(path, 0)
+}
+
+fn resolve_hops(path: &Path, hops: usize) -> PathBuf {
+    const MAX_HOPS: usize = 40;
+    let components: Vec<Component> = path.components().collect();
+    let mut out = PathBuf::new();
+    for (i, component) in components.iter().enumerate() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
                 out.pop();
             }
-            other => out.push(other),
+            other => {
+                out.push(other);
+                let is_link =
+                    std::fs::symlink_metadata(&out).is_ok_and(|m| m.file_type().is_symlink());
+                if is_link
+                    && hops < MAX_HOPS
+                    && let Ok(target) = std::fs::read_link(&out)
+                {
+                    out.pop();
+                    let mut next = out.join(target);
+                    for rest in &components[i + 1..] {
+                        next.push(rest);
+                    }
+                    return resolve_hops(&next, hops + 1);
+                }
+            }
         }
     }
     out
 }
 
-/// True when any simple command in the shell text pushes with git.
+/// The reason to deny a shell command, if any.
+pub fn check_command(command: &str) -> Option<&'static str> {
+    if command.len() > MAX_COMMAND_LEN {
+        return Some(UNREADABLE_REASON);
+    }
+    let mut found = Found::default();
+    scan(command, command, 0, &mut found);
+    if found.too_deep {
+        Some(UNREADABLE_REASON)
+    } else if found.bypass {
+        Some(BYPASS_REASON)
+    } else if found.push {
+        Some(PUSH_REASON)
+    } else {
+        None
+    }
+}
+
+/// True when the shell text pushes with git or cannot be checked.
 pub fn is_git_push(command: &str) -> bool {
-    let (commands, nested) = lex(command);
-    commands.iter().any(|words| runs_git_push(words)) || nested.iter().any(|s| is_git_push(s))
+    check_command(command).is_some()
+}
+
+#[derive(Default)]
+struct Found {
+    push: bool,
+    bypass: bool,
+    too_deep: bool,
 }
 
 /// Reserved words that may stand before the program of a simple command.
-const RESERVED: [&str; 12] = [
-    "{", "}", "!", "if", "then", "elif", "else", "fi", "do", "done", "while", "until",
+const RESERVED: [&str; 13] = [
+    "{", "}", "!", "if", "then", "elif", "else", "fi", "do", "done", "while", "until", "coproc",
 ];
-/// Programs that run another program given later on their command line.
-const WRAPPERS: [&str; 15] = [
+/// Programs that run another program given later on their command line. Any later word may
+/// start that program, so wrapper options and their values need no special knowledge.
+const WRAPPERS: [&str; 18] = [
     "env", "command", "exec", "nohup", "time", "sudo", "doas", "nice", "ionice", "timeout",
-    "stdbuf", "setsid", "chronic", "xargs", "unbuffer",
+    "stdbuf", "setsid", "chronic", "xargs", "unbuffer", "find", "watch", "parallel",
 ];
 const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "dash", "ksh"];
 /// Git global options that take the next word as their value.
@@ -188,65 +244,185 @@ const GIT_VALUE_OPTIONS: [&str; 7] = [
 /// Git subcommands, and their `git-<name>` programs, that send objects to a remote.
 const PUSH_SUBCOMMANDS: [&str; 3] = ["push", "send-pack", "http-push"];
 
-fn runs_git_push(words: &[String]) -> bool {
-    let mut rest = words;
-    while let Some(w) = rest.first() {
-        if RESERVED.contains(&w.as_str()) || is_assignment(w) {
-            rest = &rest[1..];
+/// `full` is the whole top-level command, used when a shell reads its script from stdin.
+fn scan(text: &str, full: &str, depth: usize, found: &mut Found) {
+    if depth > MAX_DEPTH {
+        found.too_deep = true;
+        return;
+    }
+    let (commands, nested) = lex(text);
+    for words in &commands {
+        check_simple(words, full, depth, found);
+    }
+    for script in &nested {
+        scan(script, full, depth + 1, found);
+    }
+}
+
+fn check_simple(words: &[String], full: &str, depth: usize, found: &mut Found) {
+    for word in words {
+        let lower = word.to_ascii_lowercase();
+        if lower.contains("core.hookspath") || word.contains(".git/hooks") {
+            found.bypass = true;
+        }
+        if word.starts_with("CLAUDECODE=") {
+            found.bypass = true;
+        }
+    }
+
+    let mut start = 0;
+    while let Some(w) = words.get(start) {
+        if RESERVED.contains(&w.as_str()) {
+            start += 1;
+        } else if is_assignment(w) {
+            if is_alias_config(w) {
+                found.push = true;
+            }
+            start += 1;
         } else {
             break;
         }
     }
-    let Some((program, args)) = rest.split_first() else {
-        return false;
+    let Some(program) = words.get(start) else {
+        return;
     };
-    let name = program.rsplit('/').next().unwrap_or(program);
+    let name = base_name(program);
+    let args = &words[start + 1..];
+
+    if matches!(name, "unset" | "export" | "env") && args.iter().any(|a| a.contains("CLAUDECODE")) {
+        found.bypass = true;
+    }
+    if !WRAPPERS.contains(&name) {
+        check_program(&words[start..], full, depth, false, found);
+        return;
+    }
+    if name == "env" {
+        // `env -S 'git push'` splits its argument into a command line.
+        if let Some(i) = args.iter().position(|a| a == "-S" || a == "--split-string")
+            && let Some(script) = args.get(i + 1)
+        {
+            scan(script, full, depth + 1, found);
+        }
+    }
+    let under_xargs = name == "xargs";
+    for i in 0..args.len() {
+        if !WRAPPERS.contains(&base_name(&args[i])) {
+            check_program(&args[i..], full, depth, under_xargs, found);
+        }
+    }
+}
+
+/// `words[0]` is a program that is not a wrapper.
+fn check_program(words: &[String], full: &str, depth: usize, under_xargs: bool, found: &mut Found) {
+    let Some((program, args)) = words.split_first() else {
+        return;
+    };
+    let name = base_name(program);
 
     if name == "eval" {
-        return is_git_push(&args.join(" "));
+        scan(&args.join(" "), full, depth + 1, found);
+    } else if SHELLS.contains(&name) {
+        match shell_script(args) {
+            Some(script) => scan(script, full, depth + 1, found),
+            // A shell with no -c and no script file reads its script from stdin: a pipe or a
+            // here-string, whose text is somewhere in the full command.
+            None if !args.iter().any(|a| !a.starts_with('-')) => {
+                if full.contains("push") {
+                    found.push = true;
+                }
+            }
+            None => {}
+        }
+    } else if let Some(sub) = name.strip_prefix("git-") {
+        if PUSH_SUBCOMMANDS.contains(&sub) {
+            found.push = true;
+        }
+    } else if name == "git" {
+        check_git(args, full, depth, under_xargs, found);
     }
-    if WRAPPERS.contains(&name) {
-        // Wrapper options may take values (`sudo -u me`, `timeout 30`); rather than know each
-        // wrapper's syntax, look for a push starting at any later word.
-        return (0..args.len()).any(|i| runs_git_push(&args[i..]));
+}
+
+/// The script after `-c` (or a flag cluster with `c`, like `-lc`), skipping a `--`.
+fn shell_script(args: &[String]) -> Option<&str> {
+    let i = args
+        .iter()
+        .position(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('c'))?;
+    let mut rest = args[i + 1..].iter().map(String::as_str);
+    match rest.next()? {
+        "--" => rest.next(),
+        script => Some(script),
     }
-    if SHELLS.contains(&name) {
-        let script = args
-            .iter()
-            .position(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('c'))
-            .and_then(|i| args.get(i + 1));
-        return script.is_some_and(|s| is_git_push(s));
-    }
-    if let Some(sub) = name.strip_prefix("git-") {
-        return PUSH_SUBCOMMANDS.contains(&sub);
-    }
-    if name != "git" {
-        return false;
-    }
+}
+
+fn check_git(args: &[String], full: &str, depth: usize, under_xargs: bool, found: &mut Found) {
     let mut i = 0;
     while let Some(arg) = args.get(i) {
-        if GIT_VALUE_OPTIONS.contains(&arg.as_str()) {
-            if arg == "-c" && args.get(i + 1).is_some_and(|v| is_push_alias(v)) {
-                return true;
+        if let Some(spec) = arg.strip_prefix("--config-env=") {
+            if spec.to_ascii_lowercase().starts_with("alias.") {
+                found.push = true;
+            }
+            i += 1;
+        } else if GIT_VALUE_OPTIONS.contains(&arg.as_str()) {
+            let value = args.get(i + 1).map(String::as_str).unwrap_or_default();
+            let alias = value.to_ascii_lowercase().starts_with("alias.");
+            if (arg == "--config-env" && alias) || (arg == "-c" && alias && is_push_alias(value)) {
+                found.push = true;
             }
             i += 2;
         } else if arg.starts_with('-') {
             i += 1;
         } else {
-            return PUSH_SUBCOMMANDS.contains(&arg.as_str());
+            check_subcommand(arg, &args[i + 1..], full, depth, found);
+            return;
         }
     }
-    false
+    // `xargs git` takes the subcommand from its input.
+    if under_xargs {
+        found.push = true;
+    }
+}
+
+fn check_subcommand(sub: &str, rest: &[String], full: &str, depth: usize, found: &mut Found) {
+    if PUSH_SUBCOMMANDS.contains(&sub) || sub.starts_with('$') {
+        // A `$` word is only known at run time.
+        found.push = true;
+        return;
+    }
+    match sub {
+        "subtree" => {
+            if rest
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .is_some_and(|a| a == "push")
+            {
+                found.push = true;
+            }
+        }
+        "submodule" => {
+            for arg in rest {
+                scan(arg, full, depth + 1, found);
+            }
+        }
+        "rebase" => {
+            for (i, arg) in rest.iter().enumerate() {
+                if let Some(script) = arg.strip_prefix("--exec=") {
+                    scan(script, full, depth + 1, found);
+                } else if (arg == "--exec" || arg == "-x")
+                    && let Some(script) = rest.get(i + 1)
+                {
+                    scan(script, full, depth + 1, found);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// `alias.<name>=<value>` whose value pushes, e.g. `alias.p=push` or `alias.p=!git push`.
 fn is_push_alias(config: &str) -> bool {
-    let Some((key, value)) = config.split_once('=') else {
+    let Some((_, value)) = config.split_once('=') else {
         return false;
     };
-    if !key.starts_with("alias.") {
-        return false;
-    }
     match value.strip_prefix('!') {
         Some(script) => is_git_push(script),
         None => value
@@ -254,6 +430,17 @@ fn is_push_alias(config: &str) -> bool {
             .next()
             .is_some_and(|sub| PUSH_SUBCOMMANDS.contains(&sub)),
     }
+}
+
+/// `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_KEY_<n>` and similar that define an alias: what the
+/// alias runs is not visible here.
+fn is_alias_config(assignment: &str) -> bool {
+    let (name, value) = assignment.split_once('=').unwrap_or_default();
+    name.starts_with("GIT_CONFIG") && value.to_ascii_lowercase().contains("alias.")
+}
+
+fn base_name(program: &str) -> &str {
+    program.rsplit('/').next().unwrap_or(program)
 }
 
 fn is_assignment(word: &str) -> bool {
@@ -264,11 +451,32 @@ fn is_assignment(word: &str) -> bool {
     })
 }
 
-/// Splits shell text into simple commands of unquoted words, plus the scripts nested in
-/// double quotes as `$(...)` or backticks. Not a full shell parser: it knows quotes,
-/// backslashes, the separators `; & | ( )`, backticks and newline, and drops redirections,
-/// which is enough to find each program and its arguments. Heredoc bodies are read as
-/// commands, which can only deny more, never less.
+/// Collects a `( ... )` body after its opening parenthesis, counting nested parentheses.
+fn take_balanced(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
+    let mut depth = 1;
+    let mut body = String::new();
+    for c in chars.by_ref() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        body.push(c);
+    }
+    body
+}
+
+/// Splits shell text into simple commands of unquoted words, plus the nested scripts found in
+/// `$( )`, backticks and process substitution `<( )`. A command substitution leaves the word
+/// `$` in its place, since its value is only known at run time. Not a full shell parser: it
+/// knows quotes, backslashes and line continuation, the separators `; & | ( )` and newline,
+/// and drops redirections, which is enough to find each program and its arguments. Heredoc
+/// bodies are read as commands, which can only deny more, never less.
 fn lex(text: &str) -> (Vec<Vec<String>>, Vec<String>) {
     let mut commands = Vec::new();
     let mut nested = Vec::new();
@@ -306,46 +514,50 @@ fn lex(text: &str) -> (Vec<Vec<String>>, Vec<String>) {
                 while let Some(q) = chars.next() {
                     match q {
                         '"' => break,
-                        '\\' => {
-                            if let Some(e) = chars.next() {
-                                word.push(e);
-                            }
-                        }
+                        '\\' => match chars.next() {
+                            Some('\n') | None => {}
+                            Some(e) => word.push(e),
+                        },
                         '$' if chars.peek() == Some(&'(') => {
                             chars.next();
-                            let mut depth = 1;
-                            let mut script = String::new();
-                            for s in chars.by_ref() {
-                                match s {
-                                    '(' => depth += 1,
-                                    ')' => {
-                                        depth -= 1;
-                                        if depth == 0 {
-                                            break;
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                                script.push(s);
-                            }
-                            nested.push(script);
+                            nested.push(take_balanced(&mut chars));
+                            word.push('$');
                         }
                         '`' => {
-                            let script: String = chars.by_ref().take_while(|&s| s != '`').collect();
-                            nested.push(script);
+                            nested.push(chars.by_ref().take_while(|&s| s != '`').collect());
+                            word.push('$');
                         }
                         _ => word.push(q),
                     }
                 }
             }
-            '\\' => {
-                in_word = true;
-                if let Some(e) = chars.next() {
+            '\\' => match chars.next() {
+                // Line continuation: the pair disappears.
+                Some('\n') | None => {}
+                Some(e) => {
+                    in_word = true;
                     word.push(e);
                 }
+            },
+            '$' if chars.peek() == Some(&'(') => {
+                chars.next();
+                nested.push(take_balanced(&mut chars));
+                in_word = true;
+                word.push('$');
+            }
+            '`' => {
+                nested.push(chars.by_ref().take_while(|&s| s != '`').collect());
+                in_word = true;
+                word.push('$');
+            }
+            '>' | '<' if chars.peek() == Some(&'(') => {
+                // Process substitution: a nested script, no redirection target.
+                chars.next();
+                end_word(&mut word, &mut in_word, &mut words, &mut skip_next_word);
+                nested.push(take_balanced(&mut chars));
             }
             '>' | '<' => {
-                // `2>&1`, `>log`, `<<EOF`: drop a leading fd number and the target word.
+                // `2>&1`, `>log`, `<<EOF`, `<<<word`: drop a leading fd number and the target.
                 if in_word && word.chars().all(|d| d.is_ascii_digit()) {
                     word.clear();
                     in_word = false;
@@ -366,8 +578,9 @@ fn lex(text: &str) -> (Vec<Vec<String>>, Vec<String>) {
                     skip_next_word = true;
                 }
             }
-            ';' | '&' | '|' | '(' | ')' | '`' | '\n' => {
+            ';' | '&' | '|' | '(' | ')' | '\n' => {
                 end_word(&mut word, &mut in_word, &mut words, &mut skip_next_word);
+                skip_next_word = false;
                 if !words.is_empty() {
                     commands.push(std::mem::take(&mut words));
                 }

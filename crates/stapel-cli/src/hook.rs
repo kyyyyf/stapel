@@ -20,9 +20,13 @@ pub fn pre_tool_use() -> ExitCode {
 
     let cwd = std::env::current_dir().unwrap_or_default();
     let project_dir = std::env::var_os("CLAUDE_PROJECT_DIR").map(std::path::PathBuf::from);
-    match decide(&input, &cwd, project_dir.as_deref()) {
-        Decision::Allow => ExitCode::SUCCESS,
-        Decision::Deny(reason) => deny(&reason),
+    // Claude Code lets the call through on any exit code but 2, so a panic must not escape.
+    std::panic::set_hook(Box::new(|_| {}));
+    let decision = std::panic::catch_unwind(|| decide(&input, &cwd, project_dir.as_deref()));
+    match decision {
+        Ok(Decision::Allow) => ExitCode::SUCCESS,
+        Ok(Decision::Deny(reason)) => deny(&reason),
+        Err(_) => deny("внутренняя ошибка проверки, вызов отклонён"),
     }
 }
 

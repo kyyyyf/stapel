@@ -22,21 +22,21 @@
 {"id": "E-6", "ticket": "STP-1", "round": 1, "role": "external", "severity": "LOW", "claim": "root from cwd, not from target path", "fate": "fix", "group": "F", "commit": "ae54223"}
 {"id": "E-7", "ticket": "STP-1", "round": 1, "role": "external", "severity": "LOW", "claim": "symlink under docs/ lets code be written", "fate": "fix", "group": "G", "commit": "ae54223"}
 {"id": "E-8", "ticket": "STP-1", "round": 1, "role": "external", "severity": "LOW", "claim": "always_writable entries not validated ('/' or '')", "fate": "fix", "group": "H", "commit": "ae54223"}
-{"id": "F2-1", "ticket": "STP-1", "round": 2, "role": "fresh-code", "severity": "MEDIUM", "claim": "wrapper scan is exponential in chained wrappers; hook timeout fails open", "fate": "open", "commit": "ad9d2e3"}
-{"id": "F2-2", "ticket": "STP-1", "round": 2, "role": "fresh-code", "severity": "MEDIUM", "claim": "unbounded recursion on nested $( ) overflows the stack; crash fails open", "fate": "open", "commit": "ad9d2e3"}
-{"id": "F2-3", "ticket": "STP-1", "round": 2, "role": "fresh-code", "severity": "MEDIUM", "claim": "process substitution <( ) swallows the first inner word", "fate": "open", "commit": "ad9d2e3"}
-{"id": "F2-4", "ticket": "STP-1", "round": 2, "role": "fresh-code", "severity": "MEDIUM", "claim": "pipe into sh, find -exec, watch, subtree/submodule/rebase --exec, $-words, glued sh -c not seen", "fate": "open", "commit": "ad9d2e3"}
-{"id": "F2-5", "ticket": "STP-1", "round": 2, "role": "fresh-code", "severity": "LOW", "claim": "dangling symlink under always-writable prefix bypasses write guard", "fate": "open", "commit": "ad9d2e3"}
-{"id": "F2-6", "ticket": "STP-1", "round": 2, "role": "fresh-code", "severity": "LOW", "claim": "old fail-open hook line counted as installed, not upgraded", "fate": "open", "commit": "ad9d2e3"}
-{"id": "D2-1", "ticket": "STP-1", "round": 2, "role": "drift", "severity": "LOW", "claim": "AC-8 says *.jsonl, code lists five names", "fate": "open", "commit": "ad9d2e3"}
-{"id": "D2-2", "ticket": "STP-1", "round": 2, "role": "drift", "severity": "LOW", "claim": "AC-7 'в любом виде' over-promises", "fate": "open", "commit": "ad9d2e3"}
-{"id": "D2-3", "ticket": "STP-1", "round": 2, "role": "drift", "severity": "LOW", "claim": "Решение signature, backtick, HOOK_LINE out of date", "fate": "open", "commit": "ad9d2e3"}
-{"id": "D2-4", "ticket": "STP-1", "round": 2, "role": "drift", "severity": "LOW", "claim": "AC-5 wider than its tests (non-UTF-8 stapel.toml/settings.json)", "fate": "open", "commit": "ad9d2e3"}
-{"id": "D2-5", "ticket": "STP-1", "round": 2, "role": "drift", "severity": "LOW", "claim": "STP-1 state.json still build.allowed=true", "fate": "open", "commit": "ad9d2e3"}
-{"id": "D2-6", "ticket": "STP-1", "round": 2, "role": "drift", "severity": "LOW", "claim": "token journal lacks builder R1 row and round-2 reviewers", "fate": "open", "commit": "ad9d2e3"}
-{"id": "E2-1", "ticket": "STP-1", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "lexical guard misses run-time words and other interpreters; AC-7 over-promises", "fate": "open", "commit": "ad9d2e3"}
-{"id": "E2-2", "ticket": "STP-1", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "backslash-newline continuation not handled", "fate": "open", "commit": "ad9d2e3"}
-{"id": "E2-3", "ticket": "STP-1", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "state flip not recorded; .claude/settings.json writable when build allowed", "fate": "open", "commit": "ad9d2e3"}
-{"id": "E2-4", "ticket": "STP-1", "round": 2, "role": "external", "severity": "LOW", "claim": "old hook line not upgraded", "fate": "open", "commit": "ad9d2e3"}
-{"id": "E2-5", "ticket": "STP-1", "round": 2, "role": "external", "severity": "LOW", "claim": "hook line verified end-to-end via sh -c; no change", "fate": "open", "commit": "ad9d2e3"}
-{"id": "E2-6", "ticket": "STP-1", "round": 2, "role": "external", "severity": "LOW", "claim": "machine file names compared case-sensitively", "fate": "open", "commit": "ad9d2e3"}
+{"id": "F2-1", "ticket": "STP-1", "round": 2, "role": "fresh-code", "severity": "MEDIUM", "claim": "wrapper scan is exponential in chained wrappers; hook timeout fails open", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "F2-2", "ticket": "STP-1", "round": 2, "role": "fresh-code", "severity": "MEDIUM", "claim": "unbounded recursion on nested $( ) overflows the stack; crash fails open", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "F2-3", "ticket": "STP-1", "round": 2, "role": "fresh-code", "severity": "MEDIUM", "claim": "process substitution <( ) swallows the first inner word", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "F2-4", "ticket": "STP-1", "round": 2, "role": "fresh-code", "severity": "MEDIUM", "claim": "pipe into sh, find -exec, watch, subtree/submodule/rebase --exec, $-words, glued sh -c not seen", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "F2-5", "ticket": "STP-1", "round": 2, "role": "fresh-code", "severity": "LOW", "claim": "dangling symlink under always-writable prefix bypasses write guard", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "F2-6", "ticket": "STP-1", "round": 2, "role": "fresh-code", "severity": "LOW", "claim": "old fail-open hook line counted as installed, not upgraded", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "D2-1", "ticket": "STP-1", "round": 2, "role": "drift", "severity": "LOW", "claim": "AC-8 says *.jsonl, code lists five names", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "D2-2", "ticket": "STP-1", "round": 2, "role": "drift", "severity": "LOW", "claim": "AC-7 'в любом виде' over-promises", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "D2-3", "ticket": "STP-1", "round": 2, "role": "drift", "severity": "LOW", "claim": "Решение signature, backtick, HOOK_LINE out of date", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "D2-4", "ticket": "STP-1", "round": 2, "role": "drift", "severity": "LOW", "claim": "AC-5 wider than its tests (non-UTF-8 stapel.toml/settings.json)", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "D2-5", "ticket": "STP-1", "round": 2, "role": "drift", "severity": "LOW", "claim": "STP-1 state.json still build.allowed=true", "fate": "fix", "commit": "ad9d2e3", "note": "state.json flipped to build.allowed=false in the closing commit; settings.json protected"}
+{"id": "D2-6", "ticket": "STP-1", "round": 2, "role": "drift", "severity": "LOW", "claim": "token journal lacks builder R1 row and round-2 reviewers", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "E2-1", "ticket": "STP-1", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "lexical guard misses run-time words and other interpreters; AC-7 over-promises", "fate": "fix", "commit": "ad9d2e3", "note": "AC-7 reworded; second layer pre-push (AC-13); run-time forms listed in Не входит"}
+{"id": "E2-2", "ticket": "STP-1", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "backslash-newline continuation not handled", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "E2-3", "ticket": "STP-1", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "state flip not recorded; .claude/settings.json writable when build allowed", "fate": "fix", "commit": "ad9d2e3", "note": "state.json flipped to build.allowed=false in the closing commit; settings.json protected"}
+{"id": "E2-4", "ticket": "STP-1", "round": 2, "role": "external", "severity": "LOW", "claim": "old hook line not upgraded", "fate": "fix", "commit": "ad9d2e3"}
+{"id": "E2-5", "ticket": "STP-1", "round": 2, "role": "external", "severity": "LOW", "claim": "hook line verified end-to-end via sh -c; no change", "fate": "no-change", "commit": "ad9d2e3"}
+{"id": "E2-6", "ticket": "STP-1", "round": 2, "role": "external", "severity": "LOW", "claim": "machine file names compared case-sensitively", "fate": "fix", "commit": "ad9d2e3"}

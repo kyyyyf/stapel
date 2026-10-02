@@ -15,6 +15,21 @@ const HOOK_COMMAND: &str = "stapel hook pre-tool-use";
 /// binary would silently disable the guard; this line turns that case into a denial.
 const HOOK_LINE: &str = "command -v stapel >/dev/null 2>&1 || { echo 'stapel: бинарный файл stapel не найден в PATH, вызов запрещён' >&2; exit 2; }; stapel hook pre-tool-use";
 const HOOK_MATCHER: &str = "Bash|Write|Edit|MultiEdit|NotebookEdit";
+/// Seconds Claude Code waits for the hook; the guard answers in milliseconds.
+const HOOK_TIMEOUT: u64 = 10;
+/// Marks the pre-push hook as ours.
+const PRE_PUSH_MARKER: &str = "# stapel: pre-push guard";
+/// Second layer against agent pushes: Claude Code sets CLAUDECODE in the shell it gives the
+/// agent, so this refuses a push however it was started (scripts, interpreters, gh).
+const PRE_PUSH: &str = r#"#!/bin/sh
+# stapel: pre-push guard, installed by `stapel init`.
+# Claude Code sets CLAUDECODE in the shell it gives the agent; pushes from there are refused.
+if [ -n "${CLAUDECODE:-}" ]; then
+  echo "stapel: push из сессии агента запрещён; пушит человек из своего терминала" >&2
+  exit 1
+fi
+exit 0
+"#;
 
 /// Test-only switch: treat stdin as a terminal so the prefix prompt can be driven from a pipe.
 const ASSUME_TTY: &str = "STAPEL_ASSUME_TTY";
@@ -46,13 +61,17 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
     plan_create(&root, ".stapel/tickets/.gitkeep", String::new(), &mut plan);
     plan_ignore_index(&root, &mut plan)?;
     plan_hooks(&root, &mut plan)?;
+    plan_pre_push(&root, &mut plan)?;
 
     for step in &plan {
-        let path = root.join(step.rel);
+        let path = root.join(&step.rel);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
         }
         std::fs::write(&path, &step.content).map_err(|e| format!("{}: {e}", step.rel))?;
+        if step.executable {
+            make_executable(&path).map_err(|e| format!("{}: {e}", step.rel))?;
+        }
     }
 
     if !on_path("stapel") {
@@ -72,9 +91,10 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
 
 /// One file `init` is about to write.
 struct Step {
-    rel: &'static str,
+    rel: String,
     content: String,
     label: String,
+    executable: bool,
 }
 
 fn repo_root() -> Result<PathBuf, String> {
@@ -111,9 +131,10 @@ fn ask_prefix() -> Result<String, String> {
 fn plan_create(root: &Path, rel: &'static str, content: String, plan: &mut Vec<Step>) {
     if !root.join(rel).exists() {
         plan.push(Step {
-            rel,
+            rel: rel.into(),
             content,
             label: format!("создано: {rel}"),
+            executable: false,
         });
     }
 }
@@ -134,9 +155,10 @@ fn plan_ignore_index(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     text.push_str(IGNORE_LINE);
     text.push('\n');
     plan.push(Step {
-        rel: ".gitignore",
+        rel: ".gitignore".into(),
         content: text,
         label: "дописано: .gitignore".into(),
+        executable: false,
     });
     Ok(())
 }
@@ -167,6 +189,19 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
             "{SETTINGS}: поле hooks.PreToolUse должно быть массивом"
         ))?;
 
+    // An entry with the bare command was written by an earlier, fail-open version: upgrade it.
+    let mut upgraded = false;
+    for hook in pre
+        .iter_mut()
+        .filter_map(|entry| entry["hooks"].as_array_mut())
+        .flatten()
+    {
+        if hook["command"] == HOOK_COMMAND {
+            hook["command"] = json!(HOOK_LINE);
+            hook["timeout"] = json!(HOOK_TIMEOUT);
+            upgraded = true;
+        }
+    }
     let installed = pre.iter().any(|entry| {
         entry["hooks"].as_array().is_some_and(|hooks| {
             hooks.iter().any(|h| {
@@ -176,25 +211,85 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
             })
         })
     });
-    if installed {
+    if installed && !upgraded {
         return Ok(());
     }
-    pre.push(json!({
-        "matcher": HOOK_MATCHER,
-        "hooks": [{ "type": "command", "command": HOOK_LINE }]
-    }));
+    if !installed {
+        pre.push(json!({
+            "matcher": HOOK_MATCHER,
+            "hooks": [{ "type": "command", "command": HOOK_LINE, "timeout": HOOK_TIMEOUT }]
+        }));
+    }
 
     let mut content = serde_json::to_string_pretty(&settings).expect("JSON value serializes");
     content.push('\n');
     plan.push(Step {
-        rel: SETTINGS,
+        rel: SETTINGS.into(),
         content,
-        label: if existed {
+        label: if upgraded {
+            format!("обновлено: {SETTINGS} (строка хука stapel)")
+        } else if existed {
             format!("дописано: {SETTINGS} (хук stapel)")
         } else {
             format!("создано: {SETTINGS}")
         },
+        executable: false,
     });
+    Ok(())
+}
+
+/// Plans the git pre-push hook in the hooks directory git uses (`core.hooksPath` included).
+/// A pre-push hook that is not ours is kept, with a warning.
+fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--git-path", "hooks/pre-push"])
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("не удалось запустить git: {e}"))?;
+    if !out.status.success() {
+        return Err("git не назвал путь к хукам репозитория".into());
+    }
+    let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim_end());
+    let path = if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    };
+    let rel = path
+        .strip_prefix(root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string());
+
+    match std::fs::read(&path) {
+        Ok(bytes) if String::from_utf8_lossy(&bytes).contains(PRE_PUSH_MARKER) => Ok(()),
+        Ok(_) => {
+            eprintln!(
+                "предупреждение: {rel} уже есть и не от stapel; второй слой защиты от push агента \
+                 не поставлен. Добавьте в него проверку переменной CLAUDECODE вручную"
+            );
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            plan.push(Step {
+                rel: path.display().to_string(),
+                content: PRE_PUSH.into(),
+                label: format!("создано: {rel} (pre-push: второй слой против push агента)"),
+                executable: true,
+            });
+            Ok(())
+        }
+        Err(e) => Err(format!("{rel}: {e}")),
+    }
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
