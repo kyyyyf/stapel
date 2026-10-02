@@ -117,6 +117,11 @@ fn refuses_broken_settings() {
         .stderr(contains(SETTINGS));
 
     assert_eq!(read(dir, SETTINGS), "{ not json");
+    assert!(
+        !dir.join(".stapel").exists(),
+        "init wrote files before failing"
+    );
+    assert!(!dir.join(".gitignore").exists());
 }
 
 // Question 3: the hook silently does nothing when `stapel` is not on PATH, so init warns.
@@ -150,4 +155,65 @@ fn no_warning_when_stapel_on_path() {
         .assert()
         .success()
         .stderr(predicates::str::is_empty());
+}
+
+fn installed_command(dir: &Path) -> String {
+    let s = settings(dir);
+    stapel_entries(&s)[0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn fake_stapel(script: &str) -> tempfile::TempDir {
+    let bin = tempfile::tempdir().unwrap();
+    let fake = bin.path().join("stapel");
+    std::fs::write(&fake, script).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    bin
+}
+
+fn run_line(command: &str, path: &str) -> std::process::Output {
+    std::process::Command::new("/bin/sh")
+        .args(["-c", command])
+        .env("PATH", path)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap()
+}
+
+// E-4: without `stapel` on PATH the installed hook line blocks the call instead of passing it.
+#[test]
+fn hook_command_fails_closed_without_stapel() {
+    let repo = git_repo();
+    stapel(repo.path())
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+
+    let out = run_line(&installed_command(repo.path()), "/usr/bin:/bin");
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("PATH"));
+}
+
+// E-4: with `stapel` on PATH the line hands over to `stapel hook pre-tool-use`.
+#[test]
+fn hook_command_runs_stapel_when_present() {
+    let repo = git_repo();
+    stapel(repo.path())
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let bin = fake_stapel("#!/bin/sh\necho \"$@\" >&2\nexit 7\n");
+
+    let out = run_line(
+        &installed_command(repo.path()),
+        &format!("{}:/usr/bin:/bin", bin.path().display()),
+    );
+    assert_eq!(out.status.code(), Some(7));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("hook pre-tool-use"));
 }

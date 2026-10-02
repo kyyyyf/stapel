@@ -30,6 +30,7 @@ pub fn stapel(dir: &Path) -> Command {
             std::env::temp_dir().canonicalize().unwrap(),
         )
         .env_remove("STAPEL_ASSUME_TTY")
+        .env_remove("CLAUDE_PROJECT_DIR")
         .write_stdin("");
     cmd
 }

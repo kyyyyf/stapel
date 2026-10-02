@@ -49,3 +49,19 @@ fn config_rejects_missing_ticket_key() {
     let err = Config::parse(&text).unwrap_err();
     assert!(err.to_string().contains("key"), "{err}");
 }
+
+// E-8: an always_writable entry that would cover the whole repository or leave it is refused.
+#[test]
+fn config_rejects_bad_always_writable() {
+    for bad in ["", "/", "/etc/", "../x/", "docs/../", "./"] {
+        let text = default_toml("ABC").replace(
+            "always_writable = [\".stapel/\", \"docs/\"]",
+            &format!("always_writable = [\".stapel/\", {bad:?}]"),
+        );
+        let err = Config::parse(&text).expect_err(bad);
+        assert!(
+            err.to_string().contains("always_writable"),
+            "{bad:?}: {err}"
+        );
+    }
+}

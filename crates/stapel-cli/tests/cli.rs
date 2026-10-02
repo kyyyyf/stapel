@@ -48,3 +48,19 @@ fn version_prints_package_version() {
         .success()
         .stdout(format!("stapel {}\n", env!("CARGO_PKG_VERSION")));
 }
+
+// AC-1: the five packages beyond core and cli are stubs with a doc comment only.
+#[test]
+fn stub_packages_are_empty() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for name in ["agent", "index", "forge", "mcp", "lsp"] {
+        let lib = root.join(format!("crates/stapel-{name}/src/lib.rs"));
+        let text = std::fs::read_to_string(&lib).unwrap();
+        assert!(
+            text.lines()
+                .all(|l| l.trim().is_empty() || l.starts_with("//")),
+            "{} has code",
+            lib.display()
+        );
+    }
+}
