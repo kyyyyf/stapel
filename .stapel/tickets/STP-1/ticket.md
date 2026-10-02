@@ -18,7 +18,7 @@
 | № | Критерий | Тест |
 |---|---|---|
 | AC-1 | Разработчик · собирает бинарный файл `stapel` · одной командой `cargo build --release` из корня · на чистой копии репозитория; в рабочей области ровно семь пакетов из `CLAUDE.md`, пять из них — пустые заготовки библиотек. | `cli::workspace_has_seven_members`, `cli::version_prints_package_version` |
-| AC-2 | Разработчик · запускает `stapel init` · в корне git-репозитория без `.stapel/` · и получает `.stapel/stapel.toml`, `.stapel/tickets/`, `.stapel/allowlist.toml` и строку `/.stapel/index/` в `.gitignore`; команда печатает список созданного и завершается с кодом 0. | `init::creates_layout_in_empty_repo` |
+| AC-2 | Разработчик · запускает `stapel init` · в корне git-репозитория без `.stapel/` · и получает `.stapel/stapel.toml`, `.stapel/tickets/`, `.stapel/allowlist.toml` и строку `/.stapel/index/` в `.gitignore`; команда печатает список созданного и завершается с кодом 0. | `init::creates_layout_in_empty_repo`, `init::creates_layout_at_repo_root_from_subdir`, `init::appends_to_existing_gitignore` |
 | AC-3 | `stapel-core` · читает `stapel.toml`, созданный `init`, · без ошибок · и видит в нём разделы `spec, design, proof, plan, review, summary`, шесть ролей из `docs/PLAN.md` §5 и правило ключа `tickets.key` с префиксом, заданным при `init`. | `core::config::default_config_roundtrips`, `core::config::default_config_has_roles_and_sections`, `core::config::config_rejects_missing_ticket_key` |
 | AC-4 | Разработчик · повторно запускает `stapel init` · в уже инициализированном репозитории · и ни один файл не меняется: содержимое и время изменения те же; команда печатает «уже готово» и завершается с кодом 0. | `init::second_run_changes_nothing` |
 | AC-5 | Разработчик · запускает `stapel init` · когда `stapel.toml` уже есть и отредактирован вручную · и файл остаётся как есть; недостающие части раскладки и хуки дописываются. | `init::keeps_user_edited_config` |
@@ -101,7 +101,7 @@ stderr: это задокументированный способ запрет�
 | Критерий или риск | Тест | Результат |
 |---|---|---|
 | AC-1 | `cli::workspace_has_seven_members`, `cli::version_prints_package_version` | — |
-| AC-2 | `init::creates_layout_in_empty_repo` | — |
+| AC-2 | `init::creates_layout_in_empty_repo`, `init::creates_layout_at_repo_root_from_subdir`, `init::appends_to_existing_gitignore` | — |
 | AC-3 | `core::config::default_config_roundtrips`, `core::config::default_config_has_roles_and_sections`, `core::config::config_rejects_missing_ticket_key` | — |
 | AC-4, R-3 | `init::second_run_changes_nothing` | — |
 | AC-5 | `init::keeps_user_edited_config` | — |
