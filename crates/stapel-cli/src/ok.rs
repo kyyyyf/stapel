@@ -1,13 +1,15 @@
-//! `stapel ok [KEY] <section>`: a person confirms a section (STP-2 AC-5).
+//! `stapel ok [KEY] <section>`: a person confirms a section (STP-2 AC-5, AC-16).
 
 use crate::repo;
 use stapel_core::confirm::prepare;
+use stapel_core::dialog::ok_facts;
+use stapel_core::grant::consume;
 use stapel_core::identity::{in_agent_shell, user_name};
 use stapel_core::state::{Confirmation, save};
 use stapel_core::time::now_rfc3339;
 
-pub fn run(key: Option<&str>, section: &str) -> Result<(), String> {
-    if in_agent_shell() {
+pub fn run(key: Option<&str>, section: &str, grant: Option<&str>) -> Result<(), String> {
+    if in_agent_shell() && grant.is_none() {
         return Err(format!(
             "only a person confirms a section: this shell belongs to an agent (CLAUDECODE or \
              CLAUDE_CODE_ENTRYPOINT is set); ask the agent to run `stapel ok` so that Claude Code \
@@ -23,6 +25,9 @@ pub fn run(key: Option<&str>, section: &str) -> Result<(), String> {
         );
     }
     let mut prepared = prepare(&root, &config, key, section)?;
+    if let Some(token) = grant {
+        consume(&root, token, &ok_facts(&prepared))?;
+    }
     for older in prepared
         .state
         .confirmations
@@ -39,7 +44,7 @@ pub fn run(key: Option<&str>, section: &str) -> Result<(), String> {
         normal_form: stapel_core::hash::NORMAL_FORM,
         depends_on: prepared.depends_on,
         text: Some(prepared.text),
-        via: Some("terminal".into()),
+        via: Some(if grant.is_some() { "grant" } else { "terminal" }.into()),
         extra: Default::default(),
     });
     save(&prepared.dir.join("state.json"), &prepared.state)?;

@@ -15,12 +15,20 @@ pub struct HookInput {
     #[serde(default)]
     pub tool_input: serde_json::Value,
     pub cwd: Option<PathBuf>,
+    /// Claude Code's permission mode, e.g. `default`, `acceptEdits`, `auto`, `plan`.
+    #[serde(default)]
+    pub permission_mode: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Decision {
     Allow,
     Deny(String),
+    /// Show the person the permission dialog with `reason`; on "yes" run `command` instead.
+    Ask {
+        reason: String,
+        command: String,
+    },
 }
 
 impl HookInput {
@@ -54,6 +62,11 @@ const BYPASS_REASON: &str = "the command may switch off the second layer against
 const UNREADABLE_REASON: &str = "the command is too long, too deeply nested or too costly to \
                                  check for git push; the call is denied";
 
+const INJECT_REASON: &str = "the command can type into the terminal where the permission dialog \
+                             is answered; only a person answers it";
+const GRANT_REASON: &str = "a --grant comes only from the permission dialog; a command may not \
+                            carry one of its own";
+
 /// Longer commands are denied rather than parsed.
 const MAX_COMMAND_LEN: usize = 64 * 1024;
 /// Deeper nesting of `$( )`, backticks, `eval` and `sh -c` is denied rather than parsed.
@@ -74,8 +87,16 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
                     return Decision::Deny("hook input has a non-string tool_input.command".into());
                 }
             };
-            match in_stapel_repo.then(|| check_command(command)).flatten() {
-                Some(reason) => Decision::Deny(reason.into()),
+            if !in_stapel_repo {
+                return Decision::Allow;
+            }
+            if let Some(reason) = check_command(command) {
+                return Decision::Deny(reason.into());
+            }
+            match plain_invocation(command) {
+                Some(invocation) => {
+                    crate::dialog::ask(&invocation, cwd, input.permission_mode.as_deref())
+                }
                 None => Decision::Allow,
             }
         }
@@ -264,6 +285,10 @@ pub fn check_command(command: &str) -> Option<&'static str> {
         Some(UNREADABLE_REASON)
     } else if found.bypass {
         Some(BYPASS_REASON)
+    } else if found.inject {
+        Some(INJECT_REASON)
+    } else if found.grant {
+        Some(GRANT_REASON)
     } else if found.push {
         Some(PUSH_REASON)
     } else {
@@ -281,6 +306,10 @@ struct Found {
     push: bool,
     bypass: bool,
     too_deep: bool,
+    /// Typing into the terminal, where the permission dialog is answered (AC-17).
+    inject: bool,
+    /// A `--grant` written by the agent rather than by the dialog (AC-15).
+    grant: bool,
     /// Units of work left; nested scripts can multiply the work, so it is capped.
     budget: usize,
 }
@@ -400,6 +429,22 @@ fn check_words(words: &[String], found: &mut Found) {
         if HOOKLESS_PUSH_WORDS.iter().any(|w| lower.contains(w)) {
             found.push = true;
         }
+        if word.contains("TIOCSTI") || word.starts_with("/dev/pts/") || word == "/dev/tty" {
+            found.inject = true;
+        }
+        if word.starts_with("--grant") {
+            found.grant = true;
+        }
+    }
+}
+
+/// Programs and arguments that type into a terminal (AC-17).
+fn injects_input(name: &str, args: &[String]) -> bool {
+    match name {
+        "xdotool" | "ydotool" | "wtype" => true,
+        "tmux" => args.iter().any(|a| a == "send-keys" || a == "send"),
+        "screen" => args.iter().any(|a| a == "-X") && args.iter().any(|a| a == "stuff"),
+        _ => false,
     }
 }
 
@@ -443,6 +488,9 @@ fn check_program(words: &[String], full: &str, depth: usize, under_xargs: bool, 
     if clears_claudecode(name, args) {
         found.bypass = true;
     }
+    if injects_input(name, args) {
+        found.inject = true;
+    }
     if WRAPPERS.contains(&name) {
         for arg in args.iter().filter(|a| a.contains(char::is_whitespace)) {
             scan(arg, full, depth + 1, found);
@@ -452,8 +500,13 @@ fn check_program(words: &[String], full: &str, depth: usize, under_xargs: bool, 
             // Later wrappers are covered by this loop, so they are not expanded again.
             if !WRAPPERS.contains(&base_name(&args[i])) {
                 check_program(&args[i..], full, depth, under_xargs, found);
-            } else if clears_claudecode(base_name(&args[i]), &args[i + 1..]) {
-                found.bypass = true;
+            } else {
+                if clears_claudecode(base_name(&args[i]), &args[i + 1..]) {
+                    found.bypass = true;
+                }
+                if injects_input(base_name(&args[i]), &args[i + 1..]) {
+                    found.inject = true;
+                }
             }
             if found.too_deep {
                 return;
@@ -848,4 +901,46 @@ fn lex(text: &str) -> Lexed {
         nested,
         targets,
     }
+}
+
+/// A Bash command that is exactly one `stapel ok|close` call (STP-2 AC-15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invocation {
+    /// `stapel` (as written) or `cargo run [options] --`.
+    pub program: Vec<String>,
+    /// `ok` or `close`.
+    pub action: String,
+    /// The words after the action, assignments and redirections dropped.
+    pub args: Vec<String>,
+}
+
+/// The `stapel ok|close` call when `command` is exactly one simple command, else `None`.
+pub fn plain_invocation(command: &str) -> Option<Invocation> {
+    let lexed = lex(command);
+    if lexed.commands.len() != 1 || !lexed.nested.is_empty() {
+        return None;
+    }
+    let words: Vec<String> = lexed.commands[0]
+        .iter()
+        .skip_while(|w| is_assignment(w))
+        .cloned()
+        .collect();
+    let (program, rest) = match words.first().map(|w| base_name(w)) {
+        Some("stapel") => (words[..1].to_vec(), &words[1..]),
+        Some("cargo") if words.get(1).is_some_and(|w| w == "run") => {
+            let sep = words.iter().position(|w| w == "--")?;
+            (words[..=sep].to_vec(), &words[sep + 1..])
+        }
+        _ => return None,
+    };
+    let at = rest.iter().position(|w| !w.starts_with('-'))?;
+    let action = rest[at].to_ascii_lowercase();
+    if action != "ok" && action != "close" {
+        return None;
+    }
+    Some(Invocation {
+        program,
+        action,
+        args: rest[at + 1..].to_vec(),
+    })
 }

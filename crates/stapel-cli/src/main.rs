@@ -39,6 +39,9 @@ enum Command {
         /// The ticket key (optional) and the section id.
         #[arg(num_args = 1..=2, required = true, value_names = ["KEY", "SECTION"])]
         args: Vec<String>,
+        /// One-time grant from the permission dialog; set by the guard, never by hand.
+        #[arg(long, hide = true)]
+        grant: Option<String>,
     },
     /// Show whose decision a ticket waits for and which confirmations went stale.
     Status {
@@ -52,6 +55,9 @@ enum Command {
         /// Why the ticket is done.
         #[arg(long)]
         reason: String,
+        /// One-time grant from the permission dialog; set by the guard, never by hand.
+        #[arg(long, hide = true)]
+        grant: Option<String>,
     },
     /// Hook entry points called by Claude Code; not meant to be run by hand.
     #[command(subcommand)]
@@ -69,10 +75,12 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Init { prefix } => init::run(prefix),
         Command::New { title, tracker } => new::run(&title, tracker.as_deref()),
-        Command::Close { key, reason } => close::run(key.as_deref(), &reason),
-        Command::Ok { args } => match args.as_slice() {
-            [section] => ok::run(None, section),
-            [key, section] => ok::run(Some(key), section),
+        Command::Close { key, reason, grant } => {
+            close::run(key.as_deref(), &reason, grant.as_deref())
+        }
+        Command::Ok { args, grant } => match args.as_slice() {
+            [section] => ok::run(None, section, grant.as_deref()),
+            [key, section] => ok::run(Some(key), section, grant.as_deref()),
             _ => unreachable!("clap limits the arguments"),
         },
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),

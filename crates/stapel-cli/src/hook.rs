@@ -25,6 +25,20 @@ pub fn pre_tool_use() -> ExitCode {
     let decision = std::panic::catch_unwind(|| decide(&input, &cwd, project_dir.as_deref()));
     match decision {
         Ok(Decision::Allow) => ExitCode::SUCCESS,
+        Ok(Decision::Ask { reason, command }) => {
+            let mut updated = input.tool_input.clone();
+            updated["command"] = serde_json::Value::String(command);
+            let answer = serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": reason,
+                    "updatedInput": updated,
+                }
+            });
+            println!("{answer}");
+            ExitCode::SUCCESS
+        }
         Ok(Decision::Deny(reason)) => deny(&reason),
         Err(_) => deny("internal error in the check; the call is denied"),
     }

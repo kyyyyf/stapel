@@ -1,13 +1,15 @@
 //! `stapel close [KEY] --reason <text>`: a person closes a ticket (STP-2 AC-14).
 
 use crate::repo;
+use stapel_core::dialog::close_facts;
+use stapel_core::grant::consume;
 use stapel_core::identity::{in_agent_shell, user_name};
 use stapel_core::state::{Closed, save};
 use stapel_core::tickets::{Status, resolve};
 use stapel_core::time::now_rfc3339;
 
-pub fn run(key: Option<&str>, reason: &str) -> Result<(), String> {
-    if in_agent_shell() {
+pub fn run(key: Option<&str>, reason: &str, grant: Option<&str>) -> Result<(), String> {
+    if in_agent_shell() && grant.is_none() {
         return Err(
             "only a person closes a ticket: this shell belongs to an agent (CLAUDECODE or \
              CLAUDE_CODE_ENTRYPOINT is set); ask the agent to run `stapel close` so that Claude \
@@ -40,6 +42,9 @@ pub fn run(key: Option<&str>, reason: &str) -> Result<(), String> {
         }
         Status::Unreadable(r) => return Err(r),
     };
+    if let Some(token) = grant {
+        consume(&root, token, &close_facts(&ticket.key, reason))?;
+    }
     state.closed = Some(Closed {
         by,
         at: now_rfc3339(),
