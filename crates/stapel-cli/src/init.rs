@@ -1,10 +1,11 @@
 //! `stapel init`: the `.stapel/` layout in the repository root.
 
-use stapel_core::config::{default_toml, validate_prefix};
+use stapel_core::config::{Config, default_toml, validate_prefix};
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const CONFIG: &str = ".stapel/stapel.toml";
 const ALLOWLIST: &str = "# Ложные срабатывания ревьюеров, которые решено не исправлять.\n";
 const IGNORE_LINE: &str = "/.stapel/index/";
 
@@ -13,18 +14,33 @@ const ASSUME_TTY: &str = "STAPEL_ASSUME_TTY";
 
 pub fn run(prefix: Option<String>) -> Result<(), String> {
     let root = repo_root()?;
-    let prefix = match prefix {
-        Some(p) => p,
-        None => ask_prefix()?,
-    };
-    validate_prefix(&prefix)?;
-
     let mut created = Vec::new();
-    write(&root, ".stapel/stapel.toml", &default_toml(&prefix), &mut created)?;
-    write(&root, ".stapel/allowlist.toml", ALLOWLIST, &mut created)?;
-    write(&root, ".stapel/tickets/.gitkeep", "", &mut created)?;
+
+    let config_path = root.join(CONFIG);
+    if config_path.exists() {
+        let text = std::fs::read_to_string(&config_path).map_err(|e| format!("{CONFIG}: {e}"))?;
+        let config = Config::parse(&text).map_err(|e| format!("{CONFIG} не читается: {e}"))?;
+        if prefix.is_some() {
+            println!(
+                "{CONFIG} уже есть, ключ тикетов остаётся {}; чтобы сменить, правьте файл",
+                config.tickets.key
+            );
+        }
+    } else {
+        let prefix = match prefix {
+            Some(p) => p,
+            None => ask_prefix()?,
+        };
+        validate_prefix(&prefix)?;
+        create(&root, CONFIG, &default_toml(&prefix), &mut created)?;
+    }
+    create(&root, ".stapel/allowlist.toml", ALLOWLIST, &mut created)?;
+    create(&root, ".stapel/tickets/.gitkeep", "", &mut created)?;
     ignore_index(&root, &mut created)?;
 
+    if created.is_empty() {
+        println!("уже готово: ничего не изменено");
+    }
     for path in created {
         println!("создано: {path}");
     }
@@ -54,8 +70,12 @@ fn ask_prefix() -> Result<String, String> {
     Ok(line.trim().to_string())
 }
 
-fn write(root: &Path, rel: &str, content: &str, created: &mut Vec<String>) -> Result<(), String> {
+/// Writes `rel` only when it does not exist yet, so a second run and hand edits leave it alone.
+fn create(root: &Path, rel: &str, content: &str, created: &mut Vec<String>) -> Result<(), String> {
     let path = root.join(rel);
+    if path.exists() {
+        return Ok(());
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
@@ -67,6 +87,9 @@ fn write(root: &Path, rel: &str, content: &str, created: &mut Vec<String>) -> Re
 fn ignore_index(root: &Path, created: &mut Vec<String>) -> Result<(), String> {
     let path = root.join(".gitignore");
     let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+    if text.lines().any(|l| l.trim_end() == IGNORE_LINE) {
+        return Ok(());
+    }
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
