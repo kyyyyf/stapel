@@ -91,3 +91,25 @@ pub fn stapel_repo() -> TempDir {
 pub fn state_json(dir: &Path, key: &str) -> serde_json::Value {
     serde_json::from_str(&read(dir, &format!(".stapel/tickets/{key}/state.json"))).unwrap()
 }
+
+/// Replaces the body of the section titled `title` in a ticket's ticket.md.
+pub fn set_section(dir: &Path, key: &str, title: &str, body: &str) {
+    let path = dir.join(format!(".stapel/tickets/{key}/ticket.md"));
+    let text = std::fs::read_to_string(&path).unwrap();
+    let heading = format!("## {title}\n");
+    let start = text.find(&heading).unwrap_or_else(|| panic!("no {heading}")) + heading.len();
+    let end = text[start..].find("\n## ").map(|i| start + i + 1).unwrap_or(text.len());
+    let new = format!("{}\n{}\n\n{}", &text[..start], body.trim_end(), &text[end..]);
+    std::fs::write(&path, new).unwrap();
+}
+
+/// A stapel repository with one ticket ABC-1 whose spec, design and proof have text.
+pub fn repo_with_ticket() -> TempDir {
+    let repo = stapel_repo();
+    let dir = repo.path();
+    stapel(dir).args(["new", "First"]).assert().success();
+    set_section(dir, "ABC-1", "Spec", "The spec.");
+    set_section(dir, "ABC-1", "Design", "The design.");
+    set_section(dir, "ABC-1", "Proof", "The proof.");
+    repo
+}
