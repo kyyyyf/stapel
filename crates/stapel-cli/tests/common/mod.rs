@@ -46,6 +46,7 @@ pub fn stapel(dir: &Path) -> Command {
         // developer's global git identity.
         .env_remove("CLAUDECODE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
+        .env_remove("CLAUDE_CODE_EXECPATH")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .write_stdin("");
     cmd

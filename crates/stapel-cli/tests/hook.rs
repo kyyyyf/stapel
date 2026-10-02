@@ -1301,3 +1301,74 @@ fn close_reason_with_dash_round_trips() {
     let (_, replaced) = ask(repo.path(), "stapel close --reason=-x");
     assert!(replaced.contains("--reason=-x"), "{replaced}");
 }
+
+// ---- STP-2 code review round 2: the second layer for the dialog ----
+
+// F2-1, F2-2: a hook process started from an agent's shell never issues a grant, whatever the
+// command text looked like (cargo aliases, computed program words, copies of the binary).
+#[test]
+fn grant_needs_the_claude_code_hook_process() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let payload = json!({
+        "tool_name": "Bash",
+        "cwd": dir,
+        "permission_mode": "auto",
+        "tool_input": { "command": "stapel ok spec" },
+    });
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .env("CLAUDE_CODE_EXECPATH", "/usr/local/bin/claude")
+        .write_stdin(payload.to_string())
+        .assert()
+        .code(DENY)
+        .stderr(contains("agent"));
+    assert!(!grants_dir(dir).exists() || std::fs::read_dir(grants_dir(dir)).unwrap().count() == 0);
+}
+
+// Removing the variable the second layer relies on is a bypass, like removing CLAUDECODE.
+#[test]
+fn removing_claude_variables_is_a_bypass() {
+    let repo = repo_with_ticket();
+    for command in [
+        "unset CLAUDE_CODE_EXECPATH",
+        "env -u CLAUDE_CODE_EXECPATH sh x.sh",
+        "CLAUDE_CODE_EXECPATH= sh x.sh",
+        "export CLAUDE_CODE_EXECPATH=",
+    ] {
+        hook_bash(repo.path(), command, "auto")
+            .code(DENY)
+            .stderr(contains("second layer"));
+    }
+}
+
+// F2-3: the prefix form of a rule needs a word boundary, and rules see the grant tail.
+#[test]
+fn allow_rule_prefix_needs_word_boundary() {
+    for (rule, command, denied) in [
+        ("Bash(s:*)", "stapel ok spec", false),
+        ("Bash(sta:*)", "stapel ok spec", false),
+        ("Bash(stapel c:*)", "stapel close --reason x", false),
+        (
+            "Bash(stapel ok ABC-1 spec --grant *)",
+            "stapel ok spec",
+            true,
+        ),
+        ("Bash(stapel:*)", "stapel ok spec", true),
+    ] {
+        let repo = repo_with_ticket();
+        let dir = repo.path();
+        std::fs::write(
+            dir.join(".claude/settings.local.json"),
+            json!({"permissions": {"allow": [rule]}}).to_string(),
+        )
+        .unwrap();
+        if denied {
+            hook_bash(dir, command, "auto")
+                .code(DENY)
+                .stderr(contains("allow rule"));
+        } else {
+            ask(dir, command);
+        }
+    }
+}
