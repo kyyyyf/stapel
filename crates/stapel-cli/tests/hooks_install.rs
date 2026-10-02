@@ -42,7 +42,10 @@ fn hooks_into_missing_settings() {
     assert_eq!(entries.len(), 1, "{s:#}");
     let matcher = entries[0]["matcher"].as_str().unwrap();
     for tool in ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"] {
-        assert!(matcher.split('|').any(|m| m == tool), "{tool} not in {matcher}");
+        assert!(
+            matcher.split('|').any(|m| m == tool),
+            "{tool} not in {matcher}"
+        );
     }
     assert_eq!(entries[0]["hooks"][0]["type"], "command");
 }
@@ -63,9 +66,16 @@ fn hooks_merge_with_foreign_settings() {
         }
     });
     std::fs::create_dir_all(dir.join(".claude")).unwrap();
-    std::fs::write(dir.join(SETTINGS), serde_json::to_string_pretty(&foreign).unwrap()).unwrap();
+    std::fs::write(
+        dir.join(SETTINGS),
+        serde_json::to_string_pretty(&foreign).unwrap(),
+    )
+    .unwrap();
 
-    stapel(dir).args(["init", "--prefix", "ABC"]).assert().success();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
 
     let s = settings(dir);
     assert_eq!(s["permissions"], foreign["permissions"]);
@@ -81,7 +91,10 @@ fn hooks_merge_with_foreign_settings() {
 fn hooks_not_duplicated() {
     let repo = git_repo();
     let dir = repo.path();
-    stapel(dir).args(["init", "--prefix", "ABC"]).assert().success();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
     // Force a second pass that has work to do elsewhere.
     std::fs::remove_file(dir.join(".stapel/allowlist.toml")).unwrap();
     stapel(dir).arg("init").assert().success();

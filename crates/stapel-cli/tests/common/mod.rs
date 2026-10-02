@@ -25,7 +25,10 @@ pub fn git_repo() -> TempDir {
 pub fn stapel(dir: &Path) -> Command {
     let mut cmd = Command::cargo_bin("stapel").unwrap();
     cmd.current_dir(dir)
-        .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir().canonicalize().unwrap())
+        .env(
+            "GIT_CEILING_DIRECTORIES",
+            std::env::temp_dir().canonicalize().unwrap(),
+        )
         .env_remove("STAPEL_ASSUME_TTY")
         .write_stdin("");
     cmd

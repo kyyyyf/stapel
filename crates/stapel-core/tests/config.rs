@@ -17,10 +17,15 @@ fn default_config_has_roles_and_sections() {
     let config = Config::parse(&default_toml("STP")).unwrap();
 
     let sections: Vec<&str> = config.sections.iter().map(|s| s.id.as_str()).collect();
-    assert_eq!(sections, ["spec", "design", "proof", "plan", "review", "summary"]);
+    assert_eq!(
+        sections,
+        ["spec", "design", "proof", "plan", "review", "summary"]
+    );
 
     let roles: Vec<&str> = config.models.keys().map(String::as_str).collect();
-    let mut expected = ["author", "builder", "reviewer", "external", "drift", "cheap"];
+    let mut expected = [
+        "author", "builder", "reviewer", "external", "drift", "cheap",
+    ];
     expected.sort();
     assert_eq!(roles, expected);
 

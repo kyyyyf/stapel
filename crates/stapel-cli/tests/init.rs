@@ -7,7 +7,10 @@ use predicates::str::contains;
 use stapel_core::config::Config;
 
 fn key_of(dir: &std::path::Path) -> String {
-    Config::parse(&read(dir, ".stapel/stapel.toml")).unwrap().tickets.key
+    Config::parse(&read(dir, ".stapel/stapel.toml"))
+        .unwrap()
+        .tickets
+        .key
 }
 
 // AC-2
@@ -26,7 +29,11 @@ fn creates_layout_in_empty_repo() {
     assert!(dir.join(".stapel/stapel.toml").is_file());
     assert!(dir.join(".stapel/allowlist.toml").is_file());
     assert!(dir.join(".stapel/tickets").is_dir());
-    assert!(read(dir, ".gitignore").lines().any(|l| l == "/.stapel/index/"));
+    assert!(
+        read(dir, ".gitignore")
+            .lines()
+            .any(|l| l == "/.stapel/index/")
+    );
 }
 
 // AC-2: the repository root is found from a subdirectory.
@@ -36,7 +43,10 @@ fn creates_layout_at_repo_root_from_subdir() {
     let sub = repo.path().join("src/deep");
     std::fs::create_dir_all(&sub).unwrap();
 
-    stapel(&sub).args(["init", "--prefix", "ABC"]).assert().success();
+    stapel(&sub)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
 
     assert!(repo.path().join(".stapel/stapel.toml").is_file());
     assert!(!sub.join(".stapel").exists());
@@ -48,9 +58,15 @@ fn appends_to_existing_gitignore() {
     let repo = git_repo();
     std::fs::write(repo.path().join(".gitignore"), "/target").unwrap();
 
-    stapel(repo.path()).args(["init", "--prefix", "ABC"]).assert().success();
+    stapel(repo.path())
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
 
-    assert_eq!(read(repo.path(), ".gitignore"), "/target\n/.stapel/index/\n");
+    assert_eq!(
+        read(repo.path(), ".gitignore"),
+        "/target\n/.stapel/index/\n"
+    );
 }
 
 // AC-11
@@ -71,7 +87,10 @@ fn refuses_outside_git() {
 #[test]
 fn prefix_from_flag() {
     let repo = git_repo();
-    stapel(repo.path()).args(["init", "--prefix", "ABC"]).assert().success();
+    stapel(repo.path())
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
     assert_eq!(key_of(repo.path()), "ABC-{n}");
 }
 
@@ -120,7 +139,10 @@ fn refuses_without_prefix_noninteractive() {
 fn second_run_changes_nothing() {
     let repo = git_repo();
     let dir = repo.path();
-    stapel(dir).args(["init", "--prefix", "ABC"]).assert().success();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
     let before = common::snapshot(dir);
     std::thread::sleep(std::time::Duration::from_millis(50));
 
@@ -138,7 +160,10 @@ fn second_run_changes_nothing() {
 fn keeps_user_edited_config() {
     let repo = git_repo();
     let dir = repo.path();
-    stapel(dir).args(["init", "--prefix", "ABC"]).assert().success();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
 
     let edited = read(dir, ".stapel/stapel.toml").replace("claude-haiku-4-5", "my-cheap-model")
         + "\n# hand edit\n";
@@ -160,7 +185,10 @@ fn keeps_user_edited_config() {
 fn second_run_with_other_prefix_keeps_key() {
     let repo = git_repo();
     let dir = repo.path();
-    stapel(dir).args(["init", "--prefix", "ABC"]).assert().success();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
 
     stapel(dir)
         .args(["init", "--prefix", "XYZ"])

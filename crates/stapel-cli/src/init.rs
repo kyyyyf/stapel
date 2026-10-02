@@ -66,18 +66,25 @@ fn repo_root() -> Result<PathBuf, String> {
     if !out.status.success() {
         return Err("не git-репозиторий: запустите stapel init внутри репозитория".into());
     }
-    Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim_end()))
+    Ok(PathBuf::from(
+        String::from_utf8_lossy(&out.stdout).trim_end(),
+    ))
 }
 
 fn ask_prefix() -> Result<String, String> {
     let stdin = std::io::stdin();
     if !stdin.is_terminal() && std::env::var_os(ASSUME_TTY).is_none() {
-        return Err("префикс ключа не задан: укажите --prefix, например stapel init --prefix STP".into());
+        return Err(
+            "префикс ключа не задан: укажите --prefix, например stapel init --prefix STP".into(),
+        );
     }
     print!("Префикс ключа тикетов (2–8 заглавных латинских букв, например STP): ");
     std::io::stdout().flush().map_err(|e| e.to_string())?;
     let mut line = String::new();
-    stdin.lock().read_line(&mut line).map_err(|e| e.to_string())?;
+    stdin
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| e.to_string())?;
     Ok(line.trim().to_string())
 }
 
@@ -133,7 +140,9 @@ fn install_hooks(root: &Path, created: &mut Vec<String>) -> Result<(), String> {
         .entry("PreToolUse")
         .or_insert_with(|| json!([]))
         .as_array_mut()
-        .ok_or(format!("{SETTINGS}: поле hooks.PreToolUse должно быть массивом"))?;
+        .ok_or(format!(
+            "{SETTINGS}: поле hooks.PreToolUse должно быть массивом"
+        ))?;
 
     let installed = pre.iter().any(|entry| {
         entry["hooks"]
@@ -163,7 +172,6 @@ fn install_hooks(root: &Path, created: &mut Vec<String>) -> Result<(), String> {
 }
 
 fn on_path(program: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|dir| dir.join(program).is_file())
-    })
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
 }

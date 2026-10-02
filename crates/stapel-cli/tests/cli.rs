@@ -21,7 +21,11 @@ fn workspace_has_seven_members() {
         .current_dir(&root)
         .output()
         .expect("cargo metadata runs");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let mut names: Vec<&str> = meta["packages"]
         .as_array()

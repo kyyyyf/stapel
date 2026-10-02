@@ -1,7 +1,8 @@
 //! The PreToolUse guard behind `stapel hook pre-tool-use`.
 
+use crate::config::Config;
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// The part of a Claude Code PreToolUse payload the guard looks at.
 #[derive(Debug, Deserialize)]
@@ -34,23 +35,96 @@ pub fn stapel_root(start: &Path) -> Option<PathBuf> {
 
 /// Decides on a tool call; `root` is the stapel repository it happens in, if any.
 pub fn decide(input: &HookInput, root: Option<&Path>) -> Decision {
-    if root.is_none() {
+    let Some(root) = root else {
+        return Decision::Allow;
+    };
+    match input.tool_name.as_str() {
+        "Bash" => {
+            let command = input.tool_input["command"].as_str().unwrap_or_default();
+            if is_git_push(command) {
+                return Decision::Deny(
+                    "git push агентам запрещён: пушит человек или оркестратор после ревью".into(),
+                );
+            }
+            Decision::Allow
+        }
+        "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => {
+            let field = if input.tool_name == "NotebookEdit" {
+                "notebook_path"
+            } else {
+                "file_path"
+            };
+            let Some(path) = input.tool_input[field].as_str() else {
+                return Decision::Deny(format!("вход хука без поля tool_input.{field}"));
+            };
+            let base = input.cwd.as_deref().unwrap_or(root);
+            decide_write(root, &normalize(&base.join(path)))
+        }
+        _ => Decision::Allow,
+    }
+}
+
+fn decide_write(root: &Path, path: &Path) -> Decision {
+    let Ok(rel) = path.strip_prefix(root) else {
+        return Decision::Allow;
+    };
+    let writable = match std::fs::read_to_string(root.join(".stapel/stapel.toml"))
+        .ok()
+        .and_then(|text| Config::parse(&text).ok())
+    {
+        Some(config) => config.guard.always_writable,
+        // A broken config must stay fixable.
+        None => vec![".stapel/".to_string()],
+    };
+    if writable
+        .iter()
+        .any(|prefix| rel.starts_with(prefix.trim_end_matches('/')))
+    {
         return Decision::Allow;
     }
-    if input.tool_name == "Bash" {
-        let command = input.tool_input["command"].as_str().unwrap_or_default();
-        if is_git_push(command) {
-            return Decision::Deny(
-                "git push агентам запрещён: пушит человек или оркестратор после ревью".into(),
-            );
+    if build_allowed(root) {
+        return Decision::Allow;
+    }
+    Decision::Deny(format!(
+        "запись в {} запрещена: сборка не разрешена ни у одного тикета \
+         (нужно \"build\": {{\"allowed\": true}} в .stapel/tickets/<ключ>/state.json)",
+        rel.display()
+    ))
+}
+
+/// True when some ticket's `state.json` has `build.allowed = true`.
+fn build_allowed(root: &Path) -> bool {
+    let Ok(tickets) = std::fs::read_dir(root.join(".stapel/tickets")) else {
+        return false;
+    };
+    tickets.flatten().any(|ticket| {
+        std::fs::read_to_string(ticket.path().join("state.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .is_some_and(|state| state["build"]["allowed"] == true)
+    })
+}
+
+/// Resolves `.` and `..` without touching the filesystem.
+fn normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
         }
     }
-    Decision::Allow
+    out
 }
 
 /// True when any simple command in the shell text runs `git push`.
 pub fn is_git_push(command: &str) -> bool {
-    simple_commands(command).iter().any(|words| runs_git_push(words))
+    simple_commands(command)
+        .iter()
+        .any(|words| runs_git_push(words))
 }
 
 /// Wrappers that run the rest of the line as a command.

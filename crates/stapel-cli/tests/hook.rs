@@ -12,7 +12,10 @@ const DENY: i32 = 2;
 
 fn initialized_repo() -> tempfile::TempDir {
     let repo = git_repo();
-    stapel(repo.path()).args(["init", "--prefix", "ABC"]).assert().success();
+    stapel(repo.path())
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
     repo
 }
 
@@ -147,7 +150,11 @@ fn allows_stapel_and_docs_writes() {
     let repo = initialized_repo();
     let root = repo.path();
     for tool in WRITE_TOOLS {
-        for rel in [".stapel/tickets/ABC-1/ticket.md", "docs/PLAN.md", "docs/deep/x.md"] {
+        for rel in [
+            ".stapel/tickets/ABC-1/ticket.md",
+            "docs/PLAN.md",
+            "docs/deep/x.md",
+        ] {
             write_call(root, tool, &root.join(rel).display().to_string()).success();
         }
         write_call(root, tool, "docs/relative.md").success();
@@ -160,13 +167,24 @@ fn always_writable_comes_from_config() {
     let repo = initialized_repo();
     let root = repo.path();
     let config = root.join(".stapel/stapel.toml");
-    let text = std::fs::read_to_string(&config)
-        .unwrap()
-        .replace("always_writable = [\".stapel/\", \"docs/\"]", "always_writable = [\".stapel/\", \"scripts/\"]");
+    let text = std::fs::read_to_string(&config).unwrap().replace(
+        "always_writable = [\".stapel/\", \"docs/\"]",
+        "always_writable = [\".stapel/\", \"scripts/\"]",
+    );
     std::fs::write(&config, text).unwrap();
 
-    write_call(root, "Write", &root.join("scripts/a.sh").display().to_string()).success();
-    write_call(root, "Write", &root.join("docs/PLAN.md").display().to_string()).code(DENY);
+    write_call(
+        root,
+        "Write",
+        &root.join("scripts/a.sh").display().to_string(),
+    )
+    .success();
+    write_call(
+        root,
+        "Write",
+        &root.join("docs/PLAN.md").display().to_string(),
+    )
+    .code(DENY);
 }
 
 // AC-8: files outside the repository are not this repository's code.
@@ -174,7 +192,12 @@ fn always_writable_comes_from_config() {
 fn allows_writes_outside_repo() {
     let repo = initialized_repo();
     let elsewhere = bare_dir();
-    write_call(repo.path(), "Write", &elsewhere.path().join("x.rs").display().to_string()).success();
+    write_call(
+        repo.path(),
+        "Write",
+        &elsewhere.path().join("x.rs").display().to_string(),
+    )
+    .success();
 }
 
 // AC-9
@@ -188,7 +211,11 @@ fn allows_code_write_when_build_allowed() {
     set_state(root, "ABC-2", "{ broken");
     write_call(root, "Write", &target).code(DENY);
 
-    set_state(root, "ABC-3", r#"{"key": "ABC-3", "build": {"allowed": true}}"#);
+    set_state(
+        root,
+        "ABC-3",
+        r#"{"key": "ABC-3", "build": {"allowed": true}}"#,
+    );
     for tool in WRITE_TOOLS {
         write_call(root, tool, &target).success();
     }
