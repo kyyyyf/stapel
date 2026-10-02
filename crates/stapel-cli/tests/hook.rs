@@ -777,7 +777,10 @@ fn denies_code_write_after_spec_edit() {
 fn closed_ticket_gives_no_permit() {
     let repo = confirmed_repo();
     let dir = repo.path();
-    stapel(dir).args(["close", "--reason", "merged"]).assert().success();
+    stapel(dir)
+        .args(["close", "--reason", "merged"])
+        .assert()
+        .success();
     code_write(dir).code(DENY);
 }
 
@@ -805,7 +808,9 @@ fn invalid_config_gives_no_computed_permit() {
     let repo = confirmed_repo();
     let dir = repo.path();
     let path = dir.join(".stapel/stapel.toml");
-    let text = std::fs::read_to_string(&path).unwrap().replace("id = \"plan\"", "id = \"spec\"");
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("id = \"plan\"", "id = \"spec\"");
     std::fs::write(&path, text).unwrap();
     code_write(dir).code(DENY);
     // The phase-0 hand flag works even then.
@@ -817,7 +822,11 @@ fn invalid_config_gives_no_computed_permit() {
 fn unreadable_ticket_gives_no_permit() {
     let repo = confirmed_repo();
     let dir = repo.path();
-    std::fs::write(dir.join(".stapel/tickets/ABC-1/ticket.md"), b"## Spec\n\xff\n").unwrap();
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-1/ticket.md"),
+        b"## Spec\n\xff\n",
+    )
+    .unwrap();
     code_write(dir).code(DENY);
 }
 
@@ -846,7 +855,11 @@ fn permit_check_on_4mib_ticket_is_fast() {
     pad_summary(dir, 4 * 1024 * 1024 - 4096);
     let started = std::time::Instant::now();
     code_write(dir).success();
-    assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 #[cfg(unix)]
@@ -856,7 +869,10 @@ fn non_regular_file_gives_no_permit() {
     let dir = repo.path();
     let ticket = dir.join(".stapel/tickets/ABC-1/ticket.md");
     std::fs::remove_file(&ticket).unwrap();
-    let status = std::process::Command::new("mkfifo").arg(&ticket).status().unwrap();
+    let status = std::process::Command::new("mkfifo")
+        .arg(&ticket)
+        .status()
+        .unwrap();
     assert!(status.success());
     let payload = json!({
         "tool_name": "Write",

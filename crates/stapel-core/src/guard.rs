@@ -144,11 +144,11 @@ fn decide_write(target: &Path) -> Decision {
             rel.display()
         ));
     }
-    let writable = match std::fs::read_to_string(root.join(".stapel/stapel.toml"))
+    let config = std::fs::read_to_string(root.join(".stapel/stapel.toml"))
         .ok()
-        .and_then(|text| Config::parse(&text).ok())
-    {
-        Some(config) => config.guard.always_writable,
+        .and_then(|text| Config::parse(&text).ok());
+    let writable = match &config {
+        Some(config) => config.guard.always_writable.clone(),
         // A broken config must stay fixable, and must not open anything else.
         None => vec![".stapel/".to_string()],
     };
@@ -158,12 +158,17 @@ fn decide_write(target: &Path) -> Decision {
     {
         return Decision::Allow;
     }
-    if build_allowed(&root) {
+    if crate::stage::build_permit(&root, config.as_ref()).is_some() {
         return Decision::Allow;
     }
+    let requires = config
+        .as_ref()
+        .map(|c| c.build.requires.join(", "))
+        .unwrap_or_else(|| "the required sections (stapel.toml is invalid)".into());
     Decision::Deny(format!(
-        "writing {} is denied: the build is not allowed for any ticket \
-         (needs \"build\": {{\"allowed\": true}} in .stapel/tickets/<key>/state.json)",
+        "writing {} is denied: the build is not allowed — no open ticket has fresh, \
+         person-made confirmations of {requires}, so they are not confirmed yet; \
+         `stapel status` shows what is waiting",
         rel.display()
     ))
 }
@@ -206,19 +211,6 @@ fn in_hooks_dir(root: &Path, target: &Path) -> bool {
     let hooks = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim_end());
     let hooks = resolve(&root.join(hooks));
     target.starts_with(&hooks)
-}
-
-/// True when some ticket's `state.json` has `build.allowed = true`.
-fn build_allowed(root: &Path) -> bool {
-    let Ok(tickets) = std::fs::read_dir(root.join(".stapel/tickets")) else {
-        return false;
-    };
-    tickets.flatten().any(|ticket| {
-        std::fs::read_to_string(ticket.path().join("state.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-            .is_some_and(|state| state["build"]["allowed"] == true)
-    })
 }
 
 /// Follows every symlink on the way, dangling ones included, and resolves `.` and `..` in
