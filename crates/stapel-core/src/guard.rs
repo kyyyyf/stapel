@@ -56,9 +56,9 @@ const MACHINE_FILES: [&str; 5] = [
 
 const PUSH_REASON: &str =
     "git push is not allowed for agents: the human or the orchestrator pushes after review";
-const BYPASS_REASON: &str = "the command may switch off the second layer against pushes (the git \
-                             pre-push hook or the CLAUDECODE variable); agents may not do that. To read a \
-                             hook, use the Read tool";
+const BYPASS_REASON: &str = "the command may switch off a second layer of protection (the git \
+                             pre-push hook, or the Claude Code variables the hooks rely on); agents may \
+                             not do that. To read a hook, use the Read tool";
 const UNREADABLE_REASON: &str = "the command is too long, too deeply nested or too costly to \
                                  check for git push; the call is denied";
 
@@ -587,7 +587,9 @@ fn check_program(words: &[String], full: &str, depth: usize, under_xargs: bool, 
 
 /// Commands that remove CLAUDECODE from what child processes see.
 fn clears_claudecode(name: &str, args: &[String]) -> bool {
-    let names_it = args.iter().any(|a| a.contains("CLAUDECODE"));
+    // Any Claude Code variable: CLAUDECODE and CLAUDE_CODE_ENTRYPOINT mark the agent's shell for
+    // `ok`, `close` and pre-push; CLAUDE_CODE_EXECPATH tells a forged hook call from a real one.
+    let names_it = args.iter().any(|a| a.contains("CLAUDE"));
     match name {
         "unset" => names_it,
         "export" | "declare" | "typeset" | "local" => {
@@ -599,7 +601,7 @@ fn clears_claudecode(name: &str, args: &[String]) -> bool {
             let mut i = 0;
             while let Some(a) = args.get(i) {
                 if a == "-u" || a == "--unset" {
-                    if args.get(i + 1).is_some_and(|v| v.contains("CLAUDECODE")) {
+                    if args.get(i + 1).is_some_and(|v| v.contains("CLAUDE")) {
                         return true;
                     }
                     i += 2;
@@ -608,7 +610,7 @@ fn clears_claudecode(name: &str, args: &[String]) -> bool {
                 let clears = a == "-"
                     || (a.len() > 3 && "--ignore-environment".starts_with(a.as_str()))
                     || (a.starts_with('-') && !a.starts_with("--") && a.contains('i'))
-                    || a.contains("CLAUDECODE")
+                    || a.contains("CLAUDE")
                     || moves_config(a);
                 if clears {
                     return true;
@@ -631,8 +633,10 @@ fn clears_claudecode(name: &str, args: &[String]) -> bool {
 
 /// Assignments that take CLAUDECODE away or move where git reads its config and hooks.
 fn moves_config(word: &str) -> bool {
-    const NAMES: [&str; 7] = [
+    const NAMES: [&str; 9] = [
         "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_EXECPATH",
         "HOME",
         "XDG_CONFIG_HOME",
         "GIT_CONFIG_GLOBAL",

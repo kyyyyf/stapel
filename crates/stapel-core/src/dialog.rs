@@ -48,6 +48,13 @@ pub fn ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Decision {
 }
 
 fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decision, String> {
+    if crate::identity::in_agent_tool_shell() {
+        return Err(format!(
+            "this hook call comes from an agent's shell ({} is set), not from Claude Code's hook \
+             runner; only Claude Code asks the person",
+            crate::identity::TOOL_SHELL_MARKER
+        ));
+    }
     let mode = mode.unwrap_or("");
     if !DIALOG_MODES.contains(&mode) {
         return Err(format!(
@@ -104,7 +111,10 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
         (close_facts(&ticket.key, &reason_text), reason, tail)
     };
     let command_without_grant = format!("{} {tail}", program(inv).join(" "));
-    if let Some(rule) = allow_rule(&root, &command_without_grant) {
+    let with_placeholder = format!("{command_without_grant} --grant {}", "0".repeat(32));
+    let rule =
+        allow_rule(&root, &command_without_grant).or_else(|| allow_rule(&root, &with_placeholder));
+    if let Some(rule) = rule {
         return Err(format!(
             "the permission allow rule \"{rule}\" would let stapel {} run without the dialog; \
              remove it from the Claude Code settings",
@@ -260,7 +270,7 @@ fn bash_rule_matches(rule: &str, command: &str) -> bool {
         return true;
     }
     if let Some(prefix) = pattern.strip_suffix(":*") {
-        return command.starts_with(prefix);
+        return command == prefix || command.starts_with(&format!("{prefix} "));
     }
     glob(pattern, command)
 }

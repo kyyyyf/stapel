@@ -6,6 +6,15 @@ use std::path::Path;
 /// included, means an agent's shell.
 pub const AGENT_VARIABLES: [&str; 2] = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"];
 
+/// Set in the shell Claude Code gives the agent's Bash tool and absent in the processes Claude
+/// Code starts for hooks (observed 2026-10-02, STP-2 code review round 2). A hook process that
+/// carries it was started by the agent, not by Claude Code.
+pub const TOOL_SHELL_MARKER: &str = "CLAUDE_CODE_EXECPATH";
+
+pub fn in_agent_tool_shell() -> bool {
+    std::env::var_os(TOOL_SHELL_MARKER).is_some()
+}
+
 pub fn in_agent_shell() -> bool {
     AGENT_VARIABLES
         .iter()
