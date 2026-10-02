@@ -22,7 +22,7 @@
 | AC-3 | `stapel-core` · читает `stapel.toml`, созданный `init`, · без ошибок · и видит в нём разделы `spec, design, proof, plan, review, summary`, шесть ролей из `docs/PLAN.md` §5 и правило ключа `tickets.key` с префиксом, заданным при `init`. | `core::config::default_config_roundtrips`, `core::config::default_config_has_roles_and_sections`, `core::config::config_rejects_missing_ticket_key` |
 | AC-4 | Разработчик · повторно запускает `stapel init` · в уже инициализированном репозитории · и ни один файл не меняется: содержимое и время изменения те же; команда печатает «уже готово» и завершается с кодом 0. | `init::second_run_changes_nothing` |
 | AC-5 | Разработчик · запускает `stapel init` · когда `stapel.toml` уже есть и отредактирован вручную · и файл остаётся как есть; недостающие части раскладки и хуки дописываются. | `init::keeps_user_edited_config`, `init::second_run_with_other_prefix_keeps_key` |
-| AC-6 | `stapel init` · ставит хуки в `.claude/settings.json` · когда файла нет, когда он есть с чужими ключами и хуками, и при повторном запуске · так, что чужие ключи и хуки сохранены, а записи `stapel` не дублируются. | `init::hooks_into_missing_settings`, `init::hooks_merge_with_foreign_settings`, `init::hooks_not_duplicated` |
+| AC-6 | `stapel init` · ставит хуки в `.claude/settings.json` · когда файла нет, когда он есть с чужими ключами и хуками, и при повторном запуске · так, что чужие ключи и хуки сохранены, а записи `stapel` не дублируются. | `hooks_install::hooks_into_missing_settings`, `hooks_install::hooks_merge_with_foreign_settings`, `hooks_install::hooks_not_duplicated`, `hooks_install::refuses_broken_settings` |
 | AC-7 | Хук `stapel hook pre-tool-use` · получает от Claude Code вызов `Bash` · с командой, которая выполняет `git push` в любом виде (`git push`, `git -C dir push`, `cd x && git push`, `FOO=1 git push`, `git push` после `;` или `\|\|`) · и отвечает отказом с причиной; команды `git status`, `git log --grep push`, `echo "git push"` пропускает. | `hook::denies_git_push_variants`, `hook::allows_non_push_commands` |
 | AC-8 | Хук `stapel hook pre-tool-use` · получает вызов `Write`, `Edit`, `MultiEdit` или `NotebookEdit` · для пути вне списка `guard.always_writable` из `stapel.toml` · когда ни у одного тикета сборка не разрешена · и отвечает отказом с причиной «сборка не разрешена»; пути внутри `.stapel/` и `docs/` пропускает всегда. | `hook::denies_code_write_without_build`, `hook::allows_stapel_and_docs_writes` |
 | AC-9 | Хук · получает вызов записи в код · когда в `.stapel/tickets/<ключ>/state.json` есть `"build": {"allowed": true}` · и пропускает его. | `hook::allows_code_write_when_build_allowed` |
@@ -91,7 +91,8 @@ stderr: это задокументированный способ запрет�
 | Риск | Тест |
 |---|---|
 | R-1 Разбор команды пропустит вариант `git push` | `hook::denies_git_push_variants` (таблица из AC-7, дополняется по находкам) |
-| R-2 `init` испортит существующий `settings.json` | `init::hooks_merge_with_foreign_settings` (сравнение чужих ключей до и после) |
+| R-2 `init` испортит существующий `settings.json` | `hooks_install::hooks_merge_with_foreign_settings` (сравнение чужих ключей до и после), `hooks_install::refuses_broken_settings` |
+| R-4 Хук молча не работает, потому что `stapel` нет в `PATH` (вопрос 3) | `hooks_install::warns_when_stapel_missing_from_path`, `hooks_install::no_warning_when_stapel_on_path` |
 | R-3 Повторный `init` перезапишет файлы с тем же содержимым и сменит время изменения | `init::second_run_changes_nothing` |
 
 ## Доказательство
@@ -105,7 +106,8 @@ stderr: это задокументированный способ запрет�
 | AC-3 | `core::config::default_config_roundtrips`, `core::config::default_config_has_roles_and_sections`, `core::config::config_rejects_missing_ticket_key` | — |
 | AC-4, R-3 | `init::second_run_changes_nothing` | — |
 | AC-5 | `init::keeps_user_edited_config`, `init::second_run_with_other_prefix_keeps_key` | — |
-| AC-6, R-2 | `init::hooks_into_missing_settings`, `init::hooks_merge_with_foreign_settings`, `init::hooks_not_duplicated` | — |
+| AC-6, R-2 | `hooks_install::hooks_into_missing_settings`, `hooks_install::hooks_merge_with_foreign_settings`, `hooks_install::hooks_not_duplicated`, `hooks_install::refuses_broken_settings` | — |
+| R-4 | `hooks_install::warns_when_stapel_missing_from_path`, `hooks_install::no_warning_when_stapel_on_path` | — |
 | AC-7, R-1 | `hook::denies_git_push_variants`, `hook::allows_non_push_commands` | — |
 | AC-8 | `hook::denies_code_write_without_build`, `hook::allows_stapel_and_docs_writes` | — |
 | AC-9 | `hook::allows_code_write_when_build_allowed` | — |
