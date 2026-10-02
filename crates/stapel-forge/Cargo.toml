@@ -1,0 +1,6 @@
+[package]
+name = "stapel-forge"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

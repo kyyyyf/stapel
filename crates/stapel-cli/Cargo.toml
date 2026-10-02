@@ -2,11 +2,13 @@
 name = "stapel-cli"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 
 [[bin]]
 name = "stapel"
 path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 assert_cmd = "2"

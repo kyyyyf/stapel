@@ -1,0 +1,6 @@
+[package]
+name = "stapel-mcp"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
