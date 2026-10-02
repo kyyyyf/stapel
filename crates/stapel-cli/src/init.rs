@@ -23,8 +23,9 @@ const PRE_PUSH_MARKER: &str = "# stapel: pre-push guard";
 /// agent, so this refuses a push however it was started (scripts, interpreters, gh).
 const PRE_PUSH: &str = r#"#!/bin/sh
 # stapel: pre-push guard, installed by `stapel init`.
-# Claude Code sets CLAUDECODE in the shell it gives the agent; pushes from there are refused.
-if [ -n "${CLAUDECODE:-}" ]; then
+# Claude Code sets CLAUDECODE (and CLAUDE_CODE_ENTRYPOINT) in the shell it gives the agent;
+# pushes from there are refused.
+if [ -n "${CLAUDECODE:-}" ] || [ -n "${CLAUDE_CODE_ENTRYPOINT:-}" ]; then
   echo "stapel: push из сессии агента запрещён; пушит человек из своего терминала" >&2
   exit 1
 fi
@@ -255,13 +256,28 @@ fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     } else {
         root.join(path)
     };
-    let rel = path
-        .strip_prefix(root)
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| path.display().to_string());
+    let Ok(rel) = path.strip_prefix(root).map(|p| p.display().to_string()) else {
+        // A shared hooks directory would put the hook into every repository that uses it.
+        eprintln!(
+            "предупреждение: папка хуков git {} вне репозитория (core.hooksPath); pre-push не \
+             поставлен, второй слой защиты от push агента не работает",
+            path.parent().unwrap_or(&path).display()
+        );
+        return Ok(());
+    };
 
     match std::fs::read(&path) {
-        Ok(bytes) if String::from_utf8_lossy(&bytes).contains(PRE_PUSH_MARKER) => Ok(()),
+        Ok(bytes) if String::from_utf8_lossy(&bytes).contains(PRE_PUSH_MARKER) => {
+            if !is_executable(&path) {
+                plan.push(Step {
+                    rel: path.display().to_string(),
+                    content: String::from_utf8_lossy(&bytes).into_owned(),
+                    label: format!("исправлено: {rel} (pre-push снова исполняемый)"),
+                    executable: true,
+                });
+            }
+            Ok(())
+        }
         Ok(_) => {
             eprintln!(
                 "предупреждение: {rel} уже есть и не от stapel; второй слой защиты от push агента \
@@ -291,6 +307,17 @@ fn make_executable(path: &Path) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn make_executable(_path: &Path) -> std::io::Result<()> {
     Ok(())
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 == 0o111)
+}
+
+#[cfg(not(unix))]
+fn is_executable(_path: &Path) -> bool {
+    true
 }
 
 fn on_path(program: &str) -> bool {

@@ -47,8 +47,9 @@ const MACHINE_FILES: [&str; 5] = [
 ];
 
 const PUSH_REASON: &str = "git push агентам запрещён: пушит человек или оркестратор после ревью";
-const BYPASS_REASON: &str = "команда отключает второй слой защиты от push (git-хук pre-push или \
-                             переменную CLAUDECODE); агентам это запрещено";
+const BYPASS_REASON: &str = "команда может отключить второй слой защиты от push (git-хук pre-push \
+                             или переменную CLAUDECODE); агентам это запрещено. Прочитать хук можно \
+                             инструментом Read";
 const UNREADABLE_REASON: &str = "команда слишком длинная или слишком глубоко вложена, чтобы \
                                  проверить её на git push; вызов отклонён";
 
@@ -95,9 +96,10 @@ fn decide_write(target: &Path) -> Decision {
         .strip_prefix(&root)
         .expect("root is an ancestor of target");
 
-    if is_machine_file(rel) {
+    if is_machine_file(rel) || is_git_or_claude_config(rel) || in_hooks_dir(&root, target) {
         return Decision::Deny(format!(
-            "файл {} пишет только stapel, не инструмент записи агента",
+            "файл {} пишет только stapel или человек, не инструмент записи агента \
+             (служебный файл stapel, git или Claude Code)",
             rel.display()
         ));
     }
@@ -138,6 +140,31 @@ fn is_machine_file(rel: &Path) -> bool {
         [a, b, _, f] => a == ".stapel" && b == "tickets" && MACHINE_FILES.contains(&f.as_str()),
         _ => false,
     }
+}
+
+/// Anything under `.git/` or `.claude/`: git config and hooks, Claude Code settings and hooks.
+fn is_git_or_claude_config(rel: &Path) -> bool {
+    rel.components().next().is_some_and(|c| {
+        let first = c.as_os_str().to_string_lossy().to_lowercase();
+        first == ".git" || first == ".claude"
+    })
+}
+
+/// True when `target` is inside the hooks directory git uses, `core.hooksPath` included.
+fn in_hooks_dir(root: &Path, target: &Path) -> bool {
+    let Ok(out) = std::process::Command::new("git")
+        .args(["rev-parse", "--git-path", "hooks"])
+        .current_dir(root)
+        .output()
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let hooks = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim_end());
+    let hooks = resolve(&root.join(hooks));
+    target.starts_with(&hooks)
 }
 
 /// True when some ticket's `state.json` has `build.allowed = true`.
@@ -195,7 +222,10 @@ pub fn check_command(command: &str) -> Option<&'static str> {
     if command.len() > MAX_COMMAND_LEN {
         return Some(UNREADABLE_REASON);
     }
-    let mut found = Found::default();
+    let mut found = Found {
+        budget: WORK_BUDGET,
+        ..Found::default()
+    };
     scan(command, command, 0, &mut found);
     if found.too_deep {
         Some(UNREADABLE_REASON)
@@ -218,19 +248,74 @@ struct Found {
     push: bool,
     bypass: bool,
     too_deep: bool,
+    /// Units of work left; nested scripts can multiply the work, so it is capped.
+    budget: usize,
 }
+
+impl Found {
+    /// Spends `cost` units; false (and a denial) once the budget is gone.
+    fn spend(&mut self, cost: usize) -> bool {
+        if self.budget < cost {
+            self.budget = 0;
+            self.too_deep = true;
+            false
+        } else {
+            self.budget -= cost;
+            true
+        }
+    }
+}
+
+/// About a millisecond of work per thousand units; far above any real command.
+const WORK_BUDGET: usize = 1_000_000;
 
 /// Reserved words that may stand before the program of a simple command.
 const RESERVED: [&str; 13] = [
     "{", "}", "!", "if", "then", "elif", "else", "fi", "do", "done", "while", "until", "coproc",
 ];
-/// Programs that run another program given later on their command line. Any later word may
-/// start that program, so wrapper options and their values need no special knowledge.
-const WRAPPERS: [&str; 18] = [
-    "env", "command", "exec", "nohup", "time", "sudo", "doas", "nice", "ionice", "timeout",
-    "stdbuf", "setsid", "chronic", "xargs", "unbuffer", "find", "watch", "parallel",
+/// Programs that run another program given later on their command line, here or elsewhere
+/// (a container, a remote host, a terminal multiplexer). Any later word may start that
+/// program, and any argument with a space may be a whole command line, so wrapper options and
+/// their values need no special knowledge.
+const WRAPPERS: [&str; 34] = [
+    "env",
+    "command",
+    "builtin",
+    "exec",
+    "nohup",
+    "time",
+    "sudo",
+    "doas",
+    "su",
+    "nice",
+    "ionice",
+    "timeout",
+    "stdbuf",
+    "setsid",
+    "chronic",
+    "xargs",
+    "unbuffer",
+    "find",
+    "watch",
+    "parallel",
+    "busybox",
+    "ssh",
+    "tmux",
+    "screen",
+    "script",
+    "flock",
+    "strace",
+    "ltrace",
+    "chroot",
+    "unshare",
+    "nsenter",
+    "systemd-run",
+    "docker",
+    "podman",
 ];
-const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "dash", "ksh"];
+const SHELLS: [&str; 10] = [
+    "sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish", "csh", "tcsh",
+];
 /// Git global options that take the next word as their value.
 const GIT_VALUE_OPTIONS: [&str; 7] = [
     "-C",
@@ -243,6 +328,13 @@ const GIT_VALUE_OPTIONS: [&str; 7] = [
 ];
 /// Git subcommands, and their `git-<name>` programs, that send objects to a remote.
 const PUSH_SUBCOMMANDS: [&str; 3] = ["push", "send-pack", "http-push"];
+/// Words that push without the pre-push hook, or skip it, in any program: an interpreter's
+/// `-c` string is one word, so this catches them inside python, perl and the like too.
+const HOOKLESS_PUSH_WORDS: [&str; 3] = ["no-verify", "send-pack", "http-push"];
+/// Paths and settings of git hooks; changing them switches off the second layer.
+const HOOK_WORDS: [&str; 3] = [".git/hooks", "hooks/pre-push", "core.hookspath"];
+/// Git subcommands whose arguments are command lines that git runs.
+const RUNS_ARGUMENTS: [&str; 5] = ["submodule", "rebase", "bisect", "filter-branch", "difftool"];
 
 /// `full` is the whole top-level command, used when a shell reads its script from stdin.
 fn scan(text: &str, full: &str, depth: usize, found: &mut Found) {
@@ -250,76 +342,91 @@ fn scan(text: &str, full: &str, depth: usize, found: &mut Found) {
         found.too_deep = true;
         return;
     }
-    let (commands, nested) = lex(text);
-    for words in &commands {
+    if !found.spend(text.len() + 1) {
+        return;
+    }
+    let lexed = lex(text);
+    for target in &lexed.targets {
+        check_words(std::slice::from_ref(target), found);
+    }
+    for words in &lexed.commands {
         check_simple(words, full, depth, found);
     }
-    for script in &nested {
+    for script in &lexed.nested {
         scan(script, full, depth + 1, found);
     }
 }
 
-fn check_simple(words: &[String], full: &str, depth: usize, found: &mut Found) {
+/// Word-level checks that do not depend on where the word stands.
+fn check_words(words: &[String], found: &mut Found) {
     for word in words {
         let lower = word.to_ascii_lowercase();
-        if lower.contains("core.hookspath") || word.contains(".git/hooks") {
+        if HOOK_WORDS.iter().any(|w| lower.contains(w)) {
             found.bypass = true;
         }
-        if word.starts_with("CLAUDECODE=") {
-            found.bypass = true;
+        if HOOKLESS_PUSH_WORDS.iter().any(|w| lower.contains(w)) {
+            found.push = true;
         }
     }
+}
+
+fn check_simple(words: &[String], full: &str, depth: usize, found: &mut Found) {
+    check_words(words, found);
 
     let mut start = 0;
     while let Some(w) = words.get(start) {
-        if RESERVED.contains(&w.as_str()) {
+        if w == "function" {
+            // `function name { ... }`: the body follows the name.
+            start += 2;
+        } else if RESERVED.contains(&w.as_str()) {
             start += 1;
         } else if is_assignment(w) {
             if is_alias_config(w) {
                 found.push = true;
+            }
+            if w.starts_with("CLAUDECODE=") {
+                found.bypass = true;
             }
             start += 1;
         } else {
             break;
         }
     }
-    let Some(program) = words.get(start) else {
-        return;
-    };
-    let name = base_name(program);
-    let args = &words[start + 1..];
-
-    if matches!(name, "unset" | "export" | "env") && args.iter().any(|a| a.contains("CLAUDECODE")) {
-        found.bypass = true;
-    }
-    if !WRAPPERS.contains(&name) {
+    if start < words.len() {
         check_program(&words[start..], full, depth, false, found);
-        return;
-    }
-    if name == "env" {
-        // `env -S 'git push'` splits its argument into a command line.
-        if let Some(i) = args.iter().position(|a| a == "-S" || a == "--split-string")
-            && let Some(script) = args.get(i + 1)
-        {
-            scan(script, full, depth + 1, found);
-        }
-    }
-    let under_xargs = name == "xargs";
-    for i in 0..args.len() {
-        if !WRAPPERS.contains(&base_name(&args[i])) {
-            check_program(&args[i..], full, depth, under_xargs, found);
-        }
     }
 }
 
-/// `words[0]` is a program that is not a wrapper.
+/// `words[0]` is the program. Wrappers make every later word a candidate program.
 fn check_program(words: &[String], full: &str, depth: usize, under_xargs: bool, found: &mut Found) {
     let Some((program, args)) = words.split_first() else {
         return;
     };
+    if !found.spend(words.len()) {
+        return;
+    }
     let name = base_name(program);
 
-    if name == "eval" {
+    if clears_claudecode(name, args) {
+        found.bypass = true;
+    }
+    if WRAPPERS.contains(&name) {
+        for arg in args.iter().filter(|a| a.contains(char::is_whitespace)) {
+            scan(arg, full, depth + 1, found);
+        }
+        let under_xargs = name == "xargs";
+        for i in 0..args.len() {
+            // Later wrappers are covered by this loop, so they are not expanded again.
+            if !WRAPPERS.contains(&base_name(&args[i])) {
+                check_program(&args[i..], full, depth, under_xargs, found);
+            } else if clears_claudecode(base_name(&args[i]), &args[i + 1..]) {
+                found.bypass = true;
+            }
+            if found.too_deep {
+                return;
+            }
+        }
+    } else if name == "eval" {
         scan(&args.join(" "), full, depth + 1, found);
     } else if SHELLS.contains(&name) {
         match shell_script(args) {
@@ -339,6 +446,28 @@ fn check_program(words: &[String], full: &str, depth: usize, under_xargs: bool, 
         }
     } else if name == "git" {
         check_git(args, full, depth, under_xargs, found);
+    }
+}
+
+/// Commands that remove CLAUDECODE from what child processes see.
+fn clears_claudecode(name: &str, args: &[String]) -> bool {
+    let names_it = args.iter().any(|a| a.contains("CLAUDECODE"));
+    match name {
+        "unset" => names_it,
+        "export" | "declare" | "typeset" | "local" => {
+            names_it && args.iter().any(|a| a == "-n" || a.starts_with('+'))
+                || args.iter().any(|a| a.starts_with("CLAUDECODE="))
+        }
+        "env" => {
+            names_it
+                || args.iter().any(|a| {
+                    a == "-"
+                        || a == "--ignore-environment"
+                        || (a.starts_with('-') && !a.starts_with("--") && a.contains('i'))
+                })
+        }
+        "exec" => args.iter().any(|a| a.starts_with('-') && a.contains('c')),
+        _ => false,
     }
 }
 
@@ -362,11 +491,16 @@ fn check_git(args: &[String], full: &str, depth: usize, under_xargs: bool, found
                 found.push = true;
             }
             i += 1;
+        } else if arg.len() > 2 && arg.starts_with("-c") {
+            check_git_config(&arg[2..], full, depth, found);
+            i += 1;
         } else if GIT_VALUE_OPTIONS.contains(&arg.as_str()) {
             let value = args.get(i + 1).map(String::as_str).unwrap_or_default();
-            let alias = value.to_ascii_lowercase().starts_with("alias.");
-            if (arg == "--config-env" && alias) || (arg == "-c" && alias && is_push_alias(value)) {
+            if arg == "--config-env" && value.to_ascii_lowercase().starts_with("alias.") {
                 found.push = true;
+            }
+            if arg == "-c" {
+                check_git_config(value, full, depth, found);
             }
             i += 2;
         } else if arg.starts_with('-') {
@@ -382,39 +516,37 @@ fn check_git(args: &[String], full: &str, depth: usize, under_xargs: bool, found
     }
 }
 
+/// A `-c key=value`: a push alias, or a value git may run (pager, editor, ssh command).
+fn check_git_config(config: &str, full: &str, depth: usize, found: &mut Found) {
+    if config.to_ascii_lowercase().starts_with("alias.") && is_push_alias(config) {
+        found.push = true;
+    }
+    if let Some((_, value)) = config.split_once('=') {
+        scan(value.trim_start_matches('!'), full, depth + 1, found);
+    }
+}
+
 fn check_subcommand(sub: &str, rest: &[String], full: &str, depth: usize, found: &mut Found) {
-    if PUSH_SUBCOMMANDS.contains(&sub) || sub.starts_with('$') {
-        // A `$` word is only known at run time.
+    // A `$` or `{}` in the subcommand is only filled in at run time.
+    if PUSH_SUBCOMMANDS.contains(&sub) || sub.contains('$') || sub.contains("{}") {
         found.push = true;
         return;
     }
-    match sub {
-        "subtree" => {
-            if rest
-                .iter()
-                .find(|a| !a.starts_with('-'))
-                .is_some_and(|a| a == "push")
-            {
-                found.push = true;
-            }
+    if sub == "subtree" {
+        if rest
+            .iter()
+            .find(|a| !a.starts_with('-'))
+            .is_some_and(|a| a == "push")
+        {
+            found.push = true;
         }
-        "submodule" => {
-            for arg in rest {
-                scan(arg, full, depth + 1, found);
-            }
+    } else if RUNS_ARGUMENTS.contains(&sub) {
+        // Each argument may be a command line, and any later word may start one
+        // (`git submodule foreach git push`, `git bisect run git push`).
+        for (i, arg) in rest.iter().enumerate() {
+            scan(arg.trim_start_matches('-'), full, depth + 1, found);
+            check_program(&rest[i..], full, depth + 1, false, found);
         }
-        "rebase" => {
-            for (i, arg) in rest.iter().enumerate() {
-                if let Some(script) = arg.strip_prefix("--exec=") {
-                    scan(script, full, depth + 1, found);
-                } else if (arg == "--exec" || arg == "-x")
-                    && let Some(script) = rest.get(i + 1)
-                {
-                    scan(script, full, depth + 1, found);
-                }
-            }
-        }
-        _ => {}
     }
 }
 
@@ -472,25 +604,40 @@ fn take_balanced(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
 }
 
 /// Splits shell text into simple commands of unquoted words, plus the nested scripts found in
-/// `$( )`, backticks and process substitution `<( )`. A command substitution leaves the word
+/// `$( )`, backticks and process substitution `<( )`, and the targets of redirections. A command substitution leaves the word
 /// `$` in its place, since its value is only known at run time. Not a full shell parser: it
 /// knows quotes, backslashes and line continuation, the separators `; & | ( )` and newline,
 /// and drops redirections, which is enough to find each program and its arguments. Heredoc
 /// bodies are read as commands, which can only deny more, never less.
-fn lex(text: &str) -> (Vec<Vec<String>>, Vec<String>) {
+/// What `lex` found: simple commands, nested scripts, and redirection targets.
+struct Lexed {
+    commands: Vec<Vec<String>>,
+    nested: Vec<String>,
+    targets: Vec<String>,
+}
+
+fn lex(text: &str) -> Lexed {
     let mut commands = Vec::new();
     let mut nested = Vec::new();
+    let mut targets = Vec::new();
     let mut words: Vec<String> = Vec::new();
     let mut word = String::new();
     let mut in_word = false;
     let mut skip_next_word = false;
     let mut chars = text.chars().peekable();
 
-    fn end_word(word: &mut String, in_word: &mut bool, words: &mut Vec<String>, skip: &mut bool) {
+    fn end_word(
+        word: &mut String,
+        in_word: &mut bool,
+        words: &mut Vec<String>,
+        skip: &mut bool,
+        targets: &mut Vec<String>,
+    ) {
         if *in_word {
             let w = std::mem::take(word);
             if *skip {
                 *skip = false;
+                targets.push(w);
             } else {
                 words.push(w);
             }
@@ -553,7 +700,13 @@ fn lex(text: &str) -> (Vec<Vec<String>>, Vec<String>) {
             '>' | '<' if chars.peek() == Some(&'(') => {
                 // Process substitution: a nested script, no redirection target.
                 chars.next();
-                end_word(&mut word, &mut in_word, &mut words, &mut skip_next_word);
+                end_word(
+                    &mut word,
+                    &mut in_word,
+                    &mut words,
+                    &mut skip_next_word,
+                    &mut targets,
+                );
                 nested.push(take_balanced(&mut chars));
             }
             '>' | '<' => {
@@ -562,7 +715,13 @@ fn lex(text: &str) -> (Vec<Vec<String>>, Vec<String>) {
                     word.clear();
                     in_word = false;
                 }
-                end_word(&mut word, &mut in_word, &mut words, &mut skip_next_word);
+                end_word(
+                    &mut word,
+                    &mut in_word,
+                    &mut words,
+                    &mut skip_next_word,
+                    &mut targets,
+                );
                 while chars.peek().is_some_and(|&n| n == '>' || n == '<') {
                     chars.next();
                 }
@@ -579,24 +738,44 @@ fn lex(text: &str) -> (Vec<Vec<String>>, Vec<String>) {
                 }
             }
             ';' | '&' | '|' | '(' | ')' | '\n' => {
-                end_word(&mut word, &mut in_word, &mut words, &mut skip_next_word);
+                end_word(
+                    &mut word,
+                    &mut in_word,
+                    &mut words,
+                    &mut skip_next_word,
+                    &mut targets,
+                );
                 skip_next_word = false;
                 if !words.is_empty() {
                     commands.push(std::mem::take(&mut words));
                 }
             }
-            c if c.is_whitespace() => {
-                end_word(&mut word, &mut in_word, &mut words, &mut skip_next_word)
-            }
+            c if c.is_whitespace() => end_word(
+                &mut word,
+                &mut in_word,
+                &mut words,
+                &mut skip_next_word,
+                &mut targets,
+            ),
             c => {
                 in_word = true;
                 word.push(c);
             }
         }
     }
-    end_word(&mut word, &mut in_word, &mut words, &mut skip_next_word);
+    end_word(
+        &mut word,
+        &mut in_word,
+        &mut words,
+        &mut skip_next_word,
+        &mut targets,
+    );
     if !words.is_empty() {
         commands.push(words);
     }
-    (commands, nested)
+    Lexed {
+        commands,
+        nested,
+        targets,
+    }
 }

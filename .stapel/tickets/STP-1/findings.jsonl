@@ -49,10 +49,10 @@
 {"id": "D3-7", "ticket": "STP-1", "round": 3, "role": "drift", "severity": "LOW", "claim": "runs.jsonl lacks a run of the final init; Результат column empty", "fate": "fix", "commit": "2047769"}
 {"id": "E3-1", "ticket": "STP-1", "round": 3, "role": "external", "severity": "MEDIUM", "claim": "--no-verify from run-time forms skips pre-push", "fate": "fix", "commit": "2047769"}
 {"id": "E3-2", "ticket": "STP-1", "round": 3, "role": "external", "severity": "MEDIUM", "claim": "write tools may change .git/ and .claude/settings.local.json with build allowed", "fate": "fix", "commit": "2047769"}
-{"id": "E3-3", "ticket": "STP-1", "round": 3, "role": "external", "severity": "MEDIUM", "claim": "bypass check denies read-only commands and commit messages", "fate": "partial", "commit": "2047769"}
+{"id": "E3-3", "ticket": "STP-1", "round": 3, "role": "external", "severity": "MEDIUM", "claim": "bypass check denies read-only commands and commit messages", "fate": "partial", "commit": "2047769", "note": "CLAUDECODE check narrowed to assignments and unset/export/env/declare/exec; hook-path words stay broad on purpose, documented with Read and commit -F workarounds"}
 {"id": "E3-4", "ticket": "STP-1", "round": 3, "role": "external", "severity": "LOW", "claim": "env -i, exec -c, declare +x, builtin/command unset clear CLAUDECODE", "fate": "fix", "commit": "2047769"}
 {"id": "E3-5", "ticket": "STP-1", "round": 3, "role": "external", "severity": "LOW", "claim": "ssh, tmux, screen, su, script, flock, strace, docker and similar runners", "fate": "fix", "commit": "2047769"}
-{"id": "E3-6", "ticket": "STP-1", "round": 3, "role": "external", "severity": "LOW", "claim": "push from a fresh clone has no pre-push", "fate": "wontfix", "commit": "2047769"}
+{"id": "E3-6", "ticket": "STP-1", "round": 3, "role": "external", "severity": "LOW", "claim": "push from a fresh clone has no pre-push", "fate": "wontfix", "commit": "2047769", "note": "recorded under Не входит"}
 {"id": "E3-7", "ticket": "STP-1", "round": 3, "role": "external", "severity": "LOW", "claim": "init writes pre-push into a hooks dir outside the repo silently", "fate": "fix", "commit": "2047769"}
 {"id": "E3-8", "ticket": "STP-1", "round": 3, "role": "external", "severity": "LOW", "claim": "CLAUDECODE is observed, not documented; record as risk", "fate": "fix", "commit": "2047769"}
 {"id": "F3-1", "ticket": "STP-1", "round": 3, "role": "fresh-code", "severity": "HIGH", "claim": "wrapper + eval rescans are exponential; fails open on timeout", "fate": "fix", "commit": "2047769"}
@@ -61,5 +61,5 @@
 {"id": "F3-4", "ticket": "STP-1", "round": 3, "role": "fresh-code", "severity": "MEDIUM", "claim": "submodule foreach unquoted, quoted watch arg, {} subcommand, function, bisect run, more shells", "fate": "fix", "commit": "2047769"}
 {"id": "F3-5", "ticket": "STP-1", "round": 3, "role": "fresh-code", "severity": "MEDIUM", "claim": "redirection targets into git hooks not checked", "fate": "fix", "commit": "2047769"}
 {"id": "F3-6", "ticket": "STP-1", "round": 3, "role": "fresh-code", "severity": "MEDIUM", "claim": "--no-verify, send-pack, http-push from interpreters", "fate": "fix", "commit": "2047769"}
-{"id": "F3-7", "ticket": "STP-1", "round": 3, "role": "fresh-code", "severity": "LOW", "claim": "false denial of reads of git hooks", "fate": "partial", "commit": "2047769"}
+{"id": "F3-7", "ticket": "STP-1", "round": 3, "role": "fresh-code", "severity": "LOW", "claim": "false denial of reads of git hooks", "fate": "partial", "commit": "2047769", "note": "CLAUDECODE check narrowed to assignments and unset/export/env/declare/exec; hook-path words stay broad on purpose, documented with Read and commit -F workarounds"}
 {"id": "F3-8", "ticket": "STP-1", "round": 3, "role": "fresh-code", "severity": "LOW", "claim": "hooks dir outside repo; marked pre-push without exec bit not repaired", "fate": "fix", "commit": "2047769"}
