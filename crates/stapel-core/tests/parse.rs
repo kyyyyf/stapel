@@ -84,7 +84,11 @@ fn large_ticket_parses_quickly() {
     let started = std::time::Instant::now();
     let s = parse(&text);
     assert!(!s.is_empty());
-    assert!(started.elapsed() < std::time::Duration::from_millis(200), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(200),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 proptest! {
