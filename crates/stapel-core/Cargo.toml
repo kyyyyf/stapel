@@ -13,3 +13,4 @@ unicode-normalization = "0.1"
 
 [dev-dependencies]
 proptest = "1"
+tempfile = "3"
