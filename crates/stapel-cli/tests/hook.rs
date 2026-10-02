@@ -664,3 +664,78 @@ fn denies_git_and_claude_writes_even_with_build() {
     )
     .success();
 }
+
+// E4-1: env and exec options are read only before the program, so its own flags are not theirs.
+#[test]
+fn allows_lookalikes_after_round_four() {
+    let repo = initialized_repo();
+    for command in [
+        "env RUST_LOG=debug grep -i foo file",
+        "env FOO=1 sed -i 's/a/b/' file",
+        "env FOO=1 ls -li",
+        "env FOO=1 grep -rin foo .",
+        "sudo env FOO=1 grep -i x f",
+        "exec cargo test --color always",
+        "exec cargo test -- --nocapture",
+        "env FOO=1 printenv CLAUDECODE",
+    ] {
+        bash(repo.path(), command).success();
+    }
+}
+
+// E4-2, E4-3: the global git config and where git looks for it are part of the second layer.
+#[test]
+fn denies_pre_push_bypass_round_four() {
+    let repo = initialized_repo();
+    for command in [
+        "env --ignore-e python3 x.py",
+        "GIT_CONFIG_GLOBAL=/tmp/g python3 x.py",
+        "GIT_CONFIG_SYSTEM=/tmp/g sh p.sh",
+        "XDG_CONFIG_HOME=/tmp/x sh p.sh",
+        "HOME=/tmp/h python3 x.py",
+        "export HOME=/tmp/h",
+        "GIT_DIR=/tmp/other/.git sh p.sh",
+    ] {
+        bash(repo.path(), command)
+            .code(DENY)
+            .stderr(contains("pre-push"));
+    }
+}
+
+// E4-2: write tools may not change the user's global git or Claude Code configuration.
+#[test]
+fn denies_global_config_writes() {
+    let repo = initialized_repo();
+    let home = bare_dir();
+    let xdg = bare_dir();
+    for path in [
+        home.path().join(".gitconfig"),
+        home.path().join(".config/git/config"),
+        xdg.path().join("git/config"),
+        home.path().join(".claude/settings.json"),
+        home.path().join(".claude/settings.local.json"),
+    ] {
+        let payload = json!({
+            "tool_name": "Write",
+            "cwd": repo.path(),
+            "tool_input": { "file_path": path, "content": "x" },
+        });
+        stapel(repo.path())
+            .args(["hook", "pre-tool-use"])
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", xdg.path())
+            .write_stdin(payload.to_string())
+            .assert()
+            .code(DENY)
+            .stderr(contains("only stapel"));
+    }
+}
+
+// E4-6: a Bash command that is not a string is unparsable input.
+#[test]
+fn rejects_non_string_command() {
+    let repo = initialized_repo();
+    hook(repo.path(), "Bash", json!({ "command": ["git", "x"] }))
+        .code(DENY)
+        .stderr(contains("hook input"));
+}
