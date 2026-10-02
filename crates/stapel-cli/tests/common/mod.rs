@@ -18,7 +18,18 @@ pub fn git_repo() -> TempDir {
         .status()
         .unwrap();
     assert!(status.success());
+    git_config(dir.path(), "user.name", "test-user");
     dir
+}
+
+/// Sets a local git config value in the repository at `dir`.
+pub fn git_config(dir: &Path, key: &str, value: &str) {
+    let status = std::process::Command::new("git")
+        .args(["config", key, value])
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
 }
 
 /// `stapel` running in `dir`, with stdin piped so it is never a terminal.
@@ -31,6 +42,11 @@ pub fn stapel(dir: &Path) -> Command {
         )
         .env_remove("STAPEL_ASSUME_TTY")
         .env_remove("CLAUDE_PROJECT_DIR")
+        // The tests run the same inside and outside an agent's shell, and never see the
+        // developer's global git identity.
+        .env_remove("CLAUDECODE")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .write_stdin("");
     cmd
 }
@@ -60,4 +76,18 @@ pub fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>, std::time::SystemTime)> {
     walk(dir, dir, &mut out);
     out.sort();
     out
+}
+
+/// A git repository with `stapel init --prefix ABC` done.
+pub fn stapel_repo() -> TempDir {
+    let repo = git_repo();
+    stapel(repo.path())
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    repo
+}
+
+pub fn state_json(dir: &Path, key: &str) -> serde_json::Value {
+    serde_json::from_str(&read(dir, &format!(".stapel/tickets/{key}/state.json"))).unwrap()
 }
