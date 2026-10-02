@@ -49,26 +49,26 @@ What this ticket promises, to whom, and what it does not.
 
 ### Questions
 
-Questions with a recommendation. Until answered, the build follows the recommendation.
+Questions with a recommendation. All six are answered.
 
 1. **Where state lives in phase 0.** PLAN.md §4 makes a separate `stapel-state` branch the default for
    phase 1. Recommendation: in STP-2, `state.json` stays in the working tree next to `ticket.md` and is
-   committed with the code; the branch is a phase-1 decision, and nothing in STP-2 depends on it. Answer: —
+   committed with the code; the branch is a phase-1 decision, and nothing in STP-2 depends on it. Answer (2026-10-02, human): as recommended.
 2. **Permit computed or stored.** Recommendation: computed (AC-11), as principle 3 says; `ok` never writes a
    permit. The hand-kept `build.allowed` keeps working until phase 1 so that STP-2 itself can be built
-   before `ok` exists, and is removed in the ticket that adds `build` (phase 1). Answer: —
+   before `ok` exists, and is removed in the ticket that adds `build` (phase 1). Answer (2026-10-02, human): as recommended.
 3. **Which sections need confirmation for the build.** PLAN.md §3 says spec, design and proof. Plan is
    owned by the engineer and is not in that list. Recommendation: keep spec, design, proof; `ok plan` works
-   but is not needed for the permit. Answer: —
+   but is not needed for the permit. Answer (2026-10-02, human): as recommended.
 4. **What `by` records.** Recommendation: `git config user.name` only, no e-mail (tracked files must not
    carry private data); refusing when it is unset. Roles are not checked: one person may hold all roles.
-   Answer: —
+   Answer (2026-10-02, human): as recommended.
 5. **Confirmed text in `state.json`.** The diff in AC-6 needs the old text. Recommendation: store the
    normalized text with the confirmation; it is what the person saw, and it avoids digging in git history.
-   The cost is a larger `state.json`. Answer: —
+   The cost is a larger `state.json`. Answer (2026-10-02, human): as recommended.
 6. **Scope of the permit (finding E-5 of STP-1).** Recommendation: still any ticket opens code writes; a
    permit tied to the ticket being built needs a notion of the current ticket, which comes with `build` in
-   phase 1. Answer: —
+   phase 1. Answer (2026-10-02, human): as recommended.
 
 ### Out of scope
 
