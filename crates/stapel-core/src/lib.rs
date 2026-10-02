@@ -2,4 +2,5 @@
 pub mod config;
 pub mod guard;
 pub mod hash;
+pub mod state;
 pub mod ticket;

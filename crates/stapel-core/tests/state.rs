@@ -60,7 +60,8 @@ fn write_preserves_unknown_fields() {
     .unwrap();
     let state = loaded_state(&path);
     save(&path, &state).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(v["build"]["allowed"], true);
     assert_eq!(v["later"], serde_json::json!([1, 2]));
     assert_eq!(v["confirmations"][0]["future"], 7);
@@ -85,7 +86,11 @@ fn refuses_corrupt_or_unknown_version() {
 fn refuses_wrong_shape() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("state.json");
-    std::fs::write(&path, r#"{"schema_version":1,"key":"ABC-1","title":"t","confirmations":"x"}"#).unwrap();
+    std::fs::write(
+        &path,
+        r#"{"schema_version":1,"key":"ABC-1","title":"t","confirmations":"x"}"#,
+    )
+    .unwrap();
     assert!(matches!(load(&path), Loaded::Unreadable(_)));
 }
 
