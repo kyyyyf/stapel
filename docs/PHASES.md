@@ -40,6 +40,11 @@ that fails first.
   "estimate".
 - MR through `gh` or `glab`: `stapel mr open` as a draft, the link in `state.json`.
 
+**Added during STP-2.** `stapel close` writes a `closed` fact (the phase-0 stand-in for `ship`). People never type
+`ok` or `close`: in Claude Code the guard answers `stapel ok` with the permission dialog and a one-time grant;
+outside an agent's shell (a terminal, a Zed task) the commands run directly. `status` prints
+`waiting for: <section> (owner: <owner>)`. Confirmations are kept in `state.json`; `decisions.jsonl` comes with STP-3.
+
 **Acceptance criteria (abridged).**
 
 1. `stapel init` in an empty repository creates `.stapel/` and the hooks; running it again changes nothing.
