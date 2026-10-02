@@ -1,1 +1,2 @@
 {"ts":"2026-10-03T00:30:00Z","ticket":"STP-2","step":"0","source":"local","commit":"8a8ac81","command":"sh .stapel/scratch/step0.sh (run by the human)","exit":0,"output":"created: .stapel/tickets/STP-2/state.json"}
+{"ts":"2026-10-03T03:00:00Z","ticket":"STP-2","step":"10b","source":"local","commit":"db54687","command":"cargo install --path crates/stapel-cli --locked; stapel --version","exit":0,"output":"stapel 0.1.0"}
