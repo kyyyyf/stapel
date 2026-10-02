@@ -114,20 +114,20 @@ TypeScript/JavaScript, Go, Rust. C++ добавляется потом как е
 | Роль | Модель | Почему |
 |---|---|---|
 | автор спеки и решения (`ask`, варианты) | claude-opus-5-5 | суждение, вопросы, дизайн |
-| сборщик (`build`) | claude-sonnet-5 | много механической работы по плану; дешевле |
-| свежий ревьюер кода | claude-sonnet-5 | независимый взгляд на дифф по критериям |
+| сборщик (`build`) | claude-sonnet-5-5 | много механической работы по плану; дешевле |
+| свежий ревьюер кода | claude-sonnet-5-5 | независимый взгляд на дифф по критериям |
 | внешний ревьюер | claude-fable-5-1 | самая сильная модель и другая, чем у автора: настоящая независимость |
-| ревьюер расхождений (код ↔ план ↔ спека) | claude-sonnet-5 | сверка, не творчество |
+| ревьюер расхождений (код ↔ план ↔ спека) | claude-sonnet-5-5 | сверка, не творчество |
 | дешёвые суждения (объём задачи, классификация находки) | claude-haiku-4-5 | там, где детерминированного правила не хватило |
 
 ```toml
 # .stapel/stapel.toml — фрагмент
 [models]
 author   = { provider = "claude-code", model = "claude-opus-5-5" }
-builder  = { provider = "claude-code", model = "claude-sonnet-5" }
-reviewer = { provider = "claude-code", model = "claude-sonnet-5" }
+builder  = { provider = "claude-code", model = "claude-sonnet-5-5" }
+reviewer = { provider = "claude-code", model = "claude-sonnet-5-5" }
 external = { provider = "anthropic-api", model = "claude-fable-5-1", required = false }
-drift    = { provider = "claude-code", model = "claude-sonnet-5" }
+drift    = { provider = "claude-code", model = "claude-sonnet-5-5" }
 cheap    = { provider = "claude-code", model = "claude-haiku-4-5" }
 ```
 
