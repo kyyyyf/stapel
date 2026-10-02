@@ -63,3 +63,15 @@ impl Config {
         toml::to_string(self).expect("config types always serialize")
     }
 }
+
+/// A ticket key prefix is 2 to 8 uppercase Latin letters.
+pub fn validate_prefix(prefix: &str) -> Result<(), String> {
+    let ok = (2..=8).contains(&prefix.len()) && prefix.bytes().all(|b| b.is_ascii_uppercase());
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "префикс ключа «{prefix}» не подходит: нужно от 2 до 8 заглавных латинских букв, например STP"
+        ))
+    }
+}

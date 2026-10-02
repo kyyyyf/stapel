@@ -9,10 +9,10 @@ name = "stapel"
 path = "src/main.rs"
 
 [dependencies]
+stapel-core = { path = "../stapel-core" }
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
-stapel-core = { path = "../stapel-core" }
 tempfile = "3"
 predicates = "3"
 assert_cmd = "2"
