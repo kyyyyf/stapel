@@ -2,3 +2,4 @@
 /.stapel/scratch/
 /.stapel/config/private.*
 *.local.toml
+/.stapel/index/
