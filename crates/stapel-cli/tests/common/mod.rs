@@ -124,3 +124,54 @@ pub fn repo_with_ticket() -> TempDir {
     set_section(dir, "ABC-1", "Proof", "The proof.");
     repo
 }
+
+/// Runs the PreToolUse hook on a Bash command with the given permission mode.
+pub fn hook_bash(dir: &Path, command: &str, mode: &str) -> assert_cmd::assert::Assert {
+    let payload = serde_json::json!({
+        "tool_name": "Bash",
+        "cwd": dir,
+        "permission_mode": mode,
+        "tool_input": { "command": command, "description": "test" },
+    });
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(payload.to_string())
+        .assert()
+}
+
+/// The hook's answer for a command it asks about: (reason, replaced command).
+pub fn ask(dir: &Path, command: &str) -> (String, String) {
+    let out = hook_bash(dir, command, "auto")
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: serde_json::Value = serde_json::from_slice(&out).unwrap_or_else(|e| {
+        panic!(
+            "no JSON answer for {command:?}: {e}: {}",
+            String::from_utf8_lossy(&out)
+        )
+    });
+    let h = &v["hookSpecificOutput"];
+    assert_eq!(h["hookEventName"], "PreToolUse");
+    assert_eq!(h["permissionDecision"], "ask", "{v}");
+    (
+        h["permissionDecisionReason"].as_str().unwrap().to_string(),
+        h["updatedInput"]["command"].as_str().unwrap().to_string(),
+    )
+}
+
+/// The token after `--grant` in a replaced command.
+pub fn token_of(command: &str) -> String {
+    command
+        .split_whitespace()
+        .skip_while(|w| *w != "--grant")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no --grant in {command}"))
+        .to_string()
+}
+
+/// The grants folder inside the git directory of `dir`.
+pub fn grants_dir(dir: &Path) -> std::path::PathBuf {
+    dir.join(".git/stapel/grants")
+}

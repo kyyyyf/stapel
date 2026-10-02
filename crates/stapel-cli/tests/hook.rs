@@ -886,3 +886,220 @@ fn non_regular_file_gives_no_permit() {
         .assert()
         .code(DENY);
 }
+
+// ---- STP-2 AC-15..AC-17: the permission dialog and grants ----
+
+use common::{ask, grants_dir, hook_bash, repo_with_ticket, token_of};
+
+#[test]
+fn asks_for_plain_stapel_ok() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for command in [
+        "stapel ok spec",
+        "FOO=1 stapel ok abc-1 spec 2>&1",
+        "/usr/local/bin/stapel OK spec",
+    ] {
+        let (reason, replaced) = ask(dir, command);
+        assert!(
+            reason.contains("ABC-1") && reason.contains("spec") && reason.contains("sha256:"),
+            "{reason}"
+        );
+        assert!(
+            replaced.ends_with(&format!("ok ABC-1 spec --grant {}", token_of(&replaced))),
+            "{replaced}"
+        );
+        assert!(
+            !replaced.contains("FOO=1") && !replaced.contains("2>&1"),
+            "{replaced}"
+        );
+    }
+}
+
+#[test]
+fn asks_for_cargo_run_ok() {
+    let repo = repo_with_ticket();
+    let (_, replaced) = ask(repo.path(), "cargo run -q -p stapel-cli -- ok spec");
+    assert!(
+        replaced.starts_with("cargo run -q -p stapel-cli -- ok ABC-1 spec --grant "),
+        "{replaced}"
+    );
+}
+
+#[test]
+fn denies_ok_in_bypass_mode() {
+    let repo = repo_with_ticket();
+    for mode in ["bypassPermissions", "dontAsk", ""] {
+        hook_bash(repo.path(), "stapel ok spec", mode)
+            .code(DENY)
+            .stderr(contains("dialog"));
+    }
+    assert!(
+        !grants_dir(repo.path()).exists()
+            || std::fs::read_dir(grants_dir(repo.path())).unwrap().count() == 0
+    );
+}
+
+#[test]
+fn denies_command_with_own_grant() {
+    let repo = repo_with_ticket();
+    for command in [
+        "stapel ok spec --grant abc",
+        "stapel ok --grant=abc spec",
+        "sh -c 'stapel ok spec --grant x'",
+    ] {
+        hook_bash(repo.path(), command, "auto")
+            .code(DENY)
+            .stderr(contains("grant"));
+    }
+}
+
+#[test]
+fn denies_unresolvable_ok() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    hook_bash(dir, "stapel ok review", "auto")
+        .code(DENY)
+        .stderr(contains("cannot be confirmed"));
+    hook_bash(dir, "stapel ok ABC-7 spec", "auto")
+        .code(DENY)
+        .stderr(contains("ABC-7"));
+    hook_bash(dir, "stapel close", "auto")
+        .code(DENY)
+        .stderr(contains("reason"));
+    common::git_config(dir, "user.name", " ");
+    hook_bash(dir, "stapel ok spec", "auto")
+        .code(DENY)
+        .stderr(contains("user.name"));
+}
+
+#[test]
+fn allows_mentions_of_stapel_ok() {
+    let repo = repo_with_ticket();
+    for command in [
+        "echo \"stapel ok\"",
+        "git commit -m 'STP-2 step 6: stapel ok refuses in agent shell'",
+        "grep -rn \"stapel ok\" crates",
+        "cargo test ok::records_confirmation",
+        "stapel hook pre-tool-use < payload.json",
+    ] {
+        let out = hook_bash(repo.path(), command, "auto")
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        assert!(
+            out.is_empty(),
+            "{command}: {}",
+            String::from_utf8_lossy(&out)
+        );
+    }
+}
+
+#[test]
+fn allows_stapel_status_and_new_from_bash() {
+    let repo = repo_with_ticket();
+    for command in [
+        "stapel status",
+        "stapel new 'Another'",
+        "stapel status ABC-1",
+    ] {
+        let out = hook_bash(repo.path(), command, "auto")
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        assert!(out.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn ask_carries_grant_and_reason() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let (reason, replaced) = ask(dir, "stapel ok spec");
+    assert!(reason.contains("1 line"), "{reason}");
+    assert!(reason.contains("not in HEAD"), "{reason}");
+    assert!(reason.contains("don't ask again"), "{reason}");
+    let files: Vec<_> = std::fs::read_dir(grants_dir(dir)).unwrap().collect();
+    assert_eq!(files.len(), 1);
+    assert!(!token_of(&replaced).is_empty());
+    // The token is not the file name.
+    let name = files[0]
+        .as_ref()
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .into_owned();
+    assert!(!name.contains(&token_of(&replaced)));
+}
+
+#[test]
+fn sweeps_expired_grants() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    std::fs::create_dir_all(grants_dir(dir)).unwrap();
+    std::fs::write(grants_dir(dir).join("0000.json"), r#"{"expires_at":0}"#).unwrap();
+    ask(dir, "stapel ok spec");
+    assert!(!grants_dir(dir).join("0000.json").exists());
+}
+
+#[test]
+fn denies_when_allow_rule_exists() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    std::fs::write(
+        dir.join(".claude/settings.local.json"),
+        r#"{"permissions":{"allow":["Bash(stapel ok:*)"]}}"#,
+    )
+    .unwrap();
+    hook_bash(dir, "stapel ok spec", "auto")
+        .code(DENY)
+        .stderr(contains("allow rule"));
+}
+
+#[test]
+fn denies_write_tools_on_grants() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    write_call(
+        dir,
+        "Write",
+        &grants_dir(dir).join("x.json").display().to_string(),
+    )
+    .code(DENY);
+}
+
+#[test]
+fn denies_terminal_input_injection() {
+    let repo = repo_with_ticket();
+    for command in [
+        "tmux send-keys -t \"$TMUX_PANE\" Enter",
+        "(sleep 5; tmux send -t 0 Enter) &",
+        "screen -X stuff $'\\n'",
+        "xdotool key Return",
+        "ydotool key 28:1",
+        "wtype -k Return",
+        "python3 -c 'import fcntl, termios; fcntl.ioctl(0, termios.TIOCSTI, b\"y\")'",
+        "printf y > /dev/pts/3",
+        "echo y > /dev/tty",
+    ] {
+        hook_bash(repo.path(), command, "auto")
+            .code(DENY)
+            .stderr(contains("person"));
+    }
+}
+
+#[test]
+fn allows_ordinary_tmux_use() {
+    let repo = repo_with_ticket();
+    for command in [
+        "tmux ls",
+        "tmux new -d -s work",
+        "screen -ls",
+        "tty",
+        "ls /dev/pts",
+    ] {
+        hook_bash(repo.path(), command, "auto").success();
+    }
+}

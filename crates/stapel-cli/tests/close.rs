@@ -81,3 +81,51 @@ fn refuses_in_agent_shell_without_grant() {
     }
     assert!(state_json(dir, "ABC-1").get("closed").is_none());
 }
+
+// ---- STP-2 AC-16: grants from the permission dialog ----
+
+use common::{ask, token_of};
+
+#[test]
+fn accepts_valid_grant_once() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let (reason, replaced) = ask(dir, "stapel close --reason merged");
+    assert!(
+        reason.contains("ABC-1") && reason.contains("merged"),
+        "{reason}"
+    );
+    assert!(
+        replaced.contains("close ABC-1 --reason merged --grant "),
+        "{replaced}"
+    );
+    let token = token_of(&replaced);
+    let run = || {
+        stapel(dir)
+            .args(["close", "ABC-1", "--reason", "merged", "--grant", &token])
+            .env("CLAUDECODE", "1")
+            .assert()
+    };
+    run().success().stdout(contains("closed: ABC-1"));
+    assert!(state_json(dir, "ABC-1").get("closed").is_some());
+}
+
+#[test]
+fn refuses_ok_grant() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let (_, replaced) = ask(dir, "stapel ok spec");
+    stapel(dir)
+        .args([
+            "close",
+            "ABC-1",
+            "--reason",
+            "merged",
+            "--grant",
+            &token_of(&replaced),
+        ])
+        .env("CLAUDECODE", "1")
+        .assert()
+        .code(1);
+    assert!(state_json(dir, "ABC-1").get("closed").is_none());
+}

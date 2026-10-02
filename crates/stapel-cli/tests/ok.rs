@@ -204,3 +204,78 @@ fn resolves_single_open_ticket() {
     .unwrap();
     stapel(dir).args(["ok", "spec"]).assert().success();
 }
+
+// ---- STP-2 AC-16: grants from the permission dialog ----
+
+use common::{ask, grants_dir, token_of};
+
+fn ok_with_grant(dir: &std::path::Path, token: &str) -> assert_cmd::assert::Assert {
+    stapel(dir)
+        .args(["ok", "ABC-1", "spec", "--grant", token])
+        .env("CLAUDECODE", "1")
+        .assert()
+}
+
+#[test]
+fn accepts_valid_grant_once() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let (_, replaced) = ask(dir, "stapel ok spec");
+    let token = token_of(&replaced);
+    ok_with_grant(dir, &token)
+        .success()
+        .stdout(contains("confirmed: ABC-1 spec"));
+    assert_eq!(confirmations(dir)[0]["via"], "grant");
+    ok_with_grant(dir, &token).code(1).stderr(contains("grant"));
+    assert_eq!(confirmations(dir).len(), 1);
+    assert_eq!(std::fs::read_dir(grants_dir(dir)).unwrap().count(), 0);
+}
+
+#[test]
+fn refuses_expired_or_mismatched_grant() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    ok_with_grant(dir, "00112233445566778899aabbccddeeff")
+        .code(1)
+        .stderr(contains("changed since the dialog"));
+    let (_, replaced) = ask(dir, "stapel ok spec");
+    for entry in std::fs::read_dir(grants_dir(dir)).unwrap() {
+        std::fs::write(entry.unwrap().path(), r#"{"expires_at":1}"#).unwrap();
+    }
+    ok_with_grant(dir, &token_of(&replaced))
+        .code(1)
+        .stderr(contains("expired"));
+    assert!(confirmations(dir).is_empty());
+}
+
+#[test]
+fn refuses_grant_after_section_edit() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let (_, replaced) = ask(dir, "stapel ok spec");
+    set_section(dir, "ABC-1", "Spec", "Rewritten while the dialog was open.");
+    ok_with_grant(dir, &token_of(&replaced))
+        .code(1)
+        .stderr(contains("changed since the dialog"));
+    assert!(confirmations(dir).is_empty());
+}
+
+#[test]
+fn ignores_rewritten_grant_file() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let (_, replaced) = ask(dir, "stapel ok spec");
+    set_section(dir, "ABC-1", "Spec", "Swapped text.");
+    let fake = serde_json::json!({
+        "expires_at": u64::MAX,
+        "key": "ABC-1",
+        "action": "ok",
+        "section": "spec",
+        "section_hash": "anything",
+    });
+    for entry in std::fs::read_dir(grants_dir(dir)).unwrap() {
+        std::fs::write(entry.unwrap().path(), fake.to_string()).unwrap();
+    }
+    ok_with_grant(dir, &token_of(&replaced)).code(1);
+    assert!(confirmations(dir).is_empty());
+}
