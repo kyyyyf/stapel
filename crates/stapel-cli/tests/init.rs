@@ -114,3 +114,59 @@ fn refuses_without_prefix_noninteractive() {
         .stderr(contains("--prefix"));
     assert!(!repo.path().join(".stapel").exists());
 }
+
+// AC-4, R-3; AC-12: the second run does not ask for a prefix.
+#[test]
+fn second_run_changes_nothing() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir).args(["init", "--prefix", "ABC"]).assert().success();
+    let before = common::snapshot(dir);
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    stapel(dir)
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(contains("уже готово"));
+
+    assert_eq!(common::snapshot(dir), before);
+}
+
+// AC-5
+#[test]
+fn keeps_user_edited_config() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir).args(["init", "--prefix", "ABC"]).assert().success();
+
+    let edited = read(dir, ".stapel/stapel.toml").replace("claude-haiku-4-5", "my-cheap-model")
+        + "\n# hand edit\n";
+    std::fs::write(dir.join(".stapel/stapel.toml"), &edited).unwrap();
+    std::fs::remove_file(dir.join(".stapel/allowlist.toml")).unwrap();
+
+    stapel(dir)
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(contains("создано: .stapel/allowlist.toml"));
+
+    assert_eq!(read(dir, ".stapel/stapel.toml"), edited);
+    assert!(dir.join(".stapel/allowlist.toml").is_file());
+}
+
+// AC-5: a prefix given again does not rewrite an existing config.
+#[test]
+fn second_run_with_other_prefix_keeps_key() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir).args(["init", "--prefix", "ABC"]).assert().success();
+
+    stapel(dir)
+        .args(["init", "--prefix", "XYZ"])
+        .assert()
+        .success()
+        .stdout(contains("ABC-{n}"));
+
+    assert_eq!(key_of(dir), "ABC-{n}");
+}
