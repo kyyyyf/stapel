@@ -1,0 +1,4 @@
+/target
+/.stapel/scratch/
+/.stapel/config/private.*
+*.local.toml
