@@ -67,7 +67,13 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
         "Bash" => {
             let in_stapel_repo =
                 stapel_root(cwd).is_some() || project_dir.and_then(stapel_root).is_some();
-            let command = input.tool_input["command"].as_str().unwrap_or_default();
+            let command = match &input.tool_input["command"] {
+                serde_json::Value::String(command) => command.as_str(),
+                serde_json::Value::Null => "",
+                _ => {
+                    return Decision::Deny("hook input has a non-string tool_input.command".into());
+                }
+            };
             match in_stapel_repo.then(|| check_command(command)).flatten() {
                 Some(reason) => Decision::Deny(reason.into()),
                 None => Decision::Allow,
@@ -82,10 +88,44 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
             let Some(path) = input.tool_input[field].as_str() else {
                 return Decision::Deny(format!("hook input has no tool_input.{field}"));
             };
-            decide_write(&resolve(&cwd.join(path)))
+            let target = resolve(&cwd.join(path));
+            let in_stapel_session =
+                stapel_root(cwd).is_some() || project_dir.and_then(stapel_root).is_some();
+            if in_stapel_session && is_global_config(&target) {
+                return Decision::Deny(format!(
+                    "only stapel or the human writes {}, not an agent's write tool \
+                     (global git or Claude Code configuration)",
+                    target.display()
+                ));
+            }
+            decide_write(&target)
         }
         _ => Decision::Allow,
     }
+}
+
+/// The user's global git and Claude Code configuration: changing it can switch off both layers
+/// for every repository at once.
+fn is_global_config(target: &Path) -> bool {
+    let env_path = |name: &str| {
+        std::env::var_os(name)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
+    let mut files = Vec::new();
+    if let Some(home) = env_path("HOME") {
+        files.push(home.join(".gitconfig"));
+        files.push(home.join(".config/git/config"));
+        files.push(home.join(".claude/settings.json"));
+        files.push(home.join(".claude/settings.local.json"));
+    }
+    if let Some(xdg) = env_path("XDG_CONFIG_HOME") {
+        files.push(xdg.join("git/config"));
+    }
+    if let Some(global) = env_path("GIT_CONFIG_GLOBAL") {
+        files.push(global);
+    }
+    files.iter().any(|f| resolve(f) == target)
 }
 
 /// `target` is absolute with symlinks resolved; the repository is the one that contains it.
@@ -267,7 +307,7 @@ impl Found {
     }
 }
 
-/// About a millisecond of work per thousand units; far above any real command.
+/// Roughly a millisecond of work per million units; far above any real command.
 const WORK_BUDGET: usize = 1_000_000;
 
 /// Reserved words that may stand before the program of a simple command.
@@ -385,7 +425,7 @@ fn check_simple(words: &[String], full: &str, depth: usize, found: &mut Found) {
             if is_alias_config(w) {
                 found.push = true;
             }
-            if w.starts_with("CLAUDECODE=") {
+            if moves_config(w) {
                 found.bypass = true;
             }
             start += 1;
@@ -457,19 +497,56 @@ fn clears_claudecode(name: &str, args: &[String]) -> bool {
         "unset" => names_it,
         "export" | "declare" | "typeset" | "local" => {
             names_it && args.iter().any(|a| a == "-n" || a.starts_with('+'))
-                || args.iter().any(|a| a.starts_with("CLAUDECODE="))
+                || args.iter().any(|a| moves_config(a))
         }
         "env" => {
-            names_it
-                || args.iter().any(|a| {
-                    a == "-"
-                        || a == "--ignore-environment"
-                        || (a.starts_with('-') && !a.starts_with("--") && a.contains('i'))
-                })
+            // Only env's own options and assignments, before the program it runs.
+            let mut i = 0;
+            while let Some(a) = args.get(i) {
+                if a == "-u" || a == "--unset" {
+                    if args.get(i + 1).is_some_and(|v| v.contains("CLAUDECODE")) {
+                        return true;
+                    }
+                    i += 2;
+                    continue;
+                }
+                let clears = a == "-"
+                    || (a.len() > 3 && "--ignore-environment".starts_with(a.as_str()))
+                    || (a.starts_with('-') && !a.starts_with("--") && a.contains('i'))
+                    || a.contains("CLAUDECODE")
+                    || moves_config(a);
+                if clears {
+                    return true;
+                }
+                if a.starts_with('-') || is_assignment(a) {
+                    i += 1;
+                } else {
+                    return false;
+                }
+            }
+            false
         }
-        "exec" => args.iter().any(|a| a.starts_with('-') && a.contains('c')),
+        "exec" => args
+            .iter()
+            .take_while(|a| a.starts_with('-'))
+            .any(|a| !a.starts_with("--") && a.contains('c')),
         _ => false,
     }
+}
+
+/// Assignments that take CLAUDECODE away or move where git reads its config and hooks.
+fn moves_config(word: &str) -> bool {
+    const NAMES: [&str; 7] = [
+        "CLAUDECODE",
+        "HOME",
+        "XDG_CONFIG_HOME",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_DIR",
+        "GIT_COMMON_DIR",
+    ];
+    word.split_once('=')
+        .is_some_and(|(name, _)| NAMES.contains(&name))
 }
 
 /// The script after `-c` (or a flag cluster with `c`, like `-lc`), skipping a `--`.
