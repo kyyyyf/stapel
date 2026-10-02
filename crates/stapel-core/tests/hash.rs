@@ -22,7 +22,11 @@ fn ignores_non_content_differences() {
     assert_eq!(NORMAL_FORM, 1);
     assert!(expected.starts_with("sha256:"));
     assert_eq!(expected.len(), "sha256:".len() + 64);
-    assert!(expected["sha256:".len()..].chars().all(|c| c.is_ascii_hexdigit()));
+    assert!(
+        expected["sha256:".len()..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
+    );
 }
 
 #[test]
