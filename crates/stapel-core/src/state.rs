@@ -40,6 +40,9 @@ pub struct Confirmation {
     /// The normalized text; kept on the latest confirmation of a section only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// `grant` when confirmed through the permission dialog, `terminal` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

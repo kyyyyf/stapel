@@ -1,6 +1,7 @@
 mod hook;
 mod init;
 mod new;
+mod ok;
 mod repo;
 
 use clap::{Parser, Subcommand};
@@ -31,6 +32,12 @@ enum Command {
         #[arg(long)]
         tracker: Option<String>,
     },
+    /// Confirm a section of a ticket: `stapel ok [KEY] <section>`. Only a person confirms.
+    Ok {
+        /// The ticket key (optional) and the section id.
+        #[arg(num_args = 1..=2, required = true, value_names = ["KEY", "SECTION"])]
+        args: Vec<String>,
+    },
     /// Hook entry points called by Claude Code; not meant to be run by hand.
     #[command(subcommand)]
     Hook(HookCommand),
@@ -47,6 +54,11 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Init { prefix } => init::run(prefix),
         Command::New { title, tracker } => new::run(&title, tracker.as_deref()),
+        Command::Ok { args } => match args.as_slice() {
+            [section] => ok::run(None, section),
+            [key, section] => ok::run(Some(key), section),
+            _ => unreachable!("clap limits the arguments"),
+        },
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),
     };
     match result {

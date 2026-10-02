@@ -6,7 +6,10 @@ use common::{git_config, repo_with_ticket, set_section, stapel, state_json};
 use predicates::str::contains;
 
 fn confirmations(dir: &std::path::Path) -> Vec<serde_json::Value> {
-    state_json(dir, "ABC-1")["confirmations"].as_array().unwrap().clone()
+    state_json(dir, "ABC-1")["confirmations"]
+        .as_array()
+        .unwrap()
+        .clone()
 }
 
 #[test]
@@ -18,7 +21,10 @@ fn records_confirmation() {
         .assert()
         .success()
         .stdout(contains("confirmed: ABC-1 spec (sha256:"));
-    stapel(dir).args(["ok", "abc-1", "design"]).assert().success();
+    stapel(dir)
+        .args(["ok", "abc-1", "design"])
+        .assert()
+        .success();
 
     let c = confirmations(dir);
     assert_eq!(c.len(), 2);
@@ -79,9 +85,14 @@ fn refuses_on_closed_ticket() {
     let dir = repo.path();
     let path = dir.join(".stapel/tickets/ABC-1/state.json");
     let mut state = state_json(dir, "ABC-1");
-    state["closed"] = serde_json::json!({"by": "x", "at": "2026-10-02T00:00:00Z", "reason": "done"});
+    state["closed"] =
+        serde_json::json!({"by": "x", "at": "2026-10-02T00:00:00Z", "reason": "done"});
     std::fs::write(&path, state.to_string()).unwrap();
-    stapel(dir).args(["ok", "ABC-1", "spec"]).assert().code(1).stderr(contains("closed"));
+    stapel(dir)
+        .args(["ok", "ABC-1", "spec"])
+        .assert()
+        .code(1)
+        .stderr(contains("closed"));
 }
 
 #[test]
@@ -94,7 +105,11 @@ fn refuses_without_identity() {
         .status()
         .unwrap();
     assert!(status.success());
-    stapel(dir).args(["ok", "spec"]).assert().code(1).stderr(contains("user.name"));
+    stapel(dir)
+        .args(["ok", "spec"])
+        .assert()
+        .code(1)
+        .stderr(contains("user.name"));
     assert!(confirmations(dir).is_empty());
 }
 
@@ -103,7 +118,11 @@ fn refuses_blank_identity() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     git_config(dir, "user.name", "   ");
-    stapel(dir).args(["ok", "spec"]).assert().code(1).stderr(contains("user.name"));
+    stapel(dir)
+        .args(["ok", "spec"])
+        .assert()
+        .code(1)
+        .stderr(contains("user.name"));
 }
 
 #[test]
@@ -124,11 +143,21 @@ fn refuses_missing_dependency() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     let path = dir.join(".stapel/tickets/ABC-1/ticket.md");
-    let text = std::fs::read_to_string(&path).unwrap().replace("## Spec\n", "## Specification\n");
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("## Spec\n", "## Specification\n");
     std::fs::write(&path, text).unwrap();
     // design depends on spec, whose heading is now missing.
-    stapel(dir).args(["ok", "design"]).assert().code(1).stderr(contains("spec"));
-    stapel(dir).args(["ok", "spec"]).assert().code(1).stderr(contains("missing"));
+    stapel(dir)
+        .args(["ok", "design"])
+        .assert()
+        .code(1)
+        .stderr(contains("spec"));
+    stapel(dir)
+        .args(["ok", "spec"])
+        .assert()
+        .code(1)
+        .stderr(contains("missing"));
     assert!(confirmations(dir).is_empty());
 }
 
@@ -158,11 +187,20 @@ fn resolves_single_open_ticket() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     stapel(dir).args(["new", "Second"]).assert().success();
-    stapel(dir).args(["ok", "spec"]).assert().code(1).stderr(contains("ABC-1")).stderr(contains("ABC-2"));
+    stapel(dir)
+        .args(["ok", "spec"])
+        .assert()
+        .code(1)
+        .stderr(contains("ABC-1"))
+        .stderr(contains("ABC-2"));
     stapel(dir).args(["ok", "ABC-1", "spec"]).assert().success();
     // A legacy (STP-1 format) ticket is never the implicit target.
     std::fs::remove_dir_all(dir.join(".stapel/tickets/ABC-2")).unwrap();
     std::fs::create_dir_all(dir.join(".stapel/tickets/ABC-9")).unwrap();
-    std::fs::write(dir.join(".stapel/tickets/ABC-9/state.json"), r#"{"key":"ABC-9","build":{"allowed":false}}"#).unwrap();
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-9/state.json"),
+        r#"{"key":"ABC-9","build":{"allowed":false}}"#,
+    )
+    .unwrap();
     stapel(dir).args(["ok", "spec"]).assert().success();
 }

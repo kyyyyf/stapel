@@ -97,9 +97,20 @@ pub fn set_section(dir: &Path, key: &str, title: &str, body: &str) {
     let path = dir.join(format!(".stapel/tickets/{key}/ticket.md"));
     let text = std::fs::read_to_string(&path).unwrap();
     let heading = format!("## {title}\n");
-    let start = text.find(&heading).unwrap_or_else(|| panic!("no {heading}")) + heading.len();
-    let end = text[start..].find("\n## ").map(|i| start + i + 1).unwrap_or(text.len());
-    let new = format!("{}\n{}\n\n{}", &text[..start], body.trim_end(), &text[end..]);
+    let start = text
+        .find(&heading)
+        .unwrap_or_else(|| panic!("no {heading}"))
+        + heading.len();
+    let end = text[start..]
+        .find("\n## ")
+        .map(|i| start + i + 1)
+        .unwrap_or(text.len());
+    let new = format!(
+        "{}\n{}\n\n{}",
+        &text[..start],
+        body.trim_end(),
+        &text[end..]
+    );
     std::fs::write(&path, new).unwrap();
 }
 

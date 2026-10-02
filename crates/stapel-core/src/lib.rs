@@ -1,7 +1,10 @@
 //! Tickets, state facts, section hashes, checks, decision log, process definitions from TOML.
 pub mod config;
+pub mod confirm;
 pub mod guard;
 pub mod hash;
+pub mod identity;
 pub mod state;
 pub mod ticket;
 pub mod tickets;
+pub mod time;
