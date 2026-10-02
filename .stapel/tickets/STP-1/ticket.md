@@ -24,7 +24,7 @@
 | AC-5 | Разработчик · запускает `stapel init` · когда `stapel.toml` уже есть и отредактирован вручную · и файл остаётся как есть; недостающие части раскладки и хуки дописываются. | `init::keeps_user_edited_config`, `init::second_run_with_other_prefix_keeps_key` |
 | AC-6 | `stapel init` · ставит хуки в `.claude/settings.json` · когда файла нет, когда он есть с чужими ключами и хуками, и при повторном запуске · так, что чужие ключи и хуки сохранены, а записи `stapel` не дублируются. | `hooks_install::hooks_into_missing_settings`, `hooks_install::hooks_merge_with_foreign_settings`, `hooks_install::hooks_not_duplicated`, `hooks_install::refuses_broken_settings` |
 | AC-7 | Хук `stapel hook pre-tool-use` · получает от Claude Code вызов `Bash` · с командой, которая выполняет `git push` в любом виде (`git push`, `git -C dir push`, `cd x && git push`, `FOO=1 git push`, `git push` после `;` или `\|\|`) · и отвечает отказом с причиной; команды `git status`, `git log --grep push`, `echo "git push"` пропускает. | `hook::denies_git_push_variants`, `hook::allows_non_push_commands` |
-| AC-8 | Хук `stapel hook pre-tool-use` · получает вызов `Write`, `Edit`, `MultiEdit` или `NotebookEdit` · для пути вне списка `guard.always_writable` из `stapel.toml` · когда ни у одного тикета сборка не разрешена · и отвечает отказом с причиной «сборка не разрешена»; пути внутри `.stapel/` и `docs/` пропускает всегда. | `hook::denies_code_write_without_build`, `hook::allows_stapel_and_docs_writes` |
+| AC-8 | Хук `stapel hook pre-tool-use` · получает вызов `Write`, `Edit`, `MultiEdit` или `NotebookEdit` · для пути вне списка `guard.always_writable` из `stapel.toml` · когда ни у одного тикета сборка не разрешена · и отвечает отказом с причиной «сборка не разрешена»; пути внутри `.stapel/` и `docs/` пропускает всегда. | `hook::denies_code_write_without_build`, `hook::allows_stapel_and_docs_writes`, `hook::always_writable_comes_from_config`, `hook::allows_writes_outside_repo` |
 | AC-9 | Хук · получает вызов записи в код · когда в `.stapel/tickets/<ключ>/state.json` есть `"build": {"allowed": true}` · и пропускает его. | `hook::allows_code_write_when_build_allowed` |
 | AC-10 | Хук · получает вход, который не может разобрать, или вызывается вне репозитория со `stapel.toml` · и не падает: неразборчивый вход отклоняется с причиной, вне репозитория вызов пропускается. | `hook::rejects_garbage_input`, `hook::passes_outside_stapel_repo` |
 | AC-11 | Разработчик · запускает `stapel init` · вне git-репозитория · и получает отказ с кодом 1 и сообщением «не git-репозиторий»; ничего не создаётся. | `init::refuses_outside_git` |
@@ -112,7 +112,7 @@ stderr: это задокументированный способ запрет�
 | AC-6, R-2 | `hooks_install::hooks_into_missing_settings`, `hooks_install::hooks_merge_with_foreign_settings`, `hooks_install::hooks_not_duplicated`, `hooks_install::refuses_broken_settings` | — |
 | R-4 | `hooks_install::warns_when_stapel_missing_from_path`, `hooks_install::no_warning_when_stapel_on_path` | — |
 | AC-7, R-1 | `hook::denies_git_push_variants`, `hook::allows_non_push_commands` | — |
-| AC-8 | `hook::denies_code_write_without_build`, `hook::allows_stapel_and_docs_writes` | — |
+| AC-8 | `hook::denies_code_write_without_build`, `hook::allows_stapel_and_docs_writes`, `hook::always_writable_comes_from_config`, `hook::allows_writes_outside_repo` | — |
 | AC-9 | `hook::allows_code_write_when_build_allowed` | — |
 | AC-10 | `hook::rejects_garbage_input`, `hook::passes_outside_stapel_repo` | — |
 | AC-11 | `init::refuses_outside_git` | — |

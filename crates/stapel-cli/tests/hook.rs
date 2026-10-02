@@ -104,3 +104,92 @@ fn passes_outside_stapel_repo() {
     let bare = bare_dir();
     bash(bare.path(), "git push").success();
 }
+
+fn write_call(dir: &Path, tool: &str, path: &str) -> assert_cmd::assert::Assert {
+    let input = match tool {
+        "NotebookEdit" => json!({ "notebook_path": path, "new_source": "x" }),
+        "MultiEdit" => json!({ "file_path": path, "edits": [] }),
+        _ => json!({ "file_path": path, "content": "x", "old_string": "a", "new_string": "b" }),
+    };
+    hook(dir, tool, input)
+}
+
+const WRITE_TOOLS: [&str; 4] = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
+
+fn set_state(dir: &Path, ticket: &str, state: &str) {
+    let path = dir.join(".stapel/tickets").join(ticket);
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("state.json"), state).unwrap();
+}
+
+// AC-8
+#[test]
+fn denies_code_write_without_build() {
+    let repo = initialized_repo();
+    let root = repo.path();
+    for tool in WRITE_TOOLS {
+        for path in [
+            root.join("src/main.rs").display().to_string(),
+            root.join("docs/../src/main.rs").display().to_string(),
+            root.join("docs-old/notes.md").display().to_string(),
+            "src/relative.rs".to_string(),
+        ] {
+            write_call(root, tool, &path)
+                .code(DENY)
+                .stderr(contains("сборка не разрешена"));
+        }
+    }
+}
+
+// AC-8
+#[test]
+fn allows_stapel_and_docs_writes() {
+    let repo = initialized_repo();
+    let root = repo.path();
+    for tool in WRITE_TOOLS {
+        for rel in [".stapel/tickets/ABC-1/ticket.md", "docs/PLAN.md", "docs/deep/x.md"] {
+            write_call(root, tool, &root.join(rel).display().to_string()).success();
+        }
+        write_call(root, tool, "docs/relative.md").success();
+    }
+}
+
+// AC-8: the list comes from stapel.toml.
+#[test]
+fn always_writable_comes_from_config() {
+    let repo = initialized_repo();
+    let root = repo.path();
+    let config = root.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&config)
+        .unwrap()
+        .replace("always_writable = [\".stapel/\", \"docs/\"]", "always_writable = [\".stapel/\", \"scripts/\"]");
+    std::fs::write(&config, text).unwrap();
+
+    write_call(root, "Write", &root.join("scripts/a.sh").display().to_string()).success();
+    write_call(root, "Write", &root.join("docs/PLAN.md").display().to_string()).code(DENY);
+}
+
+// AC-8: files outside the repository are not this repository's code.
+#[test]
+fn allows_writes_outside_repo() {
+    let repo = initialized_repo();
+    let elsewhere = bare_dir();
+    write_call(repo.path(), "Write", &elsewhere.path().join("x.rs").display().to_string()).success();
+}
+
+// AC-9
+#[test]
+fn allows_code_write_when_build_allowed() {
+    let repo = initialized_repo();
+    let root = repo.path();
+    let target = root.join("src/main.rs").display().to_string();
+
+    set_state(root, "ABC-1", r#"{"build": {"allowed": false}}"#);
+    set_state(root, "ABC-2", "{ broken");
+    write_call(root, "Write", &target).code(DENY);
+
+    set_state(root, "ABC-3", r#"{"key": "ABC-3", "build": {"allowed": true}}"#);
+    for tool in WRITE_TOOLS {
+        write_call(root, tool, &target).success();
+    }
+}
