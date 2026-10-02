@@ -95,7 +95,7 @@ fn rejects_garbage_input() {
             .write_stdin(garbage)
             .assert()
             .code(DENY)
-            .stderr(contains("вход хука"));
+            .stderr(contains("hook input"));
     }
 }
 
@@ -139,7 +139,7 @@ fn denies_code_write_without_build() {
         ] {
             write_call(root, tool, &path)
                 .code(DENY)
-                .stderr(contains("сборка не разрешена"));
+                .stderr(contains("build is not allowed"));
         }
     }
 }
@@ -292,7 +292,7 @@ fn denies_machine_file_writes_even_with_build() {
         for tool in WRITE_TOOLS {
             write_call(root, tool, &root.join(rel).display().to_string())
                 .code(DENY)
-                .stderr(contains("только stapel"));
+                .stderr(contains("only stapel"));
         }
     }
     for rel in [".stapel/tickets/ABC-1/ticket.md", ".stapel/allowlist.toml"] {
@@ -506,7 +506,7 @@ fn denies_settings_and_case_variants() {
     ] {
         write_call(root, "Write", &root.join(rel).display().to_string())
             .code(DENY)
-            .stderr(contains("только stapel"));
+            .stderr(contains("only stapel"));
     }
 }
 
@@ -654,7 +654,7 @@ fn denies_git_and_claude_writes_even_with_build() {
         for tool in WRITE_TOOLS {
             write_call(root, tool, &root.join(rel).display().to_string())
                 .code(DENY)
-                .stderr(contains("только stapel"));
+                .stderr(contains("only stapel"));
         }
     }
     write_call(

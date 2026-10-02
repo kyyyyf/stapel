@@ -243,7 +243,7 @@ fn upgrades_old_hook_line() {
         .args(["init", "--prefix", "ABC"])
         .assert()
         .success()
-        .stdout(contains("обновлено: .claude/settings.json"));
+        .stdout(contains("updated: .claude/settings.json"));
 
     let s = settings(dir);
     assert_eq!(stapel_entries(&s).len(), 1);
@@ -280,7 +280,7 @@ fn installs_pre_push_hook() {
 
     let blocked = run_pre_push(dir, Some("1"));
     assert_ne!(blocked.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&blocked.stderr).contains("агент"));
+    assert!(String::from_utf8_lossy(&blocked.stderr).contains("agent"));
     assert_eq!(run_pre_push(dir, None).status.code(), Some(0));
 
     // A second run leaves the hook as it is.
@@ -289,7 +289,7 @@ fn installs_pre_push_hook() {
         .arg("init")
         .assert()
         .success()
-        .stdout(contains("уже готово"));
+        .stdout(contains("already set up"));
     assert_eq!(std::fs::read(pre_push_path(dir)).unwrap(), before);
 }
 
@@ -374,7 +374,7 @@ fn skips_hooks_dir_outside_repo() {
         .args(["init", "--prefix", "ABC"])
         .assert()
         .success()
-        .stderr(contains("вне репозитория"));
+        .stderr(contains("outside the repository"));
     assert!(!outside.path().join("pre-push").exists());
 }
 

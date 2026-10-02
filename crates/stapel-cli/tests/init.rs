@@ -23,11 +23,11 @@ fn creates_layout_in_empty_repo() {
         .args(["init", "--prefix", "ABC"])
         .assert()
         .success()
-        .stdout(contains("создано: .stapel/stapel.toml"))
-        .stdout(contains("создано: .stapel/allowlist.toml"))
-        .stdout(contains("создано: .stapel/tickets/.gitkeep"))
-        .stdout(contains("дописано: .gitignore"))
-        .stdout(contains("создано: .claude/settings.json"));
+        .stdout(contains("created: .stapel/stapel.toml"))
+        .stdout(contains("created: .stapel/allowlist.toml"))
+        .stdout(contains("created: .stapel/tickets/.gitkeep"))
+        .stdout(contains("appended: .gitignore"))
+        .stdout(contains("created: .claude/settings.json"));
 
     assert!(dir.join(".stapel/stapel.toml").is_file());
     assert!(dir.join(".stapel/allowlist.toml").is_file());
@@ -81,7 +81,7 @@ fn refuses_outside_git() {
         .args(["init", "--prefix", "ABC"])
         .assert()
         .code(1)
-        .stderr(contains("не git-репозиторий"));
+        .stderr(contains("not a git repository"));
 
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
@@ -107,7 +107,7 @@ fn prefix_from_prompt() {
         .write_stdin("QA\n")
         .assert()
         .success()
-        .stdout(contains("Префикс ключа"));
+        .stdout(contains("Ticket key prefix"));
     assert_eq!(key_of(repo.path()), "QA-{n}");
 }
 
@@ -120,7 +120,7 @@ fn rejects_bad_prefix() {
             .args(["init", "--prefix", bad])
             .assert()
             .code(1)
-            .stderr(contains("префикс"));
+            .stderr(contains("prefix"));
         assert!(!repo.path().join(".stapel").exists(), "created for {bad:?}");
     }
 }
@@ -153,7 +153,7 @@ fn second_run_changes_nothing() {
         .arg("init")
         .assert()
         .success()
-        .stdout(contains("уже готово"));
+        .stdout(contains("already set up"));
 
     assert_eq!(common::snapshot(dir), before);
 }
@@ -177,7 +177,7 @@ fn keeps_user_edited_config() {
         .arg("init")
         .assert()
         .success()
-        .stdout(contains("создано: .stapel/allowlist.toml"));
+        .stdout(contains("created: .stapel/allowlist.toml"));
 
     assert_eq!(read(dir, ".stapel/stapel.toml"), edited);
     assert!(dir.join(".stapel/allowlist.toml").is_file());
