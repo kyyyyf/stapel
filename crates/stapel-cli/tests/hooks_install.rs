@@ -259,6 +259,7 @@ fn run_pre_push(dir: &Path, claudecode: Option<&str>) -> std::process::Output {
     let mut cmd = std::process::Command::new(pre_push_path(dir));
     cmd.current_dir(dir)
         .env_remove("CLAUDECODE")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
         .stdin(std::process::Stdio::null());
     if let Some(v) = claudecode {
         cmd.env("CLAUDECODE", v);
@@ -323,4 +324,81 @@ fn refuses_non_utf8_settings() {
         .code(1)
         .stderr(contains(SETTINGS));
     assert!(!dir.join(".stapel").exists());
+}
+
+fn git_in(dir: &Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+// E3-8: the hook also recognises Claude Code by CLAUDE_CODE_ENTRYPOINT.
+#[test]
+fn pre_push_blocks_entrypoint_env() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+
+    let out = std::process::Command::new(pre_push_path(dir))
+        .current_dir(dir)
+        .env_remove("CLAUDECODE")
+        .env("CLAUDE_CODE_ENTRYPOINT", "cli")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert_ne!(out.status.code(), Some(0));
+}
+
+// E3-7, F3-8: a hooks directory outside the repository is left alone, with a warning.
+#[test]
+fn skips_hooks_dir_outside_repo() {
+    let repo = git_repo();
+    let dir = repo.path();
+    let outside = tempfile::tempdir().unwrap();
+    git_in(
+        dir,
+        &[
+            "config",
+            "core.hooksPath",
+            &outside.path().display().to_string(),
+        ],
+    );
+
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success()
+        .stderr(contains("вне репозитория"));
+    assert!(!outside.path().join("pre-push").exists());
+}
+
+// F3-8: our pre-push hook that lost its executable bit gets it back.
+#[cfg(unix)]
+#[test]
+fn repairs_pre_push_exec_bit() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    std::fs::set_permissions(pre_push_path(dir), std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    stapel(dir)
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(contains("pre-push"));
+    let mode = std::fs::metadata(pre_push_path(dir))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o111, 0o111);
 }

@@ -521,3 +521,146 @@ fn follows_dangling_symlink() {
 
     write_call(root, "Write", &root.join("docs/lnk").display().to_string()).code(DENY);
 }
+
+fn bash_within(dir: &Path, command: &str) -> assert_cmd::assert::Assert {
+    let payload = json!({
+        "tool_name": "Bash",
+        "cwd": dir,
+        "tool_input": { "command": command },
+    });
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .timeout(std::time::Duration::from_secs(5))
+        .write_stdin(payload.to_string())
+        .assert()
+}
+
+// F3-1, D3-1: wrappers chained with eval are bounded by a work budget.
+#[test]
+fn wrapper_eval_chains_are_bounded() {
+    let repo = initialized_repo();
+    for unit in ["xargs eval ", "env eval ", "find . -exec eval "] {
+        bash_within(repo.path(), &format!("{}true; git push", unit.repeat(26))).code(DENY);
+    }
+    bash_within(
+        repo.path(),
+        &format!("{}true; git push", "xargs eval ".repeat(4000)),
+    )
+    .code(DENY);
+}
+
+// AC-7 (F3-4, F3-6, E3-1, E3-5): review round 3.
+#[test]
+fn denies_git_push_round_three() {
+    let repo = initialized_repo();
+    for command in [
+        "git submodule foreach git push",
+        "git submodule foreach --recursive git push",
+        "watch 'git push'",
+        "parallel 'git push' ::: a",
+        "sudo -i 'git push'",
+        "echo push | xargs -I{} git {}",
+        "git -calias.p=push p",
+        "git rebase -ix 'git push' HEAD~1",
+        "function f { git push; }; f",
+        "git bisect run git push",
+        "git bisect run sh -c 'git push'",
+        "git -c core.pager='git push' log",
+        "builtin command git push",
+        "ash -c 'git push'",
+        "busybox sh -c 'git push'",
+        "git p$'ush'",
+        "ssh localhost git push",
+        "ssh localhost 'cd x && git push'",
+        "tmux new-session -d 'git push'",
+        "su -c 'git push' me",
+        "script -qc 'git push' /dev/null",
+        "flock /tmp/l git push",
+        "strace -f git push",
+        "systemd-run --user git push",
+        "docker run img git push",
+        "python3 -c \"import subprocess; subprocess.run(['git', 'push', '--no-verify'])\"",
+        "python3 -c \"import os; os.system('git send-pack origin')\"",
+        "perl -e 'system(\"git http-push x\")'",
+    ] {
+        bash(repo.path(), command)
+            .code(DENY)
+            .stderr(contains("git push"));
+    }
+}
+
+// AC-13 (F3-2, F3-5, E3-4): more ways to switch off the second layer.
+#[test]
+fn denies_pre_push_bypass_round_three() {
+    let repo = initialized_repo();
+    for command in [
+        "env -i bash -l",
+        "env - sh",
+        "env -i PATH=$PATH python3 x.py",
+        "env --ignore-environment sh x.sh",
+        "exec -c sh",
+        "declare +x CLAUDECODE; python3 p.py",
+        "typeset +x CLAUDECODE",
+        "command unset CLAUDECODE",
+        "builtin unset CLAUDECODE",
+        "echo 'exit 0' > .git/hooks/pre-push",
+        ": > .git/hooks/pre-push",
+        "exec 3> .git/hooks/pre-push",
+        "cd .git && cp x hooks/pre-push",
+    ] {
+        bash(repo.path(), command)
+            .code(DENY)
+            .stderr(contains("pre-push"));
+    }
+}
+
+#[test]
+fn allows_lookalikes_after_round_three() {
+    let repo = initialized_repo();
+    for command in [
+        "echo \"CLAUDECODE=$CLAUDECODE\"",
+        "printenv CLAUDECODE",
+        "env RUST_LOG=debug cargo test",
+        "cargo test -- --nocapture",
+        "git status --short",
+        "git rebase main",
+        "git submodule update --init --recursive",
+        "watch -n 5 'cargo check'",
+    ] {
+        bash(repo.path(), command).success();
+    }
+}
+
+// AC-8 (F3-3, E3-2): git and Claude Code configuration is never written by the write tools.
+#[test]
+fn denies_git_and_claude_writes_even_with_build() {
+    let repo = initialized_repo();
+    let root = repo.path();
+    set_state(root, "ABC-1", r#"{"build": {"allowed": true}}"#);
+    let status = std::process::Command::new("git")
+        .args(["config", "core.hooksPath", ".githooks"])
+        .current_dir(root)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    for rel in [
+        ".git/hooks/pre-push",
+        ".git/config",
+        ".GIT/config",
+        ".githooks/pre-push",
+        ".claude/settings.local.json",
+        ".claude/hooks/x.sh",
+    ] {
+        for tool in WRITE_TOOLS {
+            write_call(root, tool, &root.join(rel).display().to_string())
+                .code(DENY)
+                .stderr(contains("только stapel"));
+        }
+    }
+    write_call(
+        root,
+        "Write",
+        &root.join("src/main.rs").display().to_string(),
+    )
+    .success();
+}
