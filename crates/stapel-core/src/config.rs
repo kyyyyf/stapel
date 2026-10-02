@@ -76,7 +76,7 @@ pub fn validate_prefix(prefix: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "префикс ключа «{prefix}» не подходит: нужно от 2 до 8 заглавных латинских букв, например STP"
+            "ticket key prefix \"{prefix}\" is not valid: use 2 to 8 uppercase Latin letters, e.g. STP"
         ))
     }
 }
@@ -91,8 +91,8 @@ fn validate_writable(entry: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "guard.always_writable: «{entry}» не подходит, нужен относительный путь внутри \
-             репозитория без . и .., например docs/"
+            "guard.always_writable: \"{entry}\" is not valid: use a relative path inside the \
+             repository without . and .., e.g. docs/"
         ))
     }
 }

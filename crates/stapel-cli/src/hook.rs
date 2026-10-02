@@ -11,7 +11,7 @@ pub fn pre_tool_use() -> ExitCode {
     let mut text = String::new();
     let input = std::io::stdin()
         .read_to_string(&mut text)
-        .map_err(|e| format!("вход хука не прочитан: {e}"))
+        .map_err(|e| format!("hook input could not be read: {e}"))
         .and_then(|_| HookInput::parse(&text));
     let input = match input {
         Ok(input) => input,
@@ -26,7 +26,7 @@ pub fn pre_tool_use() -> ExitCode {
     match decision {
         Ok(Decision::Allow) => ExitCode::SUCCESS,
         Ok(Decision::Deny(reason)) => deny(&reason),
-        Err(_) => deny("внутренняя ошибка проверки, вызов отклонён"),
+        Err(_) => deny("internal error in the check; the call is denied"),
     }
 }
 

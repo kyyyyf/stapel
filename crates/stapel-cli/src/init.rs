@@ -7,13 +7,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const CONFIG: &str = ".stapel/stapel.toml";
-const ALLOWLIST: &str = "# Ложные срабатывания ревьюеров, которые решено не исправлять.\n";
+const ALLOWLIST: &str = "# Reviewer false positives that were decided not to fix.\n";
 const IGNORE_LINE: &str = "/.stapel/index/";
 const SETTINGS: &str = ".claude/settings.json";
 const HOOK_COMMAND: &str = "stapel hook pre-tool-use";
 /// The installed hook line. Claude Code treats any exit code but 2 as "go ahead", so a missing
 /// binary would silently disable the guard; this line turns that case into a denial.
-const HOOK_LINE: &str = "command -v stapel >/dev/null 2>&1 || { echo 'stapel: бинарный файл stapel не найден в PATH, вызов запрещён' >&2; exit 2; }; stapel hook pre-tool-use";
+const HOOK_LINE: &str = "command -v stapel >/dev/null 2>&1 || { echo 'stapel: the stapel binary is not on PATH; the call is denied' >&2; exit 2; }; stapel hook pre-tool-use";
 const HOOK_MATCHER: &str = "Bash|Write|Edit|MultiEdit|NotebookEdit";
 /// Seconds Claude Code waits for the hook; the guard answers in milliseconds.
 const HOOK_TIMEOUT: u64 = 10;
@@ -26,7 +26,7 @@ const PRE_PUSH: &str = r#"#!/bin/sh
 # Claude Code sets CLAUDECODE (and CLAUDE_CODE_ENTRYPOINT) in the shell it gives the agent;
 # pushes from there are refused.
 if [ -n "${CLAUDECODE:-}" ] || [ -n "${CLAUDE_CODE_ENTRYPOINT:-}" ]; then
-  echo "stapel: push из сессии агента запрещён; пушит человек из своего терминала" >&2
+  echo "stapel: push from an agent session is not allowed; the human pushes from their own terminal" >&2
   exit 1
 fi
 exit 0
@@ -43,10 +43,10 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
     let config_path = root.join(CONFIG);
     if config_path.exists() {
         let text = std::fs::read_to_string(&config_path).map_err(|e| format!("{CONFIG}: {e}"))?;
-        let config = Config::parse(&text).map_err(|e| format!("{CONFIG} не читается: {e}"))?;
+        let config = Config::parse(&text).map_err(|e| format!("{CONFIG} cannot be read: {e}"))?;
         if prefix.is_some() {
             println!(
-                "{CONFIG} уже есть, ключ тикетов остаётся {}; чтобы сменить, правьте файл",
+                "{CONFIG} already exists, the ticket key stays {}; edit the file to change it",
                 config.tickets.key
             );
         }
@@ -77,12 +77,12 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
 
     if !on_path("stapel") {
         eprintln!(
-            "предупреждение: stapel не найден в PATH; пока его там нет, хук запрещает все вызовы \
-             инструментов, которые проверяет"
+            "warning: stapel is not on PATH; until it is, the hook denies every tool call it \
+             checks"
         );
     }
     if plan.is_empty() {
-        println!("уже готово: ничего не изменено");
+        println!("already set up: nothing changed");
     }
     for step in plan {
         println!("{}", step.label);
@@ -102,9 +102,9 @@ fn repo_root() -> Result<PathBuf, String> {
     let out = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()
-        .map_err(|e| format!("не удалось запустить git: {e}"))?;
+        .map_err(|e| format!("could not run git: {e}"))?;
     if !out.status.success() {
-        return Err("не git-репозиторий: запустите stapel init внутри репозитория".into());
+        return Err("not a git repository: run stapel init inside a repository".into());
     }
     Ok(PathBuf::from(
         String::from_utf8_lossy(&out.stdout).trim_end(),
@@ -115,10 +115,10 @@ fn ask_prefix() -> Result<String, String> {
     let stdin = std::io::stdin();
     if !stdin.is_terminal() && std::env::var_os(ASSUME_TTY).is_none() {
         return Err(
-            "префикс ключа не задан: укажите --prefix, например stapel init --prefix STP".into(),
+            "ticket key prefix not given: pass --prefix, e.g. stapel init --prefix STP".into(),
         );
     }
-    print!("Префикс ключа тикетов (2–8 заглавных латинских букв, например STP): ");
+    print!("Ticket key prefix (2-8 uppercase Latin letters, e.g. STP): ");
     std::io::stdout().flush().map_err(|e| e.to_string())?;
     let mut line = String::new();
     stdin
@@ -134,7 +134,7 @@ fn plan_create(root: &Path, rel: &'static str, content: String, plan: &mut Vec<S
         plan.push(Step {
             rel: rel.into(),
             content,
-            label: format!("создано: {rel}"),
+            label: format!("created: {rel}"),
             executable: false,
         });
     }
@@ -143,7 +143,7 @@ fn plan_create(root: &Path, rel: &'static str, content: String, plan: &mut Vec<S
 fn plan_ignore_index(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     let mut text = match std::fs::read(root.join(".gitignore")) {
         Ok(bytes) => String::from_utf8(bytes)
-            .map_err(|_| ".gitignore не в UTF-8, файл не тронут".to_string())?,
+            .map_err(|_| ".gitignore is not UTF-8; the file was not touched".to_string())?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!(".gitignore: {e}")),
     };
@@ -158,7 +158,7 @@ fn plan_ignore_index(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     plan.push(Step {
         rel: ".gitignore".into(),
         content: text,
-        label: "дописано: .gitignore".into(),
+        label: "appended: .gitignore".into(),
         executable: false,
     });
     Ok(())
@@ -171,23 +171,23 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     let mut settings: Value = if existed {
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{SETTINGS}: {e}"))?;
         serde_json::from_str(&text)
-            .map_err(|e| format!("{SETTINGS} не разбирается как JSON, файл не тронут: {e}"))?
+            .map_err(|e| format!("{SETTINGS} is not valid JSON; the file was not touched: {e}"))?
     } else {
         json!({})
     };
 
     let pre = settings
         .as_object_mut()
-        .ok_or(format!("{SETTINGS}: ожидался JSON-объект"))?
+        .ok_or(format!("{SETTINGS}: expected a JSON object"))?
         .entry("hooks")
         .or_insert_with(|| json!({}))
         .as_object_mut()
-        .ok_or(format!("{SETTINGS}: поле hooks должно быть объектом"))?
+        .ok_or(format!("{SETTINGS}: the hooks field must be an object"))?
         .entry("PreToolUse")
         .or_insert_with(|| json!([]))
         .as_array_mut()
         .ok_or(format!(
-            "{SETTINGS}: поле hooks.PreToolUse должно быть массивом"
+            "{SETTINGS}: the hooks.PreToolUse field must be an array"
         ))?;
 
     // An entry with the bare command was written by an earlier, fail-open version: upgrade it.
@@ -228,11 +228,11 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         rel: SETTINGS.into(),
         content,
         label: if upgraded {
-            format!("обновлено: {SETTINGS} (строка хука stapel)")
+            format!("updated: {SETTINGS} (stapel hook line)")
         } else if existed {
-            format!("дописано: {SETTINGS} (хук stapel)")
+            format!("appended: {SETTINGS} (stapel hook)")
         } else {
-            format!("создано: {SETTINGS}")
+            format!("created: {SETTINGS}")
         },
         executable: false,
     });
@@ -246,9 +246,9 @@ fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         .args(["rev-parse", "--git-path", "hooks/pre-push"])
         .current_dir(root)
         .output()
-        .map_err(|e| format!("не удалось запустить git: {e}"))?;
+        .map_err(|e| format!("could not run git: {e}"))?;
     if !out.status.success() {
-        return Err("git не назвал путь к хукам репозитория".into());
+        return Err("git did not report the repository hooks path".into());
     }
     let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim_end());
     let path = if path.is_absolute() {
@@ -259,8 +259,8 @@ fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     let Ok(rel) = path.strip_prefix(root).map(|p| p.display().to_string()) else {
         // A shared hooks directory would put the hook into every repository that uses it.
         eprintln!(
-            "предупреждение: папка хуков git {} вне репозитория (core.hooksPath); pre-push не \
-             поставлен, второй слой защиты от push агента не работает",
+            "warning: the git hooks directory {} is outside the repository (core.hooksPath); \
+             pre-push was not installed, so the second layer against agent pushes is off",
             path.parent().unwrap_or(&path).display()
         );
         return Ok(());
@@ -272,7 +272,7 @@ fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
                 plan.push(Step {
                     rel: path.display().to_string(),
                     content: String::from_utf8_lossy(&bytes).into_owned(),
-                    label: format!("исправлено: {rel} (pre-push снова исполняемый)"),
+                    label: format!("fixed: {rel} (pre-push is executable again)"),
                     executable: true,
                 });
             }
@@ -280,8 +280,8 @@ fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         }
         Ok(_) => {
             eprintln!(
-                "предупреждение: {rel} уже есть и не от stapel; второй слой защиты от push агента \
-                 не поставлен. Добавьте в него проверку переменной CLAUDECODE вручную"
+                "warning: {rel} exists and is not from stapel; the second layer against agent \
+                 pushes was not installed. Add a check of the CLAUDECODE variable to it by hand"
             );
             Ok(())
         }
@@ -289,7 +289,7 @@ fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
             plan.push(Step {
                 rel: path.display().to_string(),
                 content: PRE_PUSH.into(),
-                label: format!("создано: {rel} (pre-push: второй слой против push агента)"),
+                label: format!("created: {rel} (pre-push: second layer against agent pushes)"),
                 executable: true,
             });
             Ok(())

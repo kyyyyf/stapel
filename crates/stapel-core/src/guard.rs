@@ -25,7 +25,7 @@ pub enum Decision {
 
 impl HookInput {
     pub fn parse(text: &str) -> Result<HookInput, String> {
-        serde_json::from_str(text).map_err(|e| format!("вход хука не разобран: {e}"))
+        serde_json::from_str(text).map_err(|e| format!("hook input could not be parsed: {e}"))
     }
 }
 
@@ -46,12 +46,13 @@ const MACHINE_FILES: [&str; 5] = [
     "tokens.jsonl",
 ];
 
-const PUSH_REASON: &str = "git push агентам запрещён: пушит человек или оркестратор после ревью";
-const BYPASS_REASON: &str = "команда может отключить второй слой защиты от push (git-хук pre-push \
-                             или переменную CLAUDECODE); агентам это запрещено. Прочитать хук можно \
-                             инструментом Read";
-const UNREADABLE_REASON: &str = "команда слишком длинная или слишком глубоко вложена, чтобы \
-                                 проверить её на git push; вызов отклонён";
+const PUSH_REASON: &str =
+    "git push is not allowed for agents: the human or the orchestrator pushes after review";
+const BYPASS_REASON: &str = "the command may switch off the second layer against pushes (the git \
+                             pre-push hook or the CLAUDECODE variable); agents may not do that. To read a \
+                             hook, use the Read tool";
+const UNREADABLE_REASON: &str = "the command is too long, too deeply nested or too costly to \
+                                 check for git push; the call is denied";
 
 /// Longer commands are denied rather than parsed.
 const MAX_COMMAND_LEN: usize = 64 * 1024;
@@ -79,7 +80,7 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
                 "file_path"
             };
             let Some(path) = input.tool_input[field].as_str() else {
-                return Decision::Deny(format!("вход хука без поля tool_input.{field}"));
+                return Decision::Deny(format!("hook input has no tool_input.{field}"));
             };
             decide_write(&resolve(&cwd.join(path)))
         }
@@ -98,8 +99,8 @@ fn decide_write(target: &Path) -> Decision {
 
     if is_machine_file(rel) || is_git_or_claude_config(rel) || in_hooks_dir(&root, target) {
         return Decision::Deny(format!(
-            "файл {} пишет только stapel или человек, не инструмент записи агента \
-             (служебный файл stapel, git или Claude Code)",
+            "only stapel or the human writes {}, not an agent's write tool \
+             (a stapel, git or Claude Code file)",
             rel.display()
         ));
     }
@@ -121,8 +122,8 @@ fn decide_write(target: &Path) -> Decision {
         return Decision::Allow;
     }
     Decision::Deny(format!(
-        "запись в {} запрещена: сборка не разрешена ни у одного тикета \
-         (нужно \"build\": {{\"allowed\": true}} в .stapel/tickets/<ключ>/state.json)",
+        "writing {} is denied: the build is not allowed for any ticket \
+         (needs \"build\": {{\"allowed\": true}} in .stapel/tickets/<key>/state.json)",
         rel.display()
     ))
 }
