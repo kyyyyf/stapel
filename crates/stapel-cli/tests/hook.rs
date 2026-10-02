@@ -3,6 +3,7 @@
 mod common;
 
 use common::{bare_dir, git_repo, stapel};
+use predicates::prelude::*;
 use predicates::str::contains;
 use serde_json::json;
 use std::path::Path;
@@ -738,4 +739,134 @@ fn rejects_non_string_command() {
     hook(repo.path(), "Bash", json!({ "command": ["git", "x"] }))
         .code(DENY)
         .stderr(contains("hook input"));
+}
+
+// ---- STP-2 AC-11: the permit is computed from confirmations ----
+
+fn confirmed_repo() -> tempfile::TempDir {
+    let repo = common::repo_with_ticket();
+    for s in ["spec", "design", "proof"] {
+        stapel(repo.path()).args(["ok", s]).assert().success();
+    }
+    repo
+}
+
+fn code_write(dir: &Path) -> assert_cmd::assert::Assert {
+    write_call(dir, "Write", &dir.join("src/x.rs").display().to_string())
+}
+
+#[test]
+fn allows_code_write_with_fresh_confirmations() {
+    let repo = confirmed_repo();
+    code_write(repo.path()).success();
+}
+
+#[test]
+fn denies_code_write_after_spec_edit() {
+    let repo = confirmed_repo();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Spec", "The spec, edited.");
+    code_write(dir)
+        .code(DENY)
+        .stderr(contains("not confirmed"))
+        .stderr(contains("stapel status"))
+        .stderr(predicates::str::contains("stapel ok").not());
+}
+
+#[test]
+fn closed_ticket_gives_no_permit() {
+    let repo = confirmed_repo();
+    let dir = repo.path();
+    stapel(dir).args(["close", "--reason", "merged"]).assert().success();
+    code_write(dir).code(DENY);
+}
+
+#[test]
+fn legacy_build_flag_still_honoured() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    set_state(dir, "ABC-9", r#"{"key":"ABC-9","build":{"allowed":true}}"#);
+    code_write(dir).success();
+}
+
+#[test]
+fn closed_ticket_flag_not_honoured() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    let mut state = common::state_json(dir, "ABC-1");
+    state["build"] = json!({"allowed": true});
+    state["closed"] = json!({"by": "x", "at": "2026-10-02T00:00:00Z", "reason": "done"});
+    set_state(dir, "ABC-1", &state.to_string());
+    code_write(dir).code(DENY);
+}
+
+#[test]
+fn invalid_config_gives_no_computed_permit() {
+    let repo = confirmed_repo();
+    let dir = repo.path();
+    let path = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&path).unwrap().replace("id = \"plan\"", "id = \"spec\"");
+    std::fs::write(&path, text).unwrap();
+    code_write(dir).code(DENY);
+    // The phase-0 hand flag works even then.
+    set_state(dir, "ABC-9", r#"{"key":"ABC-9","build":{"allowed":true}}"#);
+    code_write(dir).success();
+}
+
+#[test]
+fn unreadable_ticket_gives_no_permit() {
+    let repo = confirmed_repo();
+    let dir = repo.path();
+    std::fs::write(dir.join(".stapel/tickets/ABC-1/ticket.md"), b"## Spec\n\xff\n").unwrap();
+    code_write(dir).code(DENY);
+}
+
+fn pad_summary(dir: &Path, bytes: usize) {
+    let path = dir.join(".stapel/tickets/ABC-1/ticket.md");
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    let line = "padding line in the summary section, not a required one\n";
+    while text.len() + line.len() < bytes {
+        text.push_str(line);
+    }
+    std::fs::write(&path, text).unwrap();
+}
+
+#[test]
+fn oversized_ticket_gives_no_permit() {
+    let repo = confirmed_repo();
+    let dir = repo.path();
+    pad_summary(dir, 4 * 1024 * 1024 + 4096);
+    code_write(dir).code(DENY);
+}
+
+#[test]
+fn permit_check_on_4mib_ticket_is_fast() {
+    let repo = confirmed_repo();
+    let dir = repo.path();
+    pad_summary(dir, 4 * 1024 * 1024 - 4096);
+    let started = std::time::Instant::now();
+    code_write(dir).success();
+    assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?}", started.elapsed());
+}
+
+#[cfg(unix)]
+#[test]
+fn non_regular_file_gives_no_permit() {
+    let repo = confirmed_repo();
+    let dir = repo.path();
+    let ticket = dir.join(".stapel/tickets/ABC-1/ticket.md");
+    std::fs::remove_file(&ticket).unwrap();
+    let status = std::process::Command::new("mkfifo").arg(&ticket).status().unwrap();
+    assert!(status.success());
+    let payload = json!({
+        "tool_name": "Write",
+        "cwd": dir,
+        "tool_input": { "file_path": dir.join("src/x.rs"), "content": "x" },
+    });
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .timeout(std::time::Duration::from_secs(5))
+        .write_stdin(payload.to_string())
+        .assert()
+        .code(DENY);
 }
