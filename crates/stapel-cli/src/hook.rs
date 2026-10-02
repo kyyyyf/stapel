@@ -1,6 +1,6 @@
 //! `stapel hook pre-tool-use`: reads a Claude Code PreToolUse payload from stdin.
 
-use stapel_core::guard::{Decision, HookInput, decide, stapel_root};
+use stapel_core::guard::{Decision, HookInput, decide};
 use std::io::Read;
 use std::process::ExitCode;
 
@@ -18,11 +18,9 @@ pub fn pre_tool_use() -> ExitCode {
         Err(reason) => return deny(&reason),
     };
 
-    let start = match &input.cwd {
-        Some(cwd) => cwd.clone(),
-        None => std::env::current_dir().unwrap_or_default(),
-    };
-    match decide(&input, stapel_root(&start).as_deref()) {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let project_dir = std::env::var_os("CLAUDE_PROJECT_DIR").map(std::path::PathBuf::from);
+    match decide(&input, &cwd, project_dir.as_deref()) {
         Decision::Allow => ExitCode::SUCCESS,
         Decision::Deny(reason) => deny(&reason),
     }

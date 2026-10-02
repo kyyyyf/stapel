@@ -21,9 +21,13 @@ fn stapel_entries(settings: &Value) -> Vec<&Value> {
         .unwrap_or_default()
         .into_iter()
         .filter(|e| {
-            e["hooks"]
-                .as_array()
-                .is_some_and(|hs| hs.iter().any(|h| h["command"] == HOOK_COMMAND))
+            e["hooks"].as_array().is_some_and(|hs| {
+                hs.iter().any(|h| {
+                    h["command"]
+                        .as_str()
+                        .is_some_and(|c| c.contains(HOOK_COMMAND))
+                })
+            })
         })
         .collect()
 }

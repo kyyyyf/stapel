@@ -17,14 +17,14 @@
 
 | № | Критерий | Тест |
 |---|---|---|
-| AC-1 | Разработчик · собирает бинарный файл `stapel` · одной командой `cargo build --release` из корня · на чистой копии репозитория; в рабочей области ровно семь пакетов из `CLAUDE.md`, пять из них — пустые заготовки библиотек. | `cli::workspace_has_seven_members`, `cli::version_prints_package_version` |
-| AC-2 | Разработчик · запускает `stapel init` · в корне git-репозитория без `.stapel/` · и получает `.stapel/stapel.toml`, `.stapel/tickets/`, `.stapel/allowlist.toml` и строку `/.stapel/index/` в `.gitignore`; команда печатает список созданного и завершается с кодом 0. | `init::creates_layout_in_empty_repo`, `init::creates_layout_at_repo_root_from_subdir`, `init::appends_to_existing_gitignore` |
+| AC-1 | Разработчик · собирает бинарный файл `stapel` · одной командой `cargo build --release` из корня · на чистой копии репозитория; в рабочей области ровно семь пакетов из `CLAUDE.md`, пять из них — пустые заготовки библиотек. | `cli::workspace_has_seven_members`, `cli::version_prints_package_version`, `cli::stub_packages_are_empty` |
+| AC-2 | Разработчик · запускает `stapel init` · в корне git-репозитория без `.stapel/` · и получает `.stapel/stapel.toml`, `.stapel/tickets/` (с `.gitkeep`, чтобы папка попала в git), `.stapel/allowlist.toml`, строку `/.stapel/index/` в `.gitignore` и `.claude/settings.json`; команда печатает каждый созданный или дописанный файл и завершается с кодом 0. | `init::creates_layout_in_empty_repo`, `init::creates_layout_at_repo_root_from_subdir`, `init::appends_to_existing_gitignore` |
 | AC-3 | `stapel-core` · читает `stapel.toml`, созданный `init`, · без ошибок · и видит в нём разделы `spec, design, proof, plan, review, summary`, шесть ролей из `docs/PLAN.md` §5 и правило ключа `tickets.key` с префиксом, заданным при `init`. | `core::config::default_config_roundtrips`, `core::config::default_config_has_roles_and_sections`, `core::config::config_rejects_missing_ticket_key` |
 | AC-4 | Разработчик · повторно запускает `stapel init` · в уже инициализированном репозитории · и ни один файл не меняется: содержимое и время изменения те же; команда печатает «уже готово» и завершается с кодом 0. | `init::second_run_changes_nothing` |
-| AC-5 | Разработчик · запускает `stapel init` · когда `stapel.toml` уже есть и отредактирован вручную · и файл остаётся как есть; недостающие части раскладки и хуки дописываются. | `init::keeps_user_edited_config`, `init::second_run_with_other_prefix_keeps_key` |
+| AC-5 | Разработчик · запускает `stapel init` · когда `stapel.toml` уже есть и отредактирован вручную · и файл остаётся как есть; недостающие части раскладки и хуки дописываются. Если `stapel.toml`, `.gitignore` или `.claude/settings.json` не читаются (не разбираются, не UTF-8), `init` отказывает с кодом 1, называет файл и не пишет ничего. | `init::keeps_user_edited_config`, `init::second_run_with_other_prefix_keeps_key`, `init::refuses_unparsable_config`, `init::keeps_non_utf8_gitignore`, `hooks_install::refuses_broken_settings` |
 | AC-6 | `stapel init` · ставит хуки в `.claude/settings.json` · когда файла нет, когда он есть с чужими ключами и хуками, и при повторном запуске · так, что чужие ключи и хуки сохранены, а записи `stapel` не дублируются. | `hooks_install::hooks_into_missing_settings`, `hooks_install::hooks_merge_with_foreign_settings`, `hooks_install::hooks_not_duplicated`, `hooks_install::refuses_broken_settings` |
-| AC-7 | Хук `stapel hook pre-tool-use` · получает от Claude Code вызов `Bash` · с командой, которая выполняет `git push` в любом виде (`git push`, `git -C dir push`, `cd x && git push`, `FOO=1 git push`, `git push` после `;` или `\|\|`) · и отвечает отказом с причиной; команды `git status`, `git log --grep push`, `echo "git push"` пропускает. | `hook::denies_git_push_variants`, `hook::allows_non_push_commands` |
-| AC-8 | Хук `stapel hook pre-tool-use` · получает вызов `Write`, `Edit`, `MultiEdit` или `NotebookEdit` · для пути вне списка `guard.always_writable` из `stapel.toml` · когда ни у одного тикета сборка не разрешена · и отвечает отказом с причиной «сборка не разрешена»; пути внутри `.stapel/` и `docs/` пропускает всегда. | `hook::denies_code_write_without_build`, `hook::allows_stapel_and_docs_writes`, `hook::always_writable_comes_from_config`, `hook::allows_writes_outside_repo` |
+| AC-7 | Хук `stapel hook pre-tool-use` · получает от Claude Code вызов `Bash` · с командой, которая выполняет `git push` в любом виде (`git push`, `git -C dir push`, `cd x && git push`, `FOO=1 git push`, `git push` после `;` или `\|\|`, внутри `if`, `for`, `{ }`, `$( )` и обратных кавычек, за обёртками `env`, `sudo`, `timeout`, `xargs`, `eval` и подобными, а также `git send-pack`, `git-push` и псевдоним через `-c alias.x=push`) · и отвечает отказом с причиной; команды `git status`, `git log --grep push`, `echo "git push"` пропускает. | `hook::denies_git_push_variants`, `hook::allows_non_push_commands`, `hook::denies_git_push_in_compound_forms`, `hook::allows_lookalikes_after_round_one` |
+| AC-8 | Хук `stapel hook pre-tool-use` · получает вызов `Write`, `Edit`, `MultiEdit` или `NotebookEdit` · для пути вне списка `guard.always_writable` из `stapel.toml` (по умолчанию `.stapel/` и `docs/`; неверный или нечитаемый конфиг сужает список до `.stapel/`) · когда ни у одного тикета сборка не разрешена · и отвечает отказом с причиной «сборка не разрешена»; пути из списка пропускает. Репозиторий определяется по самому пути с раскрытыми символическими ссылками, а не по текущей папке агента. Служебные файлы (`.stapel/stapel.toml`, `state.json` и журналы `*.jsonl` тикетов) запрещены инструментам записи всегда, даже при разрешённой сборке. | `hook::denies_code_write_without_build`, `hook::allows_stapel_and_docs_writes`, `hook::always_writable_comes_from_config`, `hook::allows_writes_outside_repo`, `hook::denies_machine_file_writes_even_with_build`, `hook::finds_repo_from_target_and_project_dir`, `hook::resolves_symlinks_before_matching`, `hook::bad_always_writable_does_not_open_everything`, `core::config::config_rejects_bad_always_writable` |
 | AC-9 | Хук · получает вызов записи в код · когда в `.stapel/tickets/<ключ>/state.json` есть `"build": {"allowed": true}` · и пропускает его. | `hook::allows_code_write_when_build_allowed` |
 | AC-10 | Хук · получает вход, который не может разобрать, или вызывается вне репозитория со `stapel.toml` · и не падает: неразборчивый вход отклоняется с причиной, вне репозитория вызов пропускается. | `hook::rejects_garbage_input`, `hook::passes_outside_stapel_repo` |
 | AC-11 | Разработчик · запускает `stapel init` · вне git-репозитория · и получает отказ с кодом 1 и сообщением «не git-репозиторий»; ничего не создаётся. | `init::refuses_outside_git` |
@@ -41,7 +41,9 @@
 2. **Как хук узнаёт, что сборка разрешена.** `state.json` появляется только в STP-2. Рекомендация: STP-1
    фиксирует минимальный контракт — поле `build.allowed` в `state.json` любого тикета, — а STP-2 начинает
    его писать. Альтернатива — отложить запрет записи до STP-2. Ответ (2026-10-02, человек): по рекомендации.
-3. **Что делает хук, если бинарного файла `stapel` нет в `PATH`.** Claude Code считает ошибку команды хука
+3. **Что делает хук, если бинарного файла `stapel` нет в `PATH`.** (Уточнено по находке E-4 ревью: в
+   `settings.json` пишется строка, которая без `stapel` в `PATH` завершается кодом 2, то есть запрещает
+   вызов; предупреждение `init` осталось.) Claude Code считает ошибку команды хука
    (код возврата не 2) незапрещающей, то есть защита тихо пропадает. Рекомендация: `init` проверяет `PATH` и
    предупреждает; в `settings.json` пишется `stapel hook pre-tool-use` без абсолютного пути, чтобы файл
    оставался переносимым между машинами. Ответ (2026-10-02, человек): по рекомендации.
@@ -60,6 +62,12 @@
 - Журналы решений и токенов как команды (STP-3); журнал этого тикета ведётся руками.
 - Запрет записи через `Bash` (`echo > file`, `sed -i`, `cargo fmt`): хук смотрит только на инструменты
   записи. Это известная дыра, закрывается ревью диффа; отдельное решение — в фазе 1.
+- Ложные отказы на тексте heredoc (документа, встроенного в команду оболочки): его строки разбираются как
+  команды. Отказ лишний, но безопасный (находка F-8, не исправляется). Обход — писать такой текст в файл.
+- Псевдоним push, заведённый заранее через `git config alias.x push` и вызванный отдельной командой, и
+  `gh pr create`, который может сам отправить ветку. Это решение STP-6, где появляется `stapel mr open`.
+- Разрешение сборки на конкретный тикет и с ограниченным сроком: сейчас `build.allowed` любого тикета
+  открывает запись всем (находка E-5). Контракт уточняет STP-2 вместе с местом хранения состояния.
 - Хук «ревьюер без записи в git»: ревьюеры фазы 0 работают на `git archive` без `.git`, хук не нужен.
 - Хуки для других агентов, кроме Claude Code.
 - Удаление хуков (`stapel deinit`).
@@ -80,9 +88,21 @@
 **Хук.** Читает JSON Claude Code из stdin (`tool_name`, `tool_input`, `cwd`). Отказ — код 2 и причина в
 stderr: это задокументированный способ запрета, его видит и агент, и человек. Команда `Bash` разбивается
 собственным небольшим лексером (кавычки, обратная косая черта, разделители `; & | ( )` и перевод строки) на
-простые команды; в каждой пропускаются присваивания переменных и обёртки (`env`, `exec`, `sudo` и подобные),
-у `git` — глобальные флаги (`-C`, `-c`, `--git-dir` и подобные), затем проверяется подкоманда. Скрипт после
-`sh -c` или `bash -c` проверяется тем же разбором. `shell-words` из исходного решения не подошёл: он не
+простые команды; перенаправления (`2>&1`, `>log`) отбрасываются, скрипты из `$( )` и обратных кавычек
+внутри двойных кавычек разбираются отдельно. В каждой простой команде пропускаются зарезервированные слова
+(`if`, `then`, `do`, `{`, `!` и подобные) и присваивания переменных. За обёрткой (`env`, `sudo`, `timeout`,
+`xargs` и ещё одиннадцать) push ищется с любого следующего слова, без знания синтаксиса её флагов; `eval`
+разбирает свои аргументы как скрипт; скрипт после `sh -c` или `bash -c` проверяется тем же разбором. У `git`
+пропускаются глобальные флаги (`-C`, `-c`, `--git-dir` и подобные), `-c alias.x=…` проверяется на push,
+затем подкоманда сравнивается с `push`, `send-pack`, `http-push`; программы `git-push` и подобные
+запрещены напрямую.
+
+**Запись.** Путь цели раскрывается: самый длинный существующий предок канонизируется (символические ссылки),
+остаток нормализуется по `.` и `..`. Репозиторий — ближайший предок цели со `.stapel/stapel.toml`. Для
+`Bash` репозиторий ищется от текущей папки агента и от `CLAUDE_PROJECT_DIR`.
+
+**`init` в два этапа.** Сначала читаются и проверяются все файлы, затем всё записывается; отказ на любом
+файле не оставляет частичного состояния. `shell-words` из исходного решения не подошёл: он не
 отделяет `&&` без пробелов (`cd x&&git push`).
 
 **Варианты, которые отброшены.** Регулярное выражение по всей строке — ложные срабатывания на
@@ -95,7 +115,7 @@ stderr: это задокументированный способ запрет�
 |---|---|
 | R-1 Разбор команды пропустит вариант `git push` | `hook::denies_git_push_variants` (таблица из AC-7, дополняется по находкам) |
 | R-2 `init` испортит существующий `settings.json` | `hooks_install::hooks_merge_with_foreign_settings` (сравнение чужих ключей до и после), `hooks_install::refuses_broken_settings` |
-| R-4 Хук молча не работает, потому что `stapel` нет в `PATH` (вопрос 3) | `hooks_install::warns_when_stapel_missing_from_path`, `hooks_install::no_warning_when_stapel_on_path` |
+| R-4 Хук молча не работает, потому что `stapel` нет в `PATH` (вопрос 3) | `hooks_install::warns_when_stapel_missing_from_path`, `hooks_install::no_warning_when_stapel_on_path`, `hooks_install::hook_command_fails_closed_without_stapel`, `hooks_install::hook_command_runs_stapel_when_present` |
 | R-3 Повторный `init` перезапишет файлы с тем же содержимым и сменит время изменения | `init::second_run_changes_nothing` |
 
 ## Доказательство
@@ -104,15 +124,15 @@ stderr: это задокументированный способ запрет�
 
 | Критерий или риск | Тест | Результат |
 |---|---|---|
-| AC-1 | `cli::workspace_has_seven_members`, `cli::version_prints_package_version` | — |
+| AC-1 | `cli::workspace_has_seven_members`, `cli::version_prints_package_version`, `cli::stub_packages_are_empty` | — |
 | AC-2 | `init::creates_layout_in_empty_repo`, `init::creates_layout_at_repo_root_from_subdir`, `init::appends_to_existing_gitignore` | — |
 | AC-3 | `core::config::default_config_roundtrips`, `core::config::default_config_has_roles_and_sections`, `core::config::config_rejects_missing_ticket_key` | — |
 | AC-4, R-3 | `init::second_run_changes_nothing` | — |
-| AC-5 | `init::keeps_user_edited_config`, `init::second_run_with_other_prefix_keeps_key` | — |
+| AC-5 | `init::keeps_user_edited_config`, `init::second_run_with_other_prefix_keeps_key`, `init::refuses_unparsable_config`, `init::keeps_non_utf8_gitignore`, `hooks_install::refuses_broken_settings` | — |
 | AC-6, R-2 | `hooks_install::hooks_into_missing_settings`, `hooks_install::hooks_merge_with_foreign_settings`, `hooks_install::hooks_not_duplicated`, `hooks_install::refuses_broken_settings` | — |
-| R-4 | `hooks_install::warns_when_stapel_missing_from_path`, `hooks_install::no_warning_when_stapel_on_path` | — |
-| AC-7, R-1 | `hook::denies_git_push_variants`, `hook::allows_non_push_commands` | — |
-| AC-8 | `hook::denies_code_write_without_build`, `hook::allows_stapel_and_docs_writes`, `hook::always_writable_comes_from_config`, `hook::allows_writes_outside_repo` | — |
+| R-4 | `hooks_install::warns_when_stapel_missing_from_path`, `hooks_install::no_warning_when_stapel_on_path`, `hooks_install::hook_command_fails_closed_without_stapel`, `hooks_install::hook_command_runs_stapel_when_present` | — |
+| AC-7, R-1 | `hook::denies_git_push_variants`, `hook::allows_non_push_commands`, `hook::denies_git_push_in_compound_forms`, `hook::allows_lookalikes_after_round_one` | — |
+| AC-8 | `hook::denies_code_write_without_build`, `hook::allows_stapel_and_docs_writes`, `hook::always_writable_comes_from_config`, `hook::allows_writes_outside_repo`, `hook::denies_machine_file_writes_even_with_build`, `hook::finds_repo_from_target_and_project_dir`, `hook::resolves_symlinks_before_matching`, `hook::bad_always_writable_does_not_open_everything`, `core::config::config_rejects_bad_always_writable` | — |
 | AC-9 | `hook::allows_code_write_when_build_allowed` | — |
 | AC-10 | `hook::rejects_garbage_input`, `hook::passes_outside_stapel_repo` | — |
 | AC-11 | `init::refuses_outside_git` | — |
@@ -122,7 +142,9 @@ stderr: это задокументированный способ запрет�
 
 Каждый шаг — пара коммитов RED (только тесты), затем GREEN (код). Команда проверки на всех шагах —
 `cargo test --workspace`; на RED ожидается падение названных тестов (или ошибка компиляции только в них),
-на GREEN — все тесты зелёные.
+на GREEN — все тесты зелёные. RED может нести то, без чего тесты не компилируются (манифесты, пустой
+`main`), и правку таблиц тикета; GREEN меняет тесты только при исправлении ошибки в тесте или смене
+формата, который тест проверяет, и говорит об этом в сообщении коммита.
 
 | Шаг | Что | Тесты | Ожидание на RED |
 |---|---|---|---|
@@ -134,6 +156,7 @@ stderr: это задокументированный способ запрет�
 | 6 | Хук: запрет `git push` | AC-7, AC-10 | подкоманды `hook` нет |
 | 7 | Хук: запрет записи до разрешения сборки | AC-8, AC-9 | запись пропускается |
 | 8 | `init --prefix STP` на этом репозитории | ручная проверка, вывод в журнал | — |
+| R1 | Исправления по ревью, раунд 1 | новые тесты AC-1, AC-2, AC-5, AC-7, AC-8, R-4 | см. `findings.jsonl` |
 
 Зависимости: `clap`, `serde`, `serde_json`, `toml`; для тестов `assert_cmd`,
 `tempfile`, `predicates`.

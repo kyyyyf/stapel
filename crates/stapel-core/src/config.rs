@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::path::{Component, Path};
 
 const TEMPLATE: &str = include_str!("stapel.toml");
 const PREFIX_PLACEHOLDER: &str = "@PREFIX@";
@@ -55,8 +56,12 @@ pub struct Guard {
 }
 
 impl Config {
-    pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
-        toml::from_str(text)
+    pub fn parse(text: &str) -> Result<Config, String> {
+        let config: Config = toml::from_str(text).map_err(|e| e.to_string())?;
+        for entry in &config.guard.always_writable {
+            validate_writable(entry)?;
+        }
+        Ok(config)
     }
 
     pub fn to_toml(&self) -> String {
@@ -72,6 +77,22 @@ pub fn validate_prefix(prefix: &str) -> Result<(), String> {
     } else {
         Err(format!(
             "префикс ключа «{prefix}» не подходит: нужно от 2 до 8 заглавных латинских букв, например STP"
+        ))
+    }
+}
+
+/// An `always_writable` entry is a relative path inside the repository, such as `docs/`.
+fn validate_writable(entry: &str) -> Result<(), String> {
+    let path = Path::new(entry.trim_end_matches('/'));
+    let inside = !entry.starts_with('/')
+        && path.components().next().is_some()
+        && path.components().all(|c| matches!(c, Component::Normal(_)));
+    if inside {
+        Ok(())
+    } else {
+        Err(format!(
+            "guard.always_writable: «{entry}» не подходит, нужен относительный путь внутри \
+             репозитория без . и .., например docs/"
         ))
     }
 }
