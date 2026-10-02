@@ -167,21 +167,21 @@ The tool fills in the result; in phase 0 the orchestrator does, from the output 
 
 | Criterion or risk | Test | Result |
 |---|---|---|
-| AC-1 | `cli::workspace_has_seven_members`, `cli::version_prints_package_version`, `cli::stub_packages_are_empty` | — |
-| AC-2 | `init::creates_layout_in_empty_repo`, `init::creates_layout_at_repo_root_from_subdir`, `init::appends_to_existing_gitignore` | — |
-| AC-3 | `core::config::default_config_roundtrips`, `core::config::default_config_has_roles_and_sections`, `core::config::config_rejects_missing_ticket_key` | — |
-| AC-4, R-3 | `init::second_run_changes_nothing` | — |
-| AC-5 | `init::keeps_user_edited_config`, `init::second_run_with_other_prefix_keeps_key`, `init::refuses_unparsable_config`, `init::keeps_non_utf8_gitignore`, `hooks_install::refuses_broken_settings`, `init::refuses_non_utf8_config`, `hooks_install::refuses_non_utf8_settings` | — |
-| AC-6, R-2 | `hooks_install::hooks_into_missing_settings`, `hooks_install::hooks_merge_with_foreign_settings`, `hooks_install::hooks_not_duplicated`, `hooks_install::refuses_broken_settings`, `hooks_install::upgrades_old_hook_line` | — |
-| R-4 | `hooks_install::warns_when_stapel_missing_from_path`, `hooks_install::no_warning_when_stapel_on_path`, `hooks_install::hook_command_fails_closed_without_stapel`, `hooks_install::hook_command_runs_stapel_when_present` | — |
-| R-5 | `hooks_install::installs_pre_push_hook`, `hooks_install::pre_push_blocks_entrypoint_env` | — |
-| AC-7, R-1 | `hook::denies_git_push_variants`, `hook::allows_non_push_commands`, `hook::denies_git_push_in_compound_forms`, `hook::allows_lookalikes_after_round_one`, `hook::denies_git_push_round_two`, `hook::allows_lookalikes_after_round_two`, `hook::pathological_input_is_denied_not_crashed`, `hook::denies_git_push_round_three`, `hook::allows_lookalikes_after_round_three`, `hook::wrapper_eval_chains_are_bounded` | — |
-| AC-8 | `hook::denies_code_write_without_build`, `hook::allows_stapel_and_docs_writes`, `hook::always_writable_comes_from_config`, `hook::allows_writes_outside_repo`, `hook::denies_machine_file_writes_even_with_build`, `hook::finds_repo_from_target_and_project_dir`, `hook::resolves_symlinks_before_matching`, `hook::bad_always_writable_does_not_open_everything`, `core::config::config_rejects_bad_always_writable`, `hook::denies_settings_and_case_variants`, `hook::follows_dangling_symlink`, `hook::denies_git_and_claude_writes_even_with_build`, `hook::denies_global_config_writes` | — |
-| AC-9 | `hook::allows_code_write_when_build_allowed` | — |
-| AC-10 | `hook::rejects_garbage_input`, `hook::passes_outside_stapel_repo`, `hook::rejects_non_string_command` | — |
-| AC-11 | `init::refuses_outside_git` | — |
-| AC-13 | `hooks_install::installs_pre_push_hook`, `hooks_install::keeps_foreign_pre_push`, `hook::denies_pre_push_bypass`, `hook::denies_pre_push_bypass_round_three`, `hooks_install::pre_push_blocks_entrypoint_env`, `hooks_install::skips_hooks_dir_outside_repo`, `hooks_install::repairs_pre_push_exec_bit`, `hook::denies_pre_push_bypass_round_four`, `hook::allows_lookalikes_after_round_four` | — |
-| AC-12 | `init::prefix_from_flag`, `init::prefix_from_prompt`, `init::rejects_bad_prefix`, `init::refuses_without_prefix_noninteractive` | — |
+| AC-1 | `cli::workspace_has_seven_members`, `cli::version_prints_package_version`, `cli::stub_packages_are_empty` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| AC-2 | `init::creates_layout_in_empty_repo`, `init::creates_layout_at_repo_root_from_subdir`, `init::appends_to_existing_gitignore` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| AC-3 | `core::config::default_config_roundtrips`, `core::config::default_config_has_roles_and_sections`, `core::config::config_rejects_missing_ticket_key` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| AC-4, R-3 | `init::second_run_changes_nothing` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| AC-5 | `init::keeps_user_edited_config`, `init::second_run_with_other_prefix_keeps_key`, `init::refuses_unparsable_config`, `init::keeps_non_utf8_gitignore`, `hooks_install::refuses_broken_settings`, `init::refuses_non_utf8_config`, `hooks_install::refuses_non_utf8_settings` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| AC-6, R-2 | `hooks_install::hooks_into_missing_settings`, `hooks_install::hooks_merge_with_foreign_settings`, `hooks_install::hooks_not_duplicated`, `hooks_install::refuses_broken_settings`, `hooks_install::upgrades_old_hook_line` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| R-4 | `hooks_install::warns_when_stapel_missing_from_path`, `hooks_install::no_warning_when_stapel_on_path`, `hooks_install::hook_command_fails_closed_without_stapel`, `hooks_install::hook_command_runs_stapel_when_present` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| R-5 | `hooks_install::installs_pre_push_hook`, `hooks_install::pre_push_blocks_entrypoint_env` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| AC-7, R-1 | `hook::denies_git_push_variants`, `hook::allows_non_push_commands`, `hook::denies_git_push_in_compound_forms`, `hook::allows_lookalikes_after_round_one`, `hook::denies_git_push_round_two`, `hook::allows_lookalikes_after_round_two`, `hook::pathological_input_is_denied_not_crashed`, `hook::denies_git_push_round_three`, `hook::allows_lookalikes_after_round_three`, `hook::wrapper_eval_chains_are_bounded` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| AC-8 | `hook::denies_code_write_without_build`, `hook::allows_stapel_and_docs_writes`, `hook::always_writable_comes_from_config`, `hook::allows_writes_outside_repo`, `hook::denies_machine_file_writes_even_with_build`, `hook::finds_repo_from_target_and_project_dir`, `hook::resolves_symlinks_before_matching`, `hook::bad_always_writable_does_not_open_everything`, `core::config::config_rejects_bad_always_writable`, `hook::denies_settings_and_case_variants`, `hook::follows_dangling_symlink`, `hook::denies_git_and_claude_writes_even_with_build`, `hook::denies_global_config_writes` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| AC-9 | `hook::allows_code_write_when_build_allowed` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| AC-10 | `hook::rejects_garbage_input`, `hook::passes_outside_stapel_repo`, `hook::rejects_non_string_command` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| AC-11 | `init::refuses_outside_git` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| AC-13 | `hooks_install::installs_pre_push_hook`, `hooks_install::keeps_foreign_pre_push`, `hook::denies_pre_push_bypass`, `hook::denies_pre_push_bypass_round_three`, `hooks_install::pre_push_blocks_entrypoint_env`, `hooks_install::skips_hooks_dir_outside_repo`, `hooks_install::repairs_pre_push_exec_bit`, `hook::denies_pre_push_bypass_round_four`, `hook::allows_lookalikes_after_round_four` | pass (`cargo test --workspace`, local, 87cfbcf) |
+| AC-12 | `init::prefix_from_flag`, `init::prefix_from_prompt`, `init::rejects_bad_prefix`, `init::refuses_without_prefix_noninteractive` | pass (`cargo test --workspace`, local, 87cfbcf) |
 
 ## Plan
 
@@ -216,4 +216,23 @@ external reviewer, a drift reviewer.
 
 ## Summary
 
-Generated after the merge.
+Closed on 2026-10-02 at commit `87cfbcf` plus the closing commit. Wall time: one working day, in one
+interactive session.
+
+**Tokens by role.** Measured (subagent totals from task notifications, no input/output split):
+drift 222 672, external 503 711, reviewer 205 555, translator 70 910; total 1 002 848. Estimated (the orchestrator session, which played author and
+builder; never presented as measured): author 66 000, builder 709 000; total 775 000.
+
+**Review.** Four rounds: three full rounds (fresh code, external, drift) and a fourth with the external
+reviewer only, by the human's decision. Findings: 71 in total; 24, 18, 23 and 6 by
+round; 7 HIGH, 25 MEDIUM, 39 LOW. Fates: 63 fixed, 3 partly fixed, 2 accepted, 2 won't fix, 1 needed no change.
+
+**Where the findings could have been caught** (`catchable_at`, classified by the orchestrator after the
+fact for rounds 1–3): spec 14, design 16, test plan 24, code 17. 54 of 71 findings were
+catchable before any code was written. This is the baseline for STP-2 (see CLAUDE.md, "Before the build").
+
+**What review found that mattered.** The push guard as a text filter cannot be complete: the second layer
+(`pre-push`, AC-13) came only in round 2. The agent could unlock its own build permit and rewrite git
+hooks and config with the write tools. The hook failed open on a crash, a timeout and exponential input.
+
+**Human's three lines.** —
