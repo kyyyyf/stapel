@@ -71,15 +71,48 @@ fn config_rejects_bad_always_writable() {
 fn rejects_bad_sections() {
     let base = default_toml("ABC");
     let cases: [(&str, String); 9] = [
-        ("duplicate", base.replace("id = \"design\"", "id = \"SPEC\"")),
-        ("duplicate", base.replace("title = \"Design\"", "title = \"spec\"")),
-        ("Description", base.replace("title = \"Design\"", "title = \"Description\"")),
-        ("depends_on", base.replace("depends_on = [\"spec\"]", "depends_on = [\"nope\"]")),
-        ("depends_on", base.replace("depends_on = [\"spec\"]", "depends_on = [\"design\"]")),
+        (
+            "duplicate",
+            base.replace("id = \"design\"", "id = \"SPEC\""),
+        ),
+        (
+            "duplicate",
+            base.replace("title = \"Design\"", "title = \"spec\""),
+        ),
+        (
+            "Description",
+            base.replace("title = \"Design\"", "title = \"Description\""),
+        ),
+        (
+            "depends_on",
+            base.replace("depends_on = [\"spec\"]", "depends_on = [\"nope\"]"),
+        ),
+        (
+            "depends_on",
+            base.replace("depends_on = [\"spec\"]", "depends_on = [\"design\"]"),
+        ),
         ("{n}", base.replace("key = \"ABC-{n}\"", "key = \"ABC\"")),
-        ("build.requires", base.replace("requires = [\"spec\", \"design\", \"proof\"]", "requires = []")),
-        ("build.requires", base.replace("requires = [\"spec\", \"design\", \"proof\"]", "requires = [\"nope\"]")),
-        ("build.requires", base.replace("requires = [\"spec\", \"design\", \"proof\"]", "requires = [\"review\"]")),
+        (
+            "build.requires",
+            base.replace(
+                "requires = [\"spec\", \"design\", \"proof\"]",
+                "requires = []",
+            ),
+        ),
+        (
+            "build.requires",
+            base.replace(
+                "requires = [\"spec\", \"design\", \"proof\"]",
+                "requires = [\"nope\"]",
+            ),
+        ),
+        (
+            "build.requires",
+            base.replace(
+                "requires = [\"spec\", \"design\", \"proof\"]",
+                "requires = [\"review\"]",
+            ),
+        ),
     ];
     for (word, text) in cases {
         assert_ne!(text, base, "case for {word} did not change the config");
@@ -92,10 +125,18 @@ fn rejects_bad_sections() {
 #[test]
 fn build_requires_defaults() {
     let base = default_toml("ABC");
-    let start = base.find("[build]").expect("starter config has a [build] table");
-    let end = base[start..].find("\n\n").map(|i| start + i).unwrap_or(base.len());
+    let start = base
+        .find("[build]")
+        .expect("starter config has a [build] table");
+    let end = base[start..]
+        .find("\n\n")
+        .map(|i| start + i)
+        .unwrap_or(base.len());
     let without = format!("{}{}", &base[..start], &base[end..]);
     let config = Config::parse(&without).unwrap();
     assert_eq!(config.build.requires, ["spec", "design", "proof"]);
-    assert_eq!(Config::parse(&base).unwrap().build.requires, ["spec", "design", "proof"]);
+    assert_eq!(
+        Config::parse(&base).unwrap().build.requires,
+        ["spec", "design", "proof"]
+    );
 }

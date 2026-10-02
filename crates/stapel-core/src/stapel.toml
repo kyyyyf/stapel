@@ -48,6 +48,10 @@ external = { provider = "anthropic-api", model = "claude-fable-5-1", required = 
 drift    = { provider = "claude-code", model = "claude-sonnet-5-5" }
 cheap    = { provider = "claude-code", model = "claude-haiku-4-5" }
 
+# Sections whose fresh confirmations together permit code writes.
+[build]
+requires = ["spec", "design", "proof"]
+
 # Write guard: agents may always change these paths; the rest only while a build is allowed.
 [guard]
 always_writable = [".stapel/", "docs/"]

@@ -18,6 +18,27 @@ pub struct Config {
     pub sections: Vec<Section>,
     pub models: BTreeMap<String, ModelBinding>,
     pub guard: Guard,
+    #[serde(default)]
+    pub build: Build,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Build {
+    /// Sections whose fresh confirmations together permit code writes.
+    #[serde(default = "default_requires")]
+    pub requires: Vec<String>,
+}
+
+impl Default for Build {
+    fn default() -> Self {
+        Build {
+            requires: default_requires(),
+        }
+    }
+}
+
+fn default_requires() -> Vec<String> {
+    ["spec", "design", "proof"].map(String::from).to_vec()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -61,7 +82,66 @@ impl Config {
         for entry in &config.guard.always_writable {
             validate_writable(entry)?;
         }
+        config.validate()?;
         Ok(config)
+    }
+
+    /// Checks that sections, dependencies, the key pattern and `build.requires` fit together.
+    fn validate(&self) -> Result<(), String> {
+        if !self.tickets.key.contains("{n}") {
+            return Err(format!(
+                "tickets.key \"{}\" has no {{n}} for the ticket number",
+                self.tickets.key
+            ));
+        }
+        let mut ids = std::collections::HashSet::new();
+        let mut titles = std::collections::HashSet::new();
+        for section in &self.sections {
+            if !ids.insert(section.id.to_lowercase()) {
+                return Err(format!("sections: duplicate id \"{}\"", section.id));
+            }
+            if section.title.trim().eq_ignore_ascii_case("description") {
+                return Err(
+                    "sections: the title Description is reserved for the ticket description".into(),
+                );
+            }
+            if !titles.insert(section.title.trim().to_lowercase()) {
+                return Err(format!("sections: duplicate title \"{}\"", section.title));
+            }
+        }
+        for section in &self.sections {
+            for dep in &section.depends_on {
+                if dep.eq_ignore_ascii_case(&section.id) {
+                    return Err(format!("sections: {} depends_on itself", section.id));
+                }
+                if self.section(dep).is_none() {
+                    return Err(format!(
+                        "sections: {} depends_on unknown section \"{dep}\"",
+                        section.id
+                    ));
+                }
+            }
+        }
+        if self.build.requires.is_empty() {
+            return Err("build.requires is empty: name the sections the build needs".into());
+        }
+        for id in &self.build.requires {
+            match self.section(id) {
+                None => return Err(format!("build.requires names unknown section \"{id}\"")),
+                Some(s) if s.owner == "generated" => {
+                    return Err(format!(
+                        "build.requires names \"{id}\", which is generated and cannot be confirmed"
+                    ));
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// The section with this id, compared without case.
+    pub fn section(&self, id: &str) -> Option<&Section> {
+        self.sections.iter().find(|s| s.id.eq_ignore_ascii_case(id))
     }
 
     pub fn to_toml(&self) -> String {
