@@ -1,127 +1,128 @@
-# stapel — общий план
+# stapel — overall plan
 
-Статус: план на старте проекта, 2026-10-02. Меняется решениями, записанными в тикетах.
+Status: plan at the start of the project, 2026-10-02. Changed by decisions recorded in tickets.
 
-## 1. Что это
+## 1. What it is
 
-`stapel` — инструмент, который ведёт тикет разработки от описания до слияния так, чтобы результат был
-повторяемым, процесс понятным без чтения внутренностей, а расход токенов измеренным с первого дня.
-Он рассчитан на команду из трёх ролей — продукт, инженер, QA — которые могут быть одним человеком.
-Работает на любом репозитории, где есть папка `.stapel/`. Интерфейсы: командная строка, Zed, Claude Code
-в панели агента Zed, merge request в GitLab или GitHub.
+`stapel` is a tool that takes a development ticket from description to merge so that the result is
+repeatable, the process is understandable without reading the internals, and token spending is measured from
+day one. It is built for a team of three roles — product, engineer, QA — who may be the same person. It
+works on any repository that has a `.stapel/` folder. Interfaces: command line, Zed, Claude Code in the Zed
+agent panel, a merge request in GitLab or GitHub.
 
-Название — стапель: место, где корабль собирают по шагам, прежде чем спустить на воду.
+The name means a slipway: the place where a ship is built step by step before it is launched.
 
-## 2. Принципы
+## 2. Principles
 
-1. **Договорённости становятся проверяемыми артефактами.** Критерий приёмки — это тест. Риск решения —
-   это тест. Утверждение агента помечено как «проверено», «прочитано» или «предположение».
-2. **Детерминизм из кода.** Всё, что может проверить программа, проверяет программа: тесты, порядок
-   RED→GREEN, «критерий → тест», дифф против плана. Модель отвечает только за суждение.
-3. **Состояние — это факты, этап вычисляется.** Хранятся подтверждения с хешем раздела, зелёные шаги на
-   коммите, открытые находки, выпуск. «Чьё решение сейчас нужно» выводится из фактов.
-4. **Проверки трёх сортов.** Смысловые останавливают. Ошибки формата инструмент чинит сам. Советы видны и
-   не блокируют.
-5. **Люди принимают только решения.** Ответ на вопрос, выбор варианта, подтверждение, «не исправлять,
-   потому что». Каждое решение записано: кто, когда, почему.
-6. **Одна живая сессия автора на тикет, независимые агенты только на ревью.** Кеш промпта работает,
-   независимость там, где она нужна.
-7. **Индекс отвечает на вопросы, а не угадывает файлы.** Его продукт — радиус поражения изменения и
-   выборочный прогон тестов.
-8. **Токены считаются с первого дня**, по ролям, с пометкой «замер» или «оценка».
-9. **Один бинарный файл.** Без окружений и зависимостей на машине разработчика.
-10. **Процесс — это данные.** Определения разделов, проверок, ролей и моделей лежат в TOML и Markdown,
-    ядро их исполняет.
+1. **Agreements become verifiable artifacts.** An acceptance criterion is a test. A design risk is a test.
+   An agent's claim is marked "verified", "read" or "assumption".
+2. **Determinism comes from code.** Everything a program can check, the program checks: tests, the RED→GREEN
+   order, "criterion → test", the diff against the plan. The model is responsible only for judgment.
+3. **State is facts, the phase is computed.** What is stored: confirmations with a section hash, green steps
+   on a commit, open findings, the release. "Whose decision is needed now" is derived from the facts.
+4. **Three kinds of checks.** Semantic ones stop the process. Format errors the tool fixes itself. Advice is
+   visible and does not block.
+5. **People make only decisions.** Answering a question, choosing an option, confirming, "do not fix,
+   because". Every decision is recorded: who, when, why.
+6. **One live author session per ticket, independent agents only for review.** The prompt cache works, and
+   independence is where it is needed.
+7. **The index answers questions instead of guessing files.** Its product is the blast radius of a change
+   and a selective test run.
+8. **Tokens are counted from day one**, by role, marked "measured" or "estimate".
+9. **One binary.** No environments and no dependencies on the developer's machine.
+10. **The process is data.** Definitions of sections, checks, roles and models live in TOML and Markdown;
+    the core executes them.
 
-## 3. Как это выглядит для команды
+## 3. What it looks like for the team
 
-Пять действий и один запрос:
+Five actions and one query:
 
 ```text
-stapel new <ключ|ссылка>   завести тикет из описания или задачи во внешнем трекере
-stapel ask                 агент задаёт вопросы с рекомендацией, человек отвечает
-stapel ok <раздел>         подтвердить раздел: spec | design | proof | review
-stapel build               сборка по шагам, каждый шаг RED → GREEN
-stapel ship                слить MR, записать итог
-stapel q <вопрос>          запрос к индексу: symbol | refs | callers | tests | history | impact
+stapel new <key|link>      create a ticket from a description or a task in an external tracker
+stapel ask                 the agent asks questions with a recommendation, the human answers
+stapel ok <section>        confirm a section: spec | design | proof | review
+stapel build               build step by step, each step RED → GREEN
+stapel ship                merge the MR, record the summary
+stapel q <question>        query the index: symbol | refs | callers | tests | history | impact
 ```
 
-Служебные: `status`, `inbox` (что ждёт меня), `guide` (пошаговая процедура), `init`, `index`.
+Auxiliary: `status`, `inbox` (what is waiting for me), `guide` (step-by-step procedure), `init`, `index`.
 
-Один файл для людей — `ticket.md`:
+One file for people — `ticket.md`:
 
-| Раздел | Владелец | Содержание |
+| Section | Owner | Contents |
 |---|---|---|
-| Описание | заказчик | исходная задача, ссылка на трекер |
-| Спека | продукт | критерии приёмки (каждый — тест), вопросы с ответами, «не входит» |
-| Решение | инженер | варианты, выбор с причиной, риски (каждый — тест) |
-| Доказательство | QA | таблица «критерий или риск → тест → результат» (результат подставляет инструмент) |
-| План | инженер | шаги сборки: тесты, команда проверки, ожидание |
-| Ревью | генерируется | карта «обязательно / желательно / можно пропустить», находки и их судьба |
-| Итог | генерируется | время, токены по ролям, раунды ревью, что нашло ревью, три строки человека |
+| Description | customer | the original task, a link to the tracker |
+| Spec | product | acceptance criteria (each one is a test), questions with answers, "Out of scope" |
+| Design | engineer | options, the choice with a reason, risks (each one is a test) |
+| Proof | QA | a table "criterion or risk → test → result" (the tool fills in the result) |
+| Plan | engineer | build steps: tests, the check command, the expectation |
+| Review | generated | a map "required / desirable / can be skipped", findings and their fate |
+| Summary | generated | time, tokens by role, review rounds, what the review found, three lines from a human |
 
-Машинные файлы рядом, их пишет только инструмент: `state.json` (факты), `decisions.jsonl`,
+Machine files sit next to it, and only the tool writes them: `state.json` (facts), `decisions.jsonl`,
 `findings.jsonl`, `runs.jsonl`, `tokens.jsonl`.
 
-Роли работают параллельно по черновикам. Подтверждение привязано к хешу раздела: изменилась спека —
-устарели подтверждения решения и доказательства, инструмент показывает, что именно изменилось. Сборка
-разрешена, когда три подтверждения относятся к одной версии спеки; инженер может начать раньше с пометкой
-«на свой риск».
+Roles work in parallel on drafts. A confirmation is tied to the section hash: if the spec changed, the
+confirmations of the design and the proof become stale, and the tool shows exactly what changed. The build
+is permitted when the three confirmations refer to the same version of the spec; the engineer may start
+earlier with a mark "at own risk".
 
-Объём задачи определяют правила (сколько модулей задето, меняется ли интерфейс или формат данных,
-миграция, безопасность), человек может поднять, понизить — с причиной. Маленькая задача идёт тем же путём,
-только короче: её разделы состоят из одной строки или создаются сами.
+The scope is determined by rules (how many modules are touched, whether an interface or a data format
+changes, a migration, security); a human may raise or lower it, with a reason. A small task goes the same
+way, only shorter: its sections consist of one line or are created automatically.
 
-## 4. Архитектура
+## 4. Architecture
 
-Rust, одна рабочая область cargo с несколькими пакетами:
+Rust, one cargo workspace with several packages:
 
-| Пакет | За что отвечает |
+| Package | Responsibility |
 |---|---|
-| `stapel-core` | тикеты, факты состояния, хеши разделов, проверки, журнал решений, определения процесса из TOML |
-| `stapel-agent` | провайдеры моделей, роли, пакеты контекста с бюджетом, журнал токенов, запуск автора и ревьюеров |
-| `stapel-index` | ядро индекса и адаптеры языков: структура (tree-sitter), ссылки (SCIP), тесты, история git; радиус поражения |
-| `stapel-forge` | MR/PR, CI, комментарии к строкам: GitLab и GitHub через `glab`/`gh` или API |
-| `stapel-mcp` | MCP-сервер: запросы индекса и состояние тикета для агента |
-| `stapel-lsp` | LSP-сервер для Zed: кнопки над разделами, подсветка, подсказки |
-| `stapel-cli` | бинарный файл `stapel` |
+| `stapel-core` | tickets, state facts, section hashes, checks, the decision log, process definitions from TOML |
+| `stapel-agent` | model providers, roles, context packages with a budget, the token journal, running the author and the reviewers |
+| `stapel-index` | the index core and language adapters: structure (tree-sitter), references (SCIP), tests, git history; blast radius |
+| `stapel-forge` | MR/PR, CI, line comments: GitLab and GitHub through `glab`/`gh` or the API |
+| `stapel-mcp` | MCP server: index queries and ticket state for the agent |
+| `stapel-lsp` | LSP server for Zed: buttons above sections, highlighting, hints |
+| `stapel-cli` | the `stapel` binary |
 
-Раскладка в репозитории проекта:
+Layout in the project repository:
 
 ```text
 .stapel/
-  stapel.toml          процесс: разделы, проверки, роли, модели, правила объёма
+  stapel.toml          process: sections, checks, roles, models, scope rules
   tickets/STP-12/      ticket.md, state.json, decisions.jsonl, findings.jsonl, runs.jsonl, tokens.jsonl
-  index/               кеш индекса (не в git)
-  allowlist.toml       ложные срабатывания ревьюеров
+  index/               index cache (not in git)
+  allowlist.toml       reviewers' false positives
 ```
 
-Состояние тикетов живёт в git: либо в самой ветке тикета рядом с кодом, либо в отдельной ветке состояния
-(как в klc). Выбор — решение стадии 1, по умолчанию отдельная ветка `stapel-state`.
+Ticket state lives in git: either in the ticket's own branch next to the code, or in a separate state
+branch (as in klc). The choice is a phase 1 decision; by default a separate branch `stapel-state`.
 
-Адаптер языка — это четыре вещи: грамматика tree-sitter, источник ссылок (SCIP-индексатор или запасной
-вариант на ripgrep с пометкой «неточно»), распознавание тестов, границы модулей. Первые адаптеры: Python,
-TypeScript/JavaScript, Go, Rust. C++ добавляется потом как ещё один адаптер (scip-clang); ядро не меняется.
+A language adapter is four things: a tree-sitter grammar, a source of references (a SCIP indexer or a
+fallback on ripgrep marked "imprecise"), test recognition, module boundaries. The first adapters: Python,
+TypeScript/JavaScript, Go, Rust. C++ is added later as one more adapter (scip-clang); the core does not
+change.
 
-## 5. Модели и провайдеры
+## 5. Models and providers
 
-Провайдеры: Claude Code по подписке (расход берётся из его JSON-вывода), Anthropic API по ключу (поле
-`usage`), место под другие. Роль привязана к модели в `stapel.toml`; журнал токенов приводит записи к одному
-виду и помечает «замер» или «оценка».
+Providers: Claude Code on a subscription (usage is taken from its JSON output), the Anthropic API with a key
+(the `usage` field), room for others. A role is bound to a model in `stapel.toml`; the token journal brings
+records to one form and marks them "measured" or "estimate".
 
-Стартовые значения, менять по замерам:
+Starting values, to be changed by measurements:
 
-| Роль | Модель | Почему |
+| Role | Model | Why |
 |---|---|---|
-| автор спеки и решения (`ask`, варианты) | claude-opus-5-5 | суждение, вопросы, дизайн |
-| сборщик (`build`) | claude-sonnet-5-5 | много механической работы по плану; дешевле |
-| свежий ревьюер кода | claude-sonnet-5-5 | независимый взгляд на дифф по критериям |
-| внешний ревьюер | claude-fable-5-1 | самая сильная модель и другая, чем у автора: настоящая независимость |
-| ревьюер расхождений (код ↔ план ↔ спека) | claude-sonnet-5-5 | сверка, не творчество |
-| дешёвые суждения (объём задачи, классификация находки) | claude-haiku-4-5 | там, где детерминированного правила не хватило |
+| spec and design author (`ask`, options) | claude-opus-5-5 | judgment, questions, design |
+| builder (`build`) | claude-sonnet-5-5 | a lot of mechanical work by the plan; cheaper |
+| fresh code reviewer | claude-sonnet-5-5 | an independent look at the diff against the criteria |
+| external reviewer | claude-fable-5-1 | the strongest model and a different one from the author's: real independence |
+| drift reviewer (code ↔ plan ↔ spec) | claude-sonnet-5-5 | cross-checking, not creative work |
+| cheap judgments (scope, finding classification) | claude-haiku-4-5 | where a deterministic rule was not enough |
 
 ```toml
-# .stapel/stapel.toml — фрагмент
+# .stapel/stapel.toml — fragment
 [models]
 author   = { provider = "claude-code", model = "claude-opus-5-5" }
 builder  = { provider = "claude-code", model = "claude-sonnet-5-5" }
@@ -131,69 +132,72 @@ drift    = { provider = "claude-code", model = "claude-sonnet-5-5" }
 cheap    = { provider = "claude-code", model = "claude-haiku-4-5" }
 ```
 
-Если у роли нет ключа или подписки, инструмент говорит об этом и работает тем, что есть (`required = false`
-у внешнего ревьюера). На стадии 0 роль оркестратора выполняет Claude Code в интерактивной сессии; с
-стадии 1 — сам `stapel`.
+If a role has no key or subscription, the tool says so and works with what it has (`required = false` for
+the external reviewer). In phase 0 the orchestrator role is played by Claude Code in an interactive session;
+from phase 1 it is `stapel` itself.
 
-## 6. Интеграции
+## 6. Integrations
 
-- **Forge.** Один тикет — одна ветка — один MR. `build` открывает MR черновиком на первом шаге. Находки
-  ревьюеров и комментарии людей видны как комментарии к строкам MR; источник правды — `findings.jsonl`.
-  Комментарий человека в MR или в Zed становится находкой вида `human-review`, сборщик обязан её оценить.
-- **CI.** Доказательство теста — запись «команда, вывод, коммит, источник». Источник: CI или локальный
-  прогон. Оба допустимы, разница видна в итоге тикета.
-- **Трекер.** Адаптер с первого дня: ключ, ссылка, статус наружу. Jira подключается позже.
-- **Zed.** `stapel-lsp` для `ticket.md` и кода (кнопки, подсветка, подсказки), `inbox` в строке состояния,
-  Claude Code в панели агента через ACP, задачи Zed и горячие клавиши как быстрый старт.
-- **Хуки Claude Code.** Ставятся при `init`: нет записи в код до разрешения сборки, нет `git push` у агентов,
-  ревьюеры без записи в git.
+- **Forge.** One ticket — one branch — one MR. `build` opens the MR as a draft at the first step. Reviewers'
+  findings and people's comments are visible as MR line comments; the source of truth is `findings.jsonl`.
+  A human's comment in the MR or in Zed becomes a finding of kind `human-review`, and the builder must
+  assess it.
+- **CI.** The proof of a test is a record "command, output, commit, source". The source is CI or a local
+  run. Both are acceptable, and the difference is visible in the ticket summary.
+- **Tracker.** An adapter from day one: key, link, status sent outward. Jira is connected later.
+- **Zed.** `stapel-lsp` for `ticket.md` and code (buttons, highlighting, hints), `inbox` in the status bar,
+  Claude Code in the agent panel through ACP, Zed tasks and hotkeys as a quick start.
+- **Claude Code hooks.** Installed by `init`: no writes to code before the build permit, no `git push` for
+  agents, reviewers without write access to git.
 
-## 7. Что переносится из klc
+## 7. What is carried over from klc
 
-Как идеи и данные, не как код: формат находок и приём ответов одной командой; роли ревьюеров и их
-подсказки; вопросы с рекомендацией и карта покрытия; проверка критериев (форма «кто · что · с чем · при
-каком условии», размытые слова, «не входит»); происхождение утверждений; сверка код ↔ план ↔ спека; повтор
-проверок на финальном коммите; причина возврата; белый список ложных срабатываний; ревью на изолированной
-копии; хеши до и после живых операций и репетиция на копии (`guide`); проверка объёма через радиус
-поражения; простые блокировки разделов; защита публичного зеркала от приватных терминов; хуки против
-записи агентами.
+As ideas and data, not as code: the finding format and accepting answers with one command; the reviewer
+roles and their prompts; questions with a recommendation and a coverage map; criteria checking (the form
+"who · what · with what · under what condition", vague words, "Out of scope"); the provenance of claims;
+the code ↔ plan ↔ spec cross-check; repeating the checks on the final commit; the reason for a return; the
+allowlist of false positives; review on an isolated copy; hashes before and after live operations and a
+rehearsal on a copy (`guide`); scope checking through the blast radius; simple section locks; protecting
+the public mirror from private terms; hooks against writes by agents.
 
-Не переносится: отдельные этапы learn и manual, треки как разные наборы этапов, ранжирование файлов под
-тикет, дашборды, которые рисует модель.
+Not carried over: the separate learn and manual stages, tracks as different sets of stages, ranking files
+for a ticket, dashboards drawn by a model.
 
-## 8. Чем меряем успех
+## 8. How success is measured
 
-На одних и тех же тикетах через `stapel` и через klc (стадия 4):
+On the same tickets through `stapel` and through klc (phase 4):
 
-| Метрика | Как считаем |
+| Metric | How it is counted |
 |---|---|
-| часы человека на тикет | из журнала решений: время между решениями, которые требовали человека |
-| остановки не по делу | сколько раз процесс остановился не из-за дефекта кода |
-| раунды ревью и найденные дефекты | из `findings.jsonl` |
-| токены на тикет, по ролям | из `tokens.jsonl`, только замеры |
-| экономия индекса | тот же тикет с индексом и без: токены и ходы до первого верного изменения |
-| минуты CI | выборочный прогон против полного |
+| human hours per ticket | from the decision log: the time between decisions that required a human |
+| stops for no good reason | how many times the process stopped for a reason other than a code defect |
+| review rounds and defects found | from `findings.jsonl` |
+| tokens per ticket, by role | from `tokens.jsonl`, measurements only |
+| index savings | the same ticket with and without the index: tokens and turns to the first correct change |
+| CI minutes | selective run against a full run |
 
-## 9. Риски
+## 9. Risks
 
-- **Снова обрастёт сложностью.** Защита: процесс — данные; каждая новая проверка должна быть смысловой или
-  самочинящейся; раз в стадию — ревизия команд и проверок с цифрами их использования.
-- **Rust замедлит ранние итерации.** Защита: ядро маленькое, всё изменчивое — в TOML и Markdown.
-- **SCIP не для всех языков и не всегда актуален.** Защита: запасной путь на tree-sitter и ripgrep с
-  честной пометкой «неточно»; карта ревью отправляет людей смотреть именно неточные места.
-- **Токены субагентов внутри интерактивной сессии Claude Code трудно измерить.** Защита: журналы
-  субагентов; пока числа нет — пометка «оценка», никогда не выдавать её за замер.
-- **Один сопровождающий.** Защита: инструмент должен вести собственные тикеты как можно раньше (стадия 1),
-  чтобы процесс не держался на памяти одного человека.
+- **It will grow complicated again.** Defense: the process is data; every new check must be semantic or
+  self-fixing; once per phase, a revision of the commands and checks with the numbers of their use.
+- **Rust will slow down early iterations.** Defense: the core is small, everything changeable is in TOML and
+  Markdown.
+- **SCIP is not for every language and is not always up to date.** Defense: a fallback path on tree-sitter
+  and ripgrep with an honest mark "imprecise"; the review map sends people to look at exactly the imprecise
+  places.
+- **Subagent tokens inside an interactive Claude Code session are hard to measure.** Defense: subagent logs;
+  until there is a number, the mark "estimate", never presenting it as a measurement.
+- **A single maintainer.** Defense: the tool must run its own tickets as early as possible (phase 1), so
+  that the process does not depend on one person's memory.
 
-## 10. Стадии
+## 10. Phases
 
-Подробно — в `docs/PHASES.md`.
+In detail — in `docs/PHASES.md`.
 
 ```text
-0  загрузка          ядро состояния, разделы, подтверждения, RED→GREEN, находки, токены      ~1 неделя
-1  самообслуживание  stapel ведёт собственные тикеты от new до ship                           ~2 недели
-2  индекс            адаптеры языков, радиус поражения, MCP, пакеты контекста с бюджетом      ~2–3 недели
-3  Zed               LSP, inbox, строка состояния, guide                                      ~2 недели
-4  проверка          3–5 тикетов klc через stapel против klc; решение о судьбе klc            ~1–2 недели
+0  bootstrap         state core, sections, confirmations, RED→GREEN, findings, tokens        ~1 week
+1  self-service      stapel runs its own tickets from new to ship                            ~2 weeks
+2  index             language adapters, blast radius, MCP, context packages with a budget    ~2–3 weeks
+3  Zed               LSP, inbox, status bar, guide                                           ~2 weeks
+4  verification      3–5 klc tickets through stapel against klc; a decision on klc's fate    ~1–2 weeks
 ```

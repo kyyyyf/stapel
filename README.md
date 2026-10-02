@@ -1,13 +1,13 @@
 # stapel
 
-Инструмент, который ведёт тикет разработки от описания до слияния так, чтобы результат был повторяемым,
-процесс — понятным без чтения внутренностей, а расход токенов — измеренным с первого дня.
+A tool that takes a development ticket from description to merge so that the result is repeatable, the
+process is understandable without reading the internals, and token spending is measured from day one.
 
-Стапель — место, где корабль собирают по шагам, прежде чем спустить на воду.
+Stapel is a slipway: the place where a ship is built step by step before it is launched.
 
-- Общий план: [docs/PLAN.md](docs/PLAN.md)
-- План фаз: [docs/PHASES.md](docs/PHASES.md)
+- Overall plan: [docs/PLAN.md](docs/PLAN.md)
+- Phase plan: [docs/PHASES.md](docs/PHASES.md)
 
-Статус: фаза 0, загрузка.
+Status: phase 0, bootstrap.
 
-Лицензия: MIT, см. [LICENSE](LICENSE).
+License: MIT, see [LICENSE](LICENSE).

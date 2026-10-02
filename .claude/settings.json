@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v stapel >/dev/null 2>&1 || { echo 'stapel: бинарный файл stapel не найден в PATH, вызов запрещён' >&2; exit 2; }; stapel hook pre-tool-use",
+            "command": "command -v stapel >/dev/null 2>&1 || { echo 'stapel: the stapel binary is not on PATH; the call is denied' >&2; exit 2; }; stapel hook pre-tool-use",
             "timeout": 10
           }
         ]

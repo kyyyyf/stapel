@@ -1,45 +1,45 @@
-# Процесс stapel для этого репозитория. Файл создан `stapel init`; правки сохраняются при повторном запуске.
+# The stapel process for this repository. Created by `stapel init`; hand edits survive later runs.
 
 [tickets]
-# Ключ нового тикета; {n} — следующий номер.
+# Key of a new ticket; {n} is the next number.
 key = "STP-{n}"
 
-# Разделы ticket.md в порядке следования. depends_on: изменение этих разделов делает подтверждение
-# текущего устаревшим.
+# Sections of ticket.md in order. depends_on: a change in these sections makes a confirmation of this
+# one stale.
 [[sections]]
 id = "spec"
-title = "Спека"
+title = "Spec"
 owner = "product"
 
 [[sections]]
 id = "design"
-title = "Решение"
+title = "Design"
 owner = "engineer"
 depends_on = ["spec"]
 
 [[sections]]
 id = "proof"
-title = "Доказательство"
+title = "Proof"
 owner = "qa"
 depends_on = ["spec", "design"]
 
 [[sections]]
 id = "plan"
-title = "План"
+title = "Plan"
 owner = "engineer"
 depends_on = ["spec", "design"]
 
 [[sections]]
 id = "review"
-title = "Ревью"
+title = "Review"
 owner = "generated"
 
 [[sections]]
 id = "summary"
-title = "Итог"
+title = "Summary"
 owner = "generated"
 
-# Роль → модель. Стартовые значения из docs/PLAN.md, менять по замерам токенов.
+# Role -> model. Starting values from docs/PLAN.md; change them by measured tokens.
 [models]
 author   = { provider = "claude-code", model = "claude-opus-5-5" }
 builder  = { provider = "claude-code", model = "claude-sonnet-5-5" }
@@ -48,6 +48,6 @@ external = { provider = "anthropic-api", model = "claude-fable-5-1", required = 
 drift    = { provider = "claude-code", model = "claude-sonnet-5-5" }
 cheap    = { provider = "claude-code", model = "claude-haiku-4-5" }
 
-# Хук записи: эти пути агент может менять всегда, остальные — только при разрешённой сборке.
+# Write guard: agents may always change these paths; the rest only while a build is allowed.
 [guard]
 always_writable = [".stapel/", "docs/"]

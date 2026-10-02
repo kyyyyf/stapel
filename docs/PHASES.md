@@ -1,192 +1,196 @@
-# stapel — план фаз
+# stapel — phase plan
 
-Каждая фаза описана одинаково: цель, что входит, критерии приёмки, критерий выхода, как ведётся работа.
-Критерии приёмки здесь намеренно короткие; полные критерии и тесты появятся в `ticket.md` каждого тикета.
-Оценки сроков — для одного сопровождающего, который ведёт работу через агентов.
+Every phase is described the same way: goal, what is included, acceptance criteria, exit criterion, how the
+work is run. The acceptance criteria here are deliberately short; the full criteria and tests will appear in
+the `ticket.md` of each ticket. Time estimates are for a single maintainer who runs the work through agents.
 
-## Как ведётся работа на каждой фазе
+## How the work is run in each phase
 
-| Фаза | Кто оркестратор | Процесс |
+| Phase | Who is the orchestrator | Process |
 |---|---|---|
-| 0 | Claude Code в интерактивной сессии | тот же процесс, что строим, но выполненный вручную: `ticket.md` на тикет, RED→GREEN коммитами, три ревьюера-агента на `git archive` текущего коммита, находки в едином формате, журнал токенов из отчётов агентов |
-| 1 и дальше | `stapel` | каждый тикет `stapel` идёт через `stapel` |
+| 0 | Claude Code in an interactive session | the same process we are building, but carried out by hand: a `ticket.md` per ticket, RED→GREEN commits, three reviewer agents on a `git archive` of the current commit, findings in a single format, a token journal from the agents' reports |
+| 1 onward | `stapel` | every `stapel` ticket goes through `stapel` |
 
-Правила на всех фазах: агенты не делают `git push`; ревьюеры работают только на копии и без записи в git;
-никаких приватных терминов в отслеживаемых файлах и сообщениях коммитов; на каждый критерий приёмки — тест,
-который сначала падает.
-
----
-
-## Фаза 0 — загрузка (около недели)
-
-**Цель.** Минимальное ядро, с которым можно вести тикет вручную, но уже по правилам инструмента.
-
-**Что входит.**
-
-- Рабочая область cargo: `stapel-core`, `stapel-cli`; остальные пакеты пустые заготовки.
-- `stapel init`: создаёт `.stapel/`, `stapel.toml` со стартовыми разделами, ролями и моделями, ставит хуки
-  Claude Code (запрет `git push` агентам, запрет записи в код до разрешения сборки).
-- `stapel new`: `ticket.md` с разделами и `state.json`; ключ тикета по правилу из `stapel.toml` (`STP-<n>`),
-  поле для ссылки на внешний трекер.
-- Хеши разделов и подтверждения: `stapel ok <раздел>` пишет факт «кто, когда, хеш»; изменение раздела
-  делает зависимые подтверждения устаревшими; `stapel status` показывает это.
-- Журнал решений `decisions.jsonl`: ответы на вопросы, выбор варианта, подтверждения, возвраты с причиной.
-- Проверка RED→GREEN: по истории git и команде тестов из плана инструмент подтверждает, что тест шага
-  падал до изменения и проходит после, на итоговом коммите.
-- Приём находок: `stapel review take --role <роль> --file <json>` с валидацией единого формата, запись в
-  `findings.jsonl`, отказ с сохранением сырого ответа.
-- Журнал токенов `tokens.jsonl` и команда `stapel tokens`: записи с пометкой «замер» или «оценка».
-- MR через `gh` или `glab`: `stapel mr open` черновиком, ссылка в `state.json`.
-
-**Критерии приёмки (сокращённо).**
-
-1. `stapel init` в пустом репозитории создаёт `.stapel/` и хуки; повторный запуск ничего не меняет.
-2. `stapel new` создаёт тикет; `stapel status` на нём показывает «ждёт: спека».
-3. После `stapel ok spec` и правки спеки `status` показывает «подтверждение спеки устарело» и диффом —
-   что изменилось.
-4. Для шага плана с командой тестов инструмент различает: тест не падал до изменения; падал и проходит;
-   не проходит. Проверка идёт на итоговом коммите.
-5. Ответ ревьюера в неверном формате отвергается, сырой текст сохранён, причина названа.
-6. Каждый вызов модели, записанный через `stapel tokens add`, виден в `stapel tokens` с ролью и пометкой.
-7. Весь бинарный файл собирается одной командой и работает в чужом репозитории.
-
-**Критерий выхода.** Один тикет фазы 0 проведён через эти команды целиком, с тремя ревьюерами и записью
-токенов, пусть часть шагов ещё выполнял оркестратор руками.
-
-**Первые тикеты.**
-
-- STP-1 рабочая область, `init`, `stapel.toml`, хуки.
-- STP-2 `new`, `ticket.md`, `state.json`, хеши и подтверждения, `status`.
-- STP-3 журнал решений и журнал токенов.
-- STP-4 проверка RED→GREEN на итоговом коммите.
-- STP-5 приём находок и `findings.jsonl`.
-- STP-6 MR через `gh`/`glab`.
+Rules in all phases: agents do not run `git push`; reviewers work only on a copy and without write access to
+git; no private terms in tracked files and commit messages; for every acceptance criterion there is a test
+that fails first.
 
 ---
 
-## Фаза 1 — самообслуживание (около двух недель)
+## Phase 0 — bootstrap (about a week)
 
-**Цель.** `stapel` ведёт собственные тикеты от `new` до `ship` без ручного оркестратора.
+**Goal.** A minimal core with which a ticket can be run by hand, but already by the tool's rules.
 
-**Что входит.**
+**What is included.**
 
-- `stapel-agent`: провайдер Claude Code (headless `claude -p`, расход из JSON) и провайдер Anthropic API;
-  роли из `stapel.toml`; пакет контекста для роли с бюджетом токенов.
-- `stapel ask`: автор задаёт вопросы по карте покрытия с рекомендацией и примером; ответы — в журнал решений
-  и в спеку; проверка критериев: форма «кто · что · с чем · при каком условии», размытые слова, «не
-  входит»; каждый критерий получает тест-заготовку.
-- Варианты решения и риски; каждый риск — тест; выбор с причиной.
-- План шагов и `stapel build`: сборщик идёт по шагам; инструмент проверяет RED→GREEN и объём работ;
-  остановка — смысловая проверка с понятной причиной.
-- `stapel review`: свежий ревьюер, внешний ревьюер, ревьюер расхождений на `git archive`; карта ревью
-  «обязательно / желательно / можно пропустить»; находки в MR комментариями к строкам.
-- `stapel ship`: все HIGH закрыты, подтверждения актуальны, CI или локальный прогон зелёный, приватные
-  термины не найдены — слияние и итог тикета (время, токены по ролям, раунды, что нашло ревью).
-- Проверки трёх сортов: список смысловых, список самочинящихся, остальное — советы.
-- Выбор места состояния: отдельная ветка `stapel-state` (по умолчанию) или ветка тикета.
+- A cargo workspace: `stapel-core`, `stapel-cli`; the other packages are empty stubs.
+- `stapel init`: creates `.stapel/`, `stapel.toml` with starting sections, roles and models, installs the
+  Claude Code hooks (a ban on `git push` for agents, a ban on writing to code before the build permit).
+- `stapel new`: a `ticket.md` with sections and a `state.json`; the ticket key by the rule from
+  `stapel.toml` (`STP-<n>`), a field for a link to an external tracker.
+- Section hashes and confirmations: `stapel ok <section>` writes the fact "who, when, hash"; a change in a
+  section makes the dependent confirmations stale; `stapel status` shows this.
+- The decision log `decisions.jsonl`: answers to questions, choice of an option, confirmations, returns with
+  a reason.
+- The RED→GREEN check: from the git history and the test command in the plan, the tool confirms that the
+  step's test failed before the change and passes after it, on the final commit.
+- Accepting findings: `stapel review take --role <role> --file <json>` with validation of the single
+  format, a record in `findings.jsonl`, a refusal that keeps the raw answer.
+- The token journal `tokens.jsonl` and the `stapel tokens` command: records marked "measured" or
+  "estimate".
+- MR through `gh` or `glab`: `stapel mr open` as a draft, the link in `state.json`.
 
-**Критерии приёмки (сокращённо).**
+**Acceptance criteria (abridged).**
 
-1. Тикет `stapel` проходит `new → ask → ok → build → review → ship` на самом себе; человек выполняет только
-   решения.
-2. Критерий без теста останавливает `ok proof` с названием критерия.
-3. Изменение спеки после подтверждений делает их устаревшими и останавливает `build` до повторного `ok`;
-   `build --at-own-risk` разрешён с пометкой в журнале решений.
-4. Находка HIGH без судьбы останавливает `ship`.
-5. Итог тикета показывает токены по ролям, и ни одно число «оценка» не выдано за «замер».
-6. Хуки: агент-сборщик не может сделать `git push`; ревьюер не может писать в рабочее дерево.
+1. `stapel init` in an empty repository creates `.stapel/` and the hooks; running it again changes nothing.
+2. `stapel new` creates a ticket; `stapel status` on it shows "waiting: spec".
+3. After `stapel ok spec` and an edit of the spec, `status` shows "spec confirmation is stale" and, as a
+   diff, what changed.
+4. For a plan step with a test command, the tool distinguishes: the test did not fail before the change;
+   failed and now passes; does not pass. The check runs on the final commit.
+5. A reviewer's answer in the wrong format is rejected, the raw text is saved, the reason is named.
+6. Every model call recorded through `stapel tokens add` is visible in `stapel tokens` with its role and
+   mark.
+7. The whole binary builds with one command and works in someone else's repository.
 
-**Критерий выхода.** Три подряд тикета `stapel` проведены через `stapel` без ручного вмешательства в
-машинные файлы.
+**Exit criterion.** One phase 0 ticket is taken through these commands entirely, with three reviewers and a
+token record, even if some steps were still performed by the orchestrator by hand.
+
+**First tickets.**
+
+- STP-1 workspace, `init`, `stapel.toml`, hooks.
+- STP-2 `new`, `ticket.md`, `state.json`, hashes and confirmations, `status`.
+- STP-3 decision log and token journal.
+- STP-4 RED→GREEN check on the final commit.
+- STP-5 accepting findings and `findings.jsonl`.
+- STP-6 MR through `gh`/`glab`.
 
 ---
 
-## Фаза 2 — индекс и контекст (две-три недели)
+## Phase 1 — self-service (about two weeks)
 
-**Цель.** Индекс отвечает на вопросы агента и человека и измеримо экономит токены.
+**Goal.** `stapel` runs its own tickets from `new` to `ship` without a manual orchestrator.
 
-**Что входит.**
+**What is included.**
 
-- `stapel-index`: ядро плюс адаптеры Python, TypeScript/JavaScript, Go, Rust. Слои: структура и скелет
-  файла (tree-sitter), определения и ссылки (SCIP, запасной путь ripgrep с пометкой «неточно»), карта
-  тестов (статически по импортам и, где есть, по покрытию), история (git).
-- Инкрементальное обновление по хешу файла; кеш в `.stapel/index/`, не в git.
+- `stapel-agent`: the Claude Code provider (headless `claude -p`, usage from JSON) and the Anthropic API
+  provider; roles from `stapel.toml`; a context package for a role with a token budget.
+- `stapel ask`: the author asks questions by the coverage map with a recommendation and an example; answers
+  go to the decision log and into the spec; criteria checking: the form "who · what · with what · under what
+  condition", vague words, "Out of scope"; every criterion gets a test stub.
+- Design options and risks; every risk is a test; a choice with a reason.
+- The step plan and `stapel build`: the builder goes through the steps; the tool checks RED→GREEN and the
+  scope; a stop is a semantic check with a clear reason.
+- `stapel review`: a fresh reviewer, an external reviewer, a drift reviewer on a `git archive`; the review
+  map "required / desirable / can be skipped"; findings in the MR as line comments.
+- `stapel ship`: all HIGH findings closed, confirmations current, CI or a local run green, no private terms
+  found — merge and the ticket summary (time, tokens by role, rounds, what the review found).
+- Three kinds of checks: a list of semantic ones, a list of self-fixing ones, the rest are advice.
+- Choosing where the state lives: a separate branch `stapel-state` (default) or the ticket's branch.
+
+**Acceptance criteria (abridged).**
+
+1. A `stapel` ticket goes through `new → ask → ok → build → review → ship` on `stapel` itself; the human
+   performs only decisions.
+2. A criterion without a test stops `ok proof`, naming the criterion.
+3. A change to the spec after confirmations makes them stale and stops `build` until `ok` is repeated;
+   `build --at-own-risk` is allowed with a mark in the decision log.
+4. A HIGH finding without a fate stops `ship`.
+5. The ticket summary shows tokens by role, and no "estimate" number is presented as "measured".
+6. Hooks: the builder agent cannot run `git push`; a reviewer cannot write to the working tree.
+
+**Exit criterion.** Three `stapel` tickets in a row are taken through `stapel` without manual intervention
+in the machine files.
+
+---
+
+## Phase 2 — index and context (two to three weeks)
+
+**Goal.** The index answers the questions of the agent and the human and measurably saves tokens.
+
+**What is included.**
+
+- `stapel-index`: the core plus adapters for Python, TypeScript/JavaScript, Go, Rust. Layers: structure and
+  file skeleton (tree-sitter), definitions and references (SCIP, a fallback on ripgrep marked "imprecise"),
+  the test map (statically by imports and, where available, by coverage), history (git).
+- Incremental update by file hash; the cache in `.stapel/index/`, not in git.
 - `stapel q`: `symbol`, `refs`, `callers`, `tests`, `history`, `outline`, `impact`.
-- Радиус поражения: для набора символов или файлов — кто вызывает, какие тесты, какие прошлые тикеты и
-  откаты; неточные места помечены.
-- Выборочный прогон тестов: `build` гоняет тесты из карты для изменённых файлов, полный прогон перед
-  `ship`.
-- `stapel-mcp`: те же запросы как инструменты MCP для агента.
-- Пакеты контекста: программа собирает контекст роли из запросов к индексу в бюджет токенов; состав пакета
-  записывается в `runs.jsonl`.
-- Замер экономии: тот же тикет с индексом и без него.
+- Blast radius: for a set of symbols or files — who calls them, which tests, which past tickets and
+  rollbacks; imprecise places are marked.
+- Selective test run: `build` runs the tests from the map for the changed files, a full run before `ship`.
+- `stapel-mcp`: the same queries as MCP tools for the agent.
+- Context packages: the program assembles a role's context from index queries within a token budget; the
+  composition of the package is recorded in `runs.jsonl`.
+- Measuring the savings: the same ticket with and without the index.
 
-**Критерии приёмки (сокращённо).**
+**Acceptance criteria (abridged).**
 
-1. На репозитории `stapel` и на репозитории klc `impact` для функции возвращает вызовы и тесты, совпадающие
-   с ручной проверкой на выборке.
-2. Неточные ответы (ripgrep) помечены как неточные.
-3. Повторная индексация без изменений не читает файлы заново; изменение одного файла обновляет только его.
-4. `build` на тикете запускает только тесты из карты и затем полный прогон перед `ship`; оба результата в
-   `runs.jsonl`.
-5. На трёх тикетах экономия токенов с индексом против без него измерена и записана в итог.
+1. On the `stapel` repository and on the klc repository, `impact` for a function returns calls and tests
+   that match a manual check on a sample.
+2. Imprecise answers (ripgrep) are marked as imprecise.
+3. Re-indexing without changes does not re-read files; a change to one file updates only that file.
+4. `build` on a ticket runs only the tests from the map and then a full run before `ship`; both results are
+   in `runs.jsonl`.
+5. On three tickets the token savings with the index against without it are measured and recorded in the
+   summary.
 
-**Критерий выхода.** Агент-сборщик на тикете `stapel` использует MCP-запросы вместо чтения файлов целиком,
-и это видно в `tokens.jsonl`.
-
----
-
-## Фаза 3 — Zed (около двух недель)
-
-**Цель.** Все действия человека доступны в Zed без терминала.
-
-**Что входит.**
-
-- `stapel inbox`: очередь решений по всем тикетам; вывод для строки состояния.
-- Задачи Zed и горячие клавиши для `ok`, `ask`, `inbox`, диффа тикета — как быстрый старт.
-- `stapel-lsp` для `ticket.md`: кнопки над разделами (подтвердить, вернуть с причиной, выбрать вариант, по
-  рекомендации), диагностика (устарело, нет теста, размытое слово), подсказки при наведении.
-- `stapel-lsp` для кода: находки ревью над строками с кнопками «исправить / не исправлять + причина»;
-  комментарий человека выделением → находка `human-review`.
-- Расширение Zed, которое запускает LSP и объявляет язык `ticket.md`.
-- `stapel guide`: пошаговые процедуры для живых операций со сверкой вывода и хешами до и после.
-- Уведомления: хук Claude Code присылает системное уведомление, когда очередь дошла до человека.
-
-**Критерии приёмки (сокращённо).**
-
-1. Сценарии Z-1..Z-4 из анализа выполняются в Zed без команд в терминале.
-2. Каждая кнопка вызывает ровно одну команду `stapel`, и та же команда работает из терминала.
-3. Диагностика в редакторе совпадает с тем, что остановит `ok` или `ship`.
-4. `guide` останавливается при расхождении вывода с ожидаемым и записывает транскрипт в тикет.
-
-**Критерий выхода.** Один тикет проведён целиком из Zed одним человеком во всех ролях.
+**Exit criterion.** The builder agent on a `stapel` ticket uses MCP queries instead of reading whole files,
+and this is visible in `tokens.jsonl`.
 
 ---
 
-## Фаза 4 — проверка на klc (одна-две недели)
+## Phase 3 — Zed (about two weeks)
 
-**Цель.** Сравнить `stapel` и klc на реальных задачах и решить судьбу klc.
+**Goal.** All of a human's actions are available in Zed without a terminal.
 
-**Что входит.**
+**What is included.**
 
-- `stapel init` в репозитории klc; адаптер Python уже есть.
-- Через `stapel` проводятся тикеты KLC-147, KLC-148, KLC-152, KLC-163, KLC-170 (дефекты надёжности klc).
-- Похожие по объёму тикеты идут через klc.
-- Сравнение по метрикам из общего плана: часы человека, остановки не по делу, раунды ревью и дефекты,
-  токены по ролям, минуты тестов.
+- `stapel inbox`: the queue of decisions across all tickets; output for the status bar.
+- Zed tasks and hotkeys for `ok`, `ask`, `inbox`, the ticket diff — as a quick start.
+- `stapel-lsp` for `ticket.md`: buttons above sections (confirm, return with a reason, choose an option, as
+  recommended), diagnostics (stale, no test, vague word), hover hints.
+- `stapel-lsp` for code: review findings above lines with the buttons "fix / do not fix + reason"; a human's
+  comment by selection → a `human-review` finding.
+- A Zed extension that starts the LSP and declares the `ticket.md` language.
+- `stapel guide`: step-by-step procedures for live operations with output cross-checking and hashes before
+  and after.
+- Notifications: a Claude Code hook sends a system notification when the queue reaches a human.
 
-**Критерии приёмки (сокращённо).**
+**Acceptance criteria (abridged).**
 
-1. Все пять тикетов слиты в klc через `stapel`, их MR содержат находки ревью комментариями.
-2. Таблица сравнения по метрикам опубликована в `docs/` обоих репозиториев.
-3. Записано решение: заморозить klc, перенести остаток, или вернуть уроки в klc.
+1. Scenarios Z-1..Z-4 from the analysis run in Zed without terminal commands.
+2. Each button calls exactly one `stapel` command, and the same command works from the terminal.
+3. Diagnostics in the editor match what would stop `ok` or `ship`.
+4. `guide` stops when the output differs from the expected one and writes the transcript into the ticket.
 
-**Критерий выхода.** Решение принято и записано.
+**Exit criterion.** One ticket is taken entirely from Zed by one person in all roles.
 
 ---
 
-## Что остаётся за рамками до фазы 4
+## Phase 4 — verification on klc (one to two weeks)
 
-Jira (адаптер есть, подключение позже), C++ (адаптер позже), смысловой поиск на эмбеддингах (после замера
-пользы), многопользовательские блокировки сложнее «раздел держит тот, кто подтверждает», отдельный
-этап наблюдения (есть как запись «закрыто» без действий).
+**Goal.** Compare `stapel` and klc on real tasks and decide klc's fate.
+
+**What is included.**
+
+- `stapel init` in the klc repository; the Python adapter already exists.
+- Tickets KLC-147, KLC-148, KLC-152, KLC-163, KLC-170 (klc reliability defects) are taken through `stapel`.
+- Tickets of similar scope go through klc.
+- Comparison by the metrics from the overall plan: human hours, stops for no good reason, review rounds and
+  defects, tokens by role, test minutes.
+
+**Acceptance criteria (abridged).**
+
+1. All five tickets are merged into klc through `stapel`, and their MRs contain review findings as comments.
+2. The comparison table by metrics is published in `docs/` of both repositories.
+3. A decision is recorded: freeze klc, carry over the remainder, or bring the lessons back into klc.
+
+**Exit criterion.** The decision is made and recorded.
+
+---
+
+## What stays out of scope until phase 4
+
+Jira (the adapter exists, the connection comes later), C++ (the adapter comes later), semantic search on
+embeddings (after measuring the benefit), multi-user locks more complex than "the section is held by whoever
+confirms", a separate observation stage (it exists as a "closed" record with no actions).
