@@ -272,3 +272,32 @@ fn missing_ticket_md_is_reported() {
         .code(1)
         .stdout(contains("ticket.md"));
 }
+
+// ---- STP-2 code review round 1 ----
+
+// F-7: a missing or duplicated dependency is named as such.
+#[test]
+fn dependency_missing_or_duplicated_is_named() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    stapel(dir).args(["ok", "spec"]).assert().success();
+    stapel(dir).args(["ok", "design"]).assert().success();
+    let path = dir.join(".stapel/tickets/ABC-1/ticket.md");
+    let original = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, format!("{original}\n## Spec\n\nagain\n")).unwrap();
+    stapel(dir)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains(
+            "stale: design — depends on spec, which is duplicated",
+        ));
+    std::fs::write(&path, original.replace("## Spec\n", "## Specification\n")).unwrap();
+    stapel(dir)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains(
+            "stale: design — depends on spec, which is missing",
+        ));
+}

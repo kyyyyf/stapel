@@ -981,7 +981,8 @@ fn allows_mentions_of_stapel_ok() {
         "git commit -m 'STP-2 step 6: stapel ok refuses in agent shell'",
         "grep -rn \"stapel ok\" crates",
         "cargo test ok::records_confirmation",
-        "stapel hook pre-tool-use < payload.json",
+        "grep -rn -- --grant crates/",
+        "echo --grant-me",
     ] {
         let out = hook_bash(repo.path(), command, "auto")
             .success()
@@ -1102,4 +1103,201 @@ fn allows_ordinary_tmux_use() {
     ] {
         hook_bash(repo.path(), command, "auto").success();
     }
+}
+
+// ---- STP-2 code review round 1 ----
+
+fn bash_bounded(dir: &Path, command: &str) -> assert_cmd::assert::Assert {
+    let payload = json!({
+        "tool_name": "Bash",
+        "cwd": dir,
+        "permission_mode": "auto",
+        "tool_input": { "command": command },
+    });
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .timeout(std::time::Duration::from_secs(5))
+        .write_stdin(payload.to_string())
+        .assert()
+}
+
+// F-1: an agent may not run the hook entry point itself and mint a grant.
+#[test]
+fn denies_running_the_hook_from_bash() {
+    let repo = repo_with_ticket();
+    for command in [
+        "stapel hook pre-tool-use < payload.json",
+        "echo '{}' | stapel hook pre-tool-use",
+        "sh -c 'stapel hook pre-tool-use'",
+        "cargo run -q -p stapel-cli -- hook pre-tool-use",
+        "/home/x/.cargo/bin/stapel hook pre-tool-use",
+    ] {
+        bash_bounded(repo.path(), command)
+            .code(DENY)
+            .stderr(contains("hook"));
+    }
+}
+
+// F-2: a stapel ok or close whose arguments are built at run time is denied.
+#[test]
+fn denies_stapel_ok_with_run_time_words() {
+    let repo = repo_with_ticket();
+    for command in [
+        "a=--gr; b=ant; stapel ok ABC-1 spec \"$a$b\" T",
+        "stapel ok ABC-1 $S",
+        "stapel close ABC-1 --reason x `echo --grant` y",
+    ] {
+        bash_bounded(repo.path(), command).code(DENY);
+    }
+}
+
+// F-3, E-1: a special or oversized state.json gives no permit and does not hang the guard.
+#[cfg(unix)]
+#[test]
+fn special_state_json_gives_no_permit_quickly() {
+    let repo = confirmed_repo();
+    let dir = repo.path();
+    let other = dir.join(".stapel/tickets/ABC-7");
+    std::fs::create_dir_all(&other).unwrap();
+    let status = std::process::Command::new("mkfifo")
+        .arg(other.join("state.json"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let payload = json!({
+        "tool_name": "Write",
+        "cwd": dir,
+        "tool_input": { "file_path": dir.join("src/x.rs"), "content": "x" },
+    });
+    // ABC-1 is confirmed and still grants; the FIFO beside it must not stall the check.
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .timeout(std::time::Duration::from_secs(5))
+        .write_stdin(payload.to_string())
+        .assert()
+        .success();
+    std::fs::remove_file(other.join("state.json")).unwrap();
+    std::os::unix::fs::symlink("/dev/zero", other.join("state.json")).unwrap();
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .timeout(std::time::Duration::from_secs(5))
+        .write_stdin(payload.to_string())
+        .assert()
+        .success();
+    stapel(dir)
+        .args(["status", "ABC-7"])
+        .timeout(std::time::Duration::from_secs(5))
+        .assert()
+        .code(1);
+}
+
+// F-4, E-3: allow rules that would skip the dialog are found, unrelated ones are not.
+#[test]
+fn allow_rules_are_matched_like_claude_code() {
+    for rule in [
+        "Bash",
+        "Bash(*)",
+        "Bash(stapel:*)",
+        "Bash(*stapel*)",
+        "Bash(stapel ok:*)",
+    ] {
+        let repo = repo_with_ticket();
+        let dir = repo.path();
+        std::fs::write(
+            dir.join(".claude/settings.local.json"),
+            json!({"permissions": {"allow": [rule]}}).to_string(),
+        )
+        .unwrap();
+        hook_bash(dir, "stapel ok spec", "auto")
+            .code(DENY)
+            .stderr(contains("allow rule"));
+    }
+    for rule in ["Bash(stapel status:*)", "Bash(cargo test:*)", "Read"] {
+        let repo = repo_with_ticket();
+        let dir = repo.path();
+        std::fs::write(
+            dir.join(".claude/settings.local.json"),
+            json!({"permissions": {"allow": [rule]}}).to_string(),
+        )
+        .unwrap();
+        ask(dir, "stapel ok spec");
+    }
+}
+
+#[test]
+fn allow_rule_in_user_settings_is_found() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(home.path().join(".claude")).unwrap();
+    std::fs::write(
+        home.path().join(".claude/settings.json"),
+        r#"{"permissions":{"allow":["Bash(stapel ok:*)"]}}"#,
+    )
+    .unwrap();
+    let payload = json!({
+        "tool_name": "Bash",
+        "cwd": dir,
+        "permission_mode": "auto",
+        "tool_input": { "command": "stapel ok spec" },
+    });
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .env("HOME", home.path())
+        .write_stdin(payload.to_string())
+        .assert()
+        .code(DENY)
+        .stderr(contains("allow rule"));
+}
+
+// F-5: the denial names the tickets and their unconfirmed or stale sections.
+#[test]
+fn denial_names_tickets_and_sections() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    stapel(dir).args(["ok", "spec"]).assert().success();
+    code_write(dir)
+        .code(DENY)
+        .stderr(contains("ABC-1"))
+        .stderr(contains("design not confirmed"))
+        .stderr(contains("proof not confirmed"));
+    common::set_section(dir, "ABC-1", "Spec", "edited");
+    code_write(dir).code(DENY).stderr(contains("spec stale"));
+}
+
+// E-2: other spellings of the listed injection tools.
+#[test]
+fn denies_injection_spellings() {
+    let repo = repo_with_ticket();
+    for command in [
+        "tmux send-k -t 0 y Enter",
+        "tmux set-buffer y; tmux paste-buffer -t 0",
+        "tmux pasteb -t 0",
+        "tmux load-buffer x",
+        "python3 -c 'import fcntl; fcntl.ioctl(0, 0x5412, b\"y\")'",
+    ] {
+        bash_bounded(repo.path(), command)
+            .code(DENY)
+            .stderr(contains("person"));
+    }
+}
+
+// E-5: the replaced command runs the installed stapel, and the dialog names it.
+#[test]
+fn replaced_command_runs_installed_stapel() {
+    let repo = repo_with_ticket();
+    let (reason, replaced) = ask(repo.path(), "./nope/stapel ok spec");
+    assert!(
+        replaced.starts_with("stapel ok ABC-1 spec --grant "),
+        "{replaced}"
+    );
+    assert!(reason.contains("runs: stapel"), "{reason}");
+}
+
+// F-9: a reason starting with '-' survives the replaced command.
+#[test]
+fn close_reason_with_dash_round_trips() {
+    let repo = repo_with_ticket();
+    let (_, replaced) = ask(repo.path(), "stapel close --reason=-x");
+    assert!(replaced.contains("--reason=-x"), "{replaced}");
 }

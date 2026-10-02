@@ -279,3 +279,34 @@ fn ignores_rewritten_grant_file() {
     ok_with_grant(dir, &token_of(&replaced)).code(1);
     assert!(confirmations(dir).is_empty());
 }
+
+// ---- STP-2 code review round 1 ----
+
+// F-6: ok refuses a ticket.md the guard would not read.
+#[test]
+fn refuses_oversized_ticket() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let path = dir.join(".stapel/tickets/ABC-1/ticket.md");
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    while text.len() < 4 * 1024 * 1024 + 10 {
+        text.push_str("padding padding padding padding padding padding padding padding\n");
+    }
+    std::fs::write(&path, text).unwrap();
+    stapel(dir)
+        .args(["ok", "spec"])
+        .assert()
+        .code(1)
+        .stderr(contains("4 MiB"));
+}
+
+// E-6: using a grant also removes expired ones.
+#[test]
+fn consuming_sweeps_expired_grants() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let (_, replaced) = ask(dir, "stapel ok spec");
+    std::fs::write(grants_dir(dir).join("0000.json"), r#"{"expires_at":0}"#).unwrap();
+    ok_with_grant(dir, &token_of(&replaced)).success();
+    assert!(!grants_dir(dir).join("0000.json").exists());
+}

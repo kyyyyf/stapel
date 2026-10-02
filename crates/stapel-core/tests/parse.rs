@@ -101,3 +101,11 @@ proptest! {
         }
     }
 }
+
+// F-8: lone CR line endings (old Mac editors) still give headings.
+#[test]
+fn lone_cr_line_endings_parse() {
+    let s = parse("## Spec\r\rText.\r\r## Design\r\rChoice.\r");
+    assert_eq!(body(&s, "spec").trim(), "Text.");
+    assert_eq!(body(&s, "design").trim(), "Choice.");
+}
