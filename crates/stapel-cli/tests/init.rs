@@ -241,3 +241,25 @@ fn keeps_non_utf8_gitignore() {
     assert_eq!(std::fs::read(dir.join(".gitignore")).unwrap(), original);
     assert!(!dir.join(".stapel").exists());
 }
+
+// D2-4: a stapel.toml that is not UTF-8 is refused and left alone.
+#[test]
+fn refuses_non_utf8_config() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    std::fs::write(dir.join(".stapel/stapel.toml"), b"\xff\xfe").unwrap();
+
+    stapel(dir)
+        .arg("init")
+        .assert()
+        .code(1)
+        .stderr(contains(".stapel/stapel.toml"));
+    assert_eq!(
+        std::fs::read(dir.join(".stapel/stapel.toml")).unwrap(),
+        b"\xff\xfe"
+    );
+}

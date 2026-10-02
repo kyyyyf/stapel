@@ -221,3 +221,106 @@ fn hook_command_runs_stapel_when_present() {
     assert_eq!(out.status.code(), Some(7));
     assert!(String::from_utf8_lossy(&out.stderr).contains("hook pre-tool-use"));
 }
+
+// F2-6, E2-4: an old fail-open hook line is replaced by the current one.
+#[test]
+fn upgrades_old_hook_line() {
+    let repo = git_repo();
+    let dir = repo.path();
+    let old = json!({
+        "hooks": { "PreToolUse": [
+            { "matcher": "Bash|Write", "hooks": [{ "type": "command", "command": HOOK_COMMAND }] }
+        ] }
+    });
+    std::fs::create_dir_all(dir.join(".claude")).unwrap();
+    std::fs::write(
+        dir.join(SETTINGS),
+        serde_json::to_string_pretty(&old).unwrap(),
+    )
+    .unwrap();
+
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success()
+        .stdout(contains("обновлено: .claude/settings.json"));
+
+    let s = settings(dir);
+    assert_eq!(stapel_entries(&s).len(), 1);
+    assert_ne!(installed_command(dir), HOOK_COMMAND);
+    assert!(installed_command(dir).contains("command -v stapel"));
+}
+
+fn pre_push_path(dir: &Path) -> std::path::PathBuf {
+    dir.join(".git/hooks/pre-push")
+}
+
+fn run_pre_push(dir: &Path, claudecode: Option<&str>) -> std::process::Output {
+    let mut cmd = std::process::Command::new(pre_push_path(dir));
+    cmd.current_dir(dir)
+        .env_remove("CLAUDECODE")
+        .stdin(std::process::Stdio::null());
+    if let Some(v) = claudecode {
+        cmd.env("CLAUDECODE", v);
+    }
+    cmd.output().unwrap()
+}
+
+// AC-13: init installs a git pre-push hook that refuses pushes from an agent's environment.
+#[test]
+fn installs_pre_push_hook() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success()
+        .stdout(contains("pre-push"));
+
+    let blocked = run_pre_push(dir, Some("1"));
+    assert_ne!(blocked.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&blocked.stderr).contains("агент"));
+    assert_eq!(run_pre_push(dir, None).status.code(), Some(0));
+
+    // A second run leaves the hook as it is.
+    let before = std::fs::read(pre_push_path(dir)).unwrap();
+    stapel(dir)
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(contains("уже готово"));
+    assert_eq!(std::fs::read(pre_push_path(dir)).unwrap(), before);
+}
+
+// AC-13: a pre-push hook that is not ours is kept and reported.
+#[test]
+fn keeps_foreign_pre_push() {
+    let repo = git_repo();
+    let dir = repo.path();
+    std::fs::create_dir_all(dir.join(".git/hooks")).unwrap();
+    std::fs::write(pre_push_path(dir), "#!/bin/sh\nexit 0\n").unwrap();
+
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success()
+        .stderr(contains("pre-push"));
+
+    assert_eq!(read(dir, ".git/hooks/pre-push"), "#!/bin/sh\nexit 0\n");
+}
+
+// D2-4: settings.json that is not UTF-8 is refused like broken JSON.
+#[test]
+fn refuses_non_utf8_settings() {
+    let repo = git_repo();
+    let dir = repo.path();
+    std::fs::create_dir_all(dir.join(".claude")).unwrap();
+    std::fs::write(dir.join(SETTINGS), b"\xff\xfe{}").unwrap();
+
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .code(1)
+        .stderr(contains(SETTINGS));
+    assert!(!dir.join(".stapel").exists());
+}

@@ -388,3 +388,136 @@ fn bad_always_writable_does_not_open_everything() {
     )
     .code(DENY);
 }
+
+// AC-7, R-1 (F2-3, F2-4, E2-1, E2-2): review round 2.
+#[test]
+fn denies_git_push_round_two() {
+    let repo = initialized_repo();
+    for command in [
+        "cat <(git push)",
+        "diff <(ls) <(git push)",
+        "git \\\npush",
+        "git pu\\\nsh origin",
+        "P=push; git $P",
+        "git $(echo push)",
+        "git `echo push`",
+        "git $'push'",
+        "x=`git push`",
+        "echo git push | sh",
+        "echo git push | bash -s",
+        "bash <<< 'git push'",
+        "find . -exec git push \\;",
+        "watch git push",
+        "parallel git push ::: a",
+        "echo push | xargs git",
+        "env -S 'git push'",
+        "bash -c -- 'git push'",
+        "git subtree push --prefix=a o m",
+        "git submodule foreach 'git push'",
+        "git rebase --exec 'git push' HEAD~1",
+        "git rebase -x 'git push' HEAD~1",
+        "GIT_CONFIG_PARAMETERS=\"'alias.p=push'\" git p",
+        "git --config-env=alias.p=X p",
+        "git -c Alias.P=push p",
+    ] {
+        bash(repo.path(), command)
+            .code(DENY)
+            .stderr(contains("git push"));
+    }
+}
+
+#[test]
+fn allows_lookalikes_after_round_two() {
+    let repo = initialized_repo();
+    for command in [
+        "git commit -m 'git push later'",
+        "git commit -m \"see $(date) before push\"",
+        "timeout 5 cargo build",
+        "echo ls | sh",
+        "git submodule update --init",
+        "git subtree add --prefix=a o m",
+        "git rebase --exec 'cargo test' HEAD~2",
+        "find . -name '*.rs' -exec rustfmt {} \\;",
+        "cargo test \\\n  --workspace",
+        "echo $(git rev-parse HEAD)",
+    ] {
+        bash(repo.path(), command).success();
+    }
+}
+
+// AC-13: commands that would switch off the pre-push layer are denied.
+#[test]
+fn denies_pre_push_bypass() {
+    let repo = initialized_repo();
+    for command in [
+        "unset CLAUDECODE; git push",
+        "unset CLAUDECODE",
+        "env -u CLAUDECODE sh x.sh",
+        "CLAUDECODE= sh x.sh",
+        "export CLAUDECODE=",
+        "git config core.hooksPath /tmp/none",
+        "git -c core.hooksPath=/dev/null status",
+        "rm .git/hooks/pre-push",
+        "chmod -x .git/hooks/pre-push",
+    ] {
+        bash(repo.path(), command)
+            .code(DENY)
+            .stderr(contains("pre-push"));
+    }
+}
+
+// F2-1, F2-2: pathological input is denied quickly instead of crashing or timing out.
+#[test]
+fn pathological_input_is_denied_not_crashed() {
+    let repo = initialized_repo();
+    let chain = "env ".repeat(40);
+
+    let within = |command: String| {
+        let payload = json!({
+            "tool_name": "Bash",
+            "cwd": repo.path(),
+            "tool_input": { "command": command },
+        });
+        stapel(repo.path())
+            .args(["hook", "pre-tool-use"])
+            .timeout(std::time::Duration::from_secs(5))
+            .write_stdin(payload.to_string())
+            .assert()
+    };
+    within(format!("{chain}ls")).success();
+    within(format!("{chain}ls; git push")).code(DENY);
+
+    let nested = "echo \"$(".repeat(5_000);
+    bash(repo.path(), &nested).code(DENY);
+    bash(repo.path(), &"eval ".repeat(10_000)).code(DENY);
+    bash(repo.path(), &"x".repeat(100_000)).code(DENY);
+}
+
+// E2-3, E2-6: .claude/settings.json and case variants of machine files are protected too.
+#[test]
+fn denies_settings_and_case_variants() {
+    let repo = initialized_repo();
+    let root = repo.path();
+    set_state(root, "ABC-1", r#"{"build": {"allowed": true}}"#);
+    for rel in [
+        ".claude/settings.json",
+        ".stapel/tickets/ABC-1/STATE.json",
+        ".stapel/STAPEL.toml",
+    ] {
+        write_call(root, "Write", &root.join(rel).display().to_string())
+            .code(DENY)
+            .stderr(contains("только stapel"));
+    }
+}
+
+// F2-5: a dangling symlink is followed to where the write would land.
+#[cfg(unix)]
+#[test]
+fn follows_dangling_symlink() {
+    let repo = initialized_repo();
+    let root = repo.path();
+    std::fs::create_dir_all(root.join("docs")).unwrap();
+    std::os::unix::fs::symlink("../src/new.rs", root.join("docs/lnk")).unwrap();
+
+    write_call(root, "Write", &root.join("docs/lnk").display().to_string()).code(DENY);
+}
