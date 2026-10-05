@@ -1130,7 +1130,7 @@ fn denies_running_the_hook_from_bash() {
         "echo '{}' | stapel hook pre-tool-use",
         "sh -c 'stapel hook pre-tool-use'",
         "cargo run -q -p stapel-cli -- hook pre-tool-use",
-        "/home/x/.cargo/bin/stapel hook pre-tool-use",
+        "/opt/x/bin/stapel hook pre-tool-use",
     ] {
         bash_bounded(repo.path(), command)
             .code(DENY)

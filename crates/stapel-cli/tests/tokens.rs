@@ -162,3 +162,230 @@ fn add_accepts_closed_ticket() {
         .success();
     assert_eq!(records(dir, "ABC-1").len(), 1);
 }
+
+// ---- AC-3: import from Claude Code transcripts ----
+
+fn fixture(dir: &Path, name: &str) -> std::path::PathBuf {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    let dst = dir.join(name);
+    std::fs::copy(src, &dst).unwrap();
+    dst
+}
+
+/// Imports with a window that ends long before now, so the fresh copy counts as finished.
+fn import(dir: &Path, file: &Path, since: Option<&str>, until: &str) -> assert_cmd::assert::Assert {
+    let mut args = vec![
+        "tokens".to_string(),
+        "import".into(),
+        file.display().to_string(),
+        "--role".into(),
+        "orchestrator".into(),
+        "--until".into(),
+        until.into(),
+    ];
+    if let Some(s) = since {
+        args.push("--since".into());
+        args.push(s.into());
+    }
+    stapel(dir).args(&args).assert()
+}
+
+fn by_model<'a>(rs: &'a [serde_json::Value], model: &str) -> Vec<&'a serde_json::Value> {
+    rs.iter().filter(|r| r["model"] == model).collect()
+}
+
+#[test]
+fn import_sums_usage_per_message() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let main = fixture(dir, "main.jsonl");
+    import(dir, &main, None, "2026-01-02T00:00:00Z").success();
+    let rs = records(dir, "ABC-1");
+    assert_eq!(rs.len(), 2, "{rs:?}");
+    let opus = by_model(&rs, "claude-opus-5-5")[0];
+    // msg_B counts with its last line: output 4618, not 2.
+    assert_eq!(
+        (opus["input"].clone(), opus["output"].clone()),
+        (7.into(), 4631.into())
+    );
+    assert_eq!(
+        (opus["cache_read"].clone(), opus["cache_write"].clone()),
+        (600.into(), 30.into())
+    );
+    assert_eq!(opus["messages"], 3);
+    assert_eq!(opus["source"], "measured");
+    assert_eq!(opus["transcript"], "s-test");
+    assert_eq!(opus["from"], "2026-01-01T10:00:00.100Z");
+    assert_eq!(opus["to"], "2026-01-01T10:20:00.000Z");
+    let haiku = by_model(&rs, "claude-haiku-4-5-20251001")[0];
+    assert_eq!(
+        (haiku["cache_read"].clone(), haiku["cache_write"].clone()),
+        (0.into(), 0.into())
+    );
+
+    let sub = fixture(dir, "subagent.jsonl");
+    import(dir, &sub, None, "2026-01-02T00:00:00Z").success();
+    let rs = records(dir, "ABC-1");
+    let sonnet = by_model(&rs, "claude-sonnet-5-5")[0];
+    assert_eq!(sonnet["output"], 129);
+    assert_eq!(sonnet["transcript"], "s-test/agent-test");
+}
+
+#[test]
+fn import_skips_error_and_unreadable_lines() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let main = fixture(dir, "main.jsonl");
+    import(dir, &main, None, "2026-01-02T00:00:00Z")
+        .success()
+        .stdout(contains("skipped: 1 error lines"))
+        .stdout(contains("skipped: 1 unreadable lines"));
+    assert!(by_model(&records(dir, "ABC-1"), "<synthetic>").is_empty());
+}
+
+#[test]
+fn import_is_idempotent() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let main = fixture(dir, "main.jsonl");
+    import(dir, &main, None, "2026-01-02T00:00:00Z").success();
+    import(dir, &main, None, "2026-01-02T00:00:00Z")
+        .success()
+        .stdout(contains("already imported: t-"));
+    assert_eq!(records(dir, "ABC-1").len(), 2);
+}
+
+#[test]
+fn import_refuses_overlap() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let main = fixture(dir, "main.jsonl");
+    import(
+        dir,
+        &main,
+        Some("2026-01-01T10:00:00Z"),
+        "2026-01-01T10:10:00Z",
+    )
+    .success();
+    assert_eq!(records(dir, "ABC-1").len(), 1);
+    // opus overlaps its record (msg_B at 10:05 again); haiku would be new, but nothing is appended.
+    import(
+        dir,
+        &main,
+        Some("2026-01-01T10:05:00Z"),
+        "2026-01-01T11:00:00Z",
+    )
+    .code(1)
+    .stderr(contains("overlaps"))
+    .stderr(contains("2026-01-01T10:05:00.000Z"));
+    assert_eq!(records(dir, "ABC-1").len(), 1);
+}
+
+#[test]
+fn import_appends_a_later_range() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let main = fixture(dir, "main.jsonl");
+    import(
+        dir,
+        &main,
+        Some("2026-01-01T10:00:00Z"),
+        "2026-01-01T10:10:00Z",
+    )
+    .success();
+    import(
+        dir,
+        &main,
+        Some("2026-01-01T10:10:00Z"),
+        "2026-01-01T11:00:00Z",
+    )
+    .success();
+    let rs = records(dir, "ABC-1");
+    assert_eq!(rs.len(), 3, "{rs:?}");
+    let opus = by_model(&rs, "claude-opus-5-5");
+    assert_eq!(opus.len(), 2);
+    assert_eq!(opus[0]["messages"], 2);
+    assert_eq!(opus[1]["messages"], 1);
+}
+
+#[test]
+fn import_refuses_live_transcript_without_until() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let main = fixture(dir, "main.jsonl");
+    let path = main.display().to_string();
+    stapel(dir)
+        .args(["tokens", "import", &path, "--role", "orchestrator"])
+        .assert()
+        .code(1)
+        .stderr(contains("--until"));
+    let recent = stapel_core::time::rfc3339(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 60,
+    );
+    stapel(dir)
+        .args([
+            "tokens",
+            "import",
+            &path,
+            "--role",
+            "orchestrator",
+            "--until",
+            &recent,
+        ])
+        .assert()
+        .code(1)
+        .stderr(contains("5 minutes"));
+    assert!(records(dir, "ABC-1").is_empty());
+}
+
+#[test]
+fn import_respects_window() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let main = fixture(dir, "main.jsonl");
+    // [10:05, 10:10): msg_B (first line 10:05:00) is in, msg_C at exactly 10:10:00 is out.
+    import(
+        dir,
+        &main,
+        Some("2026-01-01T10:05:00Z"),
+        "2026-01-01T10:10:00Z",
+    )
+    .success();
+    let rs = records(dir, "ABC-1");
+    assert_eq!(rs.len(), 1, "{rs:?}");
+    assert_eq!(rs[0]["output"], 4618);
+    for bad in [
+        "2026-01-01 10:00:00",
+        "2026-01-01T10:00:00+00:00",
+        "yesterday",
+    ] {
+        stapel(dir)
+            .args([
+                "tokens",
+                "import",
+                &main.display().to_string(),
+                "--role",
+                "orchestrator",
+                "--until",
+                bad,
+            ])
+            .assert()
+            .code(1);
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn parsers_never_panic(line in "\\PC{0,300}", bytes in proptest::collection::vec(proptest::num::u8::ANY, 0..300)) {
+        let _ = stapel_core::tokens::parse_transcript_line(&line);
+        let _ = stapel_core::tokens::parse_transcript_line(&String::from_utf8_lossy(&bytes));
+        let _ = stapel_core::time::parse_utc(&line);
+        let _ = stapel_core::time::parse_transcript_time(&line);
+    }
+}
