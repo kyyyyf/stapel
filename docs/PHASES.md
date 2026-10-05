@@ -51,8 +51,8 @@ comes with `ask` in phase 1. Token records come from `stapel tokens add` or from
 
 **Interim comparison with klc (added during STP-4).** Before phase 4, `stapel` and klc each take the same
 next ticket from the same branch of a TypeScript project that klc already runs, and the results are compared
-by the metrics of `docs/PLAN.md` §8. It starts only with the human's explicit consent. So the test runner of
-STP-4 is configured in `stapel.toml`, not fixed to `cargo`.
+by the metrics of `docs/PLAN.md` §8. It starts only with the human's explicit consent. STP-4 adds the `[check] runner`
+key with `cargo` as its only value; another runner is a later ticket and a precondition of the comparison.
 
 **STP-3 baseline for the comparison.** Spec review: 32 findings over two rounds. Code review: 30 findings,
 18 of them (60%) `catchable_at` earlier than `code` (target: under half; not met). The 18 fall into three
@@ -81,8 +81,9 @@ token record, even if some steps were still performed by the orchestrator by han
 - STP-1 workspace, `init`, `stapel.toml`, hooks.
 - STP-2 `new`, `ticket.md`, `state.json`, hashes and confirmations, `status`.
 - STP-3 decision log and token journal.
-- STP-4 RED→GREEN check on the final commit. Its first steps extend the drift check (CLAUDE.md items 5, 9
-  and 11: Inputs table, abuse table and self-check, matching test lists, `Cargo.lock`). After its close it is
+- STP-4 RED→GREEN check on the final commit. Its first steps extend the drift check (CLAUDE.md items 5
+  and 9: Inputs table, abuse table and self-check, matching test lists); `Cargo.lock` is checked by `--locked`
+  in every run, and item 11 stays a manual review. After its close it is
   compared with STP-3: tokens by role, and findings by stage and `catchable_at`.
 - STP-5 accepting findings and `findings.jsonl`.
 - STP-6 MR through `gh`/`glab`.
