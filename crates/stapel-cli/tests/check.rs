@@ -526,8 +526,8 @@ fn outcome_red_changes_code() {
     edit(
         dir,
         "crates/tiny/Cargo.toml",
-        "edition = \"2021\"\n",
-        "edition = \"2021\"\n\n[dev-dependencies]\n",
+        "build = \"build.rs\"\n",
+        "build = \"build.rs\"\n\n[dev-dependencies]\n",
     );
     commit(
         dir,
