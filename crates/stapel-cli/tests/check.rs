@@ -1778,3 +1778,19 @@ fn a_record_needs_a_full_commit_id() {
     let line = status_check_line(dir);
     assert!(!line.starts_with("check: pass"), "{line}");
 }
+
+// D7-2: a current but failing check does not let a ticket close.
+#[test]
+fn close_refuses_a_failing_check() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    add_test(dir, "other", "fails", "assert!(false);");
+    commit(dir, "ABC-1: a failing test outside the steps");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    stapel(dir)
+        .args(["close", "ABC-1", "--reason", "done"])
+        .assert()
+        .code(1)
+        .stderr(contains("check: fail at"));
+}
