@@ -337,4 +337,24 @@ three reviewers. Each finding gets `catchable_at`.
 
 ## Summary
 
-Generated after merge. Compared with STP-3: tokens by role, and findings by stage and `catchable_at`.
+Closed on 2026-10-05. Compared with STP-3 (CLAUDE.md item 8):
+
+| Measure | STP-3 | STP-4 |
+|---|---|---|
+| Spec review findings | 32 (two rounds) | 35 (two rounds) |
+| Drift review after each GREEN step (new, item 11) | — | 54 (9 defects fixed by extra pairs) |
+| Code review findings | 30 (2 HIGH) | 38 (6 HIGH) |
+| Code review findings `catchable_at` earlier than `code` | 18 (60 %) | 32 (84 %) |
+| Orchestrator output / cache read tokens | 151k / 76M | 280k / 82M |
+| Subagent output tokens (drift, external, reviewer, research) | 3.8k | 3.6k |
+
+**Verdict: target not met** (code review findings under half `catchable_at` earlier than `code`). The group
+that missed it is `design` (13), mostly the external reviewer's deliberate-hiding cases (a GREEN that
+redirects a test target, `.cargo/config` runners, the environment), and `spec` (12): promises about inputs
+from git and cargo that the spec did not bound (rewritten history, SHA-256, shallow clones). The per-step
+drift reviews worked as intended for text and as a second code review (54 findings, 9 real defects before
+code review), but they did not lower the code review count. Measurement caveat: subagent transcripts record
+the usage of a message's first streamed chunk only (one external reviewer message holds 4 output tokens for
+a report of several thousand), so subagent output tokens are far too low; the orchestrator's main transcript
+is measured as in STP-3. `stapel check STP-3` found real defects in the closed ticket: one empty RED, two
+steps whose tests changed after RED, two steps with an outdated `Cargo.lock`.
