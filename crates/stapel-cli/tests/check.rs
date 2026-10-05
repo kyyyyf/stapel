@@ -1389,3 +1389,128 @@ fn report_matches_golden() {
     .unwrap();
     assert_eq!(without_ids(&text), golden, "actual:\n{text}");
 }
+
+// ---- STP-4 AC-5: run records ----
+
+fn run_records(dir: &Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/runs.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["kind"] == "check")
+        .collect()
+}
+
+#[test]
+fn appends_a_run_record() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    let head = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let records = run_records(dir);
+    assert_eq!(records.len(), 1, "{records:?}");
+    let r = &records[0];
+    assert_eq!(r["v"], 1);
+    assert!(r["id"].as_str().unwrap().starts_with("c-"), "{r}");
+    assert!(r["at"].as_str().unwrap().ends_with('Z'), "{r}");
+    assert_eq!(r["ticket"], "ABC-1");
+    assert_eq!(r["head"], head.as_str());
+    assert!(r["tool"].as_str().unwrap().starts_with("stapel "), "{r}");
+    assert_eq!(r["result"], "pass");
+    let step = &r["steps"][0];
+    assert_eq!(step["label"], "step 1");
+    assert_eq!(step["outcome"], "pass");
+    assert_eq!(step["tests"], 1);
+    assert_eq!(step["red"].as_str().unwrap().len(), 40, "{step}");
+    assert_eq!(step["green"].as_str().unwrap().len(), 40, "{step}");
+    assert_eq!(r["suite"]["outcome"], "pass");
+    assert_eq!(r["suite"]["passed"], 2);
+    assert_eq!(r["suite"]["failed"], 0);
+
+    // A second check appends a second record.
+    let (code, _) = check(dir);
+    assert_eq!(code, 0);
+    let records = run_records(dir);
+    assert_eq!(records.len(), 2);
+    assert_ne!(records[0]["id"], records[1]["id"]);
+}
+
+#[test]
+fn record_caps_long_lists() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    // 250 static steps (a RED without a GREEN), one with a 300-byte label.
+    for n in 0..250 {
+        add_test(dir, "many", &format!("t{n}"), "assert!(false);");
+        let label = if n == 0 {
+            "x".repeat(300)
+        } else {
+            format!("step {n}")
+        };
+        commit(dir, &format!("ABC-1 {label} RED: test {n}"));
+    }
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    let r = &run_records(dir)[0];
+    assert_eq!(
+        r["steps"].as_array().unwrap().len(),
+        200,
+        "{}",
+        r["steps"].as_array().unwrap().len()
+    );
+    assert_eq!(r["steps_truncated"], true);
+    assert!(r["steps"][0]["label"].as_str().unwrap().len() <= 200);
+    assert!(r.to_string().len() < 64 * 1024);
+}
+
+#[test]
+fn record_names_at_most_twenty() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    for n in 0..25 {
+        add_test(
+            dir,
+            "wide",
+            &format!("w{n:02}"),
+            "assert_eq!(tiny::add(1, 1), 3);",
+        );
+    }
+    commit(dir, "ABC-1 step 1 RED: 25 tests");
+    let wide = read(dir, "crates/tiny/tests/wide.rs");
+    write(
+        dir,
+        "crates/tiny/tests/wide.rs",
+        &wide.replace("assert_eq!(tiny::add(1, 1), 3);", "assert!(true);"),
+    );
+    commit(dir, "ABC-1 step 1 GREEN: weakens them all");
+    let (_, text) = check(dir);
+    let r = &run_records(dir)[0];
+    let step = &r["steps"][0];
+    assert_eq!(step["outcome"], "tests-changed", "{text}");
+    assert_eq!(step["names"].as_array().unwrap().len(), 20, "{step}");
+}
+
+#[test]
+fn other_run_lines_are_ignored() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    let path = dir.join(".stapel/tickets/ABC-1/runs.jsonl");
+    let before = "{\"v\": 1, \"step\": \"7\", \"result\": \"pass\"}\nnot json\n";
+    std::fs::write(&path, before).unwrap();
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    let after = std::fs::read_to_string(&path).unwrap();
+    assert!(after.starts_with(before), "{after}");
+    assert_eq!(run_records(dir).len(), 1);
+}
