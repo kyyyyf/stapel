@@ -5,6 +5,9 @@
 //! output line in an acceptance criterion appears nowhere in the code. It runs with every
 //! `cargo test`, so drift is found at the commit that causes it, not at review.
 
+// The STP-4 step 1 RED test passes a cloned String slice; a GREEN commit may not change a RED test.
+#![allow(clippy::cloned_ref_to_slice_refs)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -181,6 +184,207 @@ fn missing_test(files: &BTreeMap<String, PathBuf>, module: &str, name: &str) -> 
     !defined_tests(&files[module]).contains(name)
 }
 
+/// An open ticket whose every criterion is built is checked as if closed, so what the close would
+/// find shows before it.
+fn effective_lifecycle(
+    text: &str,
+    life: Lifecycle,
+    files: &BTreeMap<String, PathBuf>,
+) -> Lifecycle {
+    let ac_rows: Vec<&str> = text.lines().filter(|l| l.starts_with("| AC-")).collect();
+    let all_built = !ac_rows.is_empty()
+        && ac_rows.iter().all(|row| {
+            let refs = test_refs(row, files);
+            !refs.is_empty() && refs.iter().all(|(m, n)| !missing_test(files, m, n))
+        });
+    if all_built { Lifecycle::Closed } else { life }
+}
+
+/// Tickets written before the rules of STP-4 AC-8; they keep their shape.
+const EARLIER_TICKETS: [&str; 3] = ["STP-1", "STP-2", "STP-3"];
+
+/// Options that existed before STP-4 AC-8 required an Inputs table row for each.
+const OLDER_OPTIONS: [&str; 14] = [
+    "--cache-read",
+    "--cache-write",
+    "--estimate",
+    "--input",
+    "--model",
+    "--note",
+    "--output",
+    "--prefix",
+    "--reason",
+    "--role",
+    "--since",
+    "--step",
+    "--tracker",
+    "--until",
+];
+
+/// The body of a level-2 section, up to the next level-2 heading.
+fn section<'a>(text: &'a str, title: &str) -> &'a str {
+    let head = format!("## {title}\n");
+    let Some(start) = text
+        .match_indices(&head)
+        .find(|(i, _)| *i == 0 || text.as_bytes()[i - 1] == b'\n')
+        .map(|(i, _)| i + head.len())
+    else {
+        return "";
+    };
+    let rest = &text[start..];
+    &rest[..rest.find("\n## ").map(|i| i + 1).unwrap_or(rest.len())]
+}
+
+/// STP-4 AC-8: risk tags, and for `guard` or `security` an abuse table and a dated self-check.
+fn process_problems(key: &str, text: &str) -> Vec<String> {
+    if EARLIER_TICKETS.contains(&key) {
+        return Vec::new();
+    }
+    let Some(tags_line) = text.lines().find(|l| l.starts_with("**Risk tags:**")) else {
+        return vec![format!("{key} has no risk tags line (`**Risk tags:**`)")];
+    };
+    let tags = spans(tags_line);
+    if !tags.iter().any(|t| *t == "guard" || *t == "security") {
+        return Vec::new();
+    }
+    let mut problems = Vec::new();
+    if !text.lines().any(|l| l.starts_with("### Abuse")) {
+        problems.push(format!(
+            "{key} is tagged guard or security but has no abuse table"
+        ));
+    }
+    let dated = |l: &str| {
+        l.as_bytes().windows(10).any(|w| {
+            w.iter().enumerate().all(|(i, c)| {
+                if i == 4 || i == 7 {
+                    *c == b'-'
+                } else {
+                    c.is_ascii_digit()
+                }
+            })
+        })
+    };
+    let done = text
+        .lines()
+        .any(|l| l.starts_with("**Author self-check") && dated(l) && !l.contains("To be done"));
+    if !done {
+        problems.push(format!(
+            "{key} is tagged guard or security but has no dated author self-check"
+        ));
+    }
+    problems
+}
+
+/// STP-4 AC-8: the tests of criteria and risks equal those of the Proof and are all in the Test plan.
+fn list_problems(key: &str, text: &str, files: &BTreeMap<String, PathBuf>) -> Vec<String> {
+    if EARLIER_TICKETS.contains(&key) {
+        return Vec::new();
+    }
+    let rows = |body: &str, prefix: &str| -> String {
+        body.lines()
+            .filter(|l| l.starts_with(prefix))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut named = test_refs(&rows(section(text, "Spec"), "| AC-"), files);
+    named.extend(test_refs(&rows(section(text, "Design"), "| R-"), files));
+    let proof = test_refs(section(text, "Proof"), files);
+    let plan = test_refs(section(text, "Test plan"), files);
+    let mut problems = Vec::new();
+    for (m, n) in named.difference(&proof) {
+        problems.push(format!(
+            "{key} names {m}::{n} in its criteria or risks but not in its Proof"
+        ));
+    }
+    for (m, n) in proof.difference(&named) {
+        problems.push(format!(
+            "{key} names {m}::{n} in its Proof but not in its criteria or risks"
+        ));
+    }
+    for (m, n) in named.difference(&plan) {
+        problems.push(format!(
+            "{key} names {m}::{n} in its criteria or risks but not in its Test plan"
+        ));
+    }
+    problems
+}
+
+/// Every long option of every `stapel` subcommand, from `--help`.
+fn stapel_options() -> BTreeSet<String> {
+    fn help(path: &[String]) -> String {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_stapel"))
+            .args(path)
+            .arg("--help")
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+    let mut options = BTreeSet::new();
+    let mut queue: Vec<Vec<String>> = vec![Vec::new()];
+    while let Some(path) = queue.pop() {
+        let text = help(&path);
+        let mut in_commands = false;
+        for line in text.lines() {
+            if line.starts_with("Commands:") {
+                in_commands = true;
+                continue;
+            }
+            if in_commands {
+                let Some(name) = line
+                    .strip_prefix("  ")
+                    .and_then(|l| l.split_whitespace().next())
+                else {
+                    in_commands = false;
+                    continue;
+                };
+                if name != "help" {
+                    let mut sub = path.clone();
+                    sub.push(name.to_string());
+                    queue.push(sub);
+                }
+            }
+        }
+        for word in text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')) {
+            let ok = word.len() > 2
+                && word.starts_with("--")
+                && word[2..].starts_with(|c: char| c.is_ascii_lowercase());
+            if ok && word != "--help" && word != "--version" {
+                options.insert(word.to_string());
+            }
+        }
+    }
+    options
+}
+
+/// Options named in no ticket's Inputs table and not older than the rule.
+fn options_missing(options: &BTreeSet<String>, tickets: &[String]) -> Vec<String> {
+    let mut named = BTreeSet::new();
+    for text in tickets {
+        let Some(start) = text.find("### Inputs") else {
+            continue;
+        };
+        let rest = &text[start..];
+        let end = rest[1..]
+            .find("\n## ")
+            .into_iter()
+            .chain(rest[1..].find("\n### "))
+            .min()
+            .map(|i| i + 1)
+            .unwrap_or(rest.len());
+        for row in rest[..end].lines().filter(|l| l.starts_with('|')) {
+            for span in spans(row) {
+                let word = span.split([' ', '=']).next().unwrap_or("");
+                named.insert(word.to_string());
+            }
+        }
+    }
+    options
+        .iter()
+        .filter(|o| !OLDER_OPTIONS.contains(&o.as_str()) && !named.contains(*o))
+        .cloned()
+        .collect()
+}
+
 /// The drift of one ticket. A closed ticket is checked fully; an open ticket checks each acceptance
 /// criterion once every test it names exists, since until then the criterion is a plan.
 fn ticket_problems(
@@ -191,15 +395,7 @@ fn ticket_problems(
     code: &str,
 ) -> Vec<String> {
     let mut problems = Vec::new();
-    // An open ticket whose every criterion is built is checked as if closed, so what the close
-    // would find shows before it.
-    let ac_rows: Vec<&str> = text.lines().filter(|l| l.starts_with("| AC-")).collect();
-    let all_built = !ac_rows.is_empty()
-        && ac_rows.iter().all(|row| {
-            let refs = test_refs(row, files);
-            !refs.is_empty() && refs.iter().all(|(m, n)| !missing_test(files, m, n))
-        });
-    let life = if all_built { Lifecycle::Closed } else { life };
+    let life = effective_lifecycle(text, life, files);
     for row in text.lines().filter(|l| l.starts_with("| AC-")) {
         let id = row.split('|').nth(1).unwrap_or("").trim();
         let refs = test_refs(row, files);
@@ -273,6 +469,10 @@ fn ticket_test_names_exist_and_every_test_is_named() {
     let mut problems = Vec::new();
     for (key, text) in tickets() {
         problems.extend(ticket_problems(&key, &text, lifecycle(&key), &files, &code));
+        if effective_lifecycle(&text, lifecycle(&key), &files) == Lifecycle::Closed {
+            problems.extend(process_problems(&key, &text));
+            problems.extend(list_problems(&key, &text, &files));
+        }
         named.extend(test_refs(&text, &files));
     }
     for (module, path) in &files {
