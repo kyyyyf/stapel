@@ -854,3 +854,34 @@ fn deleted_and_readded_tests_stay_protected() {
     let (_, text) = check(dir);
     assert_eq!(outcome(&text, "step 1"), "tests-changed", "{text}");
 }
+
+// D4-7: the paths a RED may change, and at most 20 named code paths.
+#[test]
+fn red_paths_allowed_and_capped() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "allowed", "assert!(true);");
+    write(dir, "README.md", "Read me.\n");
+    write(dir, ".stapel/notes.txt", "notes\n");
+    write(dir, "docs/plan.txt", "plan\n");
+    write(dir, "crates/tiny/tests/golden/new.txt", "golden\n");
+    edit(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "edition = \"2021\"\n",
+        "edition = \"2021\"\n\n[target.'cfg(unix)'.dev-dependencies]\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: only allowed paths");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    add_test(dir, "basic", "many", "assert!(true);");
+    for n in 0..25 {
+        write(dir, &format!("crates/tiny/src/m{n:02}.rs"), "\n");
+    }
+    commit(dir, "ABC-1 step 2 RED: many code paths");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    let (_, text) = check(dir);
+    assert_ne!(outcome(&text, "step 1"), "red-changes-code", "{text}");
+    assert_eq!(outcome(&text, "step 2"), "red-changes-code", "{text}");
+    assert!(text.contains("crates/tiny/src/m19.rs and 5 more"), "{text}");
+    assert!(!text.contains("m20.rs"), "{text}");
+}
