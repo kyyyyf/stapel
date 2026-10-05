@@ -175,6 +175,14 @@ On the same tickets through `stapel` and through klc (phase 4):
 | tokens per ticket, by role | from `tokens.jsonl`, measurements only |
 | index savings | the same ticket with and without the index: tokens and turns to the first correct change |
 | CI minutes | selective run against a full run |
+| escaped defects | defects found after a ticket closed: by `stapel check` on its history, by later tickets, by the human |
+
+**Added after STP-4.** Escaped defects are the main quality measure, and the per-ticket spec process is
+judged by them, by the HIGH and MEDIUM inside-promise findings of code review, by the size of `ticket.md`
+and by tokens — not by the share of review findings catchable before code. That share measured mostly the
+reviewers' quotas: code review found 30 to 38 findings on every ticket from STP-2 to STP-4, while the spec
+work grew to 54 KB and 89 findings before code on STP-4. The spec process is in `CLAUDE.md`, "The spec
+process"; rules that catch nothing for three tickets are removed (`.stapel/process-ledger.jsonl`).
 
 ## 9. Risks
 

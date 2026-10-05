@@ -1,0 +1,32 @@
+# Dimensions of the external systems a ticket may read or run (CLAUDE.md, "The spec process", items 2 and 3).
+# For every system a ticket touches, its External states table has one row per dimension: handled (with a
+# test), refused (exit code and test), or not promised. A dimension added here applies to later tickets.
+# Seeded from the reviews of STP-1 to STP-4 (2026-10-05).
+git:
+  - history shape: merge commits, rebased or squashed history, amended commits
+  - shallow clone
+  - object format: SHA-1 or SHA-256
+  - detached HEAD; linked worktrees, including ones whose folder is gone
+  - submodules
+  - paths with spaces, newlines, glob characters or non-UTF-8 bytes; renames and similarity
+  - commit messages with control bytes
+  - dirty tree: staged, unstaged, untracked, ignored files
+  - configuration: hooks and their path setting, global and system config, GIT_* environment
+cargo:
+  - workspace with several packages; package name differs from folder name
+  - custom targets ([[test]], harness = false, autotests = false)
+  - .cargo/config.toml at any level; rustc wrappers, target runners
+  - environment: CARGO_*, RUSTC*, RUSTFLAGS, PATH choosing another cargo
+  - Cargo.lock out of date; offline; network errors
+  - build scripts and include! of files outside src
+  - output format of libtest: singular and plural, should panic, ignored with a reason, child output
+claude-code:
+  - permission mode (default, auto, plan, bypass); whether the dialog is offered
+  - environment of hook processes versus the agent's Bash shell
+  - transcripts: main and subagent files, streamed lines of one message, resumed sessions, compaction
+  - settings at user, project and local level; allow rules that skip the dialog
+os:
+  - case-insensitive file systems; symlinks; file permissions
+  - processes: signals, process groups, children that leave the group, pid reuse
+  - time: clock skew, time zones
+  - WSL: Windows binaries on PATH, memory limits of the VM
