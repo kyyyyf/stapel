@@ -252,3 +252,18 @@ pub fn step_tests(root: &Path, red: &str) -> Result<Vec<TestId>, String> {
     out.dedup();
     Ok(out)
 }
+
+/// The package name in `crates/<dir>/Cargo.toml` at a commit.
+pub fn package_name(root: &Path, commit: &str, dir: &str) -> Result<String, String> {
+    let at = &commit[..commit.len().min(7)];
+    let manifest = show(root, commit, &format!("crates/{dir}/Cargo.toml"))
+        .ok_or_else(|| format!("crates/{dir}/Cargo.toml is missing at {at}"))?;
+    let table: toml::Table =
+        toml::from_str(&manifest).map_err(|e| format!("crates/{dir}/Cargo.toml at {at}: {e}"))?;
+    table
+        .get("package")
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str())
+        .map(String::from)
+        .ok_or_else(|| format!("crates/{dir}/Cargo.toml at {at} has no package name"))
+}
