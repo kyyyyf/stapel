@@ -73,6 +73,11 @@ fn manifest_without_dev(text: &str) -> Option<toml::Table> {
                 target.remove("dev_dependencies");
             }
         }
+        // A target table that held only dev-dependencies is gone with them.
+        targets.retain(|_, v| !matches!(v, toml::Value::Table(t) if t.is_empty()));
+        if targets.is_empty() {
+            t.remove("target");
+        }
     }
     Some(t)
 }
