@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 /// Output kept per stream; the rest is read and discarded.
@@ -182,19 +183,34 @@ pub struct RunResult {
     pub output: String,
 }
 
-fn read_capped(mut r: impl Read) -> Vec<u8> {
-    let mut kept = Vec::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        match r.read(&mut buf) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => {
-                let room = MAX_OUTPUT.saturating_sub(kept.len());
-                kept.extend_from_slice(&buf[..n.min(room)]);
+/// Reads a stream into a shared buffer, keeping at most `MAX_OUTPUT` bytes; says when done.
+fn read_capped(mut r: impl Read + Send + 'static) -> (Arc<Mutex<Vec<u8>>>, mpsc::Receiver<()>) {
+    let kept = Arc::new(Mutex::new(Vec::new()));
+    let (done, finished) = mpsc::channel();
+    let buf_kept = Arc::clone(&kept);
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            match r.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let mut k = buf_kept.lock().unwrap_or_else(|e| e.into_inner());
+                    let room = MAX_OUTPUT.saturating_sub(k.len());
+                    k.extend_from_slice(&buf[..n.min(room)]);
+                }
             }
         }
-    }
-    kept
+        let _ = done.send(());
+    });
+    (kept, finished)
+}
+
+/// What a reader has read: it gets until `deadline` to reach the end of its stream, since a
+/// process outside the group may hold the stream open for ever.
+fn collect(reader: (Arc<Mutex<Vec<u8>>>, mpsc::Receiver<()>), deadline: Instant) -> Vec<u8> {
+    let (kept, finished) = reader;
+    let _ = finished.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+    kept.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 #[cfg(unix)]
@@ -238,8 +254,8 @@ pub fn run_cargo(
         .map_err(|e| format!("cargo did not start: {e}"))?;
     let out = child.stdout.take().expect("piped");
     let err = child.stderr.take().expect("piped");
-    let out = std::thread::spawn(move || read_capped(out));
-    let err = std::thread::spawn(move || read_capped(err));
+    let out = read_capped(out);
+    let err = read_capped(err);
     let deadline = Instant::now() + timeout;
     let mut timed_out = false;
     let status = loop {
@@ -257,9 +273,10 @@ pub fn run_cargo(
     };
     // Children of the test that outlive it would keep the pipes open; the group goes too.
     kill_group(child.id());
-    let mut output = String::from_utf8_lossy(&out.join().unwrap_or_default()).into_owned();
+    let drain = Instant::now() + Duration::from_secs(2);
+    let mut output = String::from_utf8_lossy(&collect(out, drain)).into_owned();
     output.push('\n');
-    output.push_str(&String::from_utf8_lossy(&err.join().unwrap_or_default()));
+    output.push_str(&String::from_utf8_lossy(&collect(err, drain)));
     Ok(RunResult {
         exit: status.and_then(|s| s.code()),
         timed_out,
