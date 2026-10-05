@@ -727,3 +727,67 @@ fn outcome_order_and_static_outcomes() {
     assert_eq!(outcome(&text, "step 3"), "red-changes-code", "{text}");
     assert!(!marker.exists(), "a step test ran:\n{text}");
 }
+// ---- STP-4 step 3 drift review D3-4 ----
+
+// A rename below git's similarity threshold is an added file: all its tests are step tests.
+#[test]
+fn list_counts_a_dissimilar_rename_as_added() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    git(
+        dir,
+        &[
+            "mv",
+            "crates/tiny/tests/basic.rs",
+            "crates/tiny/tests/other.rs",
+        ],
+    );
+    add_test(dir, "other", "new_one", "assert_eq!(tiny::add(4, 4), 8);");
+    add_test(dir, "other", "new_two", "assert_eq!(tiny::add(5, 4), 9);");
+    commit(dir, "ABC-1 step 1 RED: rename and rewrite");
+    let text = list(dir);
+    let tests: Vec<String> = step_block(&text, "step 1")
+        .into_iter()
+        .filter(|l| l.starts_with("tiny/"))
+        .collect();
+    assert_eq!(
+        tests,
+        [
+            "tiny/other::new_one",
+            "tiny/other::new_two",
+            "tiny/other::starts"
+        ],
+        "{text}"
+    );
+}
+
+// The first commit of a repository can be a RED commit; `--list` ignores a dirty tree.
+#[test]
+fn list_reads_a_root_commit_and_ignores_a_dirty_tree() {
+    let repo = common::git_repo();
+    let dir = repo.path();
+    write(
+        dir,
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/tiny\"]\nresolver = \"2\"\n",
+    );
+    write(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write(dir, "crates/tiny/src/lib.rs", LIB);
+    add_test(dir, "basic", "first", "assert!(true);");
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    stapel(dir).args(["new", "First"]).assert().success();
+    commit(dir, "ABC-1 step 1 RED: everything at once");
+    write(dir, "crates/tiny/src/lib.rs", "uncommitted change\n");
+    let text = list(dir);
+    assert!(
+        step_block(&text, "step 1").contains(&"tiny/basic::first".to_string()),
+        "{text}"
+    );
+}
