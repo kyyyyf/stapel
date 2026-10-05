@@ -334,3 +334,139 @@ pub fn import(a: Import) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// One report row: sums of the records of one role, model and origin.
+#[derive(Default)]
+struct Row {
+    measured: [Option<u64>; 4],
+    estimate: Option<u64>,
+    legacy_total: Option<u64>,
+    legacy_kind: Option<String>,
+}
+
+fn add_to(slot: &mut Option<u64>, value: Option<u64>) {
+    if let Some(v) = value {
+        *slot = Some(slot.unwrap_or(0) + v);
+    }
+}
+
+fn cell(v: Option<u64>) -> String {
+    v.map_or_else(|| "—".to_string(), |n| n.to_string())
+}
+
+fn line(role: &str, model: &str, cells: [&str; 6]) -> String {
+    format!(
+        "{role:<14}{model:<28}{:>9}{:>9}{:>12}{:>13}{:>10}{:>17}",
+        cells[0], cells[1], cells[2], cells[3], cells[4], cells[5]
+    )
+}
+
+/// `stapel tokens [KEY]` (STP-3 AC-4). Reads only `tokens.jsonl` files.
+pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
+    use stapel_core::journal::{Entry, read};
+    let (root, _config) = repo::open()?;
+    let tickets: Vec<Ticket> = stapel_core::tickets::list(&root)
+        .into_iter()
+        .filter(|t| key.is_none_or(|k| t.key.eq_ignore_ascii_case(k)))
+        .collect();
+    if let (Some(k), true) = (key, tickets.is_empty()) {
+        return Err(format!("no ticket {k} in .stapel/tickets"));
+    }
+    let mut blocks = Vec::new();
+    let mut problems = Vec::new();
+    for ticket in tickets {
+        let path = ticket.dir.join("tokens.jsonl");
+        if !path.exists() {
+            continue;
+        }
+        // Key: role, model, origin (0 for v1 records, 1 for legacy ones).
+        let mut rows: std::collections::BTreeMap<(String, String, u8), Row> = Default::default();
+        for (n, entry) in read(&path)? {
+            let text = |m: &Map<String, Value>, k: &str| {
+                m.get(k).and_then(Value::as_str).unwrap_or("—").to_string()
+            };
+            match entry {
+                Entry::Problem(_) => problems.push(format!(
+                    "problem: .stapel/tickets/{}/tokens.jsonl:{n}",
+                    ticket.key
+                )),
+                Entry::V1(m) => {
+                    let row = rows
+                        .entry((text(&m, "role"), text(&m, "model"), 0))
+                        .or_default();
+                    let n = |k: &str| m.get(k).and_then(Value::as_u64);
+                    if m.get("source").and_then(Value::as_str) == Some("estimate") {
+                        add_to(&mut row.estimate, n("estimate"));
+                    } else {
+                        for (slot, k) in row.measured.iter_mut().zip([
+                            "input",
+                            "output",
+                            "cache_read",
+                            "cache_write",
+                        ]) {
+                            add_to(slot, n(k));
+                        }
+                    }
+                }
+                Entry::Legacy(m) => {
+                    let kind = text(&m, "kind");
+                    let n = |k: &str| m.get(k).and_then(Value::as_u64);
+                    let total = n("total_tokens")
+                        .or_else(|| Some(n("input_tokens")? + n("output_tokens")?));
+                    let row = rows
+                        .entry((
+                            text(&m, "role"),
+                            format!("{}\u{0}{kind}", text(&m, "model")),
+                            1,
+                        ))
+                        .or_default();
+                    add_to(&mut row.legacy_total, total);
+                    row.legacy_kind = Some(kind);
+                }
+            }
+        }
+        let mut block = vec![
+            format!("ticket: {}", ticket.key),
+            line(
+                "role",
+                "model",
+                [
+                    "input",
+                    "output",
+                    "cache read",
+                    "cache write",
+                    "estimate",
+                    "legacy",
+                ],
+            ),
+        ];
+        for ((role, model, origin), row) in &rows {
+            let model = model.split('\u{0}').next().unwrap_or(model);
+            let legacy = match (&row.legacy_kind, origin) {
+                (Some(kind), 1) => format!("{} {kind}", cell(row.legacy_total)),
+                _ => "—".into(),
+            };
+            let m = row.measured.map(cell);
+            let estimate = cell(row.estimate);
+            block.push(line(
+                role,
+                model,
+                [&m[0], &m[1], &m[2], &m[3], &estimate, &legacy],
+            ));
+        }
+        blocks.push(block.join("\n"));
+    }
+    let mut out = blocks.join("\n\n");
+    if !problems.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&problems.join("\n"));
+    }
+    if !out.is_empty() {
+        println!("{out}");
+    }
+    Ok(if problems.is_empty() {
+        std::process::ExitCode::SUCCESS
+    } else {
+        std::process::ExitCode::FAILURE
+    })
+}

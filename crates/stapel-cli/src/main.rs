@@ -163,10 +163,10 @@ fn main() -> ExitCode {
                 since,
                 until,
             }),
-            None => Err(format!(
-                "the token report comes with a later step of STP-3 (ticket {})",
-                key.unwrap_or_default()
-            )),
+            None => match tokens::report(key.as_deref()) {
+                Ok(code) => return code,
+                Err(message) => Err(message),
+            },
         },
         Command::Close { key, reason, grant } => {
             close::run(key.as_deref(), &reason, grant.as_deref())
