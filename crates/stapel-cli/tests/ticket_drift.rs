@@ -371,3 +371,94 @@ fn fully_built_open_ticket_is_checked_fully() {
     let open = ticket_problems("T-1", ticket, Lifecycle::Open, &files, &code);
     assert!(open.iter().any(|p| p.contains("not_written")), "{open:?}");
 }
+
+/// STP-4 AC-8: a guard or security ticket needs an abuse table and a dated self-check; every ticket
+/// needs a risk tags line. Earlier tickets are exempt.
+#[test]
+fn abuse_table_and_self_check_are_required() {
+    let tagged = "## Description\n\n**Risk tags:** `guard` (x), `data`.\n\n## Test plan\n";
+    let p = process_problems("T-9", tagged);
+    assert!(p.iter().any(|x| x.contains("abuse table")), "{p:?}");
+    assert!(p.iter().any(|x| x.contains("self-check")), "{p:?}");
+
+    let placeholder = format!(
+        "{tagged}\n### Abuse table\n\n**Author self-check (item 7).** To be done 2026-10-05.\n"
+    );
+    let p = process_problems("T-9", &placeholder);
+    assert!(p.iter().any(|x| x.contains("self-check")), "{p:?}");
+    assert!(!p.iter().any(|x| x.contains("abuse table")), "{p:?}");
+
+    let done = format!(
+        "{tagged}\n### Abuse table\n\n**Author self-check (item 7).** Done on 2026-10-05: nothing new.\n"
+    );
+    assert!(process_problems("T-9", &done).is_empty());
+
+    let untagged = "## Description\n\n**Risk tags:** `data`.\n";
+    assert!(process_problems("T-9", untagged).is_empty());
+
+    let no_tags = "## Description\n\nNo tags here.\n";
+    let p = process_problems("T-9", no_tags);
+    assert!(p.iter().any(|x| x.contains("risk tags")), "{p:?}");
+
+    assert!(process_problems("STP-2", no_tags).is_empty());
+}
+
+/// STP-4 AC-8: the tests of criteria and risks equal those of the Proof, and all are in the Test plan.
+#[test]
+fn test_lists_must_agree() {
+    let files = test_files();
+    let a = "`ticket_drift::checker_finds_a_wrong_quote`";
+    let b = "`ticket_drift::open_tickets_are_plans`";
+    let ticket = |proof: &str, plan: &str| {
+        format!(
+            "## Description\n\n**Risk tags:** `data`.\n\n## Spec\n\n| AC-1 | x | {a} |\n\n## Design\n\n| R-1 | y | {b} |\n\n## Test plan\n\n| Main | z | {plan} |\n\n## Proof\n\n| AC-1, R-1 | {proof} |\n\n## Plan\n"
+        )
+    };
+    assert!(
+        list_problems(
+            "T-9",
+            &ticket(&format!("{a}, {b}"), &format!("{a}, {b}")),
+            &files
+        )
+        .is_empty()
+    );
+    let p = list_problems("T-9", &ticket(a, &format!("{a}, {b}")), &files);
+    assert!(
+        p.iter()
+            .any(|x| x.contains("open_tickets_are_plans") && x.contains("Proof")),
+        "{p:?}"
+    );
+    let p = list_problems("T-9", &ticket(&format!("{a}, {b}"), a), &files);
+    assert!(
+        p.iter()
+            .any(|x| x.contains("open_tickets_are_plans") && x.contains("Test plan")),
+        "{p:?}"
+    );
+    assert!(list_problems("STP-3", &ticket(a, a), &files).is_empty());
+}
+
+/// STP-4 AC-8: every long option of every `stapel` subcommand is in some ticket's Inputs table,
+/// apart from those older than the rule.
+#[test]
+fn every_option_is_in_an_inputs_table() {
+    let options = stapel_options();
+    assert!(
+        options.contains("--reason") && options.contains("--until"),
+        "{options:?}"
+    );
+    let tickets: Vec<String> = tickets().into_iter().map(|(_, t)| t).collect();
+    let missing = options_missing(&options, &tickets);
+    assert!(
+        missing.is_empty(),
+        "options in no Inputs table: {missing:?}"
+    );
+
+    let fake: BTreeSet<String> = ["--reason", "--brand-new"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let inputs = "### Inputs\n\n| `--other` | flag |\n".to_string();
+    assert_eq!(options_missing(&fake, &[inputs.clone()]), ["--brand-new"]);
+    let named = format!("{inputs}| `--brand-new` | flag |\n");
+    assert!(options_missing(&fake, &[named]).is_empty());
+}
