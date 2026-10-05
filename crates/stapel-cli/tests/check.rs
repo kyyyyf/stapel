@@ -48,9 +48,9 @@ fn commit(dir: &Path, message: &str) {
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_AUTHOR_NAME", "test-user")
-        .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
+        .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
         .env("GIT_COMMITTER_NAME", "test-user")
-        .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
+        .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
         .env("GIT_AUTHOR_DATE", &date)
         .env("GIT_COMMITTER_DATE", &date)
         .output()
@@ -153,7 +153,7 @@ fn list_pairs_red_and_green_by_label() {
         dir,
         &[
             "-c",
-            "user.email=t@example.invalid",
+            "user.email=test-user.invalid",
             "merge",
             "-q",
             "--no-ff",
@@ -280,6 +280,15 @@ fn list_finds_added_and_changed_tests() {
 fn list_keeps_renamed_and_reformatted_tests() {
     let repo = cargo_repo();
     let dir = repo.path();
+    // A file large enough that git's rename detection (50 % similarity) sees the move.
+    let mut big = read(dir, "crates/tiny/tests/basic.rs");
+    for n in 0..12 {
+        big.push_str(&format!(
+            "\n#[test]\nfn kept_{n}() {{\n    assert_eq!(tiny::add({n}, 0), {n});\n}}\n"
+        ));
+    }
+    write(dir, "crates/tiny/tests/basic.rs", &big);
+    commit(dir, "ABC-1: tests before the ticket's steps");
     git(
         dir,
         &[
