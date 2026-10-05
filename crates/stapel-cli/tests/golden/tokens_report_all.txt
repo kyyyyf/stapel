@@ -1,0 +1,18 @@
+ticket: ABC-1
+role          model                           input   output  cache read  cache write  estimate           legacy
+author        claude-opus-5-5                     —        —           —            —      5000                —
+builder       claude-sonnet-5-5                  10       20           0            —        70                —
+orchestrator  claude-haiku-4-5-20251001           3        7           0            0         —                —
+orchestrator  claude-opus-5-5                     7     4631         600           30         —                —
+
+ticket: ABC-2
+role          model                           input   output  cache read  cache write  estimate           legacy
+author        claude-opus-5-5                     —        —           —            —         —       — estimate
+builder       claude-opus-5-5                     —        —           —            —         —  990000 estimate
+reviewer      claude-sonnet-5-5                   —        —           —            —         —   50786 measured
+
+ticket: ABC-3
+role          model                           input   output  cache read  cache write  estimate           legacy
+builder       claude-sonnet-5-5                   —        —           —            —         1                —
+
+problem: .stapel/tickets/ABC-3/tokens.jsonl:2

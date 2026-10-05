@@ -389,3 +389,123 @@ proptest::proptest! {
         let _ = stapel_core::time::parse_transcript_time(&line);
     }
 }
+
+// ---- AC-4: the report ----
+
+fn golden(name: &str) -> String {
+    std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/golden")
+            .join(name),
+    )
+    .unwrap()
+}
+
+/// ABC-1 with measured, estimated and imported records.
+fn ticket_with_records() -> tempfile::TempDir {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for args in [
+        vec![
+            "--role",
+            "builder",
+            "--input",
+            "10",
+            "--output",
+            "20",
+            "--cache-read",
+            "0",
+        ],
+        vec!["--role", "author", "--estimate", "5000"],
+        vec!["--role", "builder", "--estimate", "70"],
+    ] {
+        let mut a = vec!["tokens", "add", "ABC-1"];
+        a.extend(args);
+        stapel(dir).args(&a).assert().success();
+    }
+    let main = fixture(dir, "main.jsonl");
+    import(dir, &main, None, "2026-01-02T00:00:00Z").success();
+    repo
+}
+
+#[test]
+fn report_matches_golden() {
+    let repo = ticket_with_records();
+    let out = stapel(repo.path())
+        .args(["tokens", "ABC-1"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(String::from_utf8(out).unwrap(), golden("tokens_report.txt"));
+}
+
+#[test]
+fn report_all_matches_golden() {
+    let repo = ticket_with_records();
+    let dir = repo.path();
+    for title in ["Second", "Third", "Fourth"] {
+        stapel(dir).args(["new", title]).assert().success();
+    }
+    // ABC-2: the three shapes of hand-written lines found in STP-1..STP-3.
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-2/tokens.jsonl"),
+        concat!(
+            r#"{"ts":"2026-10-02T18:00:00Z","ticket":"ABC-2","role":"reviewer","model":"claude-sonnet-5-5","total_tokens":50786,"kind":"measured"}"#, "\n",
+            r#"{"ts":"2026-10-02T19:00:00Z","ticket":"ABC-2","role":"builder","model":"claude-opus-5-5","input_tokens":900000,"output_tokens":90000,"kind":"estimate"}"#, "\n",
+            r#"{"ts":"2026-10-05T07:00:00Z","ticket":"ABC-2","role":"author","model":"claude-opus-5-5","input_tokens":null,"output_tokens":null,"kind":"estimate"}"#, "\n",
+        ),
+    )
+    .unwrap();
+    stapel(dir)
+        .args([
+            "tokens",
+            "add",
+            "ABC-3",
+            "--role",
+            "builder",
+            "--estimate",
+            "1",
+        ])
+        .assert()
+        .success();
+    let mut journal = std::fs::OpenOptions::new()
+        .append(true)
+        .open(dir.join(".stapel/tickets/ABC-3/tokens.jsonl"))
+        .unwrap();
+    std::io::Write::write_all(&mut journal, b"{broken\n").unwrap();
+    // ABC-4 has no journal and is left out.
+    let out = stapel(dir)
+        .arg("tokens")
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        golden("tokens_report_all.txt")
+    );
+}
+
+#[test]
+fn report_never_mixes_sources() {
+    let repo = ticket_with_records();
+    let out = stapel(repo.path())
+        .args(["tokens", "ABC-1"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).unwrap();
+    let builder: Vec<&str> = text
+        .lines()
+        .find(|l| l.starts_with("builder"))
+        .unwrap()
+        .split_whitespace()
+        .collect();
+    // input, output, cache read, cache write, estimate: the estimate of 70 stays out of the measured counts.
+    assert_eq!(builder[2..7], ["10", "20", "0", "—", "70"]);
+}
