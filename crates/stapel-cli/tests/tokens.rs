@@ -548,3 +548,223 @@ fn report_keeps_columns_apart() {
         ]
     );
 }
+
+// ---- STP-3 code review round 1 ----
+
+// F-1, F-2: large counts are bounded, sums never overflow, and number columns stay apart.
+#[test]
+fn report_survives_large_numbers() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    stapel(dir)
+        .args([
+            "tokens",
+            "add",
+            "--role",
+            "builder",
+            "--input",
+            "18446744073709551615",
+            "--output",
+            "1",
+        ])
+        .assert()
+        .code(1);
+    for _ in 0..2 {
+        stapel(dir)
+            .args([
+                "tokens",
+                "add",
+                "--role",
+                "builder",
+                "--input",
+                "999999999999999",
+                "--output",
+                "1234567890",
+            ])
+            .assert()
+            .success();
+    }
+    let out = stapel(dir)
+        .args(["tokens", "ABC-1"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).unwrap();
+    let row: Vec<&str> = text
+        .lines()
+        .find(|l| l.starts_with("builder"))
+        .unwrap()
+        .split_whitespace()
+        .collect();
+    assert_eq!(row[2..4], ["1999999999999998", "2469135780"], "{text}");
+}
+
+// F-3: windows take milliseconds, and an import names the next --since.
+#[test]
+fn import_window_takes_milliseconds_and_names_the_next_since() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let main = fixture(dir, "main.jsonl");
+    import(dir, &main, None, "2026-01-01T10:00:00.200Z")
+        .success()
+        .stdout(contains("next --since: 2026-01-01T10:00:00.101Z"));
+    import(
+        dir,
+        &main,
+        Some("2026-01-01T10:00:00.101Z"),
+        "2026-01-02T00:00:00Z",
+    )
+    .success();
+    let opus = records(dir, "ABC-1")
+        .into_iter()
+        .filter(|r| r["model"] == "claude-opus-5-5")
+        .count();
+    assert_eq!(opus, 2);
+}
+
+// F-4: impossible dates are refused on the command line and unreadable in a transcript.
+#[test]
+fn impossible_dates_are_refused() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let main = fixture(dir, "main.jsonl");
+    for bad in [
+        "2023-02-29T00:00:00Z",
+        "2026-04-31T00:00:00Z",
+        "2026-01-01T10:00:60Z",
+    ] {
+        import(dir, &main, None, bad).code(1);
+    }
+    import(dir, &main, None, "2024-02-29T00:00:00Z").success();
+    let bad = fixture(dir, "bad_date.jsonl");
+    import(dir, &bad, None, "2026-12-01T00:00:00Z")
+        .success()
+        .stdout(contains("skipped: 1 unreadable lines"));
+}
+
+// F-5: a v1 line with an unknown source is a problem, not a measured row.
+#[test]
+fn report_flags_unknown_source() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-1/tokens.jsonl"),
+        "{\"v\":1,\"id\":\"t-x\",\"role\":\"r\",\"model\":\"m\",\"source\":\"bogus\",\"estimate\":5}\n",
+    )
+    .unwrap();
+    stapel(dir)
+        .args(["tokens", "ABC-1"])
+        .assert()
+        .code(1)
+        .stdout(contains("problem: .stapel/tickets/ABC-1/tokens.jsonl:1"));
+}
+
+// F-7: a transcript without a session id is refused; the ticket is part of the record id.
+#[test]
+fn import_refuses_transcript_without_session() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let no = fixture(dir, "no_session.jsonl");
+    import(dir, &no, None, "2026-12-01T00:00:00Z")
+        .code(1)
+        .stderr(contains("session"));
+    stapel(dir).args(["new", "Second"]).assert().success();
+    let main = fixture(dir, "main.jsonl");
+    import(dir, &main, None, "2026-01-02T00:00:00Z").success();
+    let path = main.display().to_string();
+    stapel(dir)
+        .args([
+            "tokens",
+            "import",
+            &path,
+            "ABC-2",
+            "--role",
+            "orchestrator",
+            "--until",
+            "2026-01-02T00:00:00Z",
+        ])
+        .assert()
+        .success();
+    let ids1: Vec<String> = records(dir, "ABC-1")
+        .iter()
+        .map(|r| r["id"].to_string())
+        .collect();
+    let ids2: Vec<String> = records(dir, "ABC-2")
+        .iter()
+        .map(|r| r["id"].to_string())
+        .collect();
+    assert!(ids1.iter().all(|i| !ids2.contains(i)), "{ids1:?} {ids2:?}");
+}
+
+// F-8, E-3: an empty window says so; a reversed window is refused.
+#[test]
+fn import_reports_an_empty_window() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let main = fixture(dir, "main.jsonl");
+    import(
+        dir,
+        &main,
+        Some("2025-01-01T00:00:00Z"),
+        "2025-01-02T00:00:00Z",
+    )
+    .success()
+    .stdout(contains("nothing to import in the window"));
+    import(
+        dir,
+        &main,
+        Some("2026-01-02T00:00:00Z"),
+        "2026-01-01T00:00:00Z",
+    )
+    .code(1);
+}
+
+// E-4, D-3: a long last line still counts (16 MiB bound), and reading stays bounded.
+#[test]
+fn import_counts_a_long_last_line() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let long = fixture(dir, "long_line.jsonl");
+    import(dir, &long, None, "2026-12-01T00:00:00Z").success();
+    assert_eq!(records(dir, "ABC-1")[0]["output"], 5000);
+}
+
+// E-6: import warns about a role that is not in stapel.toml, like add.
+#[test]
+fn import_warns_on_unconfigured_role() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let main = fixture(dir, "main.jsonl");
+    stapel(dir)
+        .args([
+            "tokens",
+            "import",
+            &main.display().to_string(),
+            "--role",
+            "orchestratr",
+            "--until",
+            "2026-01-02T00:00:00Z",
+        ])
+        .assert()
+        .success()
+        .stderr(contains("warning: role orchestratr is not in stapel.toml"));
+}
+
+// D-8: the report reads tokens.jsonl only, so a broken state.json does not hide a journal.
+#[test]
+fn report_ignores_state_files() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["tokens", "add", "--role", "builder", "--estimate", "3"])
+        .assert()
+        .success();
+    std::fs::write(dir.join(".stapel/tickets/ABC-1/state.json"), "{ broken").unwrap();
+    stapel(dir)
+        .arg("tokens")
+        .assert()
+        .success()
+        .stdout(contains("ticket: ABC-1"));
+}

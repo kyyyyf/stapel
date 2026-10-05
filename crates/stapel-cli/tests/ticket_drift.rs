@@ -333,3 +333,29 @@ fn open_tickets_are_plans() {
         "{closed:?}"
     );
 }
+
+/// STP-3 code review E-1: `module::name` in prose is not a test name; only table rows name tests.
+#[test]
+fn prose_mentions_are_not_test_names() {
+    let files = test_files();
+    let code = code_text();
+    let prose = "## Design\n\n- `ok` calls `journal::append` after writing state.\n";
+    assert!(ticket_problems("T-1", prose, Lifecycle::Closed, &files, &code).is_empty());
+    let table = "| R-1 | risk | `journal::append` |\n";
+    let problems = ticket_problems("T-1", table, Lifecycle::Closed, &files, &code);
+    assert!(
+        problems.iter().any(|p| p.contains("journal::append")),
+        "{problems:?}"
+    );
+}
+
+/// An open ticket whose every criterion is built is checked like a closed one, so a problem that
+/// would appear at the close shows before it.
+#[test]
+fn fully_built_open_ticket_is_checked_fully() {
+    let files = test_files();
+    let code = code_text();
+    let ticket = "| AC-1 | x | `ticket_drift::checker_finds_a_wrong_quote` |\n\n| R-1 | risk | `ticket_drift::not_written` |\n";
+    let open = ticket_problems("T-1", ticket, Lifecycle::Open, &files, &code);
+    assert!(open.iter().any(|p| p.contains("not_written")), "{open:?}");
+}

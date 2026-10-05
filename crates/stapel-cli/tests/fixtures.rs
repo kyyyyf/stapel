@@ -116,3 +116,21 @@ fn checker_finds_private_data() {
     assert!(has_word("the user ek ran it", "ek"));
     assert!(!has_word("check the code", "ek"));
 }
+
+/// F-6, E-7: the scan walks every crate's tests folder, subfolders included.
+#[test]
+fn scan_covers_every_test_folder() {
+    let names: Vec<String> = files().iter().map(|p| p.display().to_string()).collect();
+    assert!(
+        names
+            .iter()
+            .any(|n| n.ends_with("stapel-cli/tests/common/mod.rs")),
+        "{names:?}"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|n| n.ends_with("stapel-core/tests/parse.rs")),
+        "{names:?}"
+    );
+}
