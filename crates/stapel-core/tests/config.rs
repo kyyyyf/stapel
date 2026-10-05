@@ -1,6 +1,6 @@
 //! STP-1 AC-3: the starter `stapel.toml` written by `init` is readable by the core.
 
-use stapel_core::config::{Config, default_toml};
+use stapel_core::config::{Config, default_toml, starter_toml};
 
 #[test]
 fn default_config_roundtrips() {
@@ -139,4 +139,45 @@ fn build_requires_defaults() {
         Config::parse(&base).unwrap().build.requires,
         ["spec", "design", "proof"]
     );
+}
+
+/// STP-4 AC-7: `[check]` has one runner, a bounded time limit and no other keys.
+#[test]
+fn check_section_is_validated() {
+    let base = default_toml("ABC");
+    assert!(Config::parse(&base).unwrap().check.is_none());
+
+    let with = |body: &str| Config::parse(&format!("{base}\n[check]\n{body}\n"));
+    let check = with("runner = \"cargo\"").unwrap().check.unwrap();
+    assert_eq!(check.runner, "cargo");
+    assert_eq!(check.timeout_secs, 900);
+    assert_eq!(with("").unwrap().check.unwrap().runner, "cargo");
+    for ok in ["10", "86400"] {
+        let c = with(&format!("timeout_secs = {ok}"))
+            .unwrap()
+            .check
+            .unwrap();
+        assert_eq!(c.timeout_secs.to_string(), ok);
+    }
+    for bad in [
+        "runner = \"npm\"",
+        "timeout_secs = 9",
+        "timeout_secs = 86401",
+        "timeout_secs = 0",
+        "timeout_secs = -1",
+        "timeout_secs = \"900\"",
+        "timeout_secs = 1.5",
+        "command = \"cargo test\"",
+    ] {
+        assert!(with(bad).is_err(), "{bad} was accepted");
+    }
+
+    let cargo = starter_toml("ABC", true);
+    assert_eq!(
+        Config::parse(&cargo).unwrap().check.unwrap().runner,
+        "cargo"
+    );
+    let other = starter_toml("ABC", false);
+    assert!(Config::parse(&other).unwrap().check.is_none());
+    assert!(other.lines().any(|l| l.starts_with("# [check]")), "{other}");
 }

@@ -263,3 +263,32 @@ fn refuses_non_utf8_config() {
         b"\xff\xfe"
     );
 }
+
+// STP-4 AC-7: a cargo repository gets a `[check]` section.
+#[test]
+fn writes_check_for_cargo_repositories() {
+    let repo = git_repo();
+    let dir = repo.path();
+    std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let config = Config::parse(&read(dir, ".stapel/stapel.toml")).unwrap();
+    assert_eq!(config.check.unwrap().runner, "cargo");
+}
+
+// STP-4 AC-7: another repository gets a commented example and no gate.
+#[test]
+fn writes_commented_check_otherwise() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let text = read(dir, ".stapel/stapel.toml");
+    assert!(Config::parse(&text).unwrap().check.is_none());
+    assert!(text.lines().any(|l| l.starts_with("# [check]")), "{text}");
+    assert!(!text.lines().any(|l| l.trim() == "[check]"), "{text}");
+}
