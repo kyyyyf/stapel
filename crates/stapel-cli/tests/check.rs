@@ -1722,3 +1722,43 @@ fn close_dialog_shows_the_check() {
     let (reason, _) = common::ask(pdir, "stapel close ABC-1 --reason done");
     assert!(reason.contains("check: not configured"), "{reason}");
 }
+
+// ---- STP-4 step 6 drift review ----
+
+// D6-1, D6-2: many steps with long reasons still give one record within the journal's line limit.
+#[test]
+fn record_fits_the_journal_line() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    for n in 0..70 {
+        add_test(dir, "fit", &format!("f{n}"), "assert!(false);");
+        for k in 0..20 {
+            write(
+                dir,
+                &format!(
+                    "crates/tiny/src/a_rather_long_module_name_for_step_{n:03}_and_path_{k:02}.rs"
+                ),
+                "\n",
+            );
+        }
+        commit(dir, &format!("ABC-1 step {n} RED: test and code"));
+        commit(dir, &format!("ABC-1 step {n} GREEN: code"));
+    }
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    let records = run_records(dir);
+    assert_eq!(
+        records.len(),
+        1,
+        "no record: {}",
+        text.lines().last().unwrap_or("")
+    );
+    let r = &records[0];
+    assert!(r.to_string().len() < 64 * 1024);
+    assert_eq!(
+        r["steps_truncated"],
+        true,
+        "{}",
+        r["steps"].as_array().unwrap().len()
+    );
+}
