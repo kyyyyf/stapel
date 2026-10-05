@@ -384,3 +384,346 @@ fn list_matches_golden() {
     .unwrap();
     assert_eq!(without_ids(&text), golden, "actual:\n{text}");
 }
+
+// ---- STP-4 AC-2: outcomes from history alone ----
+
+/// Appends a test function to `crates/tiny/tests/<file>.rs`.
+fn add_test(dir: &Path, file: &str, name: &str, body: &str) {
+    let rel = format!("crates/tiny/tests/{file}.rs");
+    let old = std::fs::read_to_string(dir.join(&rel)).unwrap_or_default();
+    write(
+        dir,
+        &rel,
+        &format!("{old}\n#[test]\nfn {name}() {{\n    {body}\n}}\n"),
+    );
+}
+
+/// Replaces text in a file.
+fn edit(dir: &Path, rel: &str, from: &str, to: &str) {
+    let old = read(dir, rel);
+    assert!(old.contains(from), "{rel} has no {from:?}");
+    write(dir, rel, &old.replacen(from, to, 1));
+}
+
+/// `stapel check ABC-1`: exit code and output.
+fn check(dir: &Path) -> (i32, String) {
+    let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.code().unwrap_or(-1), text)
+}
+
+/// The outcome printed for a label: the word after `<label>: `.
+fn outcome<'a>(text: &'a str, label: &str) -> &'a str {
+    let prefix = format!("{label}: ");
+    text.lines()
+        .find_map(|l| l.strip_prefix(&prefix))
+        .unwrap_or_else(|| panic!("no line for {label}:\n{text}"))
+        .split([' ', ':'])
+        .next()
+        .unwrap()
+}
+
+#[test]
+fn outcome_unpaired_and_duplicate() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "one", "assert!(true);");
+    commit(dir, "ABC-1 step 1 RED: only a red");
+    commit(dir, "ABC-1 step 2 GREEN: only a green");
+    commit(dir, "ABC-1 step 3 GREEN: green first");
+    add_test(dir, "basic", "three", "assert!(true);");
+    commit(dir, "ABC-1 step 3 RED: then red");
+    add_test(dir, "basic", "four", "assert!(true);");
+    commit(dir, "ABC-1 step 4 RED: red");
+    add_test(dir, "basic", "four_b", "assert!(true);");
+    commit(dir, "ABC-1 step 4 RED: red again");
+    commit(dir, "ABC-1 step 4 GREEN: green");
+    add_test(dir, "basic", "five", "assert!(true);");
+    commit(dir, "ABC-1 step 5 RED: red");
+    commit(dir, "ABC-1 step 5 GREEN: green");
+    commit(dir, "ABC-1 step 5 GREEN: green again");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    for (label, want) in [
+        ("step 1", "unpaired"),
+        ("step 2", "unpaired"),
+        ("step 3", "unpaired"),
+        ("step 4", "duplicate"),
+        ("step 5", "duplicate"),
+    ] {
+        assert_eq!(outcome(&text, label), want, "{label}\n{text}");
+    }
+}
+
+#[test]
+fn outcome_no_tests_for_delete_only_red() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "doomed", "assert!(true);");
+    write(dir, "crates/tiny/tests/golden/out.txt", "old\n");
+    write(
+        dir,
+        "crates/tiny/tests/common/mod.rs",
+        "pub fn helper() -> u32 {\n    1\n}\n",
+    );
+    commit(dir, "ABC-1: tests before the steps");
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "#[test]\nfn doomed() {\n    assert!(true);\n}\n",
+        "",
+    );
+    commit(dir, "ABC-1 step 1 RED: delete a test");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    write(dir, "crates/tiny/tests/golden/out.txt", "new\n");
+    commit(dir, "ABC-1 step 2 RED: golden file only");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    edit(dir, "crates/tiny/tests/common/mod.rs", "1", "2");
+    commit(dir, "ABC-1 step 3 RED: helper only");
+    commit(dir, "ABC-1 step 3 GREEN: code");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    for label in ["step 1", "step 2", "step 3"] {
+        assert_eq!(outcome(&text, label), "no-tests", "{label}\n{text}");
+    }
+}
+
+#[test]
+fn outcome_red_changes_code() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "a", "assert_eq!(tiny::add(1, 2), 3);");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{LIB}\npub fn more() {{}}\n"),
+    );
+    commit(dir, "ABC-1 step 1 RED: test and code");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    add_test(dir, "basic", "b", "assert!(true);");
+    write(dir, "docs/impl.rs", "pub fn hidden() {}\n");
+    commit(dir, "ABC-1 step 2 RED: code under docs");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    add_test(dir, "basic", "c", "assert!(true);");
+    write(dir, "crates/tiny/build.rs", "fn main() {}\n");
+    commit(dir, "ABC-1 step 3 RED: a build script");
+    commit(dir, "ABC-1 step 3 GREEN: code");
+    add_test(dir, "basic", "d", "assert!(true);");
+    edit(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "edition = \"2021\"\n",
+        "edition = \"2021\"\nbuild = \"build.rs\"\n",
+    );
+    commit(dir, "ABC-1 step 4 RED: a manifest change");
+    commit(dir, "ABC-1 step 4 GREEN: code");
+    add_test(dir, "basic", "e", "assert!(true);");
+    write(dir, "docs/notes.md", "Notes.\n");
+    edit(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "edition = \"2021\"\n",
+        "edition = \"2021\"\n\n[dev-dependencies]\n",
+    );
+    commit(
+        dir,
+        "ABC-1 step 5 RED: notes and an empty dev-dependencies table",
+    );
+    commit(dir, "ABC-1 step 5 GREEN: code");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    for label in ["step 1", "step 2", "step 3", "step 4"] {
+        assert_eq!(outcome(&text, label), "red-changes-code", "{label}\n{text}");
+    }
+    assert!(text.contains("crates/tiny/src/lib.rs"), "{text}");
+    assert!(text.contains("docs/impl.rs"), "{text}");
+    assert_ne!(outcome(&text, "step 5"), "red-changes-code", "{text}");
+}
+
+#[test]
+fn outcome_tests_changed_after_red() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "weakened", "assert_eq!(tiny::add(2, 2), 5);");
+    commit(dir, "ABC-1 step 1 RED: a test");
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "assert_eq!(tiny::add(2, 2), 5);",
+        "assert!(true);",
+    );
+    commit(dir, "ABC-1 step 1 GREEN: weakens the test");
+
+    write(dir, "crates/tiny/tests/golden/out.txt", "expected\n");
+    add_test(
+        dir,
+        "golden",
+        "reads_golden",
+        "assert_eq!(include_str!(\"golden/out.txt\"), \"expected\\n\");",
+    );
+    commit(dir, "ABC-1 step 2 RED: a golden file");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    write(
+        dir,
+        "crates/tiny/tests/golden/out.txt",
+        "whatever the code prints\n",
+    );
+    commit(dir, "ABC-1: fix the golden");
+
+    write(
+        dir,
+        "crates/tiny/tests/common/mod.rs",
+        "pub fn expected() -> u32 {\n    7\n}\n",
+    );
+    add_test(
+        dir,
+        "helper",
+        "uses_helper",
+        "assert_eq!(tiny::add(3, 4), common::expected());",
+    );
+    edit(
+        dir,
+        "crates/tiny/tests/helper.rs",
+        "\n#[test]",
+        "mod common;\n\n#[test]",
+    );
+    commit(dir, "ABC-1 step 3 RED: a helper");
+    commit(dir, "ABC-1 step 3 GREEN: code");
+    edit(dir, "crates/tiny/tests/common/mod.rs", "7", "8");
+    commit(dir, "ABC-1 step 3 follow-up: the helper changes");
+
+    add_test(dir, "basic", "spaces", "assert_eq!(\"a b\".len(), 3);");
+    commit(dir, "ABC-1 step 4 RED: a literal");
+    edit(dir, "crates/tiny/tests/basic.rs", "\"a b\"", "\"ab\"");
+    commit(dir, "ABC-1 step 4 GREEN: the literal changes");
+
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    for label in ["step 1", "step 2", "step 3", "step 4"] {
+        assert_eq!(outcome(&text, label), "tests-changed", "{label}\n{text}");
+    }
+}
+
+#[test]
+fn superseded_tests_are_shown() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "evolves", "assert_eq!(tiny::add(1, 1), 3);");
+    commit(dir, "ABC-1 step 1 RED: first version");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "assert_eq!(tiny::add(1, 1), 3);",
+        "assert_eq!(tiny::add(1, 1), 4);",
+    );
+    commit(dir, "ABC-1 step 2 RED: second version");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    let (_, text) = check(dir);
+    assert_ne!(outcome(&text, "step 1"), "tests-changed", "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.trim() == "superseded by step 2: tiny/basic::evolves"),
+        "{text}"
+    );
+}
+
+#[test]
+fn retired_tests_need_a_spec_change() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "kept", "assert!(true);");
+    add_test(dir, "basic", "wrong_rule", "assert!(true);");
+    commit(dir, "ABC-1 step 1 RED: two tests");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    add_test(dir, "basic", "only_one", "assert!(true);");
+    commit(dir, "ABC-1 step 2 RED: one test");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    add_test(dir, "basic", "silently_gone", "assert!(true);");
+    commit(dir, "ABC-1 step 3 RED: one test");
+    commit(dir, "ABC-1 step 3 GREEN: code");
+    add_test(dir, "basic", "new_rule", "assert!(true);");
+    commit(dir, "ABC-1 step 4 RED: the new rule");
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "#[test]\nfn wrong_rule() {\n    assert!(true);\n}\n",
+        "",
+    );
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "#[test]\nfn only_one() {\n    assert!(true);\n}\n",
+        "",
+    );
+    commit(
+        dir,
+        "ABC-1 step 4 GREEN: code\n\nspec change: AC-1, the old rules were wrong",
+    );
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "#[test]\nfn silently_gone() {\n    assert!(true);\n}\n",
+        "",
+    );
+    commit(dir, "ABC-1: tidy up");
+    let (_, text) = check(dir);
+    assert!(
+        text.lines()
+            .any(|l| l.trim() == "retired by step 4: tiny/basic::wrong_rule"),
+        "{text}"
+    );
+    assert_eq!(outcome(&text, "step 2"), "retired", "{text}");
+    assert!(
+        !text.contains("retired by step 4: tiny/basic::silently_gone"),
+        "{text}"
+    );
+    assert!(!text.contains("retired by ABC-1: tidy up"), "{text}");
+}
+
+#[test]
+fn outcome_order_and_static_outcomes() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let marker = dir.join("a-step-test-ran");
+    // A step test that would leave a marker if it ran: static outcomes run nothing.
+    let body = format!(
+        "std::fs::write({:?}, \"ran\").unwrap();",
+        marker.display().to_string()
+    );
+    add_test(dir, "basic", "leaves_a_marker", &body);
+    commit(dir, "ABC-1 step 1 RED: two reds and no green");
+    add_test(dir, "basic", "leaves_a_marker_too", &body);
+    commit(dir, "ABC-1 step 1 RED: again");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{LIB}\npub fn x() {{}}\n"),
+    );
+    commit(dir, "ABC-1 step 2 RED: code and no test");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    add_test(dir, "basic", "marker_and_code", &body);
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{LIB}\npub fn y() {{}}\n"),
+    );
+    commit(dir, "ABC-1 step 3 RED: test and code");
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "fn marker_and_code() {\n",
+        "fn marker_and_code() {\n    let _changed = 1;\n",
+    );
+    commit(dir, "ABC-1 step 3 GREEN: also changes the test");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "unpaired", "{text}");
+    assert_eq!(outcome(&text, "step 2"), "no-tests", "{text}");
+    assert_eq!(outcome(&text, "step 3"), "red-changes-code", "{text}");
+    assert!(!marker.exists(), "a step test ran:\n{text}");
+}
