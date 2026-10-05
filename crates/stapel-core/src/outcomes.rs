@@ -173,7 +173,12 @@ fn touching(root: &Path, from: &str, head: &str, path: &str) -> Vec<(String, Str
     .collect()
 }
 
-pub fn analyse(root: &Path, head: &str, steps: &[Step]) -> Result<Vec<Analysis>, String> {
+pub fn analyse(
+    root: &Path,
+    key: &str,
+    head: &str,
+    steps: &[Step],
+) -> Result<Vec<Analysis>, String> {
     let mut files = Files {
         root,
         cache: HashMap::new(),
@@ -293,8 +298,14 @@ pub fn analyse(root: &Path, head: &str, steps: &[Step]) -> Result<Vec<Analysis>,
                     .map(|(l, _)| l.clone())
                     .unwrap_or_else(|| sha[..7.min(sha.len())].to_string());
                 if value.is_none() {
+                    // A deletion by a commit of the ticket with `spec change:` retires a test that
+                    // stays gone; otherwise the walk goes on, so a later re-add is compared with
+                    // the protected text.
+                    let of_ticket = message.starts_with(&format!("{key} "))
+                        || message.starts_with(&format!("{key}:"));
                     if let Unit::Test(t) = unit
                         && at_head.is_none()
+                        && of_ticket
                         && message.contains("spec change:")
                     {
                         a.notes.push(Note {
@@ -303,8 +314,12 @@ pub fn analyse(root: &Path, head: &str, steps: &[Step]) -> Result<Vec<Analysis>,
                             test: t.clone(),
                         });
                         retired.push(t.clone());
+                        break;
                     }
-                    break;
+                    if at_head.is_none() {
+                        break;
+                    }
+                    continue;
                 }
                 match step_of {
                     Some((l, Marker::Red)) => {

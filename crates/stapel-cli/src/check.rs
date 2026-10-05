@@ -52,7 +52,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
             Err(e) => refuse(e),
         };
     }
-    let analyses = match analyse(&root, &head, &steps) {
+    let analyses = match analyse(&root, &ticket.key, &head, &steps) {
         Ok(a) => a,
         Err(e) => return refuse(e),
     };
