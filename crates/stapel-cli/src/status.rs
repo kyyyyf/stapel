@@ -75,6 +75,12 @@ pub fn run(key: Option<&str>) -> Result<ExitCode, String> {
             );
         }
     }
+    if matches!(ticket.status, Status::Open(_) | Status::Closed(_)) {
+        println!(
+            "{}",
+            stapel_core::checkstate::current(&root, &config, &ticket.dir)
+        );
+    }
     match build_permit(&root, Some(&config)) {
         Some(Permit::Computed(k)) => println!("build: allowed (by {k})"),
         Some(Permit::ByHand(k)) => println!("build: allowed by hand (phase 0, {k})"),

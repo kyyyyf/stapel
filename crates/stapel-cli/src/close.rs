@@ -22,7 +22,7 @@ pub fn run(key: Option<&str>, reason: &str, grant: Option<&str>) -> Result<(), S
     if reason.is_empty() {
         return Err("a closing reason is required: --reason \"<why the ticket is done>\"".into());
     }
-    let (root, _config) = repo::open()?;
+    let (root, config) = repo::open()?;
     let by = user_name(&root)?;
     let ticket = resolve(&root, key)?;
     let mut state = match ticket.status {
@@ -42,6 +42,15 @@ pub fn run(key: Option<&str>, reason: &str, grant: Option<&str>) -> Result<(), S
         }
         Status::Unreadable(r) => return Err(r),
     };
+    if config.check.is_some() {
+        let line = stapel_core::checkstate::current(&root, &config, &ticket.dir);
+        if !matches!(line, stapel_core::checkstate::CheckLine::Pass(_)) {
+            return Err(format!(
+                "close needs a current passing check ({line}); run `stapel check {}` first",
+                ticket.key
+            ));
+        }
+    }
     if let Some(token) = grant {
         consume(&root, token, &close_facts(&ticket.key, reason))?;
     }

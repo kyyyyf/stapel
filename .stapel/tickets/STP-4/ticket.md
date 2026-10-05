@@ -206,7 +206,7 @@ GREEN steps into it; each test sets its own `CARGO_TARGET_DIR`.
 | A RED that only deletes a test | `no-tests` |
 | A GREEN that weakens the RED test (`assert!(true)`), or rewrites the golden file or helper it reads | `tests-changed` |
 | A later RED that rewrites an earlier step's test | that step is `superseded by <label>` in the report |
-| A RED whose `Cargo.toml` points a library at `docs/impl.rs`, or adds `build.rs` | `red-changes-code` |
+| A RED whose `Cargo.toml` points a library at a `.rs` file under the docs folder, or adds `build.rs` | `red-changes-code` |
 | A later commit that marks a step test `#[ignore]` or deletes it without `spec change:` | `removed` |
 | A test that prints `test x ... ok` from a child process | the run does not count: two result lines for one name; `unverified` (R-3) |
 | A RED whose cargo run fails offline or on a missing target | `unverified`, not a RED (R-6) |
@@ -215,10 +215,19 @@ GREEN steps into it; each test sets its own `CARGO_TARGET_DIR`.
 | A forged `pass` line appended to `runs.jsonl`, or `[check]` deleted, through Bash | not prevented (Guarantees); the write tools cannot write either file; the dialog shows the check line |
 | A `[check]` with a command line | unknown key: configuration error; no command text is read from files |
 | A test that never finishes, or leaves a child running | the process group is killed at `timeout_secs`; `unverified` |
+| A test that leaves a child in its own session holding the output open | the readers stop 2 s after cargo exits; the child itself is not killed (step 5 drift review D5-2) |
 | Two checks at once fighting over the worktree, or a pid reused after a crash | the OS lock decides; the second refuses with exit 2 |
 | A commit landing in the main tree while a check runs | runs and record use the HEAD resolved at the start; a notice names the move |
 
-**Author self-check (CLAUDE.md item 7).** To be done against this table before code review.
+**Author self-check (CLAUDE.md item 7).** Done on 2026-10-05 against this table, before code review: every row has
+a test (`check::outcome_red_changes_code`, `check::outcome_no_tests_for_delete_only_red`,
+`check::outcome_tests_changed_after_red`, `check::superseded_tests_are_shown`, `check::red_paths_allowed_and_capped`,
+`check::outcome_removed_or_ignored_at_head`, `check::child_output_cannot_fake_a_result`, `check::cargo_error_is_not_a_red`,
+`check::list_ignores_other_keys_and_prose`, `check::close_needs_a_current_passing_check`,
+`core::config::check_section_is_validated`, `check::outcome_unverified_on_timeout_and_stale_lock`,
+`check::detached_grandchild_does_not_hang_the_check`, `check::refuses_a_second_check_and_takes_over_a_dead_lock`)
+except the forged line (not promised) and the HEAD-moved notice (untested, D5-9 accepted). The detached grandchild
+row was added from D5-2; nothing else new.
 
 ## Proof
 

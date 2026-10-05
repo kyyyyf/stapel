@@ -96,10 +96,11 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
         if !matches!(ticket.status, Status::Open(_)) {
             return Err(format!("ticket {} is not open", ticket.key));
         }
+        let check = crate::checkstate::current(&root, &config, &ticket.dir);
         let reason = format!(
             "stapel: close ticket {} with the reason \"{reason_text}\"; its confirmations stop \
-             permitting code writes; runs: {}. Answer Yes or No; do not choose \"don't ask \
-             again\".",
+             permitting code writes; {check}; runs: {}. Answer Yes or No; do not choose \"don't \
+             ask again\".",
             ticket.key,
             program(inv).join(" ")
         );
