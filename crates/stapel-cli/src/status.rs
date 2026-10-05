@@ -67,6 +67,14 @@ pub fn run(key: Option<&str>) -> Result<ExitCode, String> {
         }
     }
 
+    for name in ["decisions.jsonl", "tokens.jsonl"] {
+        for (line, _) in stapel_core::journal::problems(&ticket.dir.join(name)) {
+            println!(
+                "warning: journal line .stapel/tickets/{}/{name}:{line} cannot be read",
+                ticket.key
+            );
+        }
+    }
     match build_permit(&root, Some(&config)) {
         Some(Permit::Computed(k)) => println!("build: allowed (by {k})"),
         Some(Permit::ByHand(k)) => println!("build: allowed by hand (phase 0, {k})"),
