@@ -135,7 +135,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
                 "red": a.red.as_ref().map(|c| c.sha.clone()),
                 "green": a.green.as_ref().map(|c| c.sha.clone()),
                 "outcome": outcome,
-                "reason": cut(&reason, 1024),
+                "reason": cut(&reason, MAX_REASON),
                 "tests": a.tests.len(),
                 "names": names_of(&outcome, &reason),
             }));
@@ -173,6 +173,16 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
     if analyses.len() > MAX_STEPS {
         record["steps_truncated"] = serde_json::json!(true);
     }
+    // Steps are dropped from the end until the record fits one journal line.
+    while record.to_string().len() > MAX_RECORD {
+        let Some(steps) = record["steps"].as_array_mut() else {
+            break;
+        };
+        if steps.pop().is_none() {
+            break;
+        }
+        record["steps_truncated"] = serde_json::json!(true);
+    }
     if let Err(e) = append(&ticket.dir.join("runs.jsonl"), &record) {
         eprintln!("stapel: the check record was not written: {e}");
         return ExitCode::from(1);
@@ -202,6 +212,9 @@ struct Suite {
 /// At most this many steps go into a record, and this many bytes of a label.
 const MAX_STEPS: usize = 200;
 const MAX_LABEL: usize = 200;
+const MAX_REASON: usize = 1024;
+/// A record stays below the journal's 64 KiB line limit with room to spare.
+const MAX_RECORD: usize = 60 * 1024;
 
 fn cut(text: &str, max: usize) -> String {
     let mut end = text.len().min(max);
