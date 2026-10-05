@@ -182,7 +182,8 @@ From a study of `../klc` (token journal entry `author-research`):
 | The PreToolUse input has `permission_mode`; it was `auto` in this session | experiment log 2026-10-02 | verified |
 | In `bypassPermissions` mode a hook `ask` is not shown and the call proceeds | Claude Code permission-modes docs; spec review S3-2 | read |
 | A hook `ask` shows the dialog also in `default`, `acceptEdits` and `plan` modes | not yet tested (Plan step 11) | assumption |
-| "Yes, and don't ask again" adds an allow rule that may stop later `ask` dialogs | spec review S3-10 | assumption |
+| For a hook `ask`, the terminal dialog offers only "Yes" and "No" (no "don't ask again"); it shows the replaced command with its token and the hook's reason; "Tab to amend" lets the person edit the command | screenshots of Plan step 11, 2026-10-05, auto mode, Claude Code terminal | verified |
+| "Yes, and don't ask again" adds an allow rule that may stop later `ask` dialogs | spec review S3-10; not offered for a hook `ask` in the terminal (row above) | assumption for other clients |
 | An agent can type into its own terminal with `tmux send-keys`, `screen -X stuff`, `xdotool` | spec review S3-1 | assumption |
 | The Zed agent panel shows Claude Code's permission dialog for an `ask` answer and does not auto-approve it | not yet tested (Plan step 11) | assumption |
 | The agent's Bash shell has `CLAUDE_CODE_EXECPATH` and no `CLAUDE_PROJECT_DIR`; a hook process has `CLAUDE_PROJECT_DIR` and no `CLAUDE_CODE_EXECPATH`; the hook's parent is `sh` started by `claude` | probe build, 2026-10-02, this session; `runs.jsonl` | verified (undocumented) |
