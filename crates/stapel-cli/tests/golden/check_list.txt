@@ -1,0 +1,11 @@
+ticket: ABC-1
+step 1
+  red: <sha> ABC-1 step 1 RED: first test
+  green: <sha> ABC-1 step 1 GREEN: first code
+  tests: 1
+    tiny/basic::adds_two
+step 2
+  red: <sha> ABC-1 step 2 RED: second test
+  green: —
+  tests: 1
+    tiny/basic::one
