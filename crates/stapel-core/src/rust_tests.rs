@@ -68,7 +68,8 @@ fn lex(src: &str) -> Vec<Token> {
         } else if ch == '\'' {
             let start = i;
             if c.get(i + 1) == Some(&'\\') {
-                i += 2;
+                // The quote, the backslash and the escaped character, then up to the closing quote.
+                i += 3;
                 while i < c.len() && c[i] != '\'' {
                     i += 1;
                 }
@@ -254,8 +255,19 @@ fn scan(
                 && tokens[k + 1].kind == Kind::Word
             {
                 let name = tokens[k + 1].text.clone();
+                // The body is the first `{` outside parentheses and brackets; a `;` there means
+                // no body.
                 let mut b = k + 2;
-                while b < end && !is(&tokens[b], '{') && !is(&tokens[b], ';') {
+                let mut depth = 0usize;
+                while b < end {
+                    let t = &tokens[b];
+                    if is(t, '(') || is(t, '[') {
+                        depth += 1;
+                    } else if is(t, ')') || is(t, ']') {
+                        depth = depth.saturating_sub(1);
+                    } else if depth == 0 && (is(t, '{') || is(t, ';')) {
+                        break;
+                    }
                     b += 1;
                 }
                 let close = if b < end && is(&tokens[b], '{') {
