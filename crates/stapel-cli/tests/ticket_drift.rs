@@ -360,21 +360,18 @@ fn stapel_options() -> BTreeSet<String> {
 fn options_missing(options: &BTreeSet<String>, tickets: &[String]) -> Vec<String> {
     let mut named = BTreeSet::new();
     for text in tickets {
-        let Some(start) = text.find("### Inputs") else {
-            continue;
-        };
-        let rest = &text[start..];
-        let end = rest[1..]
-            .find("\n## ")
-            .into_iter()
-            .chain(rest[1..].find("\n### "))
-            .min()
-            .map(|i| i + 1)
-            .unwrap_or(rest.len());
-        for row in rest[..end].lines().filter(|l| l.starts_with('|')) {
-            for span in spans(row) {
-                let word = span.split([' ', '=']).next().unwrap_or("");
-                named.insert(word.to_string());
+        // Every `### Inputs…` section, up to the next heading of level 2 or 3; table rows only.
+        let mut in_inputs = false;
+        for line in text.lines() {
+            if line.starts_with("## ") || line.starts_with("### ") {
+                in_inputs = line.starts_with("### Inputs");
+                continue;
+            }
+            if in_inputs && line.starts_with('|') {
+                for span in spans(line) {
+                    let word = span.split([' ', '=']).next().unwrap_or("");
+                    named.insert(word.to_string());
+                }
             }
         }
     }
@@ -383,6 +380,22 @@ fn options_missing(options: &BTreeSet<String>, tickets: &[String]) -> Vec<String
         .filter(|o| !OLDER_OPTIONS.contains(&o.as_str()) && !named.contains(*o))
         .cloned()
         .collect()
+}
+
+/// The drift of one ticket with the STP-4 AC-8 rules, which apply once it is built or closed.
+fn full_problems(
+    key: &str,
+    text: &str,
+    life: Lifecycle,
+    files: &BTreeMap<String, PathBuf>,
+    code: &str,
+) -> Vec<String> {
+    let mut problems = ticket_problems(key, text, life, files, code);
+    if effective_lifecycle(text, life, files) == Lifecycle::Closed {
+        problems.extend(process_problems(key, text));
+        problems.extend(list_problems(key, text, files));
+    }
+    problems
 }
 
 /// The drift of one ticket. A closed ticket is checked fully; an open ticket checks each acceptance
@@ -468,11 +481,7 @@ fn ticket_test_names_exist_and_every_test_is_named() {
     let mut named = BTreeSet::new();
     let mut problems = Vec::new();
     for (key, text) in tickets() {
-        problems.extend(ticket_problems(&key, &text, lifecycle(&key), &files, &code));
-        if effective_lifecycle(&text, lifecycle(&key), &files) == Lifecycle::Closed {
-            problems.extend(process_problems(&key, &text));
-            problems.extend(list_problems(&key, &text, &files));
-        }
+        problems.extend(full_problems(&key, &text, lifecycle(&key), &files, &code));
         named.extend(test_refs(&text, &files));
     }
     for (module, path) in &files {
