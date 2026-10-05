@@ -32,22 +32,22 @@ Criteria state behaviour; exact output lives in the golden files named here (CLA
 
 ### Questions
 
-Questions with a recommendation. Until answered, the build follows the recommendation.
+Questions with a recommendation. All five are answered.
 
 1. **Import from Claude Code transcripts in this ticket.** It makes the orchestrator's and the subagents'
    tokens measured instead of estimated, which is the point of the phase-0 criterion. Recommendation: yes
-   (AC-3). Answer: —
+   (AC-3). Answer (2026-10-05, human): as recommended.
 2. **How imported tokens are attributed to a ticket.** A session spans several tickets. Recommendation: by
    explicit `--ticket` and an optional time window only; no guessing from text (klc KLC-172 matched `AC-2`
-   and `UTF-8` as ticket keys). Answer: —
+   and `UTF-8` as ticket keys). Answer (2026-10-05, human): as recommended.
 3. **What goes into `decisions.jsonl` now.** Recommendation: confirmations and closings, written by `ok`
    and `close`. Answers to questions stay in the ticket text, which the spec confirmation already binds by
-   hash; a separate `stapel decide` command comes with `ask` in phase 1. Answer: —
+   hash; a separate `stapel decide` command comes with `ask` in phase 1. Answer (2026-10-05, human): as recommended.
 4. **Cost.** Transcripts carry no cost; computing it from a price table invents numbers. Recommendation:
-   tokens only; cost comes with the API provider in phase 1, copied as the provider reports it. Answer: —
+   tokens only; cost comes with the API provider in phase 1, copied as the provider reports it. Answer (2026-10-05, human): tokens only.
 5. **Old hand-written records of STP-1 and STP-2.** Recommendation: keep them, read them as `legacy`, and
    in the last plan step import this session's transcripts so that STP-1..3 also get measured records.
-   Answer: —
+   Answer (2026-10-05, human): keep them as they are; no import into STP-1 or STP-2 for now.
 
 ### Out of scope
 
@@ -143,7 +143,7 @@ very draft (it names tests that do not exist yet); this is expected and is what 
 | 4 | `stapel tokens add` | AC-2 | subcommand missing |
 | 5 | `stapel tokens import` | AC-3 | subcommand missing |
 | 6 | `stapel tokens` report and its golden file | AC-4 | subcommand missing |
-| 7 | Import this session's transcripts into STP-1, STP-2 and STP-3; record the output in `runs.jsonl` | manual | — |
+| 7 | Import this session's transcripts for STP-3 only (answer 5); record the output in `runs.jsonl` | manual | — |
 
 ## Review
 
