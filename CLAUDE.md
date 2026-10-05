@@ -45,7 +45,21 @@ Most review findings of STP-1 could have been caught before any code was written
    `code`. The ticket summary counts them. The target, first checked on STP-2: far fewer code-review
    findings than STP-1, and fewer than half of them `catchable_at` earlier than `code`.
 
-In phase 0 the orchestrator runs these checks by hand; the tool takes them over from STP-2/STP-4 on.
+9. **Every exact detail lives in one place, and a program checks the rest.** Acceptance criteria state
+   observable behaviour (what a person or agent sees, exit codes, what is written to disk). Exact output
+   lives in golden files under `crates/*/tests/golden/`, and a criterion names the file instead of retyping
+   the text. Internal mechanics (temporary file names, the order of `fsync`, parser rules) belong in the
+   Design section, marked "as built" and updated by the GREEN commit. The test
+   `crates/stapel-cli/tests/ticket_drift.rs` runs with every `cargo test` and fails when a ticket names a
+   test that does not exist, a test exists that no ticket names, an acceptance criterion quotes an output
+   line (`label: text`) that is not in the code, or a ticket names a missing `crates/` or `docs/` path. The
+   drift reviewer then reviews meaning, not wording.
+10. **A spec change during the build is explicit.** When the code shows a criterion is wrong, the GREEN
+    commit changes the ticket too and says `spec change: AC-x, <reason>` in its message; the confirmation of
+    the spec goes stale (STP-2), so the person sees the diff in `stapel status`.
+
+In phase 0 the orchestrator runs these checks by hand where no test does them; the tool takes them over from
+STP-2/STP-4 on.
 
 ## Language
 
