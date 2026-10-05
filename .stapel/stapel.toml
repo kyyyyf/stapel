@@ -54,3 +54,9 @@ translator   = { provider = "claude-code", model = "claude-sonnet-5-5" }
 # Write guard: agents may always change these paths; the rest only while a build is allowed.
 [guard]
 always_writable = [".stapel/", "docs/"]
+
+# RED to GREEN check of ticket steps (STP-4): `stapel check` runs each step's tests at its
+# RED and GREEN commits and at HEAD; with this section, `stapel close` needs a passing check.
+[check]
+runner = "cargo"
+timeout_secs = 900
