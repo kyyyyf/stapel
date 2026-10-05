@@ -8,76 +8,73 @@ phases: `docs/PHASES.md`. Rust, one cargo workspace.
 ## How work is done here
 
 - Every acceptance criterion has a test that fails first. Commits come in pairs: RED (tests only), then
-  GREEN (code). One plan step is one pair.
+  GREEN (code). One plan step is one pair. A test that passes before any code is a coverage test and goes
+  in a commit of its own.
 - Review before merge: fresh code reviewer, external reviewer, drift reviewer. Reviewers work on a copy
-  (`git archive`), with no write access to git or to the working tree.
+  (`git archive`), with no write access to git or to the working tree, and run no builds.
 - Every model call is recorded in the ticket's token journal with its role and the mark `measured` or
   `estimate`.
 - Agents do not `git push` and do not switch branches in the working tree. The human, or the orchestrator
-  after review, pushes.
+  after review, pushes. Agents do not write files the guard denies by other means (a script, Bash); they
+  hand such changes to the human as a short command.
 - Tracked files and commit messages contain no private terms (organisation name, surnames). Commit author
   is `kyyyyf`.
+- Heavy test runs use `cargo test -j 4 … -- --test-threads=4` at most; parallel nested builds crashed the
+  machine (STP-4).
 
-## Before the build: catch defects early
+## The spec process
 
-Most review findings of STP-1 could have been caught before any code was written. So, for every ticket:
+Goals, in this order of trade-off: complete enough to catch defects before code, simple enough that the
+human reads what they confirm, and cheap in tokens. Introduced after STP-4 (2026-10-05); STP-5 is its pilot.
+Rules that catch nothing are removed (item 9), so this list must not only grow.
 
-1. **Scope and risk tags first.** The ticket names its risk tags (`security`, `guard`, `data`, `migration`,
-   `interface`). A tag makes items 2–5 mandatory; a ticket without tags may keep them to one line each.
-2. **Study klc first.** Before writing `ticket.md`, the author studies the matching part of klc (`../klc`,
-   list in `docs/PLAN.md` §7): how it solved the same problem, what its reviews found, which edge cases it
-   handles. Findings go into the Design section: what we take, what we do differently, and why. klc code
-   is not copied; ideas, data and found defects are.
-3. **Spec questions from the coverage taxonomy.** Questions are checked against the ten categories of klc's
-   `config/coverage-taxonomy.yml` (taken as data), including the adversarial/abuse sub-check. Tickets
-   tagged `security` or `guard` have a **Guarantees** section: what is promised, against whom, and what is
-   explicitly not promised. Unbounded wording ("any form", "always", "never" without a list) is not allowed
-   in criteria. **Threat model by default:** the agent is careless, not malicious. A ticket promises
-   protection against mistakes; deliberate circumvention (an agent that hides code from a check on purpose)
-   is listed under "Not promised" unless the ticket is tagged `security` and says otherwise.
-4. **External contract as facts.** Before the design, every claim about an external system (Claude Code,
-   git, `gh`, the OS) is written down with its source and the mark `verified`, `read` or `assumption`.
-5. **Test plan before code, by category:** main path; negative cases; abuse (a table of bypass attempts);
-   robustness (size, depth, time, panics); environment (symlinks, case, encodings, `PATH`); repeated runs;
-   integration with the real external system. Parsers get property tests (no panic, bounded time).
-   The test plan has an **Inputs** table: every input the ticket adds (CLI flag or argument, file field,
-   environment variable) with its type, smallest and largest value, empty value, invalid value and precision
-   (for times: the unit), each row with its test. Sums of counts say what happens on overflow.
-6. **Spec review before the build.** The external reviewer reads only `ticket.md` (spec, design, test plan)
-   with one task: find how the ticket's promises can be broken. The task always includes two questions:
-   what counts as the same thing (identity), and what happens on a repeat or a double entry; and what
-   exactly each number or field taken from an external system means. The build starts after that review.
-7. **Author self-check before code review,** against the abuse table of the test plan.
-8. **Stage metric.** Each finding in `findings.jsonl` gets `catchable_at`: `spec`, `design`, `test-plan` or
-   `code`, and `adversarial: true` when it needs deliberate circumvention beyond the ticket's threat model
-   (item 3); adversarial findings are counted apart and do not enter the target. The ticket summary counts
-   them. The target, first checked on STP-2: far fewer code-review
-   findings than STP-1, and fewer than half of them `catchable_at` earlier than `code`. After the close, the
-   orchestrator imports the ticket's measured token usage and compares two things with the previous ticket:
-   tokens by role, and findings by stage and `catchable_at`, with the verdict "target met" or "not met" and
-   the group that missed it.
-
-9. **Every exact detail lives in one place, and a program checks the rest.** Acceptance criteria state
-   observable behaviour (what a person or agent sees, exit codes, what is written to disk). Exact output
-   lives in golden files under `crates/*/tests/golden/`, and a criterion names the file instead of retyping
-   the text. Internal mechanics (temporary file names, the order of `fsync`, parser rules) belong in the
-   Design section, marked "as built" and updated by the GREEN commit. The test
-   `crates/stapel-cli/tests/ticket_drift.rs` runs with every `cargo test` and fails when a ticket names a
-   test that does not exist, a test exists that no ticket names, an acceptance criterion quotes an output
-   line (`label: text`) that is not in the code, or a ticket names a missing `crates/` or `docs/` path. The
-   drift reviewer then reviews meaning, not wording. The same test also fails when a ticket tagged
-   `security` or `guard` has no abuse table or no self-check record, when the test lists of the criteria,
-   the Test plan and the Proof disagree, or when a CLI flag the ticket adds is missing from its Inputs table.
-   A commit that changes a `Cargo.toml` contains the matching `Cargo.lock`.
-10. **A spec change during the build is explicit.** When the code shows a criterion is wrong, the GREEN
-    commit changes the ticket too and says `spec change: AC-x, <reason>` in its message; the confirmation of
-    the spec goes stale (STP-2), so the person sees the diff in `stapel status`.
-11. **Drift review after every GREEN step.** A cheap drift reviewer compares the step's diff with the ticket
-    right after the GREEN commit; the "as built" Design and the criteria are fixed before the next step, so
-    no gap between text and code piles up for the code review.
-
-In phase 0 the orchestrator runs these checks by hand where no test does them; the tool takes them over from
-STP-2/STP-4 on.
+1. **Frame first, one page.** The problem; risk tags (`security`, `guard`, `data`, `migration`,
+   `interface`); at least one **non-goal**; the **promise** as a closed list: which inputs and constructions
+   the ticket handles, and which it does not promise. The default threat model is a careless agent, not a
+   malicious one; deliberate circumvention is not promised unless the ticket is tagged `security`. A size
+   estimate: a ticket that outgrows its frame is split, not grown. The human confirms the frame.
+2. **Questions before text.** The author asks the human questions from the coverage map — the ten
+   categories of `.stapel/config/coverage-taxonomy.yml` and the dimensions of every external system the
+   ticket reads, from `.stapel/config/external-states.yml` — one at a time or in a small group, each with
+   options and a recommendation. Answers go into the ticket's **Decisions** log with their date; nothing is
+   invented where the human has not answered. Prior art (klc, other tools) is studied for tagged tickets.
+3. **Short criteria.** One behaviour per criterion, at most about 500 characters, written as
+   `WHEN <event> THE <command> <does>` or `IF <unwanted condition> THEN …`, each naming its test. Exact
+   output lives in golden files under `crates/*/tests/golden/`; internal mechanics go to Design "as
+   built". The test plan has an **Inputs** table (type, bounds, empty, invalid, precision, test) and an
+   **External states** table (each dimension: handled with a test, refused with its exit code and test, or
+   not promised); both are filled from the catalogue, not from scratch, and a blank row is an error. After
+   the test plan, a **Review Focus** line lists up to five input classes or failure modes no planned test
+   exercises, each with a test or a refusal; "none" means checked.
+4. **One spec review, in order.** A separate model first reads only the frame and the criteria and writes
+   its own list of inputs, external states and bypass attempts; then it reads Design, the tables and the
+   promise and compares. It returns a Clear/Partial/Missing map over the coverage categories and findings
+   tagged **inside** the promise (defects) or **outside** it (proposals to widen it, not defects). A second
+   round only when a finding is HIGH. The build starts after that review.
+5. **The human confirms a summary.** Before each confirmation the orchestrator shows the decisions, the
+   non-goals, the promise and the criteria changed since the last confirmation; the full text stays one
+   command away (`stapel status` shows the diff). A spec change during the build is explicit: the GREEN
+   commit says `spec change: AC-x, <reason>` and the confirmation goes stale.
+6. **During the build.** Design "as built" is written as notes and moved into the ticket once, before code
+   review, so the build permit is not lost at every step. A cheap drift review runs after a GREEN step only
+   when the step touches a criterion of a tagged ticket; it gets the step's diff and its criteria, nothing
+   else. A program checks the rest: `crates/stapel-cli/tests/ticket_drift.rs` fails when a ticket names a
+   test that does not exist, a test exists that no ticket names, a criterion quotes an output line not in
+   the code, a ticket names a missing path, a tagged ticket lacks its tables or a dated self-check, the
+   test lists of criteria, Test plan and Proof disagree, or a CLI option is in no Inputs table. `stapel
+   check` shows that every step's tests failed at RED and pass at GREEN and HEAD; `--locked` covers
+   `Cargo.lock`.
+7. **Code review without quotas.** Each reviewer reports every HIGH and MEDIUM finding and a short summary of
+   LOW ones, with no fixed maximum. Each finding gets `catchable_at` (`spec`, `design`, `test-plan`,
+   `code`), `promise` (`inside` or `outside`) and `rule`: the item of this process that should have caught
+   it, or `none`.
+8. **Measures after the close.** The orchestrator imports the measured tokens and compares with the
+   previous ticket: **escaped defects** (found after the close: by `stapel check` on history, by later
+   tickets, by the human) — the main measure; HIGH and MEDIUM inside-promise findings of code review; the
+   size of `ticket.md`; tokens by role; wall time. The summary says what improved and what did not.
+9. **Rules are pruned.** `rule` counts per item are kept across tickets in `.stapel/process-ledger.jsonl`. An
+   item that caught nothing in three tickets in a row is removed or simplified, with the decision recorded
+   there.
 
 ## Language
 
