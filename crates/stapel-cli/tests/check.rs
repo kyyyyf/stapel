@@ -1762,3 +1762,19 @@ fn record_fits_the_journal_line() {
         r["steps"].as_array().unwrap().len()
     );
 }
+
+// ---- STP-4 step 7 drift review ----
+
+// D7-3: a record counts only with a full commit id; a ref name such as `HEAD` is not one.
+#[test]
+fn a_record_needs_a_full_commit_id() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    write(
+        dir,
+        ".stapel/tickets/ABC-1/runs.jsonl",
+        "{\"v\":1,\"kind\":\"check\",\"id\":\"c-000000000000\",\"at\":\"2026-01-01T00:00:00Z\",\"ticket\":\"ABC-1\",\"head\":\"HEAD\",\"result\":\"pass\",\"steps\":[]}\n",
+    );
+    let line = status_check_line(dir);
+    assert!(!line.starts_with("check: pass"), "{line}");
+}
