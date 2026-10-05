@@ -18,3 +18,18 @@
 {"id": "S-18", "ticket": "STP-4", "stage": "spec-review", "round": 1, "role": "external", "severity": "LOW", "claim": "dirty predicate worded twice differently; ignored files", "catchable_at": "spec", "fate": "fix"}
 {"id": "S-19", "ticket": "STP-4", "stage": "spec-review", "round": 1, "role": "external", "severity": "LOW", "claim": "refusal and failure share exit 1; --list without [check] unstated", "catchable_at": "spec", "fate": "fix"}
 {"id": "S-20", "ticket": "STP-4", "stage": "spec-review", "round": 1, "role": "external", "severity": "LOW", "claim": "several bounds have no test", "catchable_at": "test-plan", "fate": "fix"}
+{"id": "S2-1", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "HIGH", "claim": "golden files and helpers outside the protected identity", "catchable_at": "spec", "fate": "fix"}
+{"id": "S2-2", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "HIGH", "claim": "a later RED launders an earlier step's test", "catchable_at": "spec", "fate": "fix"}
+{"id": "S2-3", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "HIGH", "claim": "absence vs change undefined; all-retired step passes vacuously", "catchable_at": "spec", "fate": "fix"}
+{"id": "S2-4", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "ignored outcome by position contradictory", "catchable_at": "spec", "fate": "fix"}
+{"id": "S2-5", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "could not compile for another target or package undefined", "catchable_at": "spec", "fate": "fix"}
+{"id": "S2-6", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "golden-only RED is no-tests, unstated", "catchable_at": "spec", "fate": "fix"}
+{"id": "S2-7", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "whitespace and comment normalisation breaks literals", "catchable_at": "design", "fate": "fix"}
+{"id": "S2-8", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "test identity lacks the crate", "catchable_at": "spec", "fate": "fix"}
+{"id": "S2-9", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "manifest and .rs outside tests allowed in RED", "catchable_at": "spec", "fate": "fix"}
+{"id": "S2-10", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "MEDIUM", "claim": "HEAD not resolved once", "catchable_at": "spec", "fate": "fix"}
+{"id": "S2-11", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "LOW", "claim": "risk tags line format undefined", "catchable_at": "test-plan", "fate": "fix"}
+{"id": "S2-12", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "LOW", "claim": "--list refusals, stale vs fail, label order", "catchable_at": "spec", "fate": "fix"}
+{"id": "S2-13", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "LOW", "claim": "parser does not require single running and result lines", "catchable_at": "spec", "fate": "fix"}
+{"id": "S2-14", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "LOW", "claim": "pid lock fails on pid reuse", "catchable_at": "design", "fate": "fix"}
+{"id": "S2-15", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "LOW", "claim": "other test attributes undefined", "catchable_at": "spec", "fate": "fix"}
