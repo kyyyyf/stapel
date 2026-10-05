@@ -49,6 +49,12 @@ outside an agent's shell (a terminal, a Zed task) the commands run directly. `st
 close`; answers to questions stay in the ticket text, bound by the spec confirmation's hash, and `stapel decide`
 comes with `ask` in phase 1. Token records come from `stapel tokens add` or from importing Claude Code transcripts.
 
+**STP-3 baseline for the comparison.** Spec review: 32 findings over two rounds. Code review: 30 findings,
+18 of them (60%) `catchable_at` earlier than `code` (target: under half; not met). The 18 fall into three
+groups: ticket text behind the code (9), input bounds (6), meaning of external data and identity (3).
+Measured tokens (output / cache read): orchestrator 151k / 76M, research 1.5k / 4.8M, external 1.6k / 2.9M,
+reviewer 0.2k / 1.2M, drift 0.5k / 1.0M.
+
 **Acceptance criteria (abridged).**
 
 1. `stapel init` in an empty repository creates `.stapel/` and the hooks; running it again changes nothing.
@@ -70,7 +76,9 @@ token record, even if some steps were still performed by the orchestrator by han
 - STP-1 workspace, `init`, `stapel.toml`, hooks.
 - STP-2 `new`, `ticket.md`, `state.json`, hashes and confirmations, `status`.
 - STP-3 decision log and token journal.
-- STP-4 RED→GREEN check on the final commit.
+- STP-4 RED→GREEN check on the final commit. Its first steps extend the drift check (CLAUDE.md items 5, 9
+  and 11: Inputs table, abuse table and self-check, matching test lists, `Cargo.lock`). After its close it is
+  compared with STP-3: tokens by role, and findings by stage and `catchable_at`.
 - STP-5 accepting findings and `findings.jsonl`.
 - STP-6 MR through `gh`/`glab`.
 

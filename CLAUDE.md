@@ -38,12 +38,20 @@ Most review findings of STP-1 could have been caught before any code was written
 5. **Test plan before code, by category:** main path; negative cases; abuse (a table of bypass attempts);
    robustness (size, depth, time, panics); environment (symlinks, case, encodings, `PATH`); repeated runs;
    integration with the real external system. Parsers get property tests (no panic, bounded time).
+   The test plan has an **Inputs** table: every input the ticket adds (CLI flag or argument, file field,
+   environment variable) with its type, smallest and largest value, empty value, invalid value and precision
+   (for times: the unit), each row with its test. Sums of counts say what happens on overflow.
 6. **Spec review before the build.** The external reviewer reads only `ticket.md` (spec, design, test plan)
-   with one task: find how the ticket's promises can be broken. The build starts after that review.
+   with one task: find how the ticket's promises can be broken. The task always includes two questions:
+   what counts as the same thing (identity), and what happens on a repeat or a double entry; and what
+   exactly each number or field taken from an external system means. The build starts after that review.
 7. **Author self-check before code review,** against the abuse table of the test plan.
 8. **Stage metric.** Each finding in `findings.jsonl` gets `catchable_at`: `spec`, `design`, `test-plan` or
    `code`. The ticket summary counts them. The target, first checked on STP-2: far fewer code-review
-   findings than STP-1, and fewer than half of them `catchable_at` earlier than `code`.
+   findings than STP-1, and fewer than half of them `catchable_at` earlier than `code`. After the close, the
+   orchestrator imports the ticket's measured token usage and compares two things with the previous ticket:
+   tokens by role, and findings by stage and `catchable_at`, with the verdict "target met" or "not met" and
+   the group that missed it.
 
 9. **Every exact detail lives in one place, and a program checks the rest.** Acceptance criteria state
    observable behaviour (what a person or agent sees, exit codes, what is written to disk). Exact output
@@ -53,10 +61,16 @@ Most review findings of STP-1 could have been caught before any code was written
    `crates/stapel-cli/tests/ticket_drift.rs` runs with every `cargo test` and fails when a ticket names a
    test that does not exist, a test exists that no ticket names, an acceptance criterion quotes an output
    line (`label: text`) that is not in the code, or a ticket names a missing `crates/` or `docs/` path. The
-   drift reviewer then reviews meaning, not wording.
+   drift reviewer then reviews meaning, not wording. The same test also fails when a ticket tagged
+   `security` or `guard` has no abuse table or no self-check record, when the test lists of the criteria,
+   the Test plan and the Proof disagree, or when a CLI flag the ticket adds is missing from its Inputs table.
+   A commit that changes a `Cargo.toml` contains the matching `Cargo.lock`.
 10. **A spec change during the build is explicit.** When the code shows a criterion is wrong, the GREEN
     commit changes the ticket too and says `spec change: AC-x, <reason>` in its message; the confirmation of
     the spec goes stale (STP-2), so the person sees the diff in `stapel status`.
+11. **Drift review after every GREEN step.** A cheap drift reviewer compares the step's diff with the ticket
+    right after the GREEN commit; the "as built" Design and the criteria are fixed before the next step, so
+    no gap between text and code piles up for the code review.
 
 In phase 0 the orchestrator runs these checks by hand where no test does them; the tool takes them over from
 STP-2/STP-4 on.
