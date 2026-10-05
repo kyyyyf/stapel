@@ -1,6 +1,7 @@
 //! `stapel check [KEY] [--list]`: the RED to GREEN check of a ticket's steps (STP-4).
 
 use crate::repo;
+use stapel_core::journal::{append, new_id};
 use stapel_core::outcomes::{Analysis, MAX_NAMED, analyse, passing};
 use stapel_core::runner::{Parsed, TestState, parse_run, run_cargo, summary_counts};
 use stapel_core::rust_tests::test_functions;
@@ -8,6 +9,7 @@ use stapel_core::steps::{
     Step, TestId, git_text, package_name, show, step_commits, step_tests, steps,
 };
 use stapel_core::tickets::{Status, resolve};
+use stapel_core::time::now_rfc3339;
 use stapel_core::worktree::{Lock, LockError, Worktree, dirty_paths, stapel_dir};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -120,12 +122,24 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
     };
     println!("ticket: {} at {}", ticket.key, short(&head));
     let mut ok = true;
+    let mut steps_json = Vec::new();
     for a in &analyses {
         let (outcome, reason) = match &a.fixed {
             Some((o, r)) => (o.clone(), r.clone()),
             None => runner.step(a),
         };
         ok &= passing(&outcome);
+        if steps_json.len() < MAX_STEPS {
+            steps_json.push(serde_json::json!({
+                "label": cut(&a.label, MAX_LABEL),
+                "red": a.red.as_ref().map(|c| c.sha.clone()),
+                "green": a.green.as_ref().map(|c| c.sha.clone()),
+                "outcome": outcome,
+                "reason": cut(&reason, 1024),
+                "tests": a.tests.len(),
+                "names": names_of(&outcome, &reason),
+            }));
+        }
         if reason.is_empty() {
             println!("{}: {outcome}", a.label);
         } else {
@@ -135,10 +149,34 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
             println!("  {} {}: {}", n.kind, n.by, n.test);
         }
     }
-    let (suite, detail) = runner.suite();
-    ok &= suite == "pass";
-    println!("suite: {suite}: {detail}");
+    let suite = runner.suite();
+    ok &= suite.outcome == "pass";
+    println!("suite: {}: {}", suite.outcome, suite.detail);
     println!("result: {}", if ok { "pass" } else { "fail" });
+    let mut record = serde_json::json!({
+        "v": 1,
+        "kind": "check",
+        "id": new_id("c"),
+        "at": now_rfc3339(),
+        "ticket": ticket.key,
+        "head": head,
+        "tool": format!("stapel {}", env!("CARGO_PKG_VERSION")),
+        "result": if ok { "pass" } else { "fail" },
+        "steps": steps_json,
+        "suite": {
+            "outcome": suite.outcome,
+            "passed": suite.counts.0,
+            "failed": suite.counts.1,
+            "ignored": suite.counts.2,
+        },
+    });
+    if analyses.len() > MAX_STEPS {
+        record["steps_truncated"] = serde_json::json!(true);
+    }
+    if let Err(e) = append(&ticket.dir.join("runs.jsonl"), &record) {
+        eprintln!("stapel: the check record was not written: {e}");
+        return ExitCode::from(1);
+    }
     if let Ok(now) = git_text(&root, &["rev-parse", "--verify", "HEAD"])
         && now.trim() != head
     {
@@ -153,6 +191,37 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+struct Suite {
+    outcome: String,
+    detail: String,
+    counts: (u64, u64, u64),
+}
+
+/// At most this many steps go into a record, and this many bytes of a label.
+const MAX_STEPS: usize = 200;
+const MAX_LABEL: usize = 200;
+
+fn cut(text: &str, max: usize) -> String {
+    let mut end = text.len().min(max);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
+}
+
+/// The names in a reason that lists tests or paths, at most 20.
+fn names_of(outcome: &str, reason: &str) -> Vec<String> {
+    if !["no-red", "not-green", "removed", "tests-changed"].contains(&outcome) {
+        return Vec::new();
+    }
+    let list = reason.split(" and ").next().unwrap_or(reason);
+    list.split(", ")
+        .filter(|n| !n.is_empty())
+        .take(MAX_NAMED)
+        .map(String::from)
+        .collect()
 }
 
 struct Runner<'a> {
@@ -326,9 +395,15 @@ impl Runner<'_> {
     }
 
     /// The whole suite at HEAD.
-    fn suite(&self) -> (String, String) {
+    /// The whole suite at HEAD: outcome, detail and the summed counts.
+    fn suite(&self) -> Suite {
+        let unverified = |reason: String| Suite {
+            outcome: "unverified".into(),
+            detail: reason,
+            counts: (0, 0, 0),
+        };
         if let Err(e) = self.wt.checkout(self.head) {
-            return ("unverified".into(), e);
+            return unverified(e);
         }
         let args: Vec<String> = ["test", "--workspace", "--locked"]
             .iter()
@@ -336,38 +411,39 @@ impl Runner<'_> {
             .collect();
         let run = match run_cargo(&self.wt.path, &args, &self.target, self.timeout) {
             Ok(r) => r,
-            Err(e) => return ("unverified".into(), e),
+            Err(e) => return unverified(e),
         };
         if run.timed_out {
-            return (
-                "unverified".into(),
-                format!("the time limit of {} s ran out", self.timeout.as_secs()),
-            );
+            return unverified(format!(
+                "the time limit of {} s ran out",
+                self.timeout.as_secs()
+            ));
         }
         if run.output.contains("because --locked was passed") {
-            return ("unverified".into(), "Cargo.lock is out of date".into());
+            return unverified("Cargo.lock is out of date".into());
         }
         let (mut p, mut f, mut i) = (0u64, 0u64, 0u64);
         for (a, b, c) in run.output.lines().filter_map(summary_counts) {
-            p += a;
-            f += b;
-            i += c;
+            p = p.saturating_add(a);
+            f = f.saturating_add(b);
+            i = i.saturating_add(c);
         }
         let detail = format!("{p} passed, {f} failed, {i} ignored");
-        if run
+        let compiles = !run
             .output
             .lines()
-            .any(|l| l.starts_with("error: could not compile"))
-        {
-            return (
-                "fail".into(),
-                format!("{detail}; the workspace does not compile"),
-            );
-        }
-        if run.exit == Some(0) && f == 0 {
-            ("pass".into(), detail)
+            .any(|l| l.starts_with("error: could not compile"));
+        let (outcome, detail) = if !compiles {
+            ("fail", format!("{detail}; the workspace does not compile"))
+        } else if run.exit == Some(0) && f == 0 {
+            ("pass", detail)
         } else {
-            ("fail".into(), detail)
+            ("fail", detail)
+        };
+        Suite {
+            outcome: outcome.into(),
+            detail,
+            counts: (p, f, i),
         }
     }
 }
