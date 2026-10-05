@@ -1553,3 +1553,15 @@ fn detached_grandchild_does_not_hang_the_check() {
     );
     assert!(took < std::time::Duration::from_secs(90), "took {took:?}");
 }
+#[test]
+fn refusal_appends_no_record() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "x", "assert!(false);");
+    commit(dir, "ABC-1 step 1 RED: x");
+    commit(dir, "ABC-1 step 1 GREEN: x");
+    write(dir, "crates/tiny/src/lib.rs", "dirty\n");
+    let (code, _) = check(dir);
+    assert_eq!(code, 2);
+    assert!(!dir.join(".stapel/tickets/ABC-1/runs.jsonl").exists());
+}
