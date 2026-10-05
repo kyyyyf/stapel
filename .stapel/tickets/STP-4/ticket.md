@@ -178,6 +178,7 @@ GREEN steps into it; each test sets its own `CARGO_TARGET_DIR`.
 | Repeated runs | two checks append two records; the last is current | `check::appends_a_run_record` |
 | Integration | `stapel init` in a cargo and a non-cargo repository; `stapel check STP-3` and `STP-4` on this repository (plan step 7) | `init::writes_check_for_cargo_repositories`, `init::writes_commented_check_otherwise`, `check::runs_in_a_worktree_and_leaves_the_tree_alone` |
 | Process (drift) | abuse table and dated self-check; test lists; options in Inputs tables | `ticket_drift::abuse_table_and_self_check_are_required`, `ticket_drift::test_lists_must_agree`, `ticket_drift::every_option_is_in_an_inputs_table` |
+| Step 1 drift review | the rules wait until built; every Inputs table and only its rows; `security` alone; undated self-check; `####` is not the heading | `ticket_drift::process_rules_wait_until_built`, `ticket_drift::inputs_tables_are_read_in_full`, `ticket_drift::security_tag_and_undated_self_check` |
 
 ### Inputs
 

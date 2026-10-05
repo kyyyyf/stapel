@@ -33,3 +33,8 @@
 {"id": "S2-13", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "LOW", "claim": "parser does not require single running and result lines", "catchable_at": "spec", "fate": "fix"}
 {"id": "S2-14", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "LOW", "claim": "pid lock fails on pid reuse", "catchable_at": "design", "fate": "fix"}
 {"id": "S2-15", "ticket": "STP-4", "stage": "spec-review", "round": 2, "role": "external", "severity": "LOW", "claim": "other test attributes undefined", "catchable_at": "spec", "fate": "fix"}
+{"id": "D1-1", "ticket": "STP-4", "stage": "step-drift", "step": "step 1", "role": "drift", "severity": "MEDIUM", "claim": "gating of the AC-8 rules by built or closed is untested", "catchable_at": "test-plan", "fate": "fix"}
+{"id": "D1-2", "ticket": "STP-4", "stage": "step-drift", "step": "step 1", "role": "drift", "severity": "LOW", "claim": "only the first Inputs section of a ticket is read", "catchable_at": "design", "fate": "fix"}
+{"id": "D1-3", "ticket": "STP-4", "stage": "step-drift", "step": "step 1", "role": "drift", "severity": "LOW", "claim": "option named outside an Inputs table not tested as missing", "catchable_at": "test-plan", "fate": "fix"}
+{"id": "D1-4", "ticket": "STP-4", "stage": "step-drift", "step": "step 1", "role": "drift", "severity": "LOW", "claim": "Inputs parsing rules not in the as-built notes", "catchable_at": "design", "fate": "fix"}
+{"id": "D1-5", "ticket": "STP-4", "stage": "step-drift", "step": "step 1", "role": "drift", "severity": "LOW", "claim": "security-only tag and undated self-check not tested", "catchable_at": "test-plan", "fate": "fix"}

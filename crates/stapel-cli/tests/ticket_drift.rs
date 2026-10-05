@@ -662,3 +662,34 @@ fn every_option_is_in_an_inputs_table() {
     let named = format!("{inputs}| `--brand-new` | flag |\n");
     assert!(options_missing(&fake, &[named]).is_empty());
 }
+
+/// STP-4 step 1 drift review D1-1: the AC-8 rules wait until every criterion is built or the ticket
+/// is closed.
+#[test]
+fn process_rules_wait_until_built() {
+    let files = test_files();
+    let code = code_text();
+    let unbuilt = "## Spec\n\n| AC-1 | x | `ticket_drift::not_written_yet` |\n";
+    let open = full_problems("T-9", unbuilt, Lifecycle::Open, &files, &code);
+    assert!(!open.iter().any(|p| p.contains("risk tags")), "{open:?}");
+    let built = "## Spec\n\n| AC-1 | x | `ticket_drift::checker_finds_a_wrong_quote` |\n";
+    let open = full_problems("T-9", built, Lifecycle::Open, &files, &code);
+    assert!(open.iter().any(|p| p.contains("risk tags")), "{open:?}");
+    let closed = full_problems("T-9", unbuilt, Lifecycle::Closed, &files, &code);
+    assert!(closed.iter().any(|p| p.contains("risk tags")), "{closed:?}");
+}
+
+/// STP-4 step 1 drift review D1-2, D1-3: every Inputs table counts, and only its rows do.
+#[test]
+fn inputs_tables_are_read_in_full() {
+    let options: BTreeSet<String> = ["--alpha", "--beta", "--gamma"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let ticket = "### Inputs\n\n| `--alpha` | flag |\n\n### Other\n\n| `--gamma` | flag |\n\n\
+                  ### Inputs of the second command\n\n| `--beta <n>` | number |\n\nProse names `--gamma`.\n";
+    assert_eq!(
+        options_missing(&options, &[ticket.to_string()]),
+        ["--gamma"]
+    );
+}
