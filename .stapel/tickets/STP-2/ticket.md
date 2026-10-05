@@ -256,24 +256,24 @@ when running as uid 0.
 
 | Criterion or risk | Test | Result |
 |---|---|---|
-| AC-1 | `new::creates_ticket_files`, `new::numbers_after_largest_existing`, `new::numbering_ignores_case_and_zero_padding`, `new::refuses_bad_title` | — |
-| AC-2 | `new::stores_tracker_link`, `new::refuses_bad_tracker_url` | — |
-| AC-3 | `new::refuses_existing_key`, `new::refuses_without_config` | — |
-| AC-4 | `status::fresh_ticket_waits_for_spec`, `status::key_matched_without_case`, `status::without_key_needs_one_open_ticket`, `status::legacy_ticket_is_not_open`, `status::refuses_ambiguous_case_variant_keys`, `ok::resolves_single_open_ticket` | — |
-| AC-5, R-7 | `ok::records_confirmation`, `ok::keeps_text_only_on_latest`, `ok::refuses_generated_and_unknown_sections`, `ok::refuses_on_closed_ticket`, `ok::refuses_without_identity`, `ok::refuses_blank_identity`, `ok::warns_on_name_with_space`, `ok::refuses_missing_dependency`, `ok::refuses_in_agent_shell_without_grant`, `ok::confirming_twice_keeps_history`, `ok::refuses_oversized_ticket` | — |
-| AC-6 | `status::edit_makes_confirmation_stale_with_diff`, `status::revert_makes_it_fresh_again` | — |
-| AC-7 | `status::upstream_change_makes_dependents_stale`, `status::missing_or_duplicate_section_is_stale`, `status::removed_dependency_is_stale`, `status::older_normal_form_is_reported`, `status::dependency_missing_or_duplicated_is_named` | — |
-| AC-8, R-1, R-2 | `hash::ignores_non_content_differences`, `hash::detects_content_changes`, `hash::normal_form_is_idempotent`, `hash::any_inner_change_changes_hash` | — |
-| AC-9, R-6, R-9 | `parse::finds_sections_by_title`, `parse::ignores_headings_in_code_blocks`, `parse::fence_variants`, `parse::setext_and_comments_are_not_headings`, `parse::reports_missing_and_duplicate_sections`, `parse::order_does_not_matter`, `parse::non_utf8_is_reported`, `parse::arbitrary_input_never_panics`, `parse::large_ticket_parses_quickly`, `status::missing_ticket_md_is_reported`, `parse::lone_cr_line_endings_parse` | — |
-| AC-10, R-4 | `status::waiting_for_is_first_unconfirmed`, `status::build_line_names_the_granting_ticket`, `status::exit_codes`, `status::never_writes` | — |
-| AC-11, R-5 | `hook::allows_code_write_with_fresh_confirmations`, `hook::denies_code_write_after_spec_edit`, `hook::closed_ticket_gives_no_permit`, `hook::legacy_build_flag_still_honoured`, `hook::closed_ticket_flag_not_honoured`, `hook::invalid_config_gives_no_computed_permit`, `hook::unreadable_ticket_gives_no_permit`, `hook::oversized_ticket_gives_no_permit`, `hook::non_regular_file_gives_no_permit`, `hook::permit_check_on_4mib_ticket_is_fast`, `hook::special_state_json_gives_no_permit_quickly`, `hook::denial_names_tickets_and_sections` | — |
-| AC-12, R-3, R-8 | `state::failed_write_keeps_old_file`, `state::leftover_temp_is_ignored_and_removed`, `state::write_preserves_unknown_fields`, `state::refuses_corrupt_or_unknown_version`, `state::refuses_wrong_shape`, `state::legacy_file_is_reported`, `state::write_fails_cleanly_on_readonly_dir` | — |
-| AC-13 | `core::config::rejects_bad_sections`, `core::config::build_requires_defaults`, `cli_config::bad_config_refused_by_every_command` | — |
-| AC-14 | `close::records_closed_fact`, `close::drops_hand_build_flag`, `close::refuses_twice_and_without_reason`, `close::refuses_in_agent_shell_without_grant` | — |
-| AC-15, R-7, R-12 | `hook::asks_for_plain_stapel_ok`, `hook::asks_for_cargo_run_ok`, `hook::denies_ok_in_bypass_mode`, `hook::denies_command_with_own_grant`, `hook::denies_unresolvable_ok`, `hook::allows_mentions_of_stapel_ok`, `hook::allows_stapel_status_and_new_from_bash`, `hook::denies_running_the_hook_from_bash`, `hook::denies_stapel_ok_with_run_time_words` | — |
-| AC-16, R-10, R-11 | `hook::ask_carries_grant_and_reason`, `hook::sweeps_expired_grants`, `hook::denies_when_allow_rule_exists`, `ok::accepts_valid_grant_once`, `ok::refuses_expired_or_mismatched_grant`, `ok::refuses_grant_after_section_edit`, `ok::ignores_rewritten_grant_file`, `close::accepts_valid_grant_once`, `close::refuses_ok_grant`, `flow::grant_round_trip`, `flow::grant_round_trip_refuses_after_edit`, `hook::allow_rules_are_matched_like_claude_code`, `hook::allow_rule_in_user_settings_is_found`, `hook::replaced_command_runs_installed_stapel`, `hook::close_reason_with_dash_round_trips`, `ok::consuming_sweeps_expired_grants`, `hook::grant_needs_the_claude_code_hook_process`, `hook::allow_rule_prefix_needs_word_boundary` | — |
-| R-13 | `hook::grant_needs_the_claude_code_hook_process`, `hook::removing_claude_variables_is_a_bypass` | — |
-| AC-17, R-11 | `hook::denies_terminal_input_injection`, `hook::allows_ordinary_tmux_use`, `hook::denies_injection_spellings` | — |
+| AC-1 | `new::creates_ticket_files`, `new::numbers_after_largest_existing`, `new::numbering_ignores_case_and_zero_padding`, `new::refuses_bad_title` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-2 | `new::stores_tracker_link`, `new::refuses_bad_tracker_url` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-3 | `new::refuses_existing_key`, `new::refuses_without_config` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-4 | `status::fresh_ticket_waits_for_spec`, `status::key_matched_without_case`, `status::without_key_needs_one_open_ticket`, `status::legacy_ticket_is_not_open`, `status::refuses_ambiguous_case_variant_keys`, `ok::resolves_single_open_ticket` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-5, R-7 | `ok::records_confirmation`, `ok::keeps_text_only_on_latest`, `ok::refuses_generated_and_unknown_sections`, `ok::refuses_on_closed_ticket`, `ok::refuses_without_identity`, `ok::refuses_blank_identity`, `ok::warns_on_name_with_space`, `ok::refuses_missing_dependency`, `ok::refuses_in_agent_shell_without_grant`, `ok::confirming_twice_keeps_history`, `ok::refuses_oversized_ticket` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-6 | `status::edit_makes_confirmation_stale_with_diff`, `status::revert_makes_it_fresh_again` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-7 | `status::upstream_change_makes_dependents_stale`, `status::missing_or_duplicate_section_is_stale`, `status::removed_dependency_is_stale`, `status::older_normal_form_is_reported`, `status::dependency_missing_or_duplicated_is_named` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-8, R-1, R-2 | `hash::ignores_non_content_differences`, `hash::detects_content_changes`, `hash::normal_form_is_idempotent`, `hash::any_inner_change_changes_hash` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-9, R-6, R-9 | `parse::finds_sections_by_title`, `parse::ignores_headings_in_code_blocks`, `parse::fence_variants`, `parse::setext_and_comments_are_not_headings`, `parse::reports_missing_and_duplicate_sections`, `parse::order_does_not_matter`, `parse::non_utf8_is_reported`, `parse::arbitrary_input_never_panics`, `parse::large_ticket_parses_quickly`, `status::missing_ticket_md_is_reported`, `parse::lone_cr_line_endings_parse` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-10, R-4 | `status::waiting_for_is_first_unconfirmed`, `status::build_line_names_the_granting_ticket`, `status::exit_codes`, `status::never_writes` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-11, R-5 | `hook::allows_code_write_with_fresh_confirmations`, `hook::denies_code_write_after_spec_edit`, `hook::closed_ticket_gives_no_permit`, `hook::legacy_build_flag_still_honoured`, `hook::closed_ticket_flag_not_honoured`, `hook::invalid_config_gives_no_computed_permit`, `hook::unreadable_ticket_gives_no_permit`, `hook::oversized_ticket_gives_no_permit`, `hook::non_regular_file_gives_no_permit`, `hook::permit_check_on_4mib_ticket_is_fast`, `hook::special_state_json_gives_no_permit_quickly`, `hook::denial_names_tickets_and_sections` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-12, R-3, R-8 | `state::failed_write_keeps_old_file`, `state::leftover_temp_is_ignored_and_removed`, `state::write_preserves_unknown_fields`, `state::refuses_corrupt_or_unknown_version`, `state::refuses_wrong_shape`, `state::legacy_file_is_reported`, `state::write_fails_cleanly_on_readonly_dir` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-13 | `core::config::rejects_bad_sections`, `core::config::build_requires_defaults`, `cli_config::bad_config_refused_by_every_command` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-14 | `close::records_closed_fact`, `close::drops_hand_build_flag`, `close::refuses_twice_and_without_reason`, `close::refuses_in_agent_shell_without_grant` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-15, R-7, R-12 | `hook::asks_for_plain_stapel_ok`, `hook::asks_for_cargo_run_ok`, `hook::denies_ok_in_bypass_mode`, `hook::denies_command_with_own_grant`, `hook::denies_unresolvable_ok`, `hook::allows_mentions_of_stapel_ok`, `hook::allows_stapel_status_and_new_from_bash`, `hook::denies_running_the_hook_from_bash`, `hook::denies_stapel_ok_with_run_time_words` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-16, R-10, R-11 | `hook::ask_carries_grant_and_reason`, `hook::sweeps_expired_grants`, `hook::denies_when_allow_rule_exists`, `ok::accepts_valid_grant_once`, `ok::refuses_expired_or_mismatched_grant`, `ok::refuses_grant_after_section_edit`, `ok::ignores_rewritten_grant_file`, `close::accepts_valid_grant_once`, `close::refuses_ok_grant`, `flow::grant_round_trip`, `flow::grant_round_trip_refuses_after_edit`, `hook::allow_rules_are_matched_like_claude_code`, `hook::allow_rule_in_user_settings_is_found`, `hook::replaced_command_runs_installed_stapel`, `hook::close_reason_with_dash_round_trips`, `ok::consuming_sweeps_expired_grants`, `hook::grant_needs_the_claude_code_hook_process`, `hook::allow_rule_prefix_needs_word_boundary` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| R-13 | `hook::grant_needs_the_claude_code_hook_process`, `hook::removing_claude_variables_is_a_bypass` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
+| AC-17, R-11 | `hook::denies_terminal_input_injection`, `hook::allows_ordinary_tmux_use`, `hook::denies_injection_spellings` | pass (`cargo test --workspace`, local, 7a5c2ca: 180 passed) |
 
 ## Plan
 
@@ -302,10 +302,39 @@ present: `serde`, `serde_json`, `toml`, `clap`; for tests `assert_cmd`, `predica
 
 ## Review
 
-Generated. Spec review round 1: 20 findings; round 2: 12 findings; round 3: 17 findings; all applied to this text or recorded with
+Spec review round 1: 20 findings; round 2: 12 findings; round 3: 17 findings; all applied to this text or recorded with
 their fate in `findings.jsonl`. After the build: the three reviewers on a `git archive` copy. Each finding gets
 `catchable_at`.
 
 ## Summary
 
-Generated after merge.
+Built 2026-10-02 and closed 2026-10-05 at commit `7a5c2ca` plus the closing commits. The human confirmed
+spec, design and proof through the permission dialog (Plan step 11); `status` then printed
+`build: allowed (by STP-2)`, the first permit computed from confirmations.
+
+**Tokens by role.** Measured (subagent totals, no input/output split): author-research 260 316, drift 141 371, external 482 375, reviewer 200 734;
+total 1 084 796. Estimated (the orchestrator session as author and builder; never presented as
+measured): 1 606 000.
+
+**Reviews.** Spec review before the build: three rounds, 49 findings (8 HIGH, 23 MEDIUM, 18 LOW), all applied to the
+text before or during the build. Code review: round 1 with three reviewers and round 2 with one, 34
+findings (4 HIGH, 13 MEDIUM, 17 LOW). Where the code-review findings could have been caught: spec 12, design
+7, test plan 6, code 9 — 25 of 34 before any code.
+
+**Compared with STP-1** (71 code-review findings, 7 HIGH, 4 rounds, 54 of 71 catchable earlier): fewer code
+review rounds and the HIGH findings were about the implementation, not the protection model; but the share
+catchable earlier did not drop, mostly because of wording drift between ticket and code. Answer: the
+`ticket_drift` test and CLAUDE.md items 9 and 10, in force from STP-3.
+
+**What review found that mattered.** An agent could mint its own grant by running the hook entry point;
+closed by a second layer, the hook's own environment (`CLAUDE_CODE_EXECPATH`, R-13). A FIFO or `/dev/zero` in
+place of `state.json` hung the guard, and a hung hook fails open.
+
+**Open after close.**
+- The Zed agent panel is not tested (External contract row stays `assumption`); to be checked when Zed is set up.
+- Generated content inside a confirmed section: filling the Result column of Proof made the proof confirmation
+  stale, so proof was confirmed twice. For STP-3: keep results in `runs.jsonl` and let `status` show them, or
+  keep generated columns out of the hash.
+- Timestamps in the journals before code review round 1 were written by hand and are marked `ts_source`.
+
+**Human's three lines.** —
