@@ -1,7 +1,7 @@
 //! `stapel init`: the `.stapel/` layout in the repository root.
 
 use serde_json::{Value, json};
-use stapel_core::config::{Config, default_toml, validate_prefix};
+use stapel_core::config::{Config, starter_toml, validate_prefix};
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -56,7 +56,8 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
             None => ask_prefix()?,
         };
         validate_prefix(&prefix)?;
-        plan_create(&root, CONFIG, default_toml(&prefix), &mut plan);
+        let cargo = root.join("Cargo.toml").is_file();
+        plan_create(&root, CONFIG, starter_toml(&prefix, cargo), &mut plan);
     }
     plan_create(&root, ".stapel/allowlist.toml", ALLOWLIST.into(), &mut plan);
     plan_create(&root, ".stapel/tickets/.gitkeep", String::new(), &mut plan);

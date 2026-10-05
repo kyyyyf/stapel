@@ -12,6 +12,21 @@ pub fn default_toml(prefix: &str) -> String {
     TEMPLATE.replace(PREFIX_PLACEHOLDER, prefix)
 }
 
+const CHECK_COMMENT: &str = "\n# RED to GREEN check of ticket steps (STP-4): `stapel check` runs each step's tests at its\n# RED and GREEN commits and at HEAD; with this section, `stapel close` needs a passing check.\n";
+
+/// The starter `stapel.toml` for `init`: with `[check]` in a cargo repository, with a commented
+/// example otherwise (STP-4 AC-7).
+pub fn starter_toml(prefix: &str, cargo: bool) -> String {
+    let mut text = default_toml(prefix);
+    text.push_str(CHECK_COMMENT);
+    if cargo {
+        text.push_str("[check]\nrunner = \"cargo\"\ntimeout_secs = 900\n");
+    } else {
+        text.push_str("# [check]\n# runner = \"cargo\"\n# timeout_secs = 900\n");
+    }
+    text
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub tickets: Tickets,
@@ -20,7 +35,29 @@ pub struct Config {
     pub guard: Guard,
     #[serde(default)]
     pub build: Build,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<Check>,
 }
+
+/// `[check]`: how `stapel check` runs a ticket's tests (STP-4 AC-7).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Check {
+    #[serde(default = "default_runner")]
+    pub runner: String,
+    #[serde(default = "default_timeout")]
+    pub timeout_secs: u64,
+}
+
+fn default_runner() -> String {
+    "cargo".into()
+}
+
+fn default_timeout() -> u64 {
+    900
+}
+
+pub const TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 10..=86_400;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Build {
@@ -134,6 +171,22 @@ impl Config {
                     ));
                 }
                 Some(_) => {}
+            }
+        }
+        if let Some(check) = &self.check {
+            if check.runner != "cargo" {
+                return Err(format!(
+                    "check.runner \"{}\" is not supported: the only runner is cargo",
+                    check.runner
+                ));
+            }
+            if !TIMEOUT_RANGE.contains(&check.timeout_secs) {
+                return Err(format!(
+                    "check.timeout_secs {} is out of range: use {} to {} seconds",
+                    check.timeout_secs,
+                    TIMEOUT_RANGE.start(),
+                    TIMEOUT_RANGE.end()
+                ));
             }
         }
         Ok(())
