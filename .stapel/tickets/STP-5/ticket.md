@@ -40,6 +40,10 @@ start and end at `cost-state` lines can be exact); usage of background calls no 
 
 **Size.** Small: one importer change, one report change, two or three criteria.
 
+### Decisions
+
+- 2026-10-05: the frame is confirmed by the human.
+
 ## Spec
 
 TODO
