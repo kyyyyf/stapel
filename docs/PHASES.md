@@ -49,6 +49,11 @@ outside an agent's shell (a terminal, a Zed task) the commands run directly. `st
 close`; answers to questions stay in the ticket text, bound by the spec confirmation's hash, and `stapel decide`
 comes with `ask` in phase 1. Token records come from `stapel tokens add` or from importing Claude Code transcripts.
 
+**Interim comparison with klc (added during STP-4).** Before phase 4, `stapel` and klc each take the same
+next ticket from the same branch of a TypeScript project that klc already runs, and the results are compared
+by the metrics of `docs/PLAN.md` §8. It starts only with the human's explicit consent. So the test runner of
+STP-4 is configured in `stapel.toml`, not fixed to `cargo`.
+
 **STP-3 baseline for the comparison.** Spec review: 32 findings over two rounds. Code review: 30 findings,
 18 of them (60%) `catchable_at` earlier than `code` (target: under half; not met). The 18 fall into three
 groups: ticket text behind the code (9), input bounds (6), meaning of external data and identity (3).
