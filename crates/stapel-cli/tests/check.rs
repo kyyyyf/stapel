@@ -1514,3 +1514,42 @@ fn other_run_lines_are_ignored() {
     assert!(after.starts_with(before), "{after}");
     assert_eq!(run_records(dir).len(), 1);
 }
+
+// ---- STP-4 step 5 drift review ----
+
+// D5-2: a grandchild in its own session that keeps the output open does not hang the check.
+#[test]
+fn detached_grandchild_does_not_hang_the_check() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    set_timeout(dir, 10);
+    add_test(
+        dir,
+        "basic",
+        "detaches",
+        "std::process::Command::new(\"sh\").args([\"-c\", \"setsid sleep 302 &\"]).status().unwrap();\n    assert_eq!(tiny::add(1, 1), 3);",
+    );
+    commit(dir, "ABC-1 step 1 RED: a test that leaves a detached child");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    let started = std::time::Instant::now();
+    // The check is stopped after 90 s, so a hang fails this test instead of blocking it.
+    let out = {
+        let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
+        stapel(dir)
+            .args(["check", "ABC-1"])
+            .env("CARGO_BUILD_JOBS", "2")
+            .timeout(std::time::Duration::from_secs(90))
+            .output()
+    };
+    let took = started.elapsed();
+    // The detached child is not this check's to kill (Guarantees); the test ends it.
+    let _ = std::process::Command::new("pkill")
+        .args(["-x", "-f", "sleep 302"])
+        .status();
+    let out = out.unwrap_or_else(|e| panic!("the check did not finish: {e}"));
+    assert!(
+        out.status.code().is_some(),
+        "the check was stopped after {took:?}"
+    );
+    assert!(took < std::time::Duration::from_secs(90), "took {took:?}");
+}

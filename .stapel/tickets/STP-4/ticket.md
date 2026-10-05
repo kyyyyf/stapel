@@ -181,6 +181,7 @@ GREEN steps into it; each test sets its own `CARGO_TARGET_DIR`.
 | Step 3 drift review | a `;` in a signature; escaped char literals; raw strings, nested and doc comments, lifetimes, attribute runs, `proptest!`, nested and other test attributes; a dissimilar rename; a root commit; a dirty tree for `--list` | `rust_tests::signature_with_semicolon_keeps_the_body`, `rust_tests::escaped_char_literals_do_not_swallow_code`, `rust_tests::lexer_follows_the_terms`, `check::list_counts_a_dissimilar_rename_as_added`, `check::list_reads_a_root_commit_and_ignores_a_dirty_tree` |
 | Step 4 drift review | retirement only by a commit of the ticket; a test deleted and added again weaker | `check::retirement_needs_a_ticket_commit`, `check::deleted_and_readded_tests_stay_protected`, `check::red_paths_allowed_and_capped` |
 | Step 6 | at most 20 names in a record | `check::record_names_at_most_twenty` |
+| Step 5 drift review | a detached grandchild that keeps the output open | `check::detached_grandchild_does_not_hang_the_check` |
 | Step 1 drift review | the rules wait until built; every Inputs table and only its rows; `security` alone; undated self-check; `####` is not the heading | `ticket_drift::process_rules_wait_until_built`, `ticket_drift::inputs_tables_are_read_in_full`, `ticket_drift::security_tag_and_undated_self_check` |
 
 ### Inputs
