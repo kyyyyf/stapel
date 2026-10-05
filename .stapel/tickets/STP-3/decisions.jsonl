@@ -1,0 +1,4 @@
+{"v":1,"id":"d-1f8c593ef93e","at":"2026-10-05T08:31:46Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:20e2c2724839098cf83f3b0ca3d42e2b498f8a25d2b353325c8211f0f5f404bf","via":"grant"}
+{"v":1,"id":"d-4cb214ef2359","at":"2026-10-05T08:32:02Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:6db07cb9c2402d0bb9b7a02d2ab94eff2fc15b170b899a0588751ccf2268ad3e","via":"grant"}
+{"v":1,"id":"d-1b3a7b082e47","at":"2026-10-05T09:01:22Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:8cbf8cf9d35666f7165ec280429699404d4fbea2d329df9a56ab023cb47bf989","via":"grant"}
+{"v":1,"id":"d-a470d871c009","at":"2026-10-05T09:02:20Z","by":"kyyyyf","action":"close","reason":"Decision log and token journal built; code review round 1 fixed; spec, design and proof confirmed again"}
