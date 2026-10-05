@@ -2015,3 +2015,31 @@ fn shallow_clones_are_refused() {
     assert_eq!(code, 2, "{text}");
     assert!(text.contains("shallow"), "{text}");
 }
+// E-8: paths are given to git literally, so glob characters in a file name do not hide a change.
+#[test]
+fn glob_characters_in_paths_are_literal() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    write(dir, "crates/tiny/tests/golden/out[1].txt", "expected\n");
+    add_test(
+        dir,
+        "golden",
+        "reads",
+        "assert_eq!(include_str!(\"golden/out[1].txt\"), tiny::shown());",
+    );
+    commit(dir, "ABC-1 step 1 RED: a golden file with brackets");
+    let lib = read(dir, "crates/tiny/src/lib.rs");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{lib}\npub fn shown() -> &'static str {{\n    \"other\\n\"\n}}\n"),
+    );
+    write(dir, "crates/tiny/tests/golden/out[1].txt", "other\n");
+    commit(
+        dir,
+        "ABC-1 step 1 GREEN: code, and the golden file follows it",
+    );
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "tests-changed", "{text}");
+}
