@@ -45,6 +45,14 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         Ok(h) => h.trim().to_string(),
         Err(e) => return refuse(e),
     };
+    if git_text(&root, &["rev-parse", "--is-shallow-repository"])
+        .map(|s| s.trim() == "true")
+        .unwrap_or(false)
+    {
+        return refuse(
+            "this is a shallow clone; the check reads the whole history (git fetch --unshallow)",
+        );
+    }
     let steps = match step_commits(&root, &ticket.key, &head) {
         Ok(c) => steps(c),
         Err(e) => return refuse(e),
@@ -146,7 +154,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
             println!("{}: {outcome}: {reason}", a.label);
         }
         for n in &a.notes {
-            println!("  {} {}: {}", n.kind, n.by, n.test);
+            println!("  {} {}: {}", n.kind, n.by, n.what);
         }
     }
     let suite = runner.suite();
@@ -311,20 +319,8 @@ impl Runner<'_> {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        // RED: every test fails; one that passes runs once more.
-        let at_red = self.at(&red.sha, tests, true).and_then(|mut states| {
-            let passed: Vec<TestId> = states
-                .iter()
-                .filter(|(_, s)| **s == TestState::Passed)
-                .map(|(t, _)| t.clone())
-                .collect();
-            if !passed.is_empty() {
-                for (t, s) in self.at(&red.sha, &passed, true)? {
-                    states.insert(t, s);
-                }
-            }
-            Ok(states)
-        });
+        // RED: every test fails; one that passes is no RED.
+        let at_red = self.at(&red.sha, tests, true);
         let at_green = self.at(&green.sha, tests, false);
         // HEAD: tests missing there are removed; the rest run.
         let present: Vec<TestId> = tests

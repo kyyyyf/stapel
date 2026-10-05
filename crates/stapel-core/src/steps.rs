@@ -4,8 +4,12 @@ use crate::rust_tests::test_functions;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-/// The empty tree, the parent of a root commit.
-const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+/// The empty tree of the repository's hash (SHA-1 or SHA-256), the parent of a root commit.
+fn empty_tree(root: &Path) -> String {
+    git_text(root, &["hash-object", "-t", "tree", "/dev/null"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Marker {
@@ -101,23 +105,29 @@ pub fn parse_subject(key: &str, subject: &str) -> Option<(String, Marker)> {
 
 /// The ticket's step commits on the first-parent history of `head`, oldest first.
 pub fn step_commits(root: &Path, key: &str, head: &str) -> Result<Vec<StepCommit>, String> {
-    let log = git_text(
+    // Fields are split on NUL, which a commit message cannot hold.
+    let raw = git(
         root,
         &[
             "log",
+            "-z",
             "--first-parent",
             "--reverse",
-            "--format=%H%x1f%s%x1f%B%x1e",
+            "--format=%H%x00%s%x00%B",
             head,
         ],
     )?;
+    let fields: Vec<String> = raw
+        .split(|b| *b == 0)
+        .map(|f| String::from_utf8_lossy(f).into_owned())
+        .collect();
     let mut out = Vec::new();
-    for record in log.split('\x1e') {
-        let mut parts = record.trim_start_matches('\n').splitn(3, '\x1f');
-        let (Some(sha), Some(subject), Some(message)) = (parts.next(), parts.next(), parts.next())
-        else {
+    for c in fields.chunks(3) {
+        let [sha, subject, message] = c else { continue };
+        let sha = sha.trim_start_matches('\n');
+        if sha.is_empty() {
             continue;
-        };
+        }
         if let Some((label, marker)) = parse_subject(key, subject) {
             out.push(StepCommit {
                 sha: sha.to_string(),
@@ -162,7 +172,7 @@ fn test_file(path: &str) -> Option<(String, String)> {
 pub fn parent(root: &Path, sha: &str) -> String {
     git_text(root, &["rev-parse", "--verify", "-q", &format!("{sha}^1")])
         .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| EMPTY_TREE.to_string())
+        .unwrap_or_else(|_| empty_tree(root))
 }
 
 /// The file at a commit, or `None` when it does not exist there.

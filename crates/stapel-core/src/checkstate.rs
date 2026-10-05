@@ -46,7 +46,8 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
                 // Well-formed: a full commit id and a result of pass or fail.
                 let head = m.get("head")?.as_str()?.to_string();
                 let result = m.get("result")?.as_str()?.to_string();
-                let full = head.len() == 40 && head.bytes().all(|b| b.is_ascii_hexdigit());
+                let full = (head.len() == 40 || head.len() == 64)
+                    && head.bytes().all(|b| b.is_ascii_hexdigit());
                 (full && (result == "pass" || result == "fail")).then_some((head, result))
             }
             _ => None,
@@ -58,8 +59,14 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
     if !known {
         return CheckLine::Stale(format!("unknown commit {}", short(&head)));
     }
+    if git(root, &["merge-base", "--is-ancestor", &head, "HEAD"]).is_err() {
+        return CheckLine::Stale(format!(
+            "history rewritten: {} is not an ancestor of HEAD",
+            short(&head)
+        ));
+    }
     // When git cannot read the tree, the check is not current: the gate fails closed.
-    let diff = match git(root, &["diff", "--name-only", "-z", &head]) {
+    let diff = match git(root, &["diff", "--name-only", "--no-renames", "-z", &head]) {
         Ok(raw) => raw,
         Err(e) => return CheckLine::Stale(format!("cannot read the tree: {e}")),
     };

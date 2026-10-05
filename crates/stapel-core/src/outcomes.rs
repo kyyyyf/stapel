@@ -3,7 +3,9 @@
 //! `superseded by <label>` and `retired by <label>`.
 
 use crate::rust_tests::{helper_text, test_functions};
-use crate::steps::{Marker, Step, StepCommit, TestId, changes, git_text, parent, show, step_tests};
+use crate::steps::{
+    Marker, Step, StepCommit, TestId, changes, git, git_text, parent, show, step_tests,
+};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
@@ -14,7 +16,8 @@ pub const MAX_NAMED: usize = 20;
 pub struct Note {
     pub kind: &'static str,
     pub by: String,
-    pub test: TestId,
+    /// A step test or a protected path.
+    pub what: String,
 }
 
 #[derive(Debug, Clone)]
@@ -156,26 +159,35 @@ impl Unit {
 }
 
 /// Commits after `from` up to `head` on the first-parent history that touch `path`, oldest first.
-fn touching(root: &Path, from: &str, head: &str, path: &str) -> Vec<(String, String)> {
-    git_text(
+/// Fields are split on NUL, which a commit message cannot hold; the path is given literally.
+fn touching(
+    root: &Path,
+    from: &str,
+    head: &str,
+    path: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let raw = git(
         root,
         &[
             "log",
+            "-z",
             "--first-parent",
             "--reverse",
-            "--format=%H%x1f%B%x1e",
+            "--format=%H%x00%B",
             &format!("{from}..{head}"),
             "--",
-            path,
+            &format!(":(literal){path}"),
         ],
-    )
-    .unwrap_or_default()
-    .split('\x1e')
-    .filter_map(|r| {
-        let (sha, msg) = r.trim_start_matches('\n').split_once('\x1f')?;
-        Some((sha.to_string(), msg.to_string()))
-    })
-    .collect()
+    )?;
+    let fields: Vec<String> = raw
+        .split(|b| *b == 0)
+        .map(|f| String::from_utf8_lossy(f).into_owned())
+        .collect();
+    Ok(fields
+        .chunks(2)
+        .filter(|c| c.len() == 2 && !c[0].is_empty())
+        .map(|c| (c[0].trim_start_matches('\n').to_string(), c[1].clone()))
+        .collect())
 }
 
 pub fn analyse(
@@ -288,12 +300,39 @@ pub fn analyse(
                 units.push(Unit::File(new.to_string()));
             }
         }
+        // Every other file under the tests folder of a crate that holds a step test, as at the RED.
+        let mut dirs: Vec<&str> = a.tests.iter().map(|t| t.dir.as_str()).collect();
+        dirs.sort();
+        dirs.dedup();
+        for dir in dirs {
+            let listed = git(
+                root,
+                &[
+                    "ls-tree",
+                    "-r",
+                    "-z",
+                    "--name-only",
+                    &red,
+                    "--",
+                    &format!(":(literal)crates/{dir}/tests/"),
+                ],
+            )?;
+            for path in listed.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+                let path = String::from_utf8_lossy(path).into_owned();
+                let known = units
+                    .iter()
+                    .any(|u| matches!(u, Unit::File(p) if *p == path));
+                if !path.ends_with(".rs") && !known {
+                    units.push(Unit::File(path));
+                }
+            }
+        }
         let mut changed_units = Vec::new();
         let mut retired = Vec::new();
         for unit in &units {
             let mut current = unit.value(&mut files, &red);
             let at_head = unit.value(&mut files, head);
-            for (sha, message) in touching(root, &red, head, &unit.path()) {
+            for (sha, message) in touching(root, &red, head, &unit.path())? {
                 let value = unit.value(&mut files, &sha);
                 if value == current {
                     continue;
@@ -316,7 +355,7 @@ pub fn analyse(
                         a.notes.push(Note {
                             kind: "retired by",
                             by: label,
-                            test: t.clone(),
+                            what: t.to_string(),
                         });
                         retired.push(t.clone());
                         break;
@@ -328,13 +367,11 @@ pub fn analyse(
                 }
                 match step_of {
                     Some((l, Marker::Red)) => {
-                        if let Unit::Test(t) = unit {
-                            a.notes.push(Note {
-                                kind: "superseded by",
-                                by: l.clone(),
-                                test: t.clone(),
-                            });
-                        }
+                        a.notes.push(Note {
+                            kind: "superseded by",
+                            by: l.clone(),
+                            what: unit.name(),
+                        });
                         current = value;
                     }
                     _ => {

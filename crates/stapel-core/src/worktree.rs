@@ -82,16 +82,23 @@ impl Lock {
             .truncate(false)
             .open(&path)
             .map_err(|e| LockError::Io(format!("{}: {e}", path.display())))?;
-        let mut previous = String::new();
-        let _ = file.read_to_string(&mut previous);
-        let previous = previous.trim().to_string();
+        let read_pid = |file: &mut File| {
+            let mut text = String::new();
+            let _ = file.seek(SeekFrom::Start(0));
+            let _ = file.read_to_string(&mut text);
+            text.trim().to_string()
+        };
         match file.try_lock() {
             Ok(()) => {}
-            Err(std::fs::TryLockError::WouldBlock) => return Err(LockError::Held(previous)),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(LockError::Held(read_pid(&mut file)));
+            }
             Err(std::fs::TryLockError::Error(e)) => {
                 return Err(LockError::Io(format!("{}: {e}", path.display())));
             }
         }
+        // Read only once the lock is held, so a holder that just left is not named.
+        let previous = read_pid(&mut file);
         let own = std::process::id().to_string();
         let _ = file.set_len(0);
         let _ = file.seek(SeekFrom::Start(0));
@@ -123,7 +130,12 @@ impl Worktree {
         };
         wt.remove();
         let p = wt.path.to_string_lossy().into_owned();
-        git(root, &["worktree", "add", "-q", "--detach", &p, commit])?;
+        // `--force` re-uses a registration of its own path whose folder is gone; no other
+        // worktree is pruned.
+        git(
+            root,
+            &["worktree", "add", "-q", "--force", "--detach", &p, commit],
+        )?;
         Ok(wt)
     }
 
@@ -142,7 +154,6 @@ impl Worktree {
         if self.path.exists() {
             let _ = std::fs::remove_dir_all(&self.path);
         }
-        let _ = git(&self.root, &["worktree", "prune"]);
     }
 }
 
