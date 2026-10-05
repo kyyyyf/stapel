@@ -791,3 +791,66 @@ fn list_reads_a_root_commit_and_ignores_a_dirty_tree() {
         "{text}"
     );
 }
+
+// ---- STP-4 step 4 drift review ----
+
+// D4-1: only a commit of the ticket (its subject starts with the key) retires a test.
+#[test]
+fn retirement_needs_a_ticket_commit() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "foreign", "assert!(true);");
+    add_test(dir, "basic", "ours", "assert!(true);");
+    commit(dir, "ABC-1 step 1 RED: two tests");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "#[test]\nfn foreign() {\n    assert!(true);\n}\n",
+        "",
+    );
+    commit(dir, "XYZ-9: other work\n\nspec change: not this ticket's");
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "#[test]\nfn ours() {\n    assert!(true);\n}\n",
+        "",
+    );
+    commit(
+        dir,
+        "ABC-1: drop a rule\n\nspec change: AC-1, the rule was wrong",
+    );
+    let (_, text) = check(dir);
+    assert!(
+        !text
+            .lines()
+            .any(|l| l.contains("retired by") && l.contains("tiny/basic::foreign")),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|l| l.contains("retired by") && l.contains("tiny/basic::ours")),
+        "{text}"
+    );
+}
+
+// D4-2: a test deleted and added again in a weaker form is still `tests-changed`.
+#[test]
+fn deleted_and_readded_tests_stay_protected() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "phoenix", "assert_eq!(tiny::add(2, 2), 4);");
+    commit(dir, "ABC-1 step 1 RED: a test");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "#[test]\nfn phoenix() {\n    assert_eq!(tiny::add(2, 2), 4);\n}\n",
+        "",
+    );
+    commit(dir, "ABC-1: remove it");
+    add_test(dir, "basic", "phoenix", "assert!(true);");
+    commit(dir, "ABC-1: bring it back weaker");
+    let (_, text) = check(dir);
+    assert_eq!(outcome(&text, "step 1"), "tests-changed", "{text}");
+}
