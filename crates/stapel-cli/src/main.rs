@@ -5,6 +5,7 @@ mod new;
 mod ok;
 mod repo;
 mod status;
+mod tokens;
 
 use clap::{Parser, Subcommand};
 use std::process::ExitCode;
@@ -59,9 +60,45 @@ enum Command {
         #[arg(long, hide = true)]
         grant: Option<String>,
     },
+    /// The token journal: record model calls and show totals by role.
+    #[command(args_conflicts_with_subcommands = true)]
+    Tokens {
+        #[command(subcommand)]
+        action: Option<TokensAction>,
+        /// The ticket key for the report; without it, every ticket.
+        key: Option<String>,
+    },
     /// Hook entry points called by Claude Code; not meant to be run by hand.
     #[command(subcommand)]
     Hook(HookCommand),
+}
+
+#[derive(Subcommand)]
+enum TokensAction {
+    /// Record one model call: measured counts, or an estimate.
+    Add {
+        /// The ticket key; without it, the only open ticket.
+        key: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        role: String,
+        /// The model; defaults to the role's model in stapel.toml.
+        #[arg(long, allow_hyphen_values = true)]
+        model: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        input: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        output: Option<String>,
+        #[arg(long = "cache-read", allow_hyphen_values = true)]
+        cache_read: Option<String>,
+        #[arg(long = "cache-write", allow_hyphen_values = true)]
+        cache_write: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        estimate: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        step: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        note: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -75,6 +112,35 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Init { prefix } => init::run(prefix),
         Command::New { title, tracker } => new::run(&title, tracker.as_deref()),
+        Command::Tokens { action, key } => match action {
+            Some(TokensAction::Add {
+                key,
+                role,
+                model,
+                input,
+                output,
+                cache_read,
+                cache_write,
+                estimate,
+                step,
+                note,
+            }) => tokens::add(tokens::Add {
+                key,
+                role,
+                model,
+                input,
+                output,
+                cache_read,
+                cache_write,
+                estimate,
+                step,
+                note,
+            }),
+            None => Err(format!(
+                "the token report comes with a later step of STP-3 (ticket {})",
+                key.unwrap_or_default()
+            )),
+        },
         Command::Close { key, reason, grant } => {
             close::run(key.as_deref(), &reason, grant.as_deref())
         }
