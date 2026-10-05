@@ -325,6 +325,12 @@ fn list_keeps_renamed_and_reformatted_tests() {
 
 /// Commit ids replaced by `<sha>`, so golden files hold no ids.
 fn without_ids(text: &str) -> String {
+    text.lines()
+        .map(|line| format!("{}\n", line_without_ids(line)))
+        .collect()
+}
+
+fn line_without_ids(text: &str) -> String {
     text.split(' ')
         .map(|w| {
             if w.len() == 7
@@ -416,9 +422,22 @@ fn edit(dir: &Path, rel: &str, from: &str, to: &str) {
     write(dir, rel, &old.replacen(from, to, 1));
 }
 
+/// One full `stapel check` at a time, with two build jobs: every run builds with cargo, and many
+/// at once exhaust the machine's memory.
+static CARGO: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn full_check(dir: &Path) -> std::process::Output {
+    let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
+    stapel(dir)
+        .args(["check", "ABC-1"])
+        .env("CARGO_BUILD_JOBS", "2")
+        .output()
+        .unwrap()
+}
+
 /// `stapel check ABC-1`: exit code and output.
 fn check(dir: &Path) -> (i32, String) {
-    let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    let out = full_check(dir);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -702,8 +721,11 @@ fn outcome_order_and_static_outcomes() {
     let dir = repo.path();
     let marker = dir.join("a-step-test-ran");
     // A step test that would leave a marker if it ran: static outcomes run nothing.
+    // Each run appends the commit it ran at; the suite runs at HEAD, so only HEAD may appear.
     let body = format!(
-        "std::fs::write({:?}, \"ran\").unwrap();",
+        "let h = std::process::Command::new(\"git\").args([\"rev-parse\", \"HEAD\"]).output().unwrap().stdout;\n    \
+         use std::io::Write;\n    \
+         std::fs::OpenOptions::new().create(true).append(true).open({:?}).unwrap().write_all(&h).unwrap();",
         marker.display().to_string()
     );
     add_test(dir, "basic", "leaves_a_marker", &body);
@@ -736,7 +758,12 @@ fn outcome_order_and_static_outcomes() {
     assert_eq!(outcome(&text, "step 1"), "unpaired", "{text}");
     assert_eq!(outcome(&text, "step 2"), "no-tests", "{text}");
     assert_eq!(outcome(&text, "step 3"), "red-changes-code", "{text}");
-    assert!(!marker.exists(), "a step test ran:\n{text}");
+    let head = git(dir, &["rev-parse", "HEAD"]);
+    let ran = std::fs::read_to_string(&marker).unwrap_or_default();
+    assert!(
+        ran.lines().all(|l| l == head.trim()),
+        "a step test ran at a step commit:\n{ran}\n{text}"
+    );
 }
 // ---- STP-4 step 3 drift review D3-4 ----
 
@@ -987,7 +1014,6 @@ fn outcome_not_green() {
     commit(dir, "ABC-1 step 1 RED: triple is wrong");
     edit(dir, "crates/tiny/src/lib.rs", "x * 2", "x * 4");
     commit(dir, "ABC-1 step 1 GREEN: still wrong");
-    fix_triple(dir);
     edit(dir, "crates/tiny/src/lib.rs", "x * 4", "x * 3");
     commit(dir, "ABC-1: fixed later");
     add_test(dir, "basic", "halves", "assert_eq!(tiny::half(8), 4);");
@@ -1355,7 +1381,7 @@ fn report_matches_golden() {
     );
     commit(dir, "ABC-1 step 2 RED: passes from the start");
     commit(dir, "ABC-1 step 2 GREEN: nothing");
-    let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    let out = full_check(dir);
     let text = String::from_utf8(out.stdout).unwrap();
     let golden = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/check_report.txt"),
