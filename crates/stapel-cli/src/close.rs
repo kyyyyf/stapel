@@ -56,5 +56,9 @@ pub fn run(key: Option<&str>, reason: &str, grant: Option<&str>) -> Result<(), S
     if dropped_flag {
         println!("removed: build.allowed (phase 0 hand permit)");
     }
-    Ok(())
+    let c = state.closed.as_ref().expect("just set");
+    stapel_core::journal::record_decision(
+        &ticket.dir,
+        serde_json::json!({ "by": c.by, "action": "close", "reason": c.reason }),
+    )
 }

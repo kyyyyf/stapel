@@ -50,5 +50,15 @@ pub fn run(key: Option<&str>, section: &str, grant: Option<&str>) -> Result<(), 
     save(&prepared.dir.join("state.json"), &prepared.state)?;
     let short = &prepared.hash[..prepared.hash.len().min("sha256:".len() + 12)];
     println!("confirmed: {} {} ({short})", prepared.key, prepared.section);
-    Ok(())
+    let c = prepared.state.confirmations.last().expect("just pushed");
+    stapel_core::journal::record_decision(
+        &prepared.dir,
+        serde_json::json!({
+            "by": c.by,
+            "action": "ok",
+            "section": c.section,
+            "hash": c.hash,
+            "via": c.via,
+        }),
+    )
 }

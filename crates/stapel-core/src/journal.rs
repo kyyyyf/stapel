@@ -115,3 +115,25 @@ pub fn problems(path: &Path) -> Vec<(usize, String)> {
         Err(reason) => vec![(0, reason)],
     }
 }
+
+/// A record id: `prefix` and 12 hex digits from 48 random bits.
+pub fn new_id(prefix: &str) -> String {
+    let mut bytes = [0u8; 6];
+    getrandom::getrandom(&mut bytes).expect("the OS random generator works");
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!("{prefix}-{hex}")
+}
+
+/// Appends a decision to a ticket's `decisions.jsonl` (STP-3 AC-1).
+pub fn record_decision(ticket_dir: &Path, fields: Value) -> Result<(), String> {
+    let mut record = serde_json::json!({
+        "v": 1,
+        "id": new_id("d"),
+        "at": crate::time::now_rfc3339(),
+    });
+    if let (Value::Object(r), Value::Object(f)) = (&mut record, fields) {
+        r.extend(f);
+    }
+    append(&ticket_dir.join("decisions.jsonl"), &record)
+        .map_err(|e| format!("warning: decision not recorded: {e}"))
+}

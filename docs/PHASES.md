@@ -45,6 +45,10 @@ that fails first.
 outside an agent's shell (a terminal, a Zed task) the commands run directly. `status` prints
 `waiting for: <section> (owner: <owner>)`. Confirmations are kept in `state.json`; `decisions.jsonl` comes with STP-3.
 
+**Added during STP-3.** `decisions.jsonl` holds confirmations and closings, written by `stapel ok` and `stapel
+close`; answers to questions stay in the ticket text, bound by the spec confirmation's hash, and `stapel decide`
+comes with `ask` in phase 1. Token records come from `stapel tokens add` or from importing Claude Code transcripts.
+
 **Acceptance criteria (abridged).**
 
 1. `stapel init` in an empty repository creates `.stapel/` and the hooks; running it again changes nothing.
