@@ -132,7 +132,7 @@ From a study of `../klc` (token journal entry `author-research`):
 | Robustness | corrupt middle line, truncated last line without newline, a 70 KiB line, a 1.5 MiB transcript line, error lines, numbers as strings, booleans, negatives; property test: the transcript line parser and the time parser never panic and stay fast on arbitrary bytes | `journal::corrupt_line_is_reported_and_kept`, `journal::missing_newline_is_repaired_on_append`, `tokens::import_skips_error_and_unreadable_lines`, `tokens::add_refuses_bad_input`, `tokens::parsers_never_panic` |
 | Environment | ten processes appending at once; non-ASCII notes; real legacy lines of STP-1, STP-2, STP-3 copied verbatim | `journal::concurrent_appends_keep_every_line`, `journal::legacy_lines_are_read` |
 | Repeated runs | the same import twice; a grown transcript imported again | `tokens::import_is_idempotent`, `tokens::import_appends_a_later_range` |
-| Integration | the real binary; synthetic transcript fixtures with only the keys the importer reads | all CLI tests, `fixtures::contain_no_private_data` |
+| Integration | the real binary; synthetic transcript fixtures with only the keys the importer reads | all CLI tests, `fixtures::contain_no_private_data`, `fixtures::checker_finds_private_data` (the checker on known inputs) |
 
 ## Proof
 

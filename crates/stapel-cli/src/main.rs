@@ -99,6 +99,20 @@ enum TokensAction {
         #[arg(long, allow_hyphen_values = true)]
         note: Option<String>,
     },
+    /// Record the measured usage of a Claude Code transcript (main or subagent file).
+    Import {
+        transcript: std::path::PathBuf,
+        /// The ticket key; without it, the only open ticket.
+        key: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        role: String,
+        /// Count messages from this time (YYYY-MM-DDTHH:MM:SSZ).
+        #[arg(long)]
+        since: Option<String>,
+        /// Count messages before this time (YYYY-MM-DDTHH:MM:SSZ).
+        #[arg(long)]
+        until: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -135,6 +149,19 @@ fn main() -> ExitCode {
                 estimate,
                 step,
                 note,
+            }),
+            Some(TokensAction::Import {
+                transcript,
+                key,
+                role,
+                since,
+                until,
+            }) => tokens::import(tokens::Import {
+                transcript,
+                key,
+                role,
+                since,
+                until,
             }),
             None => Err(format!(
                 "the token report comes with a later step of STP-3 (ticket {})",
