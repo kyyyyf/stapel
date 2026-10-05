@@ -68,7 +68,28 @@ fn parse_millis(s: &str, fraction_allowed: bool) -> Option<u64> {
     };
     let (y, mo, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
     let (h, mi, se) = (num(11..13)?, num(14..16)?, num(17..19)?);
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60 {
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let month_days = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    if !(1..=12).contains(&mo)
+        || d < 1
+        || d > month_days[mo as usize - 1]
+        || h > 23
+        || mi > 59
+        || se > 59
+    {
         return None;
     }
     let rest = &s[19..];
@@ -100,6 +121,18 @@ pub fn parse_utc(s: &str) -> Option<u64> {
 /// Milliseconds since 1970 of a Claude Code transcript timestamp, `…:SS.mmmZ` or `…:SSZ`.
 pub fn parse_transcript_time(s: &str) -> Option<u64> {
     parse_millis(s, true)
+}
+
+/// Milliseconds since 1970 of a time given on the command line: `YYYY-MM-DDTHH:MM:SSZ`, optionally
+/// with a fraction of a second (`…:SS.mmmZ`), the form of a record's `from` and `to`.
+pub fn parse_cli_time(s: &str) -> Option<u64> {
+    parse_millis(s, true)
+}
+
+/// `YYYY-MM-DDTHH:MM:SS.mmmZ` for milliseconds since 1970.
+pub fn rfc3339_millis(ms: u64) -> String {
+    let base = rfc3339(ms / 1000);
+    format!("{}.{:03}Z", &base[..19], ms % 1000)
 }
 
 #[cfg(test)]

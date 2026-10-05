@@ -7,29 +7,26 @@ fn root() -> PathBuf {
 }
 
 fn files() -> Vec<PathBuf> {
+    // Every crate's tests folder, walked with its subfolders (fixtures, golden, common).
     let mut out = Vec::new();
-    for dir in [
-        "crates/stapel-cli/tests/fixtures",
-        "crates/stapel-cli/tests/golden",
-    ] {
-        if let Ok(entries) = std::fs::read_dir(root().join(dir)) {
-            out.extend(entries.flatten().map(|e| e.path()));
-        }
-    }
-    for krate in ["stapel-core", "stapel-cli"] {
-        for e in std::fs::read_dir(root().join("crates").join(krate).join("tests"))
-            .unwrap()
-            .flatten()
-        {
+    let mut stack: Vec<PathBuf> = std::fs::read_dir(root().join("crates"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path().join("tests"))
+        .filter(|p| p.is_dir())
+        .collect();
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir).unwrap().flatten() {
             let p = e.path();
-            // This file spells the patterns it looks for.
-            if p.extension().is_some_and(|x| x == "rs")
-                && p.file_name().is_some_and(|n| n != "fixtures.rs")
-            {
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.file_name().is_some_and(|n| n != "fixtures.rs") {
+                // fixtures.rs spells the patterns it looks for.
                 out.push(p);
             }
         }
     }
+    out.sort();
     out
 }
 
@@ -81,7 +78,10 @@ fn contain_no_private_data() {
     }
     let mut problems = Vec::new();
     for path in files() {
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            problems.push(format!("{} cannot be read as UTF-8 text", path.display()));
+            continue;
+        };
         let lower = text.to_lowercase();
         let rel = path
             .strip_prefix(root())

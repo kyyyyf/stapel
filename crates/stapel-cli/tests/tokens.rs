@@ -639,7 +639,7 @@ fn impossible_dates_are_refused() {
     }
     import(dir, &main, None, "2024-02-29T00:00:00Z").success();
     let bad = fixture(dir, "bad_date.jsonl");
-    import(dir, &bad, None, "2026-12-01T00:00:00Z")
+    import(dir, &bad, None, "2026-06-01T00:00:00Z")
         .success()
         .stdout(contains("skipped: 1 unreadable lines"));
 }
@@ -667,12 +667,12 @@ fn import_refuses_transcript_without_session() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     let no = fixture(dir, "no_session.jsonl");
-    import(dir, &no, None, "2026-12-01T00:00:00Z")
+    import(dir, &no, None, "2026-06-01T00:00:00Z")
         .code(1)
         .stderr(contains("session"));
-    stapel(dir).args(["new", "Second"]).assert().success();
     let main = fixture(dir, "main.jsonl");
     import(dir, &main, None, "2026-01-02T00:00:00Z").success();
+    stapel(dir).args(["new", "Second"]).assert().success();
     let path = main.display().to_string();
     stapel(dir)
         .args([
@@ -727,7 +727,7 @@ fn import_counts_a_long_last_line() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     let long = fixture(dir, "long_line.jsonl");
-    import(dir, &long, None, "2026-12-01T00:00:00Z").success();
+    import(dir, &long, None, "2026-06-01T00:00:00Z").success();
     assert_eq!(records(dir, "ABC-1")[0]["output"], 5000);
 }
 

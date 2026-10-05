@@ -2,10 +2,14 @@
 
 use crate::repo;
 use serde_json::{Map, Value, json};
-use stapel_core::journal::{append, new_id};
-use stapel_core::tickets::{Status, Ticket, resolve};
-use stapel_core::time::now_rfc3339;
+use sha2::Digest;
+use stapel_core::journal::{Entry, append, new_id, read};
+use stapel_core::tickets::{Status, Ticket, resolve, tickets_dir};
+use stapel_core::time::{now_rfc3339, parse_cli_time, parse_transcript_time, rfc3339_millis};
 use std::path::Path;
+
+/// The largest count one record may carry; sums of many such records still fit in `u64`.
+const MAX_COUNT: u64 = 1_000_000_000_000_000;
 
 /// The options of `stapel tokens add`, as typed.
 pub struct Add {
@@ -35,9 +39,12 @@ pub fn journal_ticket(root: &Path, key: Option<&str>) -> Result<Ticket, String> 
 }
 
 fn count(name: &str, value: &str) -> Result<u64, String> {
-    value.parse::<u64>().map_err(|_| {
-        format!("--{name} must be a whole number of tokens, 0 or more; got \"{value}\"")
-    })
+    match value.parse::<u64>() {
+        Ok(n) if n <= MAX_COUNT => Ok(n),
+        _ => Err(format!(
+            "--{name} must be a whole number of tokens from 0 to 10^15; got \"{value}\""
+        )),
+    }
 }
 
 /// A short text field: non-empty, at most 256 bytes, no control characters.
@@ -50,6 +57,12 @@ pub fn short_text(name: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn warn_unconfigured(config: &stapel_core::config::Config, role: &str) {
+    if !config.models.contains_key(role) {
+        eprintln!("warning: role {role} is not in stapel.toml");
+    }
+}
+
 pub fn add(a: Add) -> Result<(), String> {
     let (root, config) = repo::open()?;
     short_text("role", &a.role)?;
@@ -59,7 +72,7 @@ pub fn add(a: Add) -> Result<(), String> {
     if let Some(note) = &a.note
         && (note.len() > 4096 || note.chars().any(|c| c.is_control() && c != '\n'))
     {
-        return Err("--note must be at most 4 KiB, without control characters".into());
+        return Err("--note must be at most 4 KiB, without control characters but newlines".into());
     }
     let model = match (&a.model, config.models.get(&a.role)) {
         (Some(m), _) => m.clone(),
@@ -82,12 +95,8 @@ pub fn add(a: Add) -> Result<(), String> {
     ];
     let any_measured = measured.iter().any(|(_, v)| v.is_some());
     match (&a.estimate, any_measured) {
-        (Some(_), true) => {
-            return Err("give either measured counts or --estimate, not both".into());
-        }
-        (None, false) => {
-            return Err("give --input and --output, or --estimate".into());
-        }
+        (Some(_), true) => return Err("give either measured counts or --estimate, not both".into()),
+        (None, false) => return Err("give --input and --output, or --estimate".into()),
         (Some(e), false) => {
             record.insert("source".into(), json!("estimate"));
             record.insert("estimate".into(), json!(count("estimate", e)?));
@@ -99,23 +108,24 @@ pub fn add(a: Add) -> Result<(), String> {
             record.insert("source".into(), json!("measured"));
             for (name, value) in measured {
                 if let Some(v) = value {
-                    let flag = name.replace('_', "-");
-                    record.insert(name.into(), json!(count(&flag, v)?));
+                    record.insert(name.into(), json!(count(&name.replace('_', "-"), v)?));
                 }
             }
         }
     }
     let ticket = journal_ticket(&root, a.key.as_deref())?;
-    if !config.models.contains_key(&a.role) {
-        eprintln!("warning: role {} is not in stapel.toml", a.role);
-    }
+    warn_unconfigured(&config, &a.role);
     let id = new_id("t");
-    record.insert("v".into(), json!(1));
-    record.insert("id".into(), json!(id));
-    record.insert("at".into(), json!(now_rfc3339()));
-    record.insert("ticket".into(), json!(ticket.key));
-    record.insert("role".into(), json!(a.role));
-    record.insert("model".into(), json!(model));
+    for (k, v) in [
+        ("v", json!(1)),
+        ("id", json!(id)),
+        ("at", json!(now_rfc3339())),
+        ("ticket", json!(ticket.key)),
+        ("role", json!(a.role)),
+        ("model", json!(model)),
+    ] {
+        record.insert(k.into(), v);
+    }
     if let Some(step) = a.step {
         record.insert("step".into(), json!(step));
     }
@@ -136,16 +146,19 @@ pub struct Import {
     pub until: Option<String>,
 }
 
-/// Minutes a transcript must be quiet, or the window must end before now, for messages to be whole.
+/// Seconds a transcript must be quiet, or the window must end before now, for messages to be whole.
 const QUIET_SECS: u64 = 5 * 60;
 
 fn window_end(name: &str, value: &Option<String>) -> Result<Option<u64>, String> {
     value
         .as_ref()
         .map(|v| {
-            stapel_core::time::parse_utc(v)
-                .map(|s| s * 1000)
-                .ok_or_else(|| format!("--{name} must look like 2026-10-05T07:00:00Z; got \"{v}\""))
+            parse_cli_time(v).ok_or_else(|| {
+                format!(
+                    "--{name} must be a real UTC time like 2026-10-05T07:00:00Z or \
+                     2026-10-05T07:00:00.250Z; got \"{v}\""
+                )
+            })
         })
         .transpose()
 }
@@ -169,10 +182,13 @@ struct Sum {
 }
 
 pub fn import(a: Import) -> Result<(), String> {
-    let (root, _config) = repo::open()?;
+    let (root, config) = repo::open()?;
     short_text("role", &a.role)?;
     let since = window_end("since", &a.since)?.unwrap_or(0);
     let until = window_end("until", &a.until)?;
+    if until.is_some_and(|u| u <= since) {
+        return Err("--until must be later than --since".into());
+    }
 
     let modified = std::fs::metadata(&a.transcript)
         .and_then(|m| m.modified())
@@ -181,16 +197,10 @@ pub fn import(a: Import) -> Result<(), String> {
     if quiet_for < QUIET_SECS {
         match until {
             None => {
-                return Err(
-                    "the transcript is still being written; give --until at least 5 minutes before now"
-                        .into(),
-                );
+                return Err("the transcript is still being written; give --until at least 5 minutes before now".into());
             }
             Some(u) if u / 1000 + QUIET_SECS > now_secs() => {
-                return Err(
-                    "the transcript is still being written; --until must be at least 5 minutes before now"
-                        .into(),
-                );
+                return Err("the transcript is still being written; --until must be at least 5 minutes before now".into());
             }
             Some(_) => {}
         }
@@ -198,7 +208,10 @@ pub fn import(a: Import) -> Result<(), String> {
 
     let ticket = journal_ticket(&root, a.key.as_deref())?;
     let t = stapel_core::tokens::read_transcript(&a.transcript)?;
-    let transcript = t.identity();
+    let transcript = t.identity().ok_or(
+        "the transcript has no sessionId, so its records could not be told from another file's",
+    )?;
+    warn_unconfigured(&config, &a.role);
 
     let mut sums: Vec<Sum> = Vec::new();
     for m in t
@@ -206,8 +219,8 @@ pub fn import(a: Import) -> Result<(), String> {
         .iter()
         .filter(|m| m.time_ms >= since && until.is_none_or(|u| m.time_ms < u))
     {
-        let sum = match sums.iter_mut().find(|s| s.model == m.model) {
-            Some(s) => s,
+        let sum = match sums.iter().position(|s| s.model == m.model) {
+            Some(i) => &mut sums[i],
             None => {
                 sums.push(Sum {
                     model: m.model.clone(),
@@ -242,7 +255,7 @@ pub fn import(a: Import) -> Result<(), String> {
         for (field, value) in sum.fields.iter_mut().zip(values) {
             // A field is present in the sum only when every counted message carried it.
             field.1 = match (field.1, value) {
-                (Some(acc), Some(v)) => Some(acc + v),
+                (Some(acc), Some(v)) => Some(acc.saturating_add(v)),
                 _ => None,
             };
         }
@@ -250,46 +263,52 @@ pub fn import(a: Import) -> Result<(), String> {
     sums.retain(|s| s.fields.iter().any(|(_, v)| v.is_some_and(|n| n > 0)));
     sums.sort_by(|a, b| a.model.cmp(&b.model));
 
+    println!("skipped: {} error lines", t.error_lines);
+    println!("skipped: {} unreadable lines", t.unreadable_lines);
+    if sums.is_empty() {
+        println!("nothing to import in the window");
+        return Ok(());
+    }
+
     // Every record is checked before any is appended.
-    let existing: Vec<serde_json::Map<String, Value>> =
-        stapel_core::journal::read(&ticket.dir.join("tokens.jsonl"))?
-            .into_iter()
-            .filter_map(|(_, e)| match e {
-                stapel_core::journal::Entry::V1(m) => Some(m),
-                _ => None,
-            })
-            .filter(|m| m.get("transcript").and_then(Value::as_str) == Some(transcript.as_str()))
-            .collect();
+    let existing: Vec<Map<String, Value>> = read(&ticket.dir.join("tokens.jsonl"))?
+        .into_iter()
+        .filter_map(|(_, e)| match e {
+            Entry::V1(m) => Some(m),
+            _ => None,
+        })
+        .filter(|m| m.get("transcript").and_then(Value::as_str) == Some(transcript.as_str()))
+        .collect();
     let mut already = Vec::new();
     for s in &sums {
         for e in existing
             .iter()
             .filter(|e| e.get("model").and_then(Value::as_str) == Some(s.model.as_str()))
         {
-            let (ef, et) = (
-                e.get("from").and_then(Value::as_str).unwrap_or(""),
-                e.get("to").and_then(Value::as_str).unwrap_or(""),
-            );
+            let text = |k: &str| e.get(k).and_then(Value::as_str).unwrap_or("");
             let id = e.get("id").and_then(Value::as_str).unwrap_or("?");
-            if ef == s.from && et == s.to {
+            if text("from") == s.from && text("to") == s.to {
                 already.push(id.to_string());
                 continue;
             }
-            let et_ms = stapel_core::time::parse_transcript_time(et).unwrap_or(u64::MAX);
+            let et_ms = parse_transcript_time(text("to")).unwrap_or(u64::MAX);
             if s.from_ms <= et_ms {
                 return Err(format!(
-                    "the {} range from {} overlaps record {id} (to {et}); import from after that time",
-                    s.model, s.from
+                    "the {} range from {} overlaps record {id} (to {}); import with --since {}",
+                    s.model,
+                    s.from,
+                    text("to"),
+                    rfc3339_millis(et_ms.saturating_add(1))
                 ));
             }
         }
     }
-    println!("skipped: {} error lines", t.error_lines);
-    println!("skipped: {} unreadable lines", t.unreadable_lines);
-    if !sums.is_empty() && already.len() == sums.len() {
+    let next_since = rfc3339_millis(sums.iter().map(|s| s.to_ms).max().unwrap_or(0) + 1);
+    if already.len() == sums.len() {
         for id in already {
             println!("already imported: {id}");
         }
+        println!("next --since: {next_since}");
         return Ok(());
     }
     if !already.is_empty() {
@@ -300,8 +319,13 @@ pub fn import(a: Import) -> Result<(), String> {
     }
     for s in &sums {
         let mut digest = sha2::Sha256::new();
-        use sha2::Digest;
-        for part in [transcript.as_str(), &s.model, &s.from, &s.to] {
+        for part in [
+            ticket.key.as_str(),
+            transcript.as_str(),
+            &s.model,
+            &s.from,
+            &s.to,
+        ] {
             digest.update(part.as_bytes());
             digest.update([0u8]);
         }
@@ -313,13 +337,17 @@ pub fn import(a: Import) -> Result<(), String> {
             .collect();
         let id = format!("t-{hex}");
         let mut record = Map::new();
-        record.insert("v".into(), json!(1));
-        record.insert("id".into(), json!(id));
-        record.insert("at".into(), json!(now_rfc3339()));
-        record.insert("ticket".into(), json!(ticket.key));
-        record.insert("role".into(), json!(a.role));
-        record.insert("model".into(), json!(s.model));
-        record.insert("source".into(), json!("measured"));
+        for (k, v) in [
+            ("v", json!(1)),
+            ("id", json!(id)),
+            ("at", json!(now_rfc3339())),
+            ("ticket", json!(ticket.key)),
+            ("role", json!(a.role)),
+            ("model", json!(s.model)),
+            ("source", json!("measured")),
+        ] {
+            record.insert(k.into(), v);
+        }
         for (name, value) in s.fields {
             if let Some(v) = value {
                 record.insert(name.into(), json!(v));
@@ -332,6 +360,7 @@ pub fn import(a: Import) -> Result<(), String> {
         append(&ticket.dir.join("tokens.jsonl"), &Value::Object(record))?;
         println!("recorded: {id} {} ({} messages)", s.model, s.messages);
     }
+    println!("next --since: {next_since}");
     Ok(())
 }
 
@@ -346,7 +375,7 @@ struct Row {
 
 fn add_to(slot: &mut Option<u64>, value: Option<u64>) {
     if let Some(v) = value {
-        *slot = Some(slot.unwrap_or(0) + v);
+        *slot = Some(slot.unwrap_or(0).saturating_add(v));
     }
 }
 
@@ -354,123 +383,135 @@ fn cell(v: Option<u64>) -> String {
     v.map_or_else(|| "—".to_string(), |n| n.to_string())
 }
 
-/// One table line; the role and model columns grow with the longest name, two spaces apart.
-fn line(widths: (usize, usize), role: &str, model: &str, cells: [&str; 6]) -> String {
-    let (rw, mw) = widths;
-    format!(
-        "{role:<rw$}{model:<mw$}{:>9}{:>9}{:>12}{:>13}{:>10}{:>17}",
-        cells[0], cells[1], cells[2], cells[3], cells[4], cells[5]
-    )
+/// The smallest width of each column; columns grow with their longest cell, two spaces apart.
+const MIN_WIDTHS: [usize; 8] = [14, 28, 9, 9, 12, 13, 10, 17];
+
+fn render(rows: &[[String; 8]]) -> Vec<String> {
+    let mut widths = MIN_WIDTHS;
+    for row in rows {
+        for (i, c) in row.iter().enumerate() {
+            let need = c.chars().count() + 2;
+            widths[i] = widths[i].max(need);
+        }
+    }
+    rows.iter()
+        .map(|r| {
+            let mut out = format!("{:<w0$}{:<w1$}", r[0], r[1], w0 = widths[0], w1 = widths[1]);
+            for (i, c) in r.iter().enumerate().skip(2) {
+                out.push_str(&format!("{c:>w$}", w = widths[i]));
+            }
+            out
+        })
+        .collect()
+}
+
+/// Ticket folders in key order, read without their `state.json`.
+fn ticket_folders(root: &Path) -> Vec<(String, std::path::PathBuf)> {
+    let mut out: Vec<_> = std::fs::read_dir(tickets_dir(root))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+        .collect();
+    out.sort();
+    out
 }
 
 /// `stapel tokens [KEY]` (STP-3 AC-4). Reads only `tokens.jsonl` files.
 pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
-    use stapel_core::journal::{Entry, read};
     let (root, _config) = repo::open()?;
-    let tickets: Vec<Ticket> = stapel_core::tickets::list(&root)
+    let folders: Vec<_> = ticket_folders(&root)
         .into_iter()
-        .filter(|t| key.is_none_or(|k| t.key.eq_ignore_ascii_case(k)))
+        .filter(|(k, _)| key.is_none_or(|want| k.eq_ignore_ascii_case(want)))
         .collect();
-    if let (Some(k), true) = (key, tickets.is_empty()) {
+    if let (Some(k), true) = (key, folders.is_empty()) {
         return Err(format!("no ticket {k} in .stapel/tickets"));
     }
     let mut blocks = Vec::new();
     let mut problems = Vec::new();
-    for ticket in tickets {
-        let path = ticket.dir.join("tokens.jsonl");
+    for (ticket_key, dir) in folders {
+        let path = dir.join("tokens.jsonl");
         if !path.exists() {
             continue;
         }
-        // Key: role, model, origin (0 for v1 records, 1 for legacy ones).
-        let mut rows: std::collections::BTreeMap<(String, String, u8), Row> = Default::default();
+        // Key: role, model, origin (0 for v1 records, 1 for legacy ones), legacy kind.
+        let mut rows: std::collections::BTreeMap<(String, String, u8, String), Row> =
+            Default::default();
         for (n, entry) in read(&path)? {
             let text = |m: &Map<String, Value>, k: &str| {
                 m.get(k).and_then(Value::as_str).unwrap_or("—").to_string()
             };
+            let problem = format!("problem: .stapel/tickets/{ticket_key}/tokens.jsonl:{n}");
             match entry {
-                Entry::Problem(_) => problems.push(format!(
-                    "problem: .stapel/tickets/{}/tokens.jsonl:{n}",
-                    ticket.key
-                )),
+                Entry::Problem(_) => problems.push(problem),
                 Entry::V1(m) => {
-                    let row = rows
-                        .entry((text(&m, "role"), text(&m, "model"), 0))
-                        .or_default();
-                    let n = |k: &str| m.get(k).and_then(Value::as_u64);
-                    if m.get("source").and_then(Value::as_str) == Some("estimate") {
-                        add_to(&mut row.estimate, n("estimate"));
-                    } else {
-                        for (slot, k) in row.measured.iter_mut().zip([
-                            "input",
-                            "output",
-                            "cache_read",
-                            "cache_write",
-                        ]) {
-                            add_to(slot, n(k));
+                    let num = |k: &str| m.get(k).and_then(Value::as_u64);
+                    let key = (text(&m, "role"), text(&m, "model"), 0, String::new());
+                    match m.get("source").and_then(Value::as_str) {
+                        Some("estimate") => {
+                            add_to(&mut rows.entry(key).or_default().estimate, num("estimate"))
                         }
+                        Some("measured") => {
+                            let row = rows.entry(key).or_default();
+                            for (slot, k) in row.measured.iter_mut().zip([
+                                "input",
+                                "output",
+                                "cache_read",
+                                "cache_write",
+                            ]) {
+                                add_to(slot, num(k));
+                            }
+                        }
+                        // A record that is neither is not counted as either.
+                        _ => problems.push(problem),
                     }
                 }
                 Entry::Legacy(m) => {
                     let kind = text(&m, "kind");
-                    let n = |k: &str| m.get(k).and_then(Value::as_u64);
-                    let total = n("total_tokens")
-                        .or_else(|| Some(n("input_tokens")? + n("output_tokens")?));
+                    let num = |k: &str| m.get(k).and_then(Value::as_u64);
+                    let total = num("total_tokens")
+                        .or_else(|| Some(num("input_tokens")? + num("output_tokens")?));
                     let row = rows
-                        .entry((
-                            text(&m, "role"),
-                            format!("{}\u{0}{kind}", text(&m, "model")),
-                            1,
-                        ))
+                        .entry((text(&m, "role"), text(&m, "model"), 1, kind.clone()))
                         .or_default();
                     add_to(&mut row.legacy_total, total);
                     row.legacy_kind = Some(kind);
                 }
             }
         }
-        let shown = |m: &str| m.split('\u{0}').next().unwrap_or(m).chars().count();
-        let widths = (
-            rows.keys()
-                .map(|(r, _, _)| r.chars().count() + 2)
-                .max()
-                .unwrap_or(0)
-                .max(14),
-            rows.keys()
-                .map(|(_, m, _)| shown(m) + 2)
-                .max()
-                .unwrap_or(0)
-                .max(28),
-        );
-        let mut block = vec![
-            format!("ticket: {}", ticket.key),
-            line(
-                widths,
+        let mut table: Vec<[String; 8]> = vec![
+            [
                 "role",
                 "model",
-                [
-                    "input",
-                    "output",
-                    "cache read",
-                    "cache write",
-                    "estimate",
-                    "legacy",
-                ],
-            ),
+                "input",
+                "output",
+                "cache read",
+                "cache write",
+                "estimate",
+                "legacy",
+            ]
+            .map(String::from),
         ];
-        for ((role, model, origin), row) in &rows {
-            let model = model.split('\u{0}').next().unwrap_or(model);
+        for ((role, model, origin, _), row) in &rows {
             let legacy = match (&row.legacy_kind, origin) {
                 (Some(kind), 1) => format!("{} {kind}", cell(row.legacy_total)),
                 _ => "—".into(),
             };
             let m = row.measured.map(cell);
-            let estimate = cell(row.estimate);
-            block.push(line(
-                widths,
-                role,
-                model,
-                [&m[0], &m[1], &m[2], &m[3], &estimate, &legacy],
-            ));
+            table.push([
+                role.clone(),
+                model.clone(),
+                m[0].clone(),
+                m[1].clone(),
+                m[2].clone(),
+                m[3].clone(),
+                cell(row.estimate),
+                legacy,
+            ]);
         }
+        let mut block = vec![format!("ticket: {ticket_key}")];
+        block.extend(render(&table));
         blocks.push(block.join("\n"));
     }
     let mut out = blocks.join("\n\n");

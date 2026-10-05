@@ -6,11 +6,11 @@
 
 use crate::time::parse_transcript_time;
 use serde_json::Value;
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 use std::path::Path;
 
-/// A transcript line longer than this is unreadable.
-pub const MAX_TRANSCRIPT_LINE: usize = 1024 * 1024;
+/// A transcript line longer than this is unreadable; real lines stay far below it.
+pub const MAX_TRANSCRIPT_LINE: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Usage {
@@ -93,17 +93,46 @@ pub struct Transcript {
 }
 
 impl Transcript {
-    /// `session` or `session/agent`.
-    pub fn identity(&self) -> String {
-        let session = self
-            .session
-            .clone()
-            .unwrap_or_else(|| "unknown-session".into());
-        match &self.agent {
+    /// `session` or `session/agent`; `None` without a session id, since two such files could not
+    /// be told apart.
+    pub fn identity(&self) -> Option<String> {
+        let session = self.session.clone()?;
+        Some(match &self.agent {
             Some(agent) => format!("{session}/{agent}"),
             None => session,
+        })
+    }
+}
+
+/// Reads one line into `buf`, keeping at most `max + 1` bytes and discarding the rest of a longer
+/// line, so memory stays bounded. Returns false at the end of the input.
+pub fn read_bounded_line(
+    reader: &mut impl BufRead,
+    buf: &mut Vec<u8>,
+    max: usize,
+) -> std::io::Result<bool> {
+    buf.clear();
+    let n = reader
+        .by_ref()
+        .take(max as u64 + 1)
+        .read_until(b'\n', buf)?;
+    if n == 0 {
+        return Ok(false);
+    }
+    if buf.len() > max && buf.last() != Some(&b'\n') {
+        let mut sink = Vec::new();
+        loop {
+            sink.clear();
+            let m = reader
+                .by_ref()
+                .take(64 * 1024)
+                .read_until(b'\n', &mut sink)?;
+            if m == 0 || sink.last() == Some(&b'\n') {
+                break;
+            }
         }
     }
+    Ok(true)
 }
 
 /// Streams a transcript line by line; the file may be any size.
@@ -113,14 +142,9 @@ pub fn read_transcript(path: &Path) -> Result<Transcript, String> {
     let mut t = Transcript::default();
     let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut buf = Vec::new();
-    loop {
-        buf.clear();
-        let n = reader
-            .read_until(b'\n', &mut buf)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        if n == 0 {
-            break;
-        }
+    while read_bounded_line(&mut reader, &mut buf, MAX_TRANSCRIPT_LINE)
+        .map_err(|e| format!("{}: {e}", path.display()))?
+    {
         if buf.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
@@ -136,7 +160,8 @@ pub fn read_transcript(path: &Path) -> Result<Transcript, String> {
         if t.session.is_none() {
             t.session = session;
         }
-        if t.agent.is_none() {
+        // A subagent file names its agent on its message lines; a main transcript does not.
+        if t.agent.is_none() && matches!(line, Line::Message { .. }) {
             t.agent = agent;
         }
         match line {

@@ -54,9 +54,12 @@ fn spans(text: &str) -> Vec<&str> {
 }
 
 /// `module::name` references whose module is a known test file.
+/// `module::name` references in table rows only: prose such as "`ok` calls `journal::append`"
+/// names code, not tests (STP-3 code review E-1).
 fn test_refs(text: &str, files: &BTreeMap<String, PathBuf>) -> BTreeSet<(String, String)> {
-    spans(text)
-        .into_iter()
+    text.lines()
+        .filter(|l| l.starts_with('|'))
+        .flat_map(spans)
         .filter_map(|span| {
             let (module, name) = span.rsplit_once("::")?;
             let ok = !name.is_empty()
@@ -188,6 +191,15 @@ fn ticket_problems(
     code: &str,
 ) -> Vec<String> {
     let mut problems = Vec::new();
+    // An open ticket whose every criterion is built is checked as if closed, so what the close
+    // would find shows before it.
+    let ac_rows: Vec<&str> = text.lines().filter(|l| l.starts_with("| AC-")).collect();
+    let all_built = !ac_rows.is_empty()
+        && ac_rows.iter().all(|row| {
+            let refs = test_refs(row, files);
+            !refs.is_empty() && refs.iter().all(|(m, n)| !missing_test(files, m, n))
+        });
+    let life = if all_built { Lifecycle::Closed } else { life };
     for row in text.lines().filter(|l| l.starts_with("| AC-")) {
         let id = row.split('|').nth(1).unwrap_or("").trim();
         let refs = test_refs(row, files);

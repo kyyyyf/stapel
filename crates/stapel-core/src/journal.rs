@@ -67,18 +67,25 @@ fn ends_without_newline(file: &mut std::fs::File) -> std::io::Result<bool> {
 
 /// Every line with its number (1-based); empty lines are skipped; a missing file has no lines.
 pub fn read(path: &Path) -> Result<Vec<(usize, Entry)>, String> {
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(format!("{}: {e}", path.display())),
     };
+    let mut reader = std::io::BufReader::new(file);
+    let mut buf = Vec::new();
     let mut entries = Vec::new();
-    for (i, raw) in bytes.split(|b| *b == b'\n').enumerate() {
+    let mut n = 0;
+    while crate::tokens::read_bounded_line(&mut reader, &mut buf, MAX_LINE)
+        .map_err(|e| format!("{}: {e}", path.display()))?
+    {
+        n += 1;
+        let raw = buf.strip_suffix(b"\n").unwrap_or(&buf);
         let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
         if raw.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        entries.push((i + 1, parse_line(raw)));
+        entries.push((n, parse_line(raw)));
     }
     Ok(entries)
 }
