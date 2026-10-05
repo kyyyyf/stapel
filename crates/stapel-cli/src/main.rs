@@ -1,3 +1,4 @@
+mod check;
 mod close;
 mod hook;
 mod init;
@@ -67,6 +68,14 @@ enum Command {
         action: Option<TokensAction>,
         /// The ticket key for the report; without it, every ticket.
         key: Option<String>,
+    },
+    /// Check that every step's tests failed at its RED commit and pass at its GREEN commit and HEAD.
+    Check {
+        /// The ticket key; without it, the only open ticket.
+        key: Option<String>,
+        /// Print the steps, their commits and their tests without running anything.
+        #[arg(long)]
+        list: bool,
     },
     /// Hook entry points called by Claude Code; not meant to be run by hand.
     #[command(subcommand)]
@@ -177,6 +186,7 @@ fn main() -> ExitCode {
             _ => unreachable!("clap limits the arguments"),
         },
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),
+        Command::Check { key, list } => return check::run(key.as_deref(), list),
         Command::Status { key } => match status::run(key.as_deref()) {
             Ok(code) => return code,
             Err(message) => Err(message),
