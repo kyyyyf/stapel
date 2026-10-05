@@ -354,9 +354,11 @@ fn cell(v: Option<u64>) -> String {
     v.map_or_else(|| "—".to_string(), |n| n.to_string())
 }
 
-fn line(role: &str, model: &str, cells: [&str; 6]) -> String {
+/// One table line; the role and model columns grow with the longest name, two spaces apart.
+fn line(widths: (usize, usize), role: &str, model: &str, cells: [&str; 6]) -> String {
+    let (rw, mw) = widths;
     format!(
-        "{role:<14}{model:<28}{:>9}{:>9}{:>12}{:>13}{:>10}{:>17}",
+        "{role:<rw$}{model:<mw$}{:>9}{:>9}{:>12}{:>13}{:>10}{:>17}",
         cells[0], cells[1], cells[2], cells[3], cells[4], cells[5]
     )
 }
@@ -425,9 +427,23 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
                 }
             }
         }
+        let shown = |m: &str| m.split('\u{0}').next().unwrap_or(m).chars().count();
+        let widths = (
+            rows.keys()
+                .map(|(r, _, _)| r.chars().count() + 2)
+                .max()
+                .unwrap_or(0)
+                .max(14),
+            rows.keys()
+                .map(|(_, m, _)| shown(m) + 2)
+                .max()
+                .unwrap_or(0)
+                .max(28),
+        );
         let mut block = vec![
             format!("ticket: {}", ticket.key),
             line(
+                widths,
                 "role",
                 "model",
                 [
@@ -449,6 +465,7 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
             let m = row.measured.map(cell);
             let estimate = cell(row.estimate);
             block.push(line(
+                widths,
                 role,
                 model,
                 [&m[0], &m[1], &m[2], &m[3], &estimate, &legacy],

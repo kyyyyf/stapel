@@ -637,9 +637,12 @@ dependencies = [
  "assert_cmd",
  "clap",
  "predicates",
+ "proptest",
  "serde_json",
+ "sha2",
  "stapel-core",
  "tempfile",
+ "toml",
 ]
 
 [[package]]
