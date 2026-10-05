@@ -67,7 +67,11 @@ const LIB: &str = "pub fn add(a: u32, b: u32) -> u32 {\n    a + b\n}\n";
 /// A stapel repository with a one-crate cargo workspace (`crates/tiny`) and ticket ABC-1, all
 /// committed.
 fn cargo_repo() -> TempDir {
-    let repo = common::git_repo();
+    fill_cargo_repo(common::git_repo())
+}
+
+/// The cargo repository of `cargo_repo` in an existing git repository.
+fn fill_cargo_repo(repo: TempDir) -> TempDir {
     let dir = repo.path();
     write(
         dir,
@@ -1793,4 +1797,221 @@ fn close_refuses_a_failing_check() {
         .assert()
         .code(1)
         .stderr(contains("check: fail at"));
+}
+
+// ---- STP-4 code review round 1 ----
+
+// F-1: a squashed or amended history with the same tree is stale.
+#[test]
+fn rewritten_history_is_stale() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    commit(dir, "ABC-1: a commit to squash");
+    git(dir, &["reset", "-q", "--soft", "HEAD~3"]);
+    commit(dir, "ABC-1: everything squashed");
+    let line = status_check_line(dir);
+    assert!(line.starts_with("check: stale"), "{line}");
+}
+
+// F-2: a committed rename into a machine file still names the code it removed.
+#[test]
+fn a_rename_after_the_check_is_stale() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    git(
+        dir,
+        &[
+            "mv",
+            "crates/tiny/src/lib.rs",
+            ".stapel/tickets/ABC-1/tokens.jsonl",
+        ],
+    );
+    commit(dir, "ABC-1: code moved into a machine file");
+    let line = status_check_line(dir);
+    assert!(
+        line.starts_with("check: stale") && line.contains("crates/tiny/src/lib.rs"),
+        "{line}"
+    );
+}
+
+// E-3: a golden file the RED only reads is protected too.
+#[test]
+fn untouched_golden_files_are_protected() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    write(dir, "crates/tiny/tests/golden/out.txt", "four\n");
+    commit(dir, "ABC-1: a golden file before the steps");
+    add_test(
+        dir,
+        "golden",
+        "renders",
+        "assert_eq!(tiny::render(), include_str!(\"golden/out.txt\"));",
+    );
+    commit(dir, "ABC-1 step 1 RED: compare with the golden file");
+    let lib = read(dir, "crates/tiny/src/lib.rs");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{lib}\npub fn render() -> &'static str {{\n    \"five\\n\"\n}}\n"),
+    );
+    write(dir, "crates/tiny/tests/golden/out.txt", "five\n");
+    commit(
+        dir,
+        "ABC-1 step 1 GREEN: code, and the golden file follows it",
+    );
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "tests-changed", "{text}");
+}
+
+// E-9: bytes inside a commit body cannot add a step commit.
+#[test]
+fn commit_bodies_cannot_inject_steps() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "real", "assert!(true);");
+    commit(dir, "ABC-1 step 1 RED: real");
+    let head = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    commit(
+        dir,
+        &format!("ABC-1: notes\n\nbody\x1e{head}\x1fABC-1 step 9 RED: injected\x1fbody"),
+    );
+    let text = list(dir);
+    assert!(!text.contains("step 9"), "{text}");
+}
+
+// F-5: a test that passes at RED in either run is no RED.
+#[test]
+fn a_single_pass_at_red_is_no_red() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let counter = dir.join("runs-of-the-flaky-test");
+    let body = format!(
+        "let first = !std::path::Path::new({0:?}).exists();\n    std::fs::write({0:?}, \"x\").unwrap();\n    assert!(first);",
+        counter.display().to_string()
+    );
+    add_test(dir, "basic", "flaky", &body);
+    commit(dir, "ABC-1 step 1 RED: passes once, then fails");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "no-red", "{text}");
+}
+
+// E-6: a later RED that rewrites an earlier step's golden file is named in the report.
+#[test]
+fn superseded_golden_files_are_shown() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    write(dir, "crates/tiny/tests/golden/out.txt", "one\n");
+    add_test(
+        dir,
+        "golden",
+        "first",
+        "assert_eq!(include_str!(\"golden/out.txt\"), tiny::out());",
+    );
+    commit(dir, "ABC-1 step 1 RED: a golden file");
+    let lib = read(dir, "crates/tiny/src/lib.rs");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{lib}\npub fn out() -> &'static str {{\n    \"one\\n\"\n}}\n"),
+    );
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    write(dir, "crates/tiny/tests/golden/out.txt", "two\n");
+    add_test(
+        dir,
+        "basic",
+        "second",
+        "assert_eq!(tiny::out(), \"two\\n\");",
+    );
+    commit(dir, "ABC-1 step 2 RED: the golden file changes");
+    edit(dir, "crates/tiny/src/lib.rs", "\"one\\n\"", "\"two\\n\"");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    let (_, text) = check(dir);
+    assert!(
+        text.lines()
+            .any(|l| l.trim() == "superseded by step 2: crates/tiny/tests/golden/out.txt"),
+        "{text}"
+    );
+}
+
+// E-11: a check does not prune other worktrees, even when their folders are missing.
+#[test]
+fn other_worktrees_survive_a_check() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let away = tempfile::tempdir().unwrap();
+    let other = away.path().join("other");
+    git(
+        dir,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            &other.display().to_string(),
+            "HEAD",
+        ],
+    );
+    std::fs::remove_dir_all(&other).unwrap();
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    let list = git(dir, &["worktree", "list"]);
+    assert!(list.contains("other"), "{list}");
+}
+
+// E-12: a SHA-256 repository gets a current check.
+#[test]
+fn sha256_repositories_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let init = std::process::Command::new("git")
+        .args(["init", "-q", "--object-format=sha256"])
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+    assert!(init.success());
+    common::git_config(dir.path(), "user.name", "test-user");
+    let repo = fill_cargo_repo(dir);
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        status_check_line(dir).starts_with("check: pass at"),
+        "{}",
+        status_check_line(dir)
+    );
+}
+
+// E-14: a shallow clone is refused.
+#[test]
+fn shallow_clones_are_refused() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let away = tempfile::tempdir().unwrap();
+    let clone = away.path().join("clone");
+    git(
+        away.path(),
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            &format!("file://{}", dir.display()),
+            "clone",
+        ],
+    );
+    common::git_config(&clone, "user.name", "test-user");
+    let (code, text) = check(&clone);
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("shallow"), "{text}");
 }
