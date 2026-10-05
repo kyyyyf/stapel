@@ -702,3 +702,14 @@ fn inputs_tables_are_read_in_full() {
         ["--gamma"]
     );
 }
+/// STP-4 step 1 drift review D1-5: `security` alone needs the same, and an undated self-check fails.
+#[test]
+fn security_tag_and_undated_self_check() {
+    let tagged = "**Risk tags:** `security`.\n\n### Abuse table\n\n";
+    let undated = format!("{tagged}**Author self-check.** Done: nothing new.\n");
+    let p = process_problems("T-9", &undated);
+    assert!(p.iter().any(|x| x.contains("self-check")), "{p:?}");
+    let not_heading = "**Risk tags:** `security`.\n\n#### Abuse table\n\n**Author self-check.** Done 2026-10-05.\n";
+    let p = process_problems("T-9", not_heading);
+    assert!(p.iter().any(|x| x.contains("abuse table")), "{p:?}");
+}
