@@ -85,8 +85,14 @@ token record, even if some steps were still performed by the orchestrator by han
   and 9: Inputs table, abuse table and self-check, matching test lists); `Cargo.lock` is checked by `--locked`
   in every run, and item 11 stays a manual review. After its close it is
   compared with STP-3: tokens by role, and findings by stage and `catchable_at`.
-- STP-5 accepting findings and `findings.jsonl`.
-- STP-6 MR through `gh`/`glab`.
+- STP-5 measured token usage of subagents (their transcripts keep only the first streamed chunk of a
+  message; found at the close of STP-4).
+- STP-6 hardening of `stapel check` against deliberate circumvention (environment, cargo configuration,
+  test targets; the adversarial findings of STP-4's code review).
+- STP-7 one confirmation for several sections, as an option in `stapel.toml` for repositories where one
+  person owns every section.
+- STP-8 accepting findings and `findings.jsonl`.
+- STP-9 MR through `gh`/`glab`.
 
 ---
 

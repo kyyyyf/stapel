@@ -32,7 +32,9 @@ Most review findings of STP-1 could have been caught before any code was written
    `config/coverage-taxonomy.yml` (taken as data), including the adversarial/abuse sub-check. Tickets
    tagged `security` or `guard` have a **Guarantees** section: what is promised, against whom, and what is
    explicitly not promised. Unbounded wording ("any form", "always", "never" without a list) is not allowed
-   in criteria.
+   in criteria. **Threat model by default:** the agent is careless, not malicious. A ticket promises
+   protection against mistakes; deliberate circumvention (an agent that hides code from a check on purpose)
+   is listed under "Not promised" unless the ticket is tagged `security` and says otherwise.
 4. **External contract as facts.** Before the design, every claim about an external system (Claude Code,
    git, `gh`, the OS) is written down with its source and the mark `verified`, `read` or `assumption`.
 5. **Test plan before code, by category:** main path; negative cases; abuse (a table of bypass attempts);
@@ -47,7 +49,9 @@ Most review findings of STP-1 could have been caught before any code was written
    exactly each number or field taken from an external system means. The build starts after that review.
 7. **Author self-check before code review,** against the abuse table of the test plan.
 8. **Stage metric.** Each finding in `findings.jsonl` gets `catchable_at`: `spec`, `design`, `test-plan` or
-   `code`. The ticket summary counts them. The target, first checked on STP-2: far fewer code-review
+   `code`, and `adversarial: true` when it needs deliberate circumvention beyond the ticket's threat model
+   (item 3); adversarial findings are counted apart and do not enter the target. The ticket summary counts
+   them. The target, first checked on STP-2: far fewer code-review
    findings than STP-1, and fewer than half of them `catchable_at` earlier than `code`. After the close, the
    orchestrator imports the ticket's measured token usage and compares two things with the previous ticket:
    tokens by role, and findings by stage and `catchable_at`, with the verdict "target met" or "not met" and
