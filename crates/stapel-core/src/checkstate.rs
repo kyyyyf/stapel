@@ -43,9 +43,11 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
         .rev()
         .find_map(|(_, e)| match e {
             Entry::V1(m) if m.get("kind").and_then(|k| k.as_str()) == Some("check") => {
+                // Well-formed: a full commit id and a result of pass or fail.
                 let head = m.get("head")?.as_str()?.to_string();
                 let result = m.get("result")?.as_str()?.to_string();
-                Some((head, result))
+                let full = head.len() == 40 && head.bytes().all(|b| b.is_ascii_hexdigit());
+                (full && (result == "pass" || result == "fail")).then_some((head, result))
             }
             _ => None,
         });
@@ -56,15 +58,20 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
     if !known {
         return CheckLine::Stale(format!("unknown commit {}", short(&head)));
     }
-    let mut changed: Vec<String> = git(root, &["diff", "--name-only", "-z", &head])
-        .map(|raw| {
-            raw.split(|b| *b == 0)
-                .filter(|p| !p.is_empty())
-                .map(|p| String::from_utf8_lossy(p).into_owned())
-                .collect()
-        })
-        .unwrap_or_default();
-    changed.extend(dirty_paths(root).unwrap_or_default());
+    // When git cannot read the tree, the check is not current: the gate fails closed.
+    let diff = match git(root, &["diff", "--name-only", "-z", &head]) {
+        Ok(raw) => raw,
+        Err(e) => return CheckLine::Stale(format!("cannot read the tree: {e}")),
+    };
+    let mut changed: Vec<String> = diff
+        .split(|b| *b == 0)
+        .filter(|p| !p.is_empty())
+        .map(|p| String::from_utf8_lossy(p).into_owned())
+        .collect();
+    match dirty_paths(root) {
+        Ok(d) => changed.extend(d),
+        Err(e) => return CheckLine::Stale(format!("cannot read the tree: {e}")),
+    }
     changed.retain(|p| !is_machine_file(p));
     changed.sort();
     changed.dedup();
