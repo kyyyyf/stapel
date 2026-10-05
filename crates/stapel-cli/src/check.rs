@@ -1,6 +1,7 @@
 //! `stapel check [KEY] [--list]`: the RED to GREEN check of a ticket's steps (STP-4).
 
 use crate::repo;
+use stapel_core::outcomes::{analyse, passing};
 use stapel_core::steps::{Step, git_text, step_commits, step_tests, steps};
 use stapel_core::tickets::{Status, resolve};
 use std::process::ExitCode;
@@ -45,12 +46,42 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
             key = ticket.key
         ));
     }
-    if !list {
-        return refuse("only `stapel check --list` is available so far");
+    if list {
+        return match print_list(&root, &ticket.key, &steps) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => refuse(e),
+        };
     }
-    match print_list(&root, &ticket.key, &steps) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => refuse(e),
+    let analyses = match analyse(&root, &head, &steps) {
+        Ok(a) => a,
+        Err(e) => return refuse(e),
+    };
+    println!("ticket: {} at {}", ticket.key, short(&head));
+    let mut ok = true;
+    for a in &analyses {
+        match &a.fixed {
+            Some((outcome, reason)) => {
+                ok &= passing(outcome);
+                if outcome == "retired" {
+                    println!("{}: {outcome}", a.label);
+                } else {
+                    println!("{}: {outcome}: {reason}", a.label);
+                }
+            }
+            None => {
+                ok = false;
+                println!("{}: not run (the runner comes with STP-4 step 5)", a.label);
+            }
+        }
+        for n in &a.notes {
+            println!("  {} {}: {}", n.kind, n.by, n.test);
+        }
+    }
+    println!("result: {}", if ok { "pass" } else { "fail" });
+    if ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
     }
 }
 

@@ -201,14 +201,23 @@ fn scan(
     let mut i = start;
     while i < end {
         let t = &tokens[i];
-        if top
-            && t.kind == Kind::Word
+        // `proptest! {` or `proptest::proptest! {` at top level.
+        let qualified = t.kind == Kind::Word
             && t.text == "proptest"
-            && tokens.get(i + 1).is_some_and(|t| is(t, '!'))
-            && tokens.get(i + 2).is_some_and(|t| is(t, '{'))
+            && tokens.get(i + 1).is_some_and(|t| is(t, ':'))
+            && tokens.get(i + 2).is_some_and(|t| is(t, ':'))
+            && tokens
+                .get(i + 3)
+                .is_some_and(|t| t.kind == Kind::Word && t.text == "proptest");
+        let m = if qualified { i + 3 } else { i };
+        if top
+            && tokens[m].kind == Kind::Word
+            && tokens[m].text == "proptest"
+            && tokens.get(m + 1).is_some_and(|t| is(t, '!'))
+            && tokens.get(m + 2).is_some_and(|t| is(t, '{'))
         {
-            let close = close_brace(tokens, i + 2);
-            scan(tokens, i + 3, close.saturating_sub(1), false, out);
+            let close = close_brace(tokens, m + 2);
+            scan(tokens, m + 3, close.saturating_sub(1), false, out);
             i = close;
             continue;
         }

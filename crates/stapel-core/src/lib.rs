@@ -7,6 +7,7 @@ pub mod guard;
 pub mod hash;
 pub mod identity;
 pub mod journal;
+pub mod outcomes;
 pub mod rust_tests;
 pub mod stage;
 pub mod state;

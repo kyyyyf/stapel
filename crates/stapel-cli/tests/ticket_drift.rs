@@ -74,35 +74,14 @@ fn test_refs(text: &str, files: &BTreeMap<String, PathBuf>) -> BTreeSet<(String,
         .collect()
 }
 
-/// Test functions defined in a file: `#[test]` functions and functions inside `proptest!`.
+/// Test functions defined in a file, by the same lexer as `stapel check` (STP-4 "Step test"), so a
+/// test inside a string literal is not one.
 fn defined_tests(path: &Path) -> BTreeSet<String> {
     let text = std::fs::read_to_string(path).unwrap();
-    let lines: Vec<&str> = text.lines().collect();
-    let mut names = BTreeSet::new();
-    let mut in_proptest = false;
-    for (i, line) in lines.iter().enumerate() {
-        let t = line.trim();
-        if t.starts_with("proptest!") {
-            in_proptest = true;
-        }
-        let Some(rest) = t.strip_prefix("fn ") else {
-            continue;
-        };
-        let name: String = rest
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-            .collect();
-        let attributed = lines[..i]
-            .iter()
-            .rev()
-            .take_while(|l| l.trim().starts_with("#[") || l.trim().starts_with("//"))
-            .any(|l| l.trim() == "#[test]");
-        let property = in_proptest && rest.contains(" in ");
-        if attributed || property {
-            names.insert(name);
-        }
-    }
-    names
+    stapel_core::rust_tests::test_functions(&text)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
 }
 
 /// All Rust source and golden output under `crates/`, as one text to search.
