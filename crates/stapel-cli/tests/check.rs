@@ -1565,3 +1565,160 @@ fn refusal_appends_no_record() {
     assert_eq!(code, 2);
     assert!(!dir.join(".stapel/tickets/ABC-1/runs.jsonl").exists());
 }
+
+// ---- STP-4 AC-6: status, close and the dialog ----
+
+fn status_check_line(dir: &Path) -> String {
+    let out = stapel(dir).args(["status", "ABC-1"]).output().unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find(|l| l.starts_with("check: "))
+        .unwrap_or("(no check line)")
+        .to_string()
+}
+
+/// A repository whose ticket has one passing step.
+fn passing_repo() -> TempDir {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    repo
+}
+
+fn short_head(dir: &Path) -> String {
+    git(dir, &["rev-parse", "--short=7", "HEAD"])
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn status_shows_the_check_line() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    assert_eq!(status_check_line(dir), "check: none");
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(
+        status_check_line(dir),
+        format!("check: pass at {}", short_head(dir))
+    );
+
+    add_test(dir, "basic", "breaks", "assert_eq!(tiny::add(1, 1), 3);");
+    commit(dir, "ABC-1: a failing test outside the steps");
+    let line = status_check_line(dir);
+    assert!(
+        line.starts_with("check: stale") && line.contains("crates/tiny/tests/basic.rs"),
+        "{line}"
+    );
+    let (code, _) = check(dir);
+    assert_eq!(code, 1);
+    assert_eq!(
+        status_check_line(dir),
+        format!("check: fail at {}", short_head(dir))
+    );
+
+    let config = read(dir, ".stapel/stapel.toml");
+    let without: String = config
+        .lines()
+        .filter(|l| {
+            !(l.starts_with("[check]") || l.starts_with("runner") || l.starts_with("timeout_secs"))
+        })
+        .map(|l| format!("{l}\n"))
+        .collect();
+    write(dir, ".stapel/stapel.toml", &without);
+    assert_eq!(status_check_line(dir), "check: not configured");
+}
+
+#[test]
+fn machine_files_keep_a_check_current() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    let pass = format!("check: pass at {}", short_head(dir));
+    commit(dir, "ABC-1: the check record");
+    let state = dir.join(".stapel/tickets/ABC-1/state.json");
+    let text_state = std::fs::read_to_string(&state).unwrap();
+    std::fs::write(&state, format!("{text_state}\n")).unwrap();
+    write(dir, ".stapel/tickets/ABC-1/tokens.jsonl", "{\"v\":1}\n");
+    assert_eq!(status_check_line(dir), pass);
+    write(
+        dir,
+        ".stapel/tickets/ABC-1/notes.txt",
+        "not a machine file\n",
+    );
+    assert!(
+        status_check_line(dir).starts_with("check: stale"),
+        "{}",
+        status_check_line(dir)
+    );
+}
+
+#[test]
+fn unknown_head_is_stale() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let record = format!(
+        "{{\"v\":1,\"kind\":\"check\",\"id\":\"c-000000000000\",\"at\":\"2026-01-01T00:00:00Z\",\"ticket\":\"ABC-1\",\"head\":\"{}\",\"result\":\"pass\",\"steps\":[]}}\n",
+        "0".repeat(40)
+    );
+    write(dir, ".stapel/tickets/ABC-1/runs.jsonl", &record);
+    let line = status_check_line(dir);
+    assert!(
+        line.starts_with("check: stale") && line.contains("unknown commit"),
+        "{line}"
+    );
+}
+
+#[test]
+fn close_needs_a_current_passing_check() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["close", "ABC-1", "--reason", "done"])
+        .assert()
+        .code(1)
+        .stderr(contains("stapel check"))
+        .stderr(contains("check: none"));
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{}\n// later\n", read(dir, "crates/tiny/src/lib.rs")),
+    );
+    stapel(dir)
+        .args(["close", "ABC-1", "--reason", "done"])
+        .assert()
+        .code(1)
+        .stderr(contains("check: stale"));
+    git(dir, &["checkout", "--", "crates/tiny/src/lib.rs"]);
+    stapel(dir)
+        .args(["close", "ABC-1", "--reason", "done"])
+        .assert()
+        .success()
+        .stdout(contains("closed: ABC-1"));
+}
+
+#[test]
+fn close_dialog_shows_the_check() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    let (reason, _) = common::ask(dir, "stapel close ABC-1 --reason done");
+    assert!(
+        reason.contains(&format!("check: pass at {}", short_head(dir))),
+        "{reason}"
+    );
+
+    let plain = common::stapel_repo();
+    let pdir = plain.path();
+    stapel(pdir).args(["new", "Plain"]).assert().success();
+    let (reason, _) = common::ask(pdir, "stapel close ABC-1 --reason done");
+    assert!(reason.contains("check: not configured"), "{reason}");
+}
