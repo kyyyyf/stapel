@@ -237,3 +237,43 @@ fn checker_finds_a_wrong_quote() {
     assert!(code.contains(literal_prefix(found[0]).trim_end()));
     assert!(!code.contains(literal_prefix(found[2]).trim_end()));
 }
+
+/// STP-3 AC-6: an open ticket's criterion is checked once all tests it names exist; a closed ticket
+/// is checked fully.
+#[test]
+fn open_tickets_are_plans() {
+    let files = test_files();
+    let code = code_text();
+    let ticket = "\
+| AC-1 | prints `planned output: <x>` | `ticket_drift::not_written_yet` |
+| AC-2 | prints `another missing line: <y>` | `ticket_drift::checker_finds_a_wrong_quote` |
+";
+    let open = ticket_problems("T-1", ticket, Lifecycle::Open, &files, &code);
+    assert_eq!(open.len(), 1, "{open:?}");
+    assert!(
+        open[0].contains("AC-2") && open[0].contains("another missing line:"),
+        "{open:?}"
+    );
+
+    let closed = ticket_problems("T-1", ticket, Lifecycle::Closed, &files, &code);
+    assert!(
+        closed.iter().any(|p| p.contains("not_written_yet")),
+        "{closed:?}"
+    );
+    assert!(
+        closed.iter().any(|p| p.contains("planned output:")),
+        "{closed:?}"
+    );
+    assert!(
+        closed.iter().any(|p| p.contains("another missing line:")),
+        "{closed:?}"
+    );
+
+    // In a closed ticket's Proof table every `a::b` is a test; an unknown module is drift.
+    let proof = "## Proof\n\n| AC-1 | `nosuchmodule::some_test` |\n\n## Plan\n";
+    let closed = ticket_problems("T-1", proof, Lifecycle::Closed, &files, &code);
+    assert!(
+        closed.iter().any(|p| p.contains("nosuchmodule")),
+        "{closed:?}"
+    );
+}
