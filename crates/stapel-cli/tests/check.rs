@@ -91,6 +91,17 @@ fn cargo_repo() -> TempDir {
         .assert()
         .success();
     stapel(dir).args(["new", "First"]).assert().success();
+    // `stapel check` runs cargo with `--locked`, so the lock file is part of the repository.
+    let lock = std::process::Command::new("cargo")
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
     commit(dir, "initial");
     repo
 }
@@ -884,4 +895,471 @@ fn red_paths_allowed_and_capped() {
     assert_eq!(outcome(&text, "step 2"), "red-changes-code", "{text}");
     assert!(text.contains("crates/tiny/src/m19.rs and 5 more"), "{text}");
     assert!(!text.contains("m20.rs"), "{text}");
+}
+
+// ---- STP-4 AC-3 and AC-4: runs in a worktree ----
+
+/// Sets `[check] timeout_secs` and commits it.
+fn set_timeout(dir: &Path, secs: u32) {
+    edit(
+        dir,
+        ".stapel/stapel.toml",
+        "timeout_secs = 900",
+        &format!("timeout_secs = {secs}"),
+    );
+    commit(dir, "ABC-1: a shorter time limit");
+}
+
+/// A library function `triple` that is wrong at first, committed before the steps.
+fn with_wrong_triple(dir: &Path) {
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{LIB}\npub fn triple(x: u32) -> u32 {{\n    x * 2\n}}\n"),
+    );
+    commit(dir, "ABC-1: a library function to fix");
+}
+
+fn fix_triple(dir: &Path) {
+    edit(dir, "crates/tiny/src/lib.rs", "x * 2", "x * 3");
+}
+
+#[test]
+fn outcome_pass_with_assert_and_compile_reds() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    add_test(dir, "basic", "halves", "assert_eq!(tiny::half(8), 4);");
+    commit(dir, "ABC-1 step 2 RED: half is missing");
+    let lib = read(dir, "crates/tiny/src/lib.rs");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{lib}\npub fn half(x: u32) -> u32 {{\n    x / 2\n}}\n"),
+    );
+    commit(dir, "ABC-1 step 2 GREEN: half");
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("step 1: pass") && l.contains("1 assert")),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("step 2: pass") && l.contains("1 compile")),
+        "{text}"
+    );
+    assert!(text.lines().any(|l| l.starts_with("suite: pass")), "{text}");
+    assert!(text.lines().any(|l| l == "result: pass"), "{text}");
+}
+
+#[test]
+fn outcome_no_red() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(
+        dir,
+        "basic",
+        "already_true",
+        "assert_eq!(tiny::add(1, 1), 2);",
+    );
+    commit(dir, "ABC-1 step 1 RED: a test that passes from the start");
+    commit(dir, "ABC-1 step 1 GREEN: nothing to do");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "no-red", "{text}");
+    assert!(text.contains("tiny/basic::already_true"), "{text}");
+}
+
+#[test]
+fn outcome_not_green() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    edit(dir, "crates/tiny/src/lib.rs", "x * 2", "x * 4");
+    commit(dir, "ABC-1 step 1 GREEN: still wrong");
+    fix_triple(dir);
+    edit(dir, "crates/tiny/src/lib.rs", "x * 4", "x * 3");
+    commit(dir, "ABC-1: fixed later");
+    add_test(dir, "basic", "halves", "assert_eq!(tiny::half(8), 4);");
+    commit(dir, "ABC-1 step 2 RED: half is missing");
+    write(dir, "crates/tiny/src/lib.rs", "this does not compile\n");
+    commit(dir, "ABC-1 step 2 GREEN: a broken library");
+    let lib = format!(
+        "{LIB}\npub fn triple(x: u32) -> u32 {{\n    x * 3\n}}\n\npub fn half(x: u32) -> u32 {{\n    x / 2\n}}\n"
+    );
+    write(dir, "crates/tiny/src/lib.rs", &lib);
+    commit(dir, "ABC-1: the library repaired");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "not-green", "{text}");
+    assert_eq!(outcome(&text, "step 2"), "not-green", "{text}");
+}
+
+#[test]
+fn outcome_removed_or_ignored_at_head() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    add_test(
+        dir,
+        "basic",
+        "gone_later",
+        "assert_eq!(tiny::triple(1), 3);",
+    );
+    commit(dir, "ABC-1 step 1 RED: a test");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    add_test(
+        dir,
+        "basic",
+        "ignored_later",
+        "assert_eq!(tiny::half(2), 1);",
+    );
+    commit(dir, "ABC-1 step 2 RED: a test");
+    let lib = read(dir, "crates/tiny/src/lib.rs");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{lib}\npub fn half(x: u32) -> u32 {{\n    x / 2\n}}\n"),
+    );
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "#[test]\nfn gone_later() {\n    assert_eq!(tiny::triple(1), 3);\n}\n",
+        "",
+    );
+    commit(dir, "ABC-1: delete a test without a spec change");
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "#[test]\nfn ignored_later()",
+        "#[test]\n#[ignore]\nfn ignored_later()",
+    );
+    add_test(dir, "basic", "third", "assert_eq!(tiny::quarter(8), 2);");
+    commit(
+        dir,
+        "ABC-1 step 3 RED: ignores the step 2 test and adds one",
+    );
+    let lib = read(dir, "crates/tiny/src/lib.rs");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{lib}\npub fn quarter(x: u32) -> u32 {{\n    x / 4\n}}\n"),
+    );
+    commit(dir, "ABC-1 step 3 GREEN: code");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "removed", "{text}");
+    assert_eq!(outcome(&text, "step 2"), "removed", "{text}");
+}
+
+#[test]
+fn outcome_unverified_on_timeout_and_stale_lock() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    set_timeout(dir, 10);
+    // The test starts a child that would outlive it; the whole process group is killed.
+    add_test(
+        dir,
+        "slow",
+        "hangs",
+        "std::process::Command::new(\"sleep\").arg(\"301\").spawn().unwrap();\n    std::thread::sleep(std::time::Duration::from_secs(120));",
+    );
+    commit(dir, "ABC-1 step 1 RED: a test that hangs");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    edit(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "version = \"0.1.0\"",
+        "version = \"0.2.0\"",
+    );
+    commit(dir, "ABC-1: a version bump without the lock file");
+    add_test(
+        dir,
+        "basic",
+        "after_bump",
+        "assert_eq!(tiny::add(1, 1), 3);",
+    );
+    commit(dir, "ABC-1 step 2 RED: a test");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    let started = std::time::Instant::now();
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(110),
+        "{text}"
+    );
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("step 1: unverified") && l.contains("time")),
+        "{text}"
+    );
+    assert_eq!(outcome(&text, "step 2"), "unverified", "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("step 2: unverified") && l.contains("Cargo.lock")),
+        "{text}"
+    );
+    let left = std::process::Command::new("pgrep")
+        .args(["-f", "sleep 301"])
+        .output()
+        .unwrap();
+    assert!(
+        left.stdout.is_empty(),
+        "a child survived: {}",
+        String::from_utf8_lossy(&left.stdout)
+    );
+}
+
+#[test]
+fn outcome_unverified_on_ignored_or_unmatched_test() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    write(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        &format!(
+            "{}\n#[test]\n#[ignore]\nfn skipped() {{\n    assert!(false);\n}}\n",
+            read(dir, "crates/tiny/tests/basic.rs")
+        ),
+    );
+    commit(dir, "ABC-1 step 1 RED: an ignored test");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    write(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        &format!(
+            "{}\n#[test]\n#[cfg(any())]\nfn never_built() {{\n    assert!(false);\n}}\n",
+            read(dir, "crates/tiny/tests/basic.rs")
+        ),
+    );
+    commit(dir, "ABC-1 step 2 RED: a test that is not compiled");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("step 1: unverified") && l.contains("ignored")),
+        "{text}"
+    );
+    assert_eq!(outcome(&text, "step 2"), "unverified", "{text}");
+}
+
+#[test]
+fn cargo_error_is_not_a_red() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    write(dir, "crates/tiny/src/lib.rs", "not rust at all\n");
+    commit(dir, "ABC-1: the library is broken before the step");
+    add_test(dir, "basic", "needs_lib", "assert_eq!(tiny::add(2, 2), 4);");
+    commit(
+        dir,
+        "ABC-1 step 1 RED: fails only because the library does not build",
+    );
+    write(dir, "crates/tiny/src/lib.rs", LIB);
+    commit(dir, "ABC-1 step 1 GREEN: the library builds");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+}
+
+#[test]
+fn child_output_cannot_fake_a_result() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(
+        dir,
+        "basic",
+        "fake",
+        "std::process::Command::new(\"sh\").args([\"-c\", \"echo 'test fake ... ok'\"]).status().unwrap();\n    assert_eq!(tiny::add(1, 1), 2);",
+    );
+    commit(dir, "ABC-1 step 1 RED: a test that prints a result line");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+}
+
+proptest::proptest! {
+    #[test]
+    fn output_parser_never_panics(out in "\\PC{0,400}", n in 0usize..4, exit in proptest::option::of(-2i32..300)) {
+        let names: Vec<String> = (0..n).map(|i| format!("t{i}")).collect();
+        let started = std::time::Instant::now();
+        let _ = stapel_core::runner::parse_run(&out, &names, exit, "basic", true);
+        let _ = stapel_core::runner::parse_run(&out, &names, exit, "basic", false);
+        proptest::prop_assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+}
+
+#[test]
+fn runs_in_a_worktree_and_leaves_the_tree_alone() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    // A leftover worktree folder from a killed check.
+    let common = dir.join(".git/stapel");
+    write(&common, "check-worktree/junk.txt", "left over\n");
+    let machine = |p: &str| p.contains("runs.jsonl");
+    let before: Vec<_> = common::snapshot(dir)
+        .into_iter()
+        .filter(|(p, _, _)| !machine(p))
+        .collect();
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    let after: Vec<_> = common::snapshot(dir)
+        .into_iter()
+        .filter(|(p, _, _)| !machine(p))
+        .collect();
+    assert_eq!(before, after, "the working tree changed");
+    assert!(!common.join("check-worktree").exists());
+    let worktrees = git(dir, &["worktree", "list"]);
+    assert_eq!(worktrees.lines().count(), 1, "{worktrees}");
+}
+
+#[test]
+fn refuses_a_dirty_tree() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "x", "assert!(false);");
+    commit(dir, "ABC-1 step 1 RED: x");
+    commit(dir, "ABC-1 step 1 GREEN: x");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{LIB}\n// uncommitted\n"),
+    );
+    let (code, text) = check(dir);
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("crates/tiny/src/lib.rs"), "{text}");
+    git(dir, &["checkout", "--", "crates/tiny/src/lib.rs"]);
+    write(dir, "crates/tiny/tests/new_file.rs", "\n");
+    let (code, text) = check(dir);
+    assert_eq!(code, 2, "{text}");
+    std::fs::remove_file(dir.join("crates/tiny/tests/new_file.rs")).unwrap();
+    // A machine file does not make the tree dirty.
+    let state = dir.join(".stapel/tickets/ABC-1/state.json");
+    let text_state = std::fs::read_to_string(&state).unwrap();
+    std::fs::write(&state, format!("{text_state}\n")).unwrap();
+    let (code, text) = check(dir);
+    assert_ne!(code, 2, "{text}");
+}
+
+#[test]
+fn refuses_ticket_without_steps() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let (code, text) = check(dir);
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("no step commits"), "{text}");
+    stapel(dir).args(["check", "ABC-7"]).assert().code(2);
+}
+
+#[test]
+fn refuses_without_configuration() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "x", "assert!(false);");
+    commit(dir, "ABC-1 step 1 RED: x");
+    commit(dir, "ABC-1 step 1 GREEN: x");
+    let config = read(dir, ".stapel/stapel.toml");
+    let without: String = config
+        .lines()
+        .filter(|l| {
+            !(l.starts_with("[check]") || l.starts_with("runner") || l.starts_with("timeout_secs"))
+        })
+        .map(|l| format!("{l}\n"))
+        .collect();
+    write(dir, ".stapel/stapel.toml", &without);
+    commit(dir, "ABC-1: no check section");
+    let (code, text) = check(dir);
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("check is not configured"), "{text}");
+}
+
+#[test]
+fn refuses_a_second_check_and_takes_over_a_dead_lock() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "x", "assert_eq!(tiny::add(1, 1), 3);");
+    commit(dir, "ABC-1 step 1 RED: x");
+    commit(dir, "ABC-1 step 1 GREEN: x");
+    let lock_path = dir.join(".git/stapel/check.lock");
+    std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+    let held = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .unwrap();
+    held.try_lock().unwrap();
+    let (code, text) = check(dir);
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("another stapel check"), "{text}");
+    held.unlock().unwrap();
+    drop(held);
+    std::fs::write(&lock_path, "999999999\n").unwrap();
+    let (code, text) = check(dir);
+    assert_ne!(code, 2, "{text}");
+    assert!(text.contains("999999999"), "{text}");
+}
+
+#[test]
+fn suite_failure_fails_the_check() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    add_test(dir, "other", "unrelated_failure", "assert!(false);");
+    commit(dir, "ABC-1: a failing test outside the steps");
+    add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    assert!(text.lines().any(|l| l.starts_with("suite: fail")), "{text}");
+    assert!(text.lines().any(|l| l == "result: fail"), "{text}");
+}
+
+#[test]
+fn report_matches_golden() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    add_test(
+        dir,
+        "basic",
+        "already_true",
+        "assert_eq!(tiny::add(1, 1), 2);",
+    );
+    commit(dir, "ABC-1 step 2 RED: passes from the start");
+    commit(dir, "ABC-1 step 2 GREEN: nothing");
+    let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    let golden = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/check_report.txt"),
+    )
+    .unwrap();
+    assert_eq!(without_ids(&text), golden, "actual:\n{text}");
 }
