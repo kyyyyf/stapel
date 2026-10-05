@@ -99,38 +99,6 @@ fn defined_tests(path: &Path) -> BTreeSet<String> {
     names
 }
 
-#[test]
-fn ticket_test_names_exist_and_every_test_is_named() {
-    let files = test_files();
-    let mut named = BTreeSet::new();
-    let mut problems = Vec::new();
-    for (key, text) in tickets() {
-        for (module, name) in test_refs(&text, &files) {
-            if !defined_tests(&files[&module]).contains(&name) {
-                problems.push(format!(
-                    "{key} names {module}::{name}, which does not exist"
-                ));
-            }
-            named.insert((module, name));
-        }
-    }
-    for (module, path) in &files {
-        if module == "ticket_drift" {
-            continue;
-        }
-        for name in defined_tests(path) {
-            if !named.contains(&(module.clone(), name.clone())) {
-                problems.push(format!("{module}::{name} is not named by any ticket"));
-            }
-        }
-    }
-    assert!(
-        problems.is_empty(),
-        "ticket drift:\n{}",
-        problems.join("\n")
-    );
-}
-
 /// All Rust source and golden output under `crates/`, as one text to search.
 fn code_text() -> String {
     let mut text = String::new();
@@ -180,40 +148,128 @@ fn quoted_output(row: &str) -> Vec<&str> {
         .collect()
 }
 
-#[test]
-fn quoted_output_in_criteria_appears_in_the_code() {
-    let code = code_text();
+/// Whether a ticket is finished (fully checked) or still being built (STP-3 AC-6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lifecycle {
+    Open,
+    Closed,
+}
+
+fn lifecycle(key: &str) -> Lifecycle {
+    let path = root().join(".stapel/tickets").join(key).join("state.json");
+    match stapel_core::state::load(&path) {
+        stapel_core::state::Loaded::State(s) if s.closed.is_none() => Lifecycle::Open,
+        // Closed, legacy (STP-1) and unreadable tickets are held to the full check.
+        _ => Lifecycle::Closed,
+    }
+}
+
+fn repo_paths(text: &str) -> Vec<&str> {
+    spans(text)
+        .into_iter()
+        .filter(|s| {
+            (s.starts_with("crates/") || s.starts_with("docs/"))
+                && !s.contains(['<', '*', ' ', '{'])
+        })
+        .collect()
+}
+
+fn missing_test(files: &BTreeMap<String, PathBuf>, module: &str, name: &str) -> bool {
+    !defined_tests(&files[module]).contains(name)
+}
+
+/// The drift of one ticket. A closed ticket is checked fully; an open ticket checks each acceptance
+/// criterion once every test it names exists, since until then the criterion is a plan.
+fn ticket_problems(
+    key: &str,
+    text: &str,
+    life: Lifecycle,
+    files: &BTreeMap<String, PathBuf>,
+    code: &str,
+) -> Vec<String> {
     let mut problems = Vec::new();
-    for (key, text) in tickets() {
-        for row in text.lines().filter(|l| l.starts_with("| AC-")) {
-            for span in quoted_output(row) {
-                let prefix = literal_prefix(span).trim_end();
-                if prefix.len() >= 6 && !code.contains(prefix) {
-                    let id = row.split('|').nth(1).unwrap_or("").trim();
-                    problems.push(format!(
-                        "{key} {id} quotes `{span}`; `{prefix}` is not in the code"
-                    ));
+    for row in text.lines().filter(|l| l.starts_with("| AC-")) {
+        let id = row.split('|').nth(1).unwrap_or("").trim();
+        let refs = test_refs(row, files);
+        let built = !refs.is_empty() && refs.iter().all(|(m, n)| !missing_test(files, m, n));
+        if life == Lifecycle::Open && !built {
+            continue;
+        }
+        for span in quoted_output(row) {
+            let prefix = literal_prefix(span).trim_end();
+            if prefix.len() >= 6 && !code.contains(prefix) {
+                problems.push(format!(
+                    "{key} {id} quotes `{span}`; `{prefix}` is not in the code"
+                ));
+            }
+        }
+        if life == Lifecycle::Open {
+            for path in repo_paths(row) {
+                if !root().join(path.trim_end_matches('/')).exists() {
+                    problems.push(format!("{key} {id} names `{path}`, which does not exist"));
                 }
             }
         }
     }
-    assert!(
-        problems.is_empty(),
-        "ticket drift:\n{}",
-        problems.join("\n")
-    );
+    if life == Lifecycle::Closed {
+        for (module, name) in test_refs(text, files) {
+            if missing_test(files, &module, &name) {
+                problems.push(format!(
+                    "{key} names {module}::{name}, which does not exist"
+                ));
+            }
+        }
+        for path in repo_paths(text) {
+            if !root().join(path.trim_end_matches('/')).exists() {
+                problems.push(format!("{key} names `{path}`, which does not exist"));
+            }
+        }
+        // In the Proof table every `module::name` is a test.
+        if let Some(start) = text.find("## Proof") {
+            let rest = &text[start + 1..];
+            let proof = &rest[..rest.find("\n## ").unwrap_or(rest.len())];
+            for row in proof
+                .lines()
+                .filter(|l| l.starts_with("| AC-") || l.starts_with("| R-"))
+            {
+                for span in spans(row) {
+                    let Some((module, name)) = span.rsplit_once("::") else {
+                        continue;
+                    };
+                    let looks_like_test = name
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                        && (module == "core::config"
+                            || module.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
+                    if looks_like_test && !files.contains_key(module) {
+                        problems.push(format!(
+                            "{key} names module {module}, which is not a test file"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    problems
 }
 
-/// Paths a ticket names inside the repository exist (`crates/...`, `docs/...`).
 #[test]
-fn named_repository_paths_exist() {
+fn ticket_test_names_exist_and_every_test_is_named() {
+    let files = test_files();
+    let code = code_text();
+    let mut named = BTreeSet::new();
     let mut problems = Vec::new();
     for (key, text) in tickets() {
-        for span in spans(&text) {
-            let is_repo_path = (span.starts_with("crates/") || span.starts_with("docs/"))
-                && !span.contains(['<', '*', ' ', '{']);
-            if is_repo_path && !root().join(span.trim_end_matches('/')).exists() {
-                problems.push(format!("{key} names `{span}`, which does not exist"));
+        problems.extend(ticket_problems(&key, &text, lifecycle(&key), &files, &code));
+        named.extend(test_refs(&text, &files));
+    }
+    for (module, path) in &files {
+        if module == "ticket_drift" {
+            continue;
+        }
+        for name in defined_tests(path) {
+            if !named.contains(&(module.clone(), name.clone())) {
+                problems.push(format!("{module}::{name} is not named by any ticket"));
             }
         }
     }
