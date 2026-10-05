@@ -509,3 +509,42 @@ fn report_never_mixes_sources() {
     // input, output, cache read, cache write, estimate: the estimate of 70 stays out of the measured counts.
     assert_eq!(builder[2..7], ["10", "20", "0", "—", "70"]);
 }
+
+#[test]
+fn report_keeps_columns_apart() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    stapel(dir)
+        .args([
+            "tokens",
+            "add",
+            "--role",
+            "a-very-long-role-name",
+            "--model",
+            "a-very-long-model-name-for-the-column",
+            "--estimate",
+            "1",
+        ])
+        .assert()
+        .success();
+    let out = stapel(dir)
+        .args(["tokens", "ABC-1"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).unwrap();
+    let row = text
+        .lines()
+        .find(|l| l.starts_with("a-very-long-role-name"))
+        .unwrap();
+    let words: Vec<&str> = row.split_whitespace().collect();
+    assert_eq!(
+        words[..2],
+        [
+            "a-very-long-role-name",
+            "a-very-long-model-name-for-the-column"
+        ]
+    );
+}
