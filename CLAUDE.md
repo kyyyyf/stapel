@@ -82,6 +82,11 @@ Every artifact is in English: documents, tickets and their sections, journal lab
 message the `stapel` binary prints. Only conversation with the human in the chat is in Russian, in full
 sentences. Code identifiers and commit messages are in English.
 
+Chat replies follow ASD-STE100 (Simplified Technical English) about 80 % of the way, in Russian: one idea per
+sentence, sentences of about 20 words at most, active voice, one term for one meaning every time, no idioms or
+filler, steps as numbered lists with one action each, facts first and the request last. Code names, quotes and
+needed technical terms stay as they are; a longer sentence is allowed when splitting it would hide a condition.
+
 ## Layout
 
 ```text
