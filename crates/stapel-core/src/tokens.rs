@@ -205,3 +205,78 @@ pub fn read_transcript(path: &Path) -> Result<Transcript, String> {
     }
     Ok(t)
 }
+
+/// Session totals of one `cost-state` line (STP-5 AC-3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CostState {
+    pub session: String,
+    pub start: u64,
+    pub duration_ms: u64,
+    /// Model → (input, output, thinking, cache read, cache write).
+    pub models: Vec<(String, [Option<u64>; 5])>,
+}
+
+fn parse_cost_state(line: &str) -> Option<CostState> {
+    let v: Value = serde_json::from_str(line).ok()?;
+    if v.get("type")?.as_str()? != "cost-state" {
+        return None;
+    }
+    let mut models = Vec::new();
+    for (model, u) in v.get("modelUsage")?.as_object()? {
+        let n = |k: &str| u.get(k).and_then(Value::as_u64);
+        models.push((
+            model.clone(),
+            [
+                n("inputTokens"),
+                n("outputTokens"),
+                n("thinkingTokens"),
+                n("cacheReadInputTokens"),
+                n("cacheCreationInputTokens"),
+            ],
+        ));
+    }
+    Some(CostState {
+        session: v.get("sessionId")?.as_str()?.to_string(),
+        start: v.get("startTime")?.as_u64()?,
+        duration_ms: v.get("totalDuration")?.as_u64()?,
+        models,
+    })
+}
+
+/// The last `cost-state` line of a transcript. A line counts as one when it mentions the type
+/// `cost-state`; when the last such line cannot be read (half written, or without its session,
+/// start or duration), the transcript is refused rather than an earlier line taken.
+pub fn last_cost_state(path: &Path) -> Result<CostState, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut buf = Vec::new();
+    let mut last: Option<(usize, Option<CostState>)> = None;
+    let mut n = 0;
+    while read_bounded_line(&mut reader, &mut buf, MAX_TRANSCRIPT_LINE)
+        .map_err(|e| format!("{}: {e}", path.display()))?
+    {
+        n += 1;
+        let text = String::from_utf8_lossy(&buf);
+        let compact: String = text
+            .chars()
+            .take(200)
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        if compact.contains("\"type\":\"cost-state\"") {
+            let parsed = if buf.len() > MAX_TRANSCRIPT_LINE {
+                None
+            } else {
+                parse_cost_state(text.trim_end())
+            };
+            last = Some((n, parsed));
+        }
+    }
+    match last {
+        None => Err(format!("{}: no cost-state line", path.display())),
+        Some((line, None)) => Err(format!(
+            "{}: line {line}, the last cost-state line, cannot be read; import it once it is complete",
+            path.display()
+        )),
+        Some((_, Some(c))) => Ok(c),
+    }
+}

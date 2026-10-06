@@ -385,6 +385,67 @@ pub fn import(a: Import) -> Result<(), String> {
     Ok(())
 }
 
+/// `stapel tokens session <transcript>`: the last cost-state line into `.stapel/sessions.jsonl`
+/// (STP-5 AC-3).
+pub fn session(transcript: &Path) -> Result<(), String> {
+    let (root, _config) = repo::open()?;
+    let c = stapel_core::tokens::last_cost_state(transcript)?;
+    let mut digest = sha2::Sha256::new();
+    for part in [
+        c.session.clone(),
+        c.start.to_string(),
+        c.duration_ms.to_string(),
+    ] {
+        digest.update(part.as_bytes());
+        digest.update([0u8]);
+    }
+    let hex: String = digest
+        .finalize()
+        .iter()
+        .take(6)
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let id = format!("s-{hex}");
+    let journal = root.join(".stapel/sessions.jsonl");
+    let known = read(&journal)?.into_iter().any(|(_, e)| match e {
+        Entry::V1(m) => m.get("id").and_then(Value::as_str) == Some(id.as_str()),
+        _ => false,
+    });
+    if known {
+        println!("already imported: {id}");
+        return Ok(());
+    }
+    let mut models = Map::new();
+    for (model, counts) in &c.models {
+        let mut m = Map::new();
+        for (name, value) in ["input", "output", "thinking", "cache_read", "cache_write"]
+            .iter()
+            .zip(counts)
+        {
+            if let Some(v) = value {
+                m.insert((*name).into(), json!(v));
+            }
+        }
+        models.insert(model.clone(), Value::Object(m));
+    }
+    let record = json!({
+        "v": 1,
+        "id": id,
+        "at": now_rfc3339(),
+        "session": c.session,
+        "start": c.start,
+        "duration_ms": c.duration_ms,
+        "models": models,
+    });
+    append(&journal, &record)?;
+    println!(
+        "recorded: {id} session {} ({} models)",
+        c.session,
+        c.models.len()
+    );
+    Ok(())
+}
+
 /// One report row: sums of the records of one role, model and origin.
 #[derive(Default)]
 struct Row {

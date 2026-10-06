@@ -108,6 +108,8 @@ enum TokensAction {
         #[arg(long, allow_hyphen_values = true)]
         note: Option<String>,
     },
+    /// Record the session totals of a Claude Code transcript's last cost-state line.
+    Session { transcript: std::path::PathBuf },
     /// Record the measured usage of a Claude Code transcript (main or subagent file).
     Import {
         transcript: std::path::PathBuf,
@@ -172,6 +174,7 @@ fn main() -> ExitCode {
                 since,
                 until,
             }),
+            Some(TokensAction::Session { transcript }) => tokens::session(&transcript),
             None => match tokens::report(key.as_deref()) {
                 Ok(code) => return code,
                 Err(message) => Err(message),
