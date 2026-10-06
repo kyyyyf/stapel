@@ -2,5 +2,41 @@
   "schema_version": 1,
   "key": "STP-5",
   "title": "Measured token usage of subagents",
-  "confirmations": []
+  "confirmations": [
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-10-06T06:23:28Z",
+      "hash": "sha256:64e3c87c1850fcb2756ba752b09711ec7dcd473cbbb1aeab3d9fa89b76b1cba4",
+      "normal_form": 1,
+      "depends_on": {},
+      "text": "Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in golden files.\n\n| № | Criterion | Test |\n|---|---|---|\n| AC-1 | IF a message's last line in a transcript has no `stop_reason` THEN `stapel tokens import` counts its input and cache, adds nothing to its model's output, and the record of that model carries `partial: <n>` (such messages, written only when n > 0); the record's `output` is the sum over the messages that have a final line, and is absent only when none has one; the report shows a partial output as a lower bound (`≥<n>`). `<synthetic>` and API error messages stay skipped (STP-3). | `tokens::partial_messages_lose_only_their_output` |\n| AC-2 | WHEN `stapel tokens import` writes a record THE record carries `importer: 2`; IF a v1 `measured` record has a subagent transcript identity (`<session>/<agent>`) and no `importer` field THEN `stapel tokens` shows its output as partial. | `tokens::older_subagent_records_show_partial_output` |\n| AC-3 | WHEN `stapel tokens session <transcript>` runs THE command appends to `.stapel/sessions.jsonl` one record of the transcript's last `cost-state` line: `v: 1`, `id` (`s-` and 12 hex of SHA-256 over session, `start`, `duration_ms`), `at` (the import time), `session`, `start`, `duration_ms`, and per model `input`, `output`, `thinking`, `cache_read`, `cache_write`; IF that line is already recorded THEN it appends nothing, prints `already imported: <id>` and exits 0; IF the transcript has no `cost-state` line, or its last line that starts as one cannot be read, THEN it exits 1, names the line, and appends nothing. | `tokens::session_totals_are_imported_once`, `tokens::session_without_cost_state_is_refused`, `tokens::truncated_cost_state_is_refused` |\n| AC-4 | WHEN `stapel tokens` runs and `.stapel/sessions.jsonl` has records THE report ends with a sessions table: per session (its record with the greatest `start + duration_ms`; records are deduplicated by `id`) and model, the session's output, its thinking (part of the output, shown apart), the sum of the output of all tickets' `measured` records whose transcript identity equals the session or starts with `<session>/` (each session id stands alone: a continuation is another session), the count of partial records (AC-1 and AC-2 alike) and of duplicates (two records with one transcript identity and model whose `from`..`to` ranges overlap; one of them counts — the one with `importer: 2`, else the later `at` — while records with disjoint windows all count), and the signed gap (session minus records); sums saturate; unreadable lines are skipped and named after the table; the layout is that of the golden file `tokens_sessions.txt`. | `tokens::report_shows_session_gaps`, `tokens::report_counts_a_duplicate_import_once` |",
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-10-06T06:23:30Z",
+      "hash": "sha256:124f184a94c42b6480e3fd466144ebd04d4b6b6713d5fafb4fe0f3953bf1955b",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:64e3c87c1850fcb2756ba752b09711ec7dcd473cbbb1aeab3d9fa89b76b1cba4"
+      },
+      "text": "### Facts (external contract and states)\n\n| Claim | Source | Mark |\n|---|---|---|\n| Subagent transcripts keep, for most messages, only streamed lines without `stop_reason` and with the first chunk's `output_tokens`; 8 of 77 messages of STP-4's 14 subagent files have a final line | this machine, 2026-10-05 | verified |\n| Main transcripts have a final line for every message (801 of 801 in two sessions) | same | verified |\n| A `cost-state` line holds `sessionId`, `startTime` (ms), `totalDuration` (ms) and `modelUsage.<model>` with `inputTokens`, `outputTokens`, `thinkingTokens`, `cacheReadInputTokens`, `cacheCreationInputTokens`, `costUSD`; totals are cumulative over the session and include subagents | same (three lines of one session, growing) | verified |\n| `outputTokens` includes `thinkingTokens`: between two lines of one session the main transcript's message output was 368,947, the line delta 393,927 and the thinking delta 95,633, so thinking is not on top | same | verified (from deltas) |\n| A session that continues in a new file gets a new `sessionId` there (the continuation of `d8463ea3` writes `104ede7a`), and ticket records carry that id as the first part of their transcript identity | same | verified |\n| Whether the continuation's `cost-state` totals start from zero or carry the predecessor's | — | assumption; checked at plan step 4, and until then each session id stands alone |\n| A `cost-state` line is written when a session continues in a new file or is resumed, not at every call; the running session has none | same | read |\n\nExternal states (`.stapel/config/external-states.yml`, `claude-code`): transcripts of a session that\ncontinued in another file (the `cost-state` line is in the old file: handled, the command takes any file);\na session resumed several times (several lines: the latest wins, AC-3); a compacted session (same file:\nhandled); permission modes, hooks and settings (not read: not applicable).\n\n### Decisions (as built)\n\nTo be written once before code review (`CLAUDE.md`, item 6).",
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-10-06T06:23:31Z",
+      "hash": "sha256:c4da7f4310ae12b47c16225de962d9980f5e764901607307d3b3293c3c5f65c7",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:124f184a94c42b6480e3fd466144ebd04d4b6b6713d5fafb4fe0f3953bf1955b",
+        "spec": "sha256:64e3c87c1850fcb2756ba752b09711ec7dcd473cbbb1aeab3d9fa89b76b1cba4"
+      },
+      "text": "| Criterion | Test |\n|---|---|\n| AC-1 | `tokens::partial_messages_lose_only_their_output` |\n| AC-2 | `tokens::older_subagent_records_show_partial_output` |\n| AC-3 | `tokens::session_totals_are_imported_once`, `tokens::session_without_cost_state_is_refused`, `tokens::truncated_cost_state_is_refused` |\n| AC-4 | `tokens::report_shows_session_gaps`, `tokens::report_counts_a_duplicate_import_once` |",
+      "via": "grant"
+    }
+  ]
 }
