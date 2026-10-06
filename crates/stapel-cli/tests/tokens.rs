@@ -832,3 +832,75 @@ fn older_subagent_records_show_partial_output() {
     assert!(!line("orchestrator").contains('≥'), "{text}");
     assert!(!line("drift").contains('≥'), "{text}");
 }
+
+fn sessions(dir: &Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(dir.join(".stapel/sessions.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+// STP-5 AC-3: the last cost-state line of a transcript is recorded once.
+#[test]
+fn session_totals_are_imported_once() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let file = fixture(dir, "session.jsonl");
+    stapel(dir)
+        .args(["tokens", "session", &file.display().to_string()])
+        .assert()
+        .success();
+    let s = sessions(dir);
+    assert_eq!(s.len(), 1, "{s:?}");
+    let r = &s[0];
+    assert_eq!(r["v"], 1);
+    assert!(r["id"].as_str().unwrap().starts_with("s-"), "{r}");
+    assert!(r["at"].as_str().unwrap().ends_with('Z'), "{r}");
+    assert_eq!(r["session"], "s-sess");
+    assert_eq!(r["start"], 1767268800000u64);
+    assert_eq!(r["duration_ms"], 120000);
+    let opus = &r["models"]["claude-opus-5-5"];
+    assert_eq!(opus["output"], 800, "{r}");
+    assert_eq!(opus["thinking"], 150);
+    assert_eq!(opus["input"], 5);
+    assert_eq!(opus["cache_read"], 100);
+    assert_eq!(opus["cache_write"], 20);
+    assert_eq!(r["models"]["claude-sonnet-5-5"]["output"], 1200);
+
+    let id = r["id"].as_str().unwrap().to_string();
+    stapel(dir)
+        .args(["tokens", "session", &file.display().to_string()])
+        .assert()
+        .success()
+        .stdout(contains(format!("already imported: {id}")));
+    assert_eq!(sessions(dir).len(), 1);
+}
+
+// STP-5 AC-3: no cost-state line, nothing recorded.
+#[test]
+fn session_without_cost_state_is_refused() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let file = fixture(dir, "main.jsonl");
+    stapel(dir)
+        .args(["tokens", "session", &file.display().to_string()])
+        .assert()
+        .code(1)
+        .stderr(contains("cost-state"));
+    assert!(!dir.join(".stapel/sessions.jsonl").exists());
+}
+
+// STP-5 AC-3: a half-written last cost-state line is refused, not replaced by an earlier one.
+#[test]
+fn truncated_cost_state_is_refused() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let file = fixture(dir, "session_truncated.jsonl");
+    stapel(dir)
+        .args(["tokens", "session", &file.display().to_string()])
+        .assert()
+        .code(1)
+        .stderr(contains("line 4"));
+    assert!(!dir.join(".stapel/sessions.jsonl").exists());
+}
