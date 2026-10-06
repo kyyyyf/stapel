@@ -768,3 +768,67 @@ fn report_ignores_state_files() {
         .success()
         .stdout(contains("ticket: ABC-1"));
 }
+
+// ---- STP-5: measured usage of subagents ----
+
+// STP-5 AC-1: messages without a final line keep their input and cache and lose only their output.
+#[test]
+fn partial_messages_lose_only_their_output() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let file = fixture(dir, "partial.jsonl");
+    import(dir, &file, None, "2026-01-02T00:00:00Z").success();
+    let rs = records(dir, "ABC-1");
+    assert_eq!(rs.len(), 1, "{rs:?}");
+    let r = &rs[0];
+    assert_eq!(r["output"], 1500, "{r}");
+    assert_eq!(r["partial"], 2, "{r}");
+    assert_eq!(r["input"], 15, "{r}");
+    assert_eq!(r["cache_read"], 600, "{r}");
+    assert_eq!(r["cache_write"], 27, "{r}");
+    assert_eq!(r["importer"], 2, "{r}");
+    let out = stapel(dir).args(["tokens", "ABC-1"]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("orchestrator") && l.contains("≥1500")),
+        "{text}"
+    );
+
+    // A complete transcript gets no `partial` field.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let file = fixture(dir, "subagent.jsonl");
+    import(dir, &file, None, "2026-01-02T00:00:00Z").success();
+    let rs = records(dir, "ABC-1");
+    assert!(
+        rs.iter()
+            .all(|r| r.get("partial").is_none() && r["importer"] == 2),
+        "{rs:?}"
+    );
+}
+
+// STP-5 AC-2: a subagent record written before STP-5 shows its output as partial.
+#[test]
+fn older_subagent_records_show_partial_output() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-1/tokens.jsonl"),
+        "{\"v\":1,\"id\":\"t-a\",\"role\":\"reviewer\",\"model\":\"m\",\"source\":\"measured\",\"input\":1,\"output\":16,\"transcript\":\"s-1/agent-1\"}\n\
+         {\"v\":1,\"id\":\"t-b\",\"role\":\"orchestrator\",\"model\":\"m\",\"source\":\"measured\",\"input\":1,\"output\":40,\"transcript\":\"s-1\"}\n\
+         {\"v\":1,\"id\":\"t-c\",\"role\":\"drift\",\"model\":\"m\",\"source\":\"measured\",\"input\":1,\"output\":9,\"transcript\":\"s-1/agent-2\",\"importer\":2}\n",
+    )
+    .unwrap();
+    let out = stapel(dir).args(["tokens", "ABC-1"]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = |role: &str| {
+        text.lines()
+            .find(|l| l.starts_with(role))
+            .unwrap_or("")
+            .to_string()
+    };
+    assert!(line("reviewer").contains("≥16"), "{text}");
+    assert!(!line("orchestrator").contains('≥'), "{text}");
+    assert!(!line("drift").contains('≥'), "{text}");
+}
