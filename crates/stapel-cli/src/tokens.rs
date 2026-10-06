@@ -457,6 +457,150 @@ struct Row {
     legacy_kind: Option<String>,
 }
 
+/// The sessions table (STP-5 AC-4): per session (its line with the greatest start plus duration)
+/// and model, the session's output and thinking, the output of all tickets' measured records of
+/// that session (overlapping windows of one transcript and model counted once), and the gap.
+fn sessions_table(
+    path: &Path,
+    records: &[Map<String, Value>],
+    problems: &mut Vec<String>,
+) -> Result<String, String> {
+    let mut latest: std::collections::BTreeMap<String, Map<String, Value>> = Default::default();
+    let mut seen = std::collections::BTreeSet::new();
+    for (n, entry) in read(path)? {
+        let m = match entry {
+            Entry::V1(m) => m,
+            _ => {
+                problems.push(format!("problem: .stapel/sessions.jsonl:{n}"));
+                continue;
+            }
+        };
+        let id = m
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let session = m.get("session").and_then(Value::as_str).map(String::from);
+        let end = m
+            .get("start")
+            .and_then(Value::as_u64)
+            .zip(m.get("duration_ms").and_then(Value::as_u64));
+        let (Some(session), Some((start, duration)), true) =
+            (session, end, m.get("models").is_some_and(Value::is_object))
+        else {
+            problems.push(format!("problem: .stapel/sessions.jsonl:{n}"));
+            continue;
+        };
+        if !seen.insert(id) {
+            continue;
+        }
+        let later = |o: &Map<String, Value>| {
+            let e = |k: &str| o.get(k).and_then(Value::as_u64).unwrap_or(0);
+            start.saturating_add(duration) > e("start").saturating_add(e("duration_ms"))
+        };
+        if latest.get(&session).is_none_or(later) {
+            latest.insert(session, m);
+        }
+    }
+    let mut table: Vec<[String; 8]> = vec![
+        [
+            "session",
+            "model",
+            "output",
+            "thinking",
+            "records",
+            "partial",
+            "duplicates",
+            "gap",
+        ]
+        .map(String::from),
+    ];
+    for (session, line) in &latest {
+        let models = line
+            .get("models")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let ours = |r: &&Map<String, Value>| {
+            r.get("transcript")
+                .and_then(Value::as_str)
+                .is_some_and(|t| t == session || t.starts_with(&format!("{session}/")))
+        };
+        let mut names: std::collections::BTreeSet<String> = models.keys().cloned().collect();
+        for r in records.iter().filter(ours) {
+            if let Some(m) = r.get("model").and_then(Value::as_str) {
+                names.insert(m.to_string());
+            }
+        }
+        for model in names {
+            let mut group: Vec<&Map<String, Value>> = records
+                .iter()
+                .filter(ours)
+                .filter(|r| r.get("model").and_then(Value::as_str) == Some(model.as_str()))
+                .collect();
+            // Preferred first: a record of this importer, then the later one.
+            group.sort_by(|a, b| {
+                let key = |r: &Map<String, Value>| {
+                    (
+                        r.contains_key("importer"),
+                        r.get("at")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                    )
+                };
+                key(b).cmp(&key(a))
+            });
+            let window = |r: &Map<String, Value>| {
+                let t = |k: &str| {
+                    r.get(k)
+                        .and_then(Value::as_str)
+                        .and_then(stapel_core::time::parse_transcript_time)
+                };
+                t("from").zip(t("to"))
+            };
+            let mut kept: Vec<&Map<String, Value>> = Vec::new();
+            let mut duplicates = 0u64;
+            for r in group {
+                let overlaps = kept.iter().any(|k| {
+                    k.get("transcript") == r.get("transcript")
+                        && matches!((window(k), window(r)), (Some((a0, a1)), Some((b0, b1))) if a0 <= b1 && b0 <= a1)
+                });
+                if overlaps {
+                    duplicates += 1;
+                } else {
+                    kept.push(r);
+                }
+            }
+            let sum = kept
+                .iter()
+                .filter_map(|r| r.get("output").and_then(Value::as_u64))
+                .fold(0u64, u64::saturating_add);
+            let partial = kept.iter().filter(|r| partial_output(r)).count();
+            let counts = models.get(&model);
+            let n = |k: &str| counts.and_then(|c| c.get(k)).and_then(Value::as_u64);
+            let gap = i128::from(n("output").unwrap_or(0)) - i128::from(sum);
+            table.push([
+                session.clone(),
+                model.clone(),
+                cell(n("output")),
+                cell(n("thinking")),
+                if partial > 0 {
+                    format!("≥{sum}")
+                } else {
+                    sum.to_string()
+                },
+                partial.to_string(),
+                duplicates.to_string(),
+                gap.to_string(),
+            ]);
+        }
+    }
+    let mut block = vec!["sessions".to_string()];
+    block.extend(render(&table));
+    Ok(block.join("\n"))
+}
+
 /// A measured record whose output is a lower bound: it says so (`partial`), or it is a subagent
 /// record written before STP-5 (`importer` absent, transcript identity `<session>/<agent>`).
 fn partial_output(m: &Map<String, Value>) -> bool {
@@ -524,6 +668,7 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
     }
     let mut blocks = Vec::new();
     let mut problems = Vec::new();
+    let mut measured_records: Vec<Map<String, Value>> = Vec::new();
     for (ticket_key, dir) in folders {
         let path = dir.join("tokens.jsonl");
         if !path.exists() {
@@ -547,6 +692,7 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
                             add_to(&mut rows.entry(key).or_default().estimate, num("estimate"))
                         }
                         Some("measured") => {
+                            measured_records.push(m.clone());
                             let row = rows.entry(key).or_default();
                             row.partial |= partial_output(&m);
                             for (slot, k) in row.measured.iter_mut().zip([
@@ -611,6 +757,12 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
         let mut block = vec![format!("ticket: {ticket_key}")];
         block.extend(render(&table));
         blocks.push(block.join("\n"));
+    }
+    if key.is_none() {
+        let path = root.join(".stapel/sessions.jsonl");
+        if path.exists() {
+            blocks.push(sessions_table(&path, &measured_records, &mut problems)?);
+        }
     }
     let mut out = blocks.join("\n\n");
     if !problems.is_empty() {
