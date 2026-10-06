@@ -83,7 +83,9 @@ handled); permission modes, hooks and settings (not read: not applicable).
 
 ### Decisions (as built)
 
-To be written once before code review (`CLAUDE.md`, item 6).
+- Step 1: `stapel-core::tokens` marks a message `complete` when its last line has a string `stop_reason`; a later line of the same message replaces usage and completeness. `tokens import` counts input and cache of every message, output only of complete ones; `partial` is the number of incomplete messages (written when > 0); `output` is absent when no message of the model is complete. The report's row output shows `≥<sum>` when any of its records is partial (field `partial`, or a subagent identity without `importer`).
+- Step 2: `stapel-core::tokens::last_cost_state` streams the transcript (16 MiB lines); a line counts as a cost-state line when its first 200 characters, without whitespace, contain `"type":"cost-state"`; the last such line must parse with `sessionId`, `startTime`, `totalDuration` and `modelUsage`, else exit 1 naming its line number. `tokens session` writes `models.<model>` with `input`, `output`, `thinking`, `cache_read`, `cache_write` (absent when the line lacks them); `id` = `s-` + 12 hex of SHA-256 over session, start and duration with NUL separators; the journal is `.stapel/sessions.jsonl` through the STP-3 journal.
+- Step 3: the sessions table is printed only for the whole report (`stapel tokens` without a key), since one ticket's records cannot be compared with a session total; the measured records of all tickets are collected while the ticket blocks are built; a sessions line without `session`, `start`, `duration_ms` or a `models` object, or not `v: 1`, is a problem line; models are the union of the session's and the records'; duplicates: records of one transcript identity and model whose `from`..`to` overlap, the one with `importer` (then the later `at`) kept; the gap is signed (`i128`); the table uses the ticket table's column widths. Step 1 drift review D1 ("≥0" when no message of a model is complete) matches the Inputs row of AC-2 and is kept.
 
 ## Test plan
 
