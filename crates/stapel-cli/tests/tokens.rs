@@ -904,3 +904,79 @@ fn truncated_cost_state_is_refused() {
         .stderr(contains("line 4"));
     assert!(!dir.join(".stapel/sessions.jsonl").exists());
 }
+
+/// A sessions journal with an older and a newer line of one session.
+fn write_sessions(dir: &Path) {
+    let line = |dur: u64, opus: u64, think: u64| {
+        format!(
+            "{{\"v\":1,\"id\":\"s-{dur}\",\"at\":\"2026-01-02T00:00:00Z\",\"session\":\"s-sess\",\"start\":1767268800000,\"duration_ms\":{dur},\"models\":{{\"claude-opus-5-5\":{{\"output\":{opus},\"thinking\":{think}}},\"claude-sonnet-5-5\":{{\"output\":1200,\"thinking\":0}}}}}}\n"
+        )
+    };
+    // The newer line first: the report picks by start plus duration, not by file order.
+    std::fs::write(
+        dir.join(".stapel/sessions.jsonl"),
+        format!("{}{}", line(120000, 800, 150), line(60000, 450, 100)),
+    )
+    .unwrap();
+}
+
+/// The report from its `sessions` line to the end.
+fn sessions_part(dir: &Path) -> String {
+    let out = stapel(dir).args(["tokens"]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    text[text
+        .find("sessions\n")
+        .unwrap_or_else(|| panic!("no sessions table:\n{text}"))..]
+        .to_string()
+}
+
+// STP-5 AC-4: the sessions table compares session totals with the records of all tickets.
+#[test]
+fn report_shows_session_gaps() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-1/tokens.jsonl"),
+        "{\"v\":1,\"id\":\"t-1\",\"role\":\"orchestrator\",\"model\":\"claude-opus-5-5\",\"source\":\"measured\",\"output\":300,\"transcript\":\"s-sess\",\"from\":\"2026-01-01T12:00:00.000Z\",\"to\":\"2026-01-01T12:00:00.000Z\",\"importer\":2}\n\
+         {\"v\":1,\"id\":\"t-2\",\"role\":\"orchestrator\",\"model\":\"claude-opus-5-5\",\"source\":\"measured\",\"output\":200,\"transcript\":\"s-sess\",\"from\":\"2026-01-01T12:05:00.000Z\",\"to\":\"2026-01-01T12:05:00.000Z\",\"importer\":2}\n\
+         {\"v\":1,\"id\":\"t-3\",\"role\":\"reviewer\",\"model\":\"claude-sonnet-5-5\",\"source\":\"measured\",\"output\":1500,\"partial\":1,\"transcript\":\"s-sess/agent-x\",\"from\":\"2026-01-01T12:01:00.000Z\",\"to\":\"2026-01-01T12:02:00.000Z\",\"importer\":2}\n\
+         {\"v\":1,\"id\":\"t-4\",\"role\":\"reviewer\",\"model\":\"claude-sonnet-5-5\",\"source\":\"estimate\",\"estimate\":999}\n\
+         {\"v\":1,\"id\":\"t-5\",\"role\":\"orchestrator\",\"model\":\"claude-opus-5-5\",\"source\":\"measured\",\"output\":77,\"transcript\":\"s-other\",\"from\":\"2026-01-01T12:00:00.000Z\",\"to\":\"2026-01-01T12:00:00.000Z\",\"importer\":2}\n",
+    )
+    .unwrap();
+    write_sessions(dir);
+    assert_eq!(sessions_part(dir), golden("tokens_sessions.txt"));
+}
+
+// STP-5 AC-4: overlapping windows of one transcript and model count once; the newer importer wins.
+#[test]
+fn report_counts_a_duplicate_import_once() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    stapel(dir).args(["new", "Second"]).assert().success();
+    let rec = |id: &str, out: u64, importer: &str| {
+        format!(
+            "{{\"v\":1,\"id\":\"{id}\",\"role\":\"orchestrator\",\"model\":\"claude-opus-5-5\",\"source\":\"measured\",\"output\":{out},\"transcript\":\"s-sess\",\"from\":\"2026-01-01T12:00:00.000Z\",\"to\":\"2026-01-01T12:10:00.000Z\"{importer}}}\n"
+        )
+    };
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-1/tokens.jsonl"),
+        rec("t-a", 300, ""),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-2/tokens.jsonl"),
+        rec("t-b", 310, ",\"importer\":2"),
+    )
+    .unwrap();
+    write_sessions(dir);
+    let part = sessions_part(dir);
+    let opus = part
+        .lines()
+        .find(|l| l.contains("claude-opus-5-5"))
+        .unwrap_or("");
+    let cells: Vec<&str> = opus.split_whitespace().collect();
+    assert_eq!(cells[4], "310", "{part}");
+    assert_eq!(cells[6], "1", "{part}");
+    assert_eq!(cells[7], "490", "{part}");
+}
