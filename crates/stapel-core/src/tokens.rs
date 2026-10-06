@@ -28,6 +28,8 @@ pub enum Line {
         time_ms: u64,
         time: String,
         usage: Usage,
+        /// The line has a `stop_reason`: it carries the message's final usage (STP-5).
+        complete: bool,
     },
     Error,
     Unreadable,
@@ -58,6 +60,9 @@ pub fn parse_transcript_line(line: &str) -> (Line, Option<String>, Option<String
         return (Line::Unreadable, session, agent);
     };
     let n = |key: &str| usage.get(key).and_then(Value::as_u64);
+    let complete = message
+        .and_then(|m| m.get("stop_reason"))
+        .is_some_and(|r| r.is_string());
     let line = Line::Message {
         id: id.into(),
         model: model.into(),
@@ -69,6 +74,7 @@ pub fn parse_transcript_line(line: &str) -> (Line, Option<String>, Option<String
             cache_read: n("cache_read_input_tokens"),
             cache_write: n("cache_creation_input_tokens"),
         },
+        complete,
     };
     (line, session, agent)
 }
@@ -80,6 +86,8 @@ pub struct Message {
     pub time_ms: u64,
     pub time: String,
     pub usage: Usage,
+    /// Its last line has a `stop_reason`; otherwise its output count is a streamed partial.
+    pub complete: bool,
 }
 
 #[derive(Debug, Default)]
@@ -174,9 +182,13 @@ pub fn read_transcript(path: &Path) -> Result<Transcript, String> {
                 time_ms,
                 time,
                 usage,
+                complete,
             } => match index.get(&id) {
                 // A later line of the same message carries its full usage.
-                Some(&i) => t.messages[i].usage = usage,
+                Some(&i) => {
+                    t.messages[i].usage = usage;
+                    t.messages[i].complete = complete;
+                }
                 None => {
                     index.insert(id.clone(), t.messages.len());
                     t.messages.push(Message {
@@ -185,6 +197,7 @@ pub fn read_transcript(path: &Path) -> Result<Transcript, String> {
                         time_ms,
                         time,
                         usage,
+                        complete,
                     });
                 }
             },

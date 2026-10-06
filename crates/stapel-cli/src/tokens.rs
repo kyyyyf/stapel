@@ -179,6 +179,8 @@ struct Sum {
     to_ms: u64,
     messages: u64,
     fields: [(&'static str, Option<u64>); 4],
+    /// Messages without a final line: their output is not known (STP-5 AC-1).
+    partial: u64,
 }
 
 pub fn import(a: Import) -> Result<(), String> {
@@ -229,6 +231,7 @@ pub fn import(a: Import) -> Result<(), String> {
                     from_ms: m.time_ms,
                     to_ms: m.time_ms,
                     messages: 0,
+                    partial: 0,
                     fields: [
                         ("input", Some(0)),
                         ("output", Some(0)),
@@ -246,18 +249,30 @@ pub fn import(a: Import) -> Result<(), String> {
             (sum.to_ms, sum.to) = (m.time_ms, m.time.clone());
         }
         sum.messages += 1;
+        if !m.complete {
+            sum.partial += 1;
+        }
         let values = [
             m.usage.input,
             m.usage.output,
             m.usage.cache_read,
             m.usage.cache_write,
         ];
-        for (field, value) in sum.fields.iter_mut().zip(values) {
+        for (i, (field, value)) in sum.fields.iter_mut().zip(values).enumerate() {
+            // The output of a message without a final line is a streamed partial: left out.
+            if i == 1 && !m.complete {
+                continue;
+            }
             // A field is present in the sum only when every counted message carried it.
             field.1 = match (field.1, value) {
                 (Some(acc), Some(v)) => Some(acc.saturating_add(v)),
                 _ => None,
             };
+        }
+    }
+    for s in sums.iter_mut() {
+        if s.partial == s.messages {
+            s.fields[1].1 = None;
         }
     }
     sums.retain(|s| s.fields.iter().any(|(_, v)| v.is_some_and(|n| n > 0)));
@@ -357,6 +372,12 @@ pub fn import(a: Import) -> Result<(), String> {
         record.insert("from".into(), json!(s.from));
         record.insert("to".into(), json!(s.to));
         record.insert("messages".into(), json!(s.messages));
+        if s.partial > 0 {
+            record.insert("partial".into(), json!(s.partial));
+        }
+        // Every record of this importer says `importer: 2`, so the report can tell it from the
+        // subagent records written before STP-5, whose output may be partial.
+        record.insert("importer".into(), json!(2));
         append(&ticket.dir.join("tokens.jsonl"), &Value::Object(record))?;
         println!("recorded: {id} {} ({} messages)", s.model, s.messages);
     }
@@ -369,8 +390,20 @@ pub fn import(a: Import) -> Result<(), String> {
 struct Row {
     measured: [Option<u64>; 4],
     estimate: Option<u64>,
+    /// Some measured record of the row has a partial output (STP-5 AC-1, AC-2).
+    partial: bool,
     legacy_total: Option<u64>,
     legacy_kind: Option<String>,
+}
+
+/// A measured record whose output is a lower bound: it says so (`partial`), or it is a subagent
+/// record written before STP-5 (`importer` absent, transcript identity `<session>/<agent>`).
+fn partial_output(m: &Map<String, Value>) -> bool {
+    let subagent = m
+        .get("transcript")
+        .and_then(Value::as_str)
+        .is_some_and(|t| t.contains('/'));
+    m.contains_key("partial") || (subagent && !m.contains_key("importer"))
 }
 
 fn add_to(slot: &mut Option<u64>, value: Option<u64>) {
@@ -454,6 +487,7 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
                         }
                         Some("measured") => {
                             let row = rows.entry(key).or_default();
+                            row.partial |= partial_output(&m);
                             for (slot, k) in row.measured.iter_mut().zip([
                                 "input",
                                 "output",
@@ -498,7 +532,10 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
                 (Some(kind), 1) => format!("{} {kind}", cell(row.legacy_total)),
                 _ => "—".into(),
             };
-            let m = row.measured.map(cell);
+            let mut m = row.measured.map(cell);
+            if row.partial {
+                m[1] = format!("≥{}", row.measured[1].unwrap_or(0));
+            }
             table.push([
                 role.clone(),
                 model.clone(),
