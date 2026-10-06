@@ -30,7 +30,8 @@ how Claude Code writes transcripts.
 
 **Promise (closed list).** For Claude Code transcripts on this machine's format:
 
-1. a subagent record never shows a streamed partial count as `measured`;
+1. `stapel tokens` never shows a streamed partial count as a complete one (older journal lines keep
+   `source: measured`; the report marks them, by a rule that also marks the few complete ones);
 2. where only a total is known, it is recorded as such and marked, never split by guess;
 3. session totals from `cost-state` lines can be imported per model and compared with the per-message
    records, so the gap is visible in `stapel tokens`.
@@ -38,7 +39,9 @@ how Claude Code writes transcripts.
 Not promised: splitting a session total between tickets that share a session by time (only windows that
 start and end at `cost-state` lines can be exact); usage of background calls no transcript holds.
 
-**Size.** Small: one importer change, one report change, two or three criteria.
+**Size.** Framed as small (two or three criteria); it grew to a new subcommand, a session journal and a
+table (eight criteria after code review). The growth is recorded under Decisions, not split, because the
+table is the only way to see the gap the problem is about.
 
 ### Decisions
 
@@ -50,6 +53,11 @@ start and end at `cost-state` lines can be exact); usage of background calls no 
   when its session, `startTime` and `totalDuration` are the same; a later line of a session replaces an
   earlier one in the report, since its totals are cumulative; (4) older subagent records are not rewritten;
   the report recognises them and shows their output as partial.
+- 2026-10-06, after code review round 1 (17 findings): every unknown or inexact number is marked, never shown
+  as exact (absent session output: `—`; partial records: `≥` and `≤`); a half-written last line refuses;
+  criteria split to one behaviour each; the gap of a continued session is marked as possibly including its
+  predecessor's totals. Agreed in principle by the human with the build of this process; confirmed with the
+  next confirmation.
 
 ## Spec
 
@@ -57,10 +65,14 @@ Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in g
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | IF a message's last line in a transcript has no `stop_reason` THEN `stapel tokens import` counts its input and cache, adds nothing to its model's output, and the record of that model carries `partial: <n>` (such messages, written only when n > 0); the record's `output` is the sum over the messages that have a final line, and is absent only when none has one; the report shows a partial output as a lower bound (`≥<n>`). `<synthetic>` and API error messages stay skipped (STP-3). | `tokens::partial_messages_lose_only_their_output` |
-| AC-2 | WHEN `stapel tokens import` writes a record THE record carries `importer: 2`; IF a v1 `measured` record has a subagent transcript identity (`<session>/<agent>`) and no `importer` field THEN `stapel tokens` shows its output as partial. | `tokens::older_subagent_records_show_partial_output` |
-| AC-3 | WHEN `stapel tokens session <transcript>` runs THE command appends to `.stapel/sessions.jsonl` one record of the transcript's last `cost-state` line: `v: 1`, `id` (`s-` and 12 hex of SHA-256 over session, `start`, `duration_ms`), `at` (the import time), `session`, `start`, `duration_ms`, and per model `input`, `output`, `thinking`, `cache_read`, `cache_write`; IF that line is already recorded THEN it appends nothing, prints `already imported: <id>` and exits 0; IF the transcript has no `cost-state` line, or its last line that starts as one cannot be read, THEN it exits 1, names the line, and appends nothing. | `tokens::session_totals_are_imported_once`, `tokens::session_without_cost_state_is_refused`, `tokens::truncated_cost_state_is_refused` |
-| AC-4 | WHEN `stapel tokens` runs and `.stapel/sessions.jsonl` has records THE report ends with a sessions table: per session (its record with the greatest `start + duration_ms`; records are deduplicated by `id`) and model, the session's output, its thinking (part of the output, shown apart), the sum of the output of all tickets' `measured` records whose transcript identity equals the session or starts with `<session>/` (each session id stands alone: a continuation is another session), the count of partial records (AC-1 and AC-2 alike) and of duplicates (two records with one transcript identity and model whose `from`..`to` ranges overlap; one of them counts — the one with `importer: 2`, else the later `at` — while records with disjoint windows all count), and the signed gap (session minus records); sums saturate; unreadable lines are skipped and named after the table; the layout is that of the golden file `tokens_sessions.txt`. | `tokens::report_shows_session_gaps`, `tokens::report_counts_a_duplicate_import_once` |
+| AC-1 | IF a message's last line has no `stop_reason` THEN `stapel tokens import` counts its input and cache but not its output; the record carries `partial: <n>`, its `output` sums the complete messages and is absent when none is complete, and the import line says `partial: <n>`. | `tokens::partial_messages_lose_only_their_output` |
+| AC-2 | IF a line without `stop_reason` follows a final line of the same message THEN the final line's usage stays. | `tokens::final_line_is_kept` |
+| AC-3 | WHEN `stapel tokens` shows a record with `partial` of 1 or more, or a subagent record (`<session>/<agent>`) without `importer: 2` THE output reads `≥<n>`; records of this importer carry `importer: 2`; IF `partial` or `importer` has another type or value THEN the line is a problem. | `tokens::older_subagent_records_show_partial_output`, `tokens::bad_partial_and_importer_values_are_problems` |
+| AC-4 | WHEN `stapel tokens session <transcript>` runs THE command appends one record of the transcript's last `cost-state` line to `.stapel/sessions.jsonl`; IF that line is recorded already THEN it prints `already imported: <id>`, appends nothing and exits 0. | `tokens::session_totals_are_imported_once` |
+| AC-5 | IF the transcript has no `cost-state` line, its last non-empty line is not complete JSON, or its last `cost-state` line lacks `sessionId`, `startTime`, `totalDuration` or `modelUsage` or holds a count that is not a non-negative integer THEN `tokens session` exits 1, names the line and appends nothing. | `tokens::session_without_cost_state_is_refused`, `tokens::truncated_cost_state_is_refused`, `tokens::cost_state_with_bad_counts_is_refused` |
+| AC-6 | WHEN `stapel tokens` runs without a key and sessions are recorded THE report ends with the sessions table of the golden file `tokens_sessions.txt`: per session and model its output, thinking, the records' output, partial and duplicate counts and the gap; the gap is `—` without a session output and `≤<n>` when a record is partial; a note says a continued session's gap may include its predecessor's totals. | `tokens::report_shows_session_gaps` |
+| AC-7 | WHEN two records of one transcript and model have overlapping windows THE table counts one of them and shows the other as a duplicate; records with disjoint windows all count. | `tokens::report_counts_a_duplicate_import_once` |
+| AC-8 | IF a sessions line is unreadable, not `v: 1`, or lacks `id`, `session`, `start`, `duration_ms` or `models` THEN the report skips it and prints `problem: .stapel/sessions.jsonl:<n>` after the table; a repeated `id` counts once; `stapel tokens <KEY>` shows no sessions table. | `tokens::sessions_journal_problems_are_named` |
 
 ## Design
 
@@ -73,13 +85,22 @@ Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in g
 | A `cost-state` line holds `sessionId`, `startTime` (ms), `totalDuration` (ms) and `modelUsage.<model>` with `inputTokens`, `outputTokens`, `thinkingTokens`, `cacheReadInputTokens`, `cacheCreationInputTokens`, `costUSD`; totals are cumulative over the session and include subagents | same (three lines of one session, growing) | verified |
 | `outputTokens` includes `thinkingTokens`: between two lines of one session the main transcript's message output was 368,947, the line delta 393,927 and the thinking delta 95,633, so thinking is not on top | same | verified (from deltas) |
 | A session that continues in a new file gets a new `sessionId` there (the continuation of `d8463ea3` writes `104ede7a`), and ticket records carry that id as the first part of their transcript identity | same | verified |
-| Whether the continuation's `cost-state` totals start from zero or carry the predecessor's | — | assumption; checked at plan step 4, and until then each session id stands alone |
+| Lines of one session written at its resumes keep `startTime` and a growing `totalDuration` (8,766,812, 8,871,849, 248,039,497 ms in `d8463ea3`), so start plus duration orders them | same | verified |
+| Whether a continuation's `cost-state` totals start from zero or carry the predecessor's, and which `sessionId` that line names | — | assumption; the report marks the gap (AC-6) and plan step 4 checks it |
+| `modelUsage` keys equal the `message.model` strings of the same session (the four keys of `d8463ea3` match its message models) | same | verified |
 | A `cost-state` line is written when a session continues in a new file or is resumed, not at every call; the running session has none | same | read |
 
-External states (`.stapel/config/external-states.yml`, `claude-code`): transcripts of a session that
-continued in another file (the `cost-state` line is in the old file: handled, the command takes any file);
-a session resumed several times (several lines: the latest wins, AC-3); a compacted session (same file:
-handled); permission modes, hooks and settings (not read: not applicable).
+External states (`.stapel/config/external-states.yml`):
+
+| System, dimension | Handling | Test |
+|---|---|---|
+| claude-code: transcripts — streamed lines of one message | the last line decides; a later partial line does not undo a final one | `tokens::partial_messages_lose_only_their_output`, `tokens::final_line_is_kept` |
+| claude-code: transcripts — resumed session (several `cost-state` lines) | the latest by start plus duration | `tokens::report_shows_session_gaps` |
+| claude-code: transcripts — continued in a new file | another session id; its gap is marked | `tokens::report_shows_session_gaps` |
+| claude-code: transcripts — compaction | same file, same rules | not tested (no format change seen) |
+| claude-code: permission modes, hook environment, settings | not read | not applicable |
+| os: a transcript path that is a directory, unreadable or a symlink | the OS error, exit 1 (STP-3 reader) | not promised |
+| os: two `tokens session` runs at once | both may append the same line; the report counts an `id` once | `tokens::sessions_journal_problems_are_named` |
 
 ### Decisions (as built)
 
@@ -94,29 +115,31 @@ handled); permission modes, hooks and settings (not read: not applicable).
 | Main path | a subagent fixture with and without final lines; a session journal and the report | `tokens::partial_messages_lose_only_their_output`, `tokens::session_totals_are_imported_once`, `tokens::report_shows_session_gaps` |
 | Negative | no `cost-state` line; an older subagent record | `tokens::session_without_cost_state_is_refused`, `tokens::older_subagent_records_show_partial_output` |
 | Repeated runs | the same `cost-state` line twice; a later line of the same session imported before an earlier one; one transcript in two tickets with disjoint windows (summed) and with overlapping windows (counted once) | `tokens::session_totals_are_imported_once`, `tokens::report_counts_a_duplicate_import_once` |
-| Robustness | a half-written last `cost-state` line; a negative gap | `tokens::truncated_cost_state_is_refused`, `tokens::report_shows_session_gaps` |
+| Robustness | a half-written last line (inside the type key and inside the counts); non-integer counts; a negative gap; a later partial line after a final line; bad `partial`, `importer` and sessions lines | `tokens::cost_state_with_bad_counts_is_refused`, `tokens::final_line_is_kept`, `tokens::bad_partial_and_importer_values_are_problems`, `tokens::sessions_journal_problems_are_named`, `tokens::truncated_cost_state_is_refused`, `tokens::report_shows_session_gaps` |
 
 ### Inputs
 
 | Input | Type | Smallest / largest | Empty | Invalid | Precision | Test |
 |---|---|---|---|---|---|---|
-| `.stapel/sessions.jsonl` lines | JSON, `v: 1` | STP-3 journal bounds | no file: no sessions table | unreadable or unknown `v`: skipped and named; a duplicate `id`: counted once | — | `tokens::report_shows_session_gaps` |
-| `partial` and `importer` of a ticket record | integers | `partial` 1 / 10^15 (0 is never written) | absent: complete (or partial by AC-2); `partial` without `output` shows `≥0` | not an integer: the line is a problem (STP-3) | messages | `tokens::older_subagent_records_show_partial_output` |
+| `.stapel/sessions.jsonl` lines | JSON, `v: 1` | STP-3 journal bounds | no file: no sessions table | unreadable, unknown `v` or a missing field: skipped and named; a duplicate `id`: counted once | — | `tokens::sessions_journal_problems_are_named` |
+| `partial` and `importer` of a ticket record | integers | `partial` 1 / u64; `importer` 2 | absent: complete (or partial by AC-3); `partial` without `output` shows `≥0` | another type or value: the line is a problem | messages | `tokens::bad_partial_and_importer_values_are_problems` |
 | transcript of `tokens session` | path | STP-3 bounds (16 MiB lines) | no `cost-state`: exit 1 | an unreadable line before the last `cost-state` line is skipped; the last one unreadable, or lacking `sessionId`, `startTime` or `totalDuration`, refuses (AC-3) | — | `tokens::session_without_cost_state_is_refused` |
-| `cost-state` counts | JSON integers | 0 / 10^15 | a missing model field: absent | non-integer: the line is unreadable | tokens | `tokens::session_totals_are_imported_once` |
+| `cost-state` counts | JSON integers | 0 / u64, sums saturate | a missing field: absent | not a non-negative integer: refused (AC-5) | tokens | `tokens::cost_state_with_bad_counts_is_refused` |
 
-**Review Focus.** Checked: two `tokens session` runs at once (both append through the single-write journal; the report dedupes by `id`); a session file with a `cost-state` line but no messages (handled: totals, gap equals
-totals); a model in `cost-state` that no ticket record has (handled: sum 0); `stop_reason` present but
-`output_tokens` missing (as STP-3: absent field).
+**Review Focus.** Checked: a model in the records but not in the session line (gap `—`, `tokens::report_shows_session_gaps`); a session line with no records (sum 0, same test); two runs at once (External states); a complete message without `output_tokens` (its output field absent, as STP-3; AC-1 sums only present counts).
 
 ## Proof
 
 | Criterion | Test |
 |---|---|
 | AC-1 | `tokens::partial_messages_lose_only_their_output` |
-| AC-2 | `tokens::older_subagent_records_show_partial_output` |
-| AC-3 | `tokens::session_totals_are_imported_once`, `tokens::session_without_cost_state_is_refused`, `tokens::truncated_cost_state_is_refused` |
-| AC-4 | `tokens::report_shows_session_gaps`, `tokens::report_counts_a_duplicate_import_once` |
+| AC-2 | `tokens::final_line_is_kept` |
+| AC-3 | `tokens::older_subagent_records_show_partial_output`, `tokens::bad_partial_and_importer_values_are_problems` |
+| AC-4 | `tokens::session_totals_are_imported_once` |
+| AC-5 | `tokens::session_without_cost_state_is_refused`, `tokens::truncated_cost_state_is_refused`, `tokens::cost_state_with_bad_counts_is_refused` |
+| AC-6 | `tokens::report_shows_session_gaps` |
+| AC-7 | `tokens::report_counts_a_duplicate_import_once` |
+| AC-8 | `tokens::sessions_journal_problems_are_named` |
 
 ## Plan
 
@@ -124,9 +147,10 @@ Each step is a RED/GREEN pair; heavy runs with `-j 4`.
 
 | Step | What | Tests | Expected at RED |
 |---|---|---|---|
-| 1 | Partial messages in import; `importer: 2`; older records shown partial; fixtures get final lines | AC-1, AC-2 | partial output counted |
-| 2 | `stapel tokens session` and the session journal | AC-3 | subcommand missing |
-| 3 | The sessions table in the report | AC-4 | no table |
+| 1 | Partial messages in import; `importer: 2`; older records shown partial; fixtures get final lines | AC-1, AC-3 | partial output counted |
+| 2 | `stapel tokens session` and the session journal | AC-4, AC-5 | subcommand missing |
+| 3 | The sessions table in the report | AC-6, AC-7, AC-8 | no table |
+| R1 | Code review round 1: marked unknowns, refusals, sticky final lines, problem lines, split criteria | AC-1 to AC-8 | see `findings.jsonl` |
 | 4 | After the close: import this session's `cost-state` when it exists, and compare with the STP-4 records | manual | — |
 
 ## Review
