@@ -76,6 +76,20 @@ Rules that catch nothing are removed (item 9), so this list must not only grow.
    item that caught nothing in three tickets in a row is removed or simplified, with the decision recorded
    there.
 
+## Build and review (`docs/decisions/0002`)
+
+- Route after the investigation, written in the ticket with its source (`auto` or pinned): light for about 100
+  changed lines or fewer, mechanical work and no risk tags (no spec review, no builder, one reviewer;
+  RED/GREEN and `stapel check` stay); full otherwise.
+- A builder subagent per step receives only the ticket path, the step and the base commit, and returns files
+  changed, the test command and its result, and what is left. It stops when the request leaves out something
+  the human would notice; that is an `intent_gap`. Its tokens are journaled with the role `builder`.
+- Review by risk: an untagged ticket gets the drift test and one fresh reviewer; a tagged one gets three. The
+  ticket records the reviewers that ran and the round.
+- Every code reviewer also does the deletion check, the claims check (falsify each claim of the criteria and of
+  Design "as built" against the code) and the verification gap (would an existing test fail if a behaviour
+  change were wrong). A test that did not run counts as missing.
+
 ## Language
 
 Every artifact is in English: documents, tickets and their sections, journal labels, `stapel.toml`, and every
