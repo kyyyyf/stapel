@@ -91,8 +91,28 @@ token record, even if some steps were still performed by the orchestrator by han
   test targets; the adversarial findings of STP-4's code review).
 - STP-7 one confirmation for several sections, as an option in `stapel.toml` for repositories where one
   person owns every section.
-- STP-8 accepting findings and `findings.jsonl`.
-- STP-9 MR through `gh`/`glab`.
+- STP-8 accepting findings and `findings.jsonl`, with the triage of `docs/decisions/0002`: a verdict
+  (`high`, `medium`, `low`, `false` with a refutation, `maybe-false` with what settles it) and evidence per
+  finding, findings grouped by root cause, the fates `patch`, `bad_plan`, `intent_gap` and `defer`, at most
+  two review rounds before the human decides; each finding names the process rule that should have caught it,
+  and `.stapel/process-ledger.jsonl` counts the catches per rule (`CLAUDE.md`, spec process items 7 and 9).
+- STP-9 mechanical spec checks in `ticket_drift.rs` (`docs/decisions/0001`, the six narrow fixes, and
+  `docs/decisions/0002`): one behaviour per criterion, at most about 500 characters; the Spec section within
+  about 1600 tokens, else the ticket is split; an External states table whenever the ticket has an External
+  contract, every row handled, refused or not promised; a Review Focus line; for every Inputs and External
+  states row an `IF … THEN` criterion or a golden file; a word list of vague terms with an inline waiver; a
+  frame with at least one non-goal and a closed promise. Before it: a targeted study of how BMAD writes specs
+  and work plans (`skills/bmad-spec`, the PRD and architecture validation checklists, the plan template of
+  `skills/bmad-build`), on top of what `docs/decisions/0001` and `0002` already took.
+- STP-10 MR through `gh`/`glab`.
+
+**Process changes without a ticket** (`docs/decisions/0002`, text in `CLAUDE.md`): review by risk (an untagged
+ticket gets the drift test and one fresh reviewer; a tagged one gets three); three review tasks for the
+existing reviewers (deletion check, claims check, verification gap); "a test that did not run counts as
+missing"; a route chosen after the investigation and written in the ticket (light: up to about 100 changed
+lines, mechanical, no risk tags); a builder subagent per step, tried by hand from the next build on and
+measured against the orchestrator's tokens, with a fixed report (files, test command and result, what is left)
+and the stop rule "stop when the request leaves out something the human would notice".
 
 ---
 
@@ -108,7 +128,9 @@ token record, even if some steps were still performed by the orchestrator by han
   go to the decision log and into the spec; criteria checking: the form "who · what · with what · under what
   condition", vague words, "Out of scope"; every criterion gets a test stub.
 - Design options and risks; every risk is a test; a choice with a reason.
-- The step plan and `stapel build`: the builder goes through the steps; the tool checks RED→GREEN and the
+- The step plan and `stapel build`: a context-free builder per step that receives only the ticket path, the
+  step and the base commit, and returns a fixed report (the manual pilot of phase 0, `docs/decisions/0002`);
+  the builder goes through the steps; the tool checks RED→GREEN and the
   scope; a stop is a semantic check with a clear reason.
 - `stapel review`: a fresh reviewer, an external reviewer, a drift reviewer on a `git archive`; the review
   map "required / desirable / can be skipped"; findings in the MR as line comments.
