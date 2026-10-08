@@ -313,8 +313,8 @@ pub fn analyse(root: &Path, key: &str, head: &str, steps: &[Step]) -> Result<Bui
         broken: HashMap::new(),
     };
     // Helpers: every `.rs` file under `crates/*/tests/` that holds no step test (AC-3). Included
-    // files: what the step test files and the helpers include at the base, every RED and GREEN
-    // and HEAD (AC-4).
+    // files: what the step test files and the helpers include at the base and at every commit of the
+    // range (AC-4).
     let mut step_files: BTreeSet<String> = BTreeSet::new();
     for c in steps.iter().flat_map(|s| s.commits.iter()) {
         if c.marker == Marker::Red && commits.contains(&c.sha) {
@@ -326,13 +326,7 @@ pub fn analyse(root: &Path, key: &str, head: &str, steps: &[Step]) -> Result<Bui
     if let Some(first) = commits.first() {
         seen.push(parent(root, first));
     }
-    seen.extend(
-        steps
-            .iter()
-            .flat_map(|s| s.commits.iter())
-            .filter(|c| commits.contains(&c.sha))
-            .map(|c| c.sha.clone()),
-    );
+    seen.extend(commits.iter().cloned());
     let included = Includes::new(root).included(&seen, under_tests)?;
     let mut changed: Option<Change> = None;
     let mut touched: BTreeSet<String> = BTreeSet::new();
