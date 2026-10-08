@@ -64,6 +64,10 @@ fn named_input(path: &str) -> bool {
         || parts.any(|p| p == ".cargo")
 }
 
+fn dir_of(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(d, _)| d)
+}
+
 fn is_manifest(path: &str) -> bool {
     path.rsplit('/').next() == Some("Cargo.toml")
 }
@@ -129,6 +133,12 @@ fn build_file(manifest_path: &str, text: &str) -> Option<String> {
     Some(parts.join("/"))
 }
 
+/// The `build` file of a manifest text, or `None` when the text does not parse.
+fn parse_build(manifest_path: &str, text: &str) -> Option<Option<String>> {
+    toml::from_str::<toml::Table>(text).ok()?;
+    Some(build_file(manifest_path, text))
+}
+
 /// One entry of `git diff-tree --raw -z`.
 struct Entry {
     old_mode: String,
@@ -149,8 +159,10 @@ struct Reader<'a> {
     root: &'a Path,
     /// `[package] build` files of a commit's manifests.
     builds: HashMap<String, BTreeSet<String>>,
-    /// The `build` file of a manifest blob.
-    blobs: HashMap<(String, String), Option<String>>,
+    /// The `build` file of a manifest blob; `Err` when the blob cannot be read or parsed.
+    blobs: HashMap<(String, String), Result<Option<String>, ()>>,
+    /// The directories of a commit's manifests that cannot be read or parsed.
+    broken: HashMap<String, Vec<String>>,
 }
 
 impl Reader<'_> {
@@ -159,12 +171,13 @@ impl Reader<'_> {
         let mut out = Vec::new();
         for rec in raw.split(|b| *b == 0).filter(|r| !r.is_empty()) {
             let text = String::from_utf8_lossy(rec).into_owned();
+            let malformed = || format!("git ls-tree {commit}: malformed record {text:?}");
             let Some((meta, path)) = text.split_once('\t') else {
-                continue;
+                return Err(malformed());
             };
             let mut it = meta.split(' ');
             let (Some(mode), Some(_kind), Some(id)) = (it.next(), it.next(), it.next()) else {
-                continue;
+                return Err(malformed());
             };
             out.push(Leaf {
                 mode: mode.into(),
@@ -181,6 +194,7 @@ impl Reader<'_> {
             return Ok(s.clone());
         }
         let mut set = BTreeSet::new();
+        let mut broken: Vec<String> = Vec::new();
         for leaf in self.tree(commit)? {
             if !is_manifest(&leaf.path) || leaf.mode == "120000" {
                 continue;
@@ -190,13 +204,20 @@ impl Reader<'_> {
                 Some(f) => f.clone(),
                 None => {
                     let f = show(self.root, commit, &leaf.path)
-                        .and_then(|text| build_file(&leaf.path, &text));
+                        .and_then(|text| parse_build(&leaf.path, &text))
+                        .ok_or(());
                     self.blobs.insert(key, f.clone());
                     f
                 }
             };
-            set.extend(file);
+            match file {
+                Ok(f) => set.extend(f),
+                Err(()) => {
+                    broken.push(dir_of(&leaf.path).to_string());
+                }
+            }
         }
+        self.broken.insert(commit.into(), broken);
         self.builds.insert(commit.into(), set.clone());
         Ok(set)
     }
@@ -204,7 +225,9 @@ impl Reader<'_> {
 
 /// The entries of a commit against its first parent, in `git` order, renames detected. Fields are
 /// split on NUL and paths are literal.
-fn entries(root: &Path, sha: &str) -> Result<(String, Vec<Entry>), String> {
+///
+/// The flag is set when a record is malformed or the output is short: the caller must not skip it.
+fn entries(root: &Path, sha: &str) -> Result<(String, Vec<Entry>, bool), String> {
     let base = parent(root, sha);
     let raw = git(
         root,
@@ -224,9 +247,14 @@ fn entries(root: &Path, sha: &str) -> Result<(String, Vec<Entry>), String> {
         .map(|f| String::from_utf8_lossy(f).into_owned())
         .collect();
     let mut out = Vec::new();
+    let mut bad = false;
     let mut i = 0;
     while i < fields.len() {
+        if fields[i].is_empty() && i + 1 == fields.len() {
+            break;
+        }
         let Some(meta) = fields[i].strip_prefix(':') else {
+            bad = true;
             i += 1;
             continue;
         };
@@ -239,6 +267,7 @@ fn entries(root: &Path, sha: &str) -> Result<(String, Vec<Entry>), String> {
         let two = status == 'R' || status == 'C';
         let n = if two { 2 } else { 1 };
         if i + n >= fields.len() {
+            bad = true;
             break;
         }
         let first = fields.get(i + 1).cloned();
@@ -262,7 +291,7 @@ fn entries(root: &Path, sha: &str) -> Result<(String, Vec<Entry>), String> {
         });
         i += 1 + n;
     }
-    Ok((base, out))
+    Ok((base, out, bad))
 }
 
 /// Reads the range: the first commit that changes a build input, and the build inputs at HEAD that
@@ -280,16 +309,30 @@ pub fn analyse(root: &Path, key: &str, head: &str, steps: &[Step]) -> Result<Bui
         root,
         builds: HashMap::new(),
         blobs: HashMap::new(),
+        broken: HashMap::new(),
     };
     let mut changed: Option<Change> = None;
     let mut touched: BTreeSet<String> = BTreeSet::new();
     for sha in commits.iter().filter(|s| !reds.contains(*s)) {
-        let (base, list) = entries(root, sha)?;
-        if list.is_empty() {
+        let (base, list, bad) = entries(root, sha)?;
+        if list.is_empty() && !bad {
             continue;
         }
         let mut builds = reader.build_files(&base)?;
         builds.extend(reader.build_files(sha)?);
+        // Fail closed: a malformed diff record counts as a change naming the commit; a manifest that
+        // cannot be read hides its `build` key, so a file next to it counts (as an unparsable
+        // manifest does in `manifest_hit`).
+        if bad && changed.is_none() {
+            changed = Some(Change {
+                path: format!("diff of {sha}"),
+                sha: sha.clone(),
+            });
+        }
+        let broken: Vec<String> = [&base, sha]
+            .iter()
+            .flat_map(|c| reader.broken[*c].iter().cloned())
+            .collect();
         for e in &list {
             let paths: Vec<&String> = [e.old.as_ref(), e.new.as_ref()]
                 .into_iter()
@@ -298,7 +341,11 @@ pub fn analyse(root: &Path, key: &str, head: &str, steps: &[Step]) -> Result<Bui
             let link = e.old_mode == "120000" || e.new_mode == "120000";
             let mut hit: Option<String> = None;
             for p in &paths {
-                if link || named_input(p) || builds.contains(*p) {
+                if link
+                    || named_input(p)
+                    || builds.contains(*p)
+                    || broken.iter().any(|d| d == dir_of(p))
+                {
                     touched.insert((*p).clone());
                     hit.get_or_insert_with(|| (*p).clone());
                 }
