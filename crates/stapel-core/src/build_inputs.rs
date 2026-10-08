@@ -1,0 +1,347 @@
+//! Build inputs that a commit of a ticket's range changes (STP-6 AC-1, AC-2, AC-6): the target
+//! tables and keys of a `Cargo.toml`, cargo configuration, toolchain files, build scripts and
+//! symbolic links. Such a change means a test run at HEAD may not run the code under test.
+
+use crate::outcomes::red_changes_code;
+use crate::steps::{Marker, Step, git, parent, show};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::Path;
+
+/// What the range says about build inputs.
+#[derive(Debug, Clone, Default)]
+pub struct BuildInputs {
+    /// The first non-RED commit of the range that changes a build input, with the path it names.
+    pub changed: Option<Change>,
+    /// Build inputs at HEAD that no non-RED commit of the range changes, sorted.
+    pub unchanged: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    pub path: String,
+    /// The full id of the commit.
+    pub sha: String,
+}
+
+/// The commits of the ticket's range, oldest first: the first-parent history from the oldest commit
+/// whose subject starts with `<key> ` or `<key>:` up to `head`.
+pub fn range(root: &Path, key: &str, head: &str) -> Result<Vec<String>, String> {
+    let raw = git(
+        root,
+        &[
+            "log",
+            "-z",
+            "--first-parent",
+            "--reverse",
+            "--format=%H%x00%s",
+            head,
+        ],
+    )?;
+    let fields: Vec<String> = raw
+        .split(|b| *b == 0)
+        .map(|f| String::from_utf8_lossy(f).into_owned())
+        .collect();
+    let commits: Vec<(String, &String)> = fields
+        .chunks(2)
+        .filter(|c| c.len() == 2)
+        .map(|c| (c[0].trim_start_matches('\n').to_string(), &c[1]))
+        .filter(|(sha, _)| !sha.is_empty())
+        .collect();
+    let start = commits
+        .iter()
+        .position(|(_, s)| s.starts_with(&format!("{key} ")) || s.starts_with(&format!("{key}:")));
+    Ok(start
+        .map(|i| commits[i..].iter().map(|(sha, _)| sha.clone()).collect())
+        .unwrap_or_default())
+}
+
+/// A path that is a build input by its name: a `.cargo` component, a toolchain file or `build.rs`.
+fn named_input(path: &str) -> bool {
+    let mut parts = path.split('/');
+    let last = parts.next_back().unwrap_or("");
+    matches!(last, "rust-toolchain" | "rust-toolchain.toml" | "build.rs")
+        || last == ".cargo"
+        || parts.any(|p| p == ".cargo")
+}
+
+fn is_manifest(path: &str) -> bool {
+    path.rsplit('/').next() == Some("Cargo.toml")
+}
+
+/// The parts of a manifest that decide which targets exist, for comparison.
+fn targets(text: &str) -> Option<toml::Table> {
+    let t: toml::Table = toml::from_str(text).ok()?;
+    let mut out = toml::Table::new();
+    for k in ["lib", "bin", "test", "example", "bench"] {
+        if let Some(v) = t.get(k) {
+            out.insert(k.into(), v.clone());
+        }
+    }
+    let pick = |section: &str, keys: &[&str]| {
+        let mut part = toml::Table::new();
+        if let Some(toml::Value::Table(s)) = t.get(section) {
+            for k in keys {
+                if let Some(v) = s.get(*k) {
+                    part.insert((*k).into(), v.clone());
+                }
+            }
+        }
+        part
+    };
+    let ws = pick("workspace", &["members", "exclude", "default-members"]);
+    if !ws.is_empty() {
+        out.insert("workspace".into(), toml::Value::Table(ws));
+    }
+    let pkg = pick(
+        "package",
+        &[
+            "build",
+            "autolib",
+            "autobins",
+            "autotests",
+            "autoexamples",
+            "autobenches",
+        ],
+    );
+    if !pkg.is_empty() {
+        out.insert("package".into(), toml::Value::Table(pkg));
+    }
+    Some(out)
+}
+
+/// The file a manifest's `[package] build` key names, relative to the repository.
+fn build_file(manifest_path: &str, text: &str) -> Option<String> {
+    let t: toml::Table = toml::from_str(text).ok()?;
+    let toml::Value::String(name) = t.get("package")?.get("build")? else {
+        return None;
+    };
+    let mut parts: Vec<&str> = manifest_path.split('/').collect();
+    parts.pop();
+    for c in name.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            c => parts.push(c),
+        }
+    }
+    Some(parts.join("/"))
+}
+
+/// One entry of `git diff-tree --raw -z`.
+struct Entry {
+    old_mode: String,
+    new_mode: String,
+    status: char,
+    old: Option<String>,
+    new: Option<String>,
+}
+
+/// A tree entry of `git ls-tree -r -z`: mode, blob id and path.
+struct Leaf {
+    mode: String,
+    id: String,
+    path: String,
+}
+
+struct Reader<'a> {
+    root: &'a Path,
+    /// `[package] build` files of a commit's manifests.
+    builds: HashMap<String, BTreeSet<String>>,
+    /// The `build` file of a manifest blob.
+    blobs: HashMap<(String, String), Option<String>>,
+}
+
+impl Reader<'_> {
+    fn tree(&self, commit: &str) -> Result<Vec<Leaf>, String> {
+        let raw = git(self.root, &["ls-tree", "-r", "-z", commit])?;
+        let mut out = Vec::new();
+        for rec in raw.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+            let text = String::from_utf8_lossy(rec).into_owned();
+            let Some((meta, path)) = text.split_once('\t') else {
+                continue;
+            };
+            let mut it = meta.split(' ');
+            let (Some(mode), Some(_kind), Some(id)) = (it.next(), it.next(), it.next()) else {
+                continue;
+            };
+            out.push(Leaf {
+                mode: mode.into(),
+                id: id.into(),
+                path: path.into(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// The files that the manifests of a commit name with `build`.
+    fn build_files(&mut self, commit: &str) -> Result<BTreeSet<String>, String> {
+        if let Some(s) = self.builds.get(commit) {
+            return Ok(s.clone());
+        }
+        let mut set = BTreeSet::new();
+        for leaf in self.tree(commit)? {
+            if !is_manifest(&leaf.path) || leaf.mode == "120000" {
+                continue;
+            }
+            let key = (leaf.id.clone(), leaf.path.clone());
+            let file = match self.blobs.get(&key) {
+                Some(f) => f.clone(),
+                None => {
+                    let f = show(self.root, commit, &leaf.path)
+                        .and_then(|text| build_file(&leaf.path, &text));
+                    self.blobs.insert(key, f.clone());
+                    f
+                }
+            };
+            set.extend(file);
+        }
+        self.builds.insert(commit.into(), set.clone());
+        Ok(set)
+    }
+}
+
+/// The entries of a commit against its first parent, in `git` order, renames detected. Fields are
+/// split on NUL and paths are literal.
+fn entries(root: &Path, sha: &str) -> Result<(String, Vec<Entry>), String> {
+    let base = parent(root, sha);
+    let raw = git(
+        root,
+        &[
+            "diff-tree",
+            "-r",
+            "-z",
+            "-M",
+            "--raw",
+            "--no-commit-id",
+            &base,
+            sha,
+        ],
+    )?;
+    let fields: Vec<String> = raw
+        .split(|b| *b == 0)
+        .map(|f| String::from_utf8_lossy(f).into_owned())
+        .collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < fields.len() {
+        let Some(meta) = fields[i].strip_prefix(':') else {
+            i += 1;
+            continue;
+        };
+        let parts: Vec<&str> = meta.split(' ').collect();
+        let status = parts.get(4).and_then(|s| s.chars().next()).unwrap_or('M');
+        let (old_mode, new_mode) = (
+            parts.first().copied().unwrap_or("").to_string(),
+            parts.get(1).copied().unwrap_or("").to_string(),
+        );
+        let two = status == 'R' || status == 'C';
+        let n = if two { 2 } else { 1 };
+        if i + n >= fields.len() {
+            break;
+        }
+        let first = fields.get(i + 1).cloned();
+        let second = if two {
+            fields.get(i + 2).cloned()
+        } else {
+            None
+        };
+        let (old, new) = match status {
+            'A' => (None, first),
+            'D' => (first, None),
+            _ if two => (first, second),
+            _ => (first.clone(), first),
+        };
+        out.push(Entry {
+            old_mode,
+            new_mode,
+            status,
+            old,
+            new,
+        });
+        i += 1 + n;
+    }
+    Ok((base, out))
+}
+
+/// Reads the range: the first commit that changes a build input, and the build inputs at HEAD that
+/// no commit changes. A RED of the ticket that changes no code is skipped; every other commit of the
+/// range counts.
+pub fn analyse(root: &Path, key: &str, head: &str, steps: &[Step]) -> Result<BuildInputs, String> {
+    let commits = range(root, key, head)?;
+    let mut reds: HashSet<String> = HashSet::new();
+    for c in steps.iter().flat_map(|s| s.commits.iter()) {
+        if c.marker == Marker::Red && commits.contains(&c.sha) && !red_changes_code(root, &c.sha)? {
+            reds.insert(c.sha.clone());
+        }
+    }
+    let mut reader = Reader {
+        root,
+        builds: HashMap::new(),
+        blobs: HashMap::new(),
+    };
+    let mut changed: Option<Change> = None;
+    let mut touched: BTreeSet<String> = BTreeSet::new();
+    for sha in commits.iter().filter(|s| !reds.contains(*s)) {
+        let (base, list) = entries(root, sha)?;
+        if list.is_empty() {
+            continue;
+        }
+        let mut builds = reader.build_files(&base)?;
+        builds.extend(reader.build_files(sha)?);
+        for e in &list {
+            let paths: Vec<&String> = [e.old.as_ref(), e.new.as_ref()]
+                .into_iter()
+                .flatten()
+                .collect();
+            let link = e.old_mode == "120000" || e.new_mode == "120000";
+            let mut hit: Option<String> = None;
+            for p in &paths {
+                if link || named_input(p) || builds.contains(*p) {
+                    touched.insert((*p).clone());
+                    hit.get_or_insert_with(|| (*p).clone());
+                }
+            }
+            if hit.is_none() {
+                hit = manifest_hit(root, sha, &base, e);
+            }
+            if let Some(path) = hit
+                && changed.is_none()
+            {
+                changed = Some(Change {
+                    path,
+                    sha: sha.clone(),
+                });
+            }
+        }
+    }
+    let at_head = reader.tree(head)?;
+    let builds = reader.build_files(head)?;
+    let unchanged = at_head
+        .iter()
+        .filter(|l| l.mode == "120000" || named_input(&l.path) || builds.contains(&l.path))
+        .map(|l| l.path.clone())
+        .filter(|p| !touched.contains(p))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    Ok(BuildInputs { changed, unchanged })
+}
+
+/// The manifest path of an entry whose target tables or keys changed, or that was added or deleted.
+fn manifest_hit(root: &Path, sha: &str, base: &str, e: &Entry) -> Option<String> {
+    let path = [e.old.as_ref(), e.new.as_ref()]
+        .into_iter()
+        .flatten()
+        .find(|p| is_manifest(p))?;
+    if e.status != 'M' && e.status != 'T' {
+        return Some(path.clone());
+    }
+    let before = show(root, base, e.old.as_deref()?).and_then(|t| targets(&t));
+    let after = show(root, sha, e.new.as_deref()?).and_then(|t| targets(&t));
+    match (before, after) {
+        (Some(b), Some(a)) if b == a => None,
+        _ => Some(path.clone()),
+    }
+}

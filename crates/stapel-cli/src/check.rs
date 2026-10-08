@@ -1,9 +1,10 @@
 //! `stapel check [KEY] [--list]`: the RED to GREEN check of a ticket's steps (STP-4).
 
 use crate::repo;
+use stapel_core::build_inputs;
 use stapel_core::config::validate_cargo;
 use stapel_core::journal::{append, new_id};
-use stapel_core::outcomes::{Analysis, MAX_NAMED, analyse, passing};
+use stapel_core::outcomes::{Analysis, MAX_NAMED, analyse, named, passing};
 use stapel_core::runner::{
     Parsed, TestState, cargo_version, parse_run, resolve_cargo, run_cargo, summary_counts,
 };
@@ -122,6 +123,10 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         Ok(a) => a,
         Err(e) => return refuse(e),
     };
+    let inputs = match build_inputs::analyse(&root, &ticket.key, &head, &steps) {
+        Ok(i) => i,
+        Err(e) => return refuse(e),
+    };
     let tmp = match resolve_tmpdir(&root) {
         Ok(t) => t,
         Err(e) => return refuse(e),
@@ -143,7 +148,13 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
     let timeout = Duration::from_secs(check.timeout_secs);
     // A configuration above the worktree is found before any cargo run (AC-7).
     let outside = build_input_outside(&wt.path);
-    let cargo_text = if outside.is_some() {
+    // A build input changed by a commit of the ticket comes first (STP-6 AC-1, AC-2); no cargo runs.
+    let blocked = inputs
+        .changed
+        .as_ref()
+        .map(|c| format!("build-input-changed: {} at {}", c.path, short(&c.sha)))
+        .or(outside.map(|p| format!("build-input-outside: {}", p.display())));
+    let cargo_text = if blocked.is_some() {
         cargo.display().to_string()
     } else {
         match cargo_version(&cargo, &wt.path, &target, timeout) {
@@ -158,10 +169,13 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         target,
         timeout,
         head: &head,
-        outside: outside.map(|p| format!("build-input-outside: {}", p.display())),
+        outside: blocked,
     };
     println!("ticket: {} at {}", ticket.key, short(&head));
     println!("cargo: {cargo_text}");
+    if !inputs.unchanged.is_empty() {
+        println!("build inputs: {}", named(&inputs.unchanged));
+    }
     let mut ok = true;
     let mut steps_json = Vec::new();
     for a in &analyses {

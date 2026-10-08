@@ -51,7 +51,7 @@ impl Files<'_> {
     }
 }
 
-fn named(items: &[String]) -> String {
+pub fn named(items: &[String]) -> String {
     let mut text = items
         .iter()
         .take(MAX_NAMED)
@@ -120,6 +120,19 @@ fn is_code(files: &mut Files, red: &str, base: &str, old: Option<&str>, new: Opt
         };
     }
     true
+}
+
+/// Whether a RED commit changes code (STP-4 AC-2); such a commit is no RED for the build-input
+/// outcome.
+pub fn red_changes_code(root: &Path, red: &str) -> Result<bool, String> {
+    let mut files = Files {
+        root,
+        cache: HashMap::new(),
+    };
+    let base = parent(root, red);
+    Ok(changes(root, red)?
+        .iter()
+        .any(|c| is_code(&mut files, red, &base, c.old.as_deref(), c.new.as_deref())))
 }
 
 /// A part of a step's protected content.
