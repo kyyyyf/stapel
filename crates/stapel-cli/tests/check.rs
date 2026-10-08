@@ -2638,3 +2638,40 @@ fn refuses_a_tmpdir_inside_the_repository() {
     assert_eq!(code, 2, "relative: {text}");
     assert!(!runs.exists(), "relative: a record was written");
 }
+
+#[test]
+fn history_outcomes_come_before_build_input_outside() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "lonely", "assert!(true);");
+    commit(dir, "ABC-1 step 2 RED: only a red");
+    let tmp = tempfile::tempdir().unwrap();
+    write(tmp.path(), "rust-toolchain.toml", "");
+    let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 2"), "unpaired", "{text}");
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+    assert!(
+        text.contains("step 1: unverified: build-input-outside:"),
+        "{text}"
+    );
+}
+
+#[test]
+fn unwritable_tmpdir_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = passing_repo();
+    let dir = repo.path();
+    let runs = dir.join(".stapel/tickets/ABC-1/runs.jsonl");
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+    let writable = std::fs::File::create(tmp.path().join("probe")).is_ok();
+    if !writable {
+        let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
+        assert_eq!(code, 2, "{text}");
+        assert!(text.contains("TMPDIR"), "{text}");
+        assert!(!runs.exists(), "a record was written");
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
+    }
+    std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+}
