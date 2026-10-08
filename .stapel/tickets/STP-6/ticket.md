@@ -105,6 +105,10 @@ proxy and certificate variables of the caller; proc-macro crates that read files
   term's order, STP-4's history outcomes first (D2-2). (26) A stale `stapel-check-*` worktree registration
   whose folder is gone is pruned before a check; other worktrees are not touched (D2-4). (27) An ancestor
   that cannot be read counts as found (D2-6).
+- 2026-10-08, step 3: (28) Decision, proposed by the builder and agreed by the human: a RED of the ticket
+  that changes code (`red-changes-code`) counts as a non-RED commit for the build-input rules of the other
+  steps, since their HEAD runs use that input. The golden fix of step 3 was moved into its RED by the human
+  (a local rewrite of two unpushed commits; old ids 32d43b1 and 2cfbac9).
 ## Spec
 
 Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in golden files. Terms:
