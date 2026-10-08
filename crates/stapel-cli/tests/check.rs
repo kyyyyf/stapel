@@ -2149,6 +2149,7 @@ fn cargo_runs_with_the_allow_list_only() {
         "CARGO_HOME",
         "RUSTUP_HOME",
         "RUSTUP_TOOLCHAIN",
+        "CARGO_BUILD_JOBS",
         "CARGO_TARGET_DIR",
         "CARGO_TERM_COLOR",
         // set by the shell itself
@@ -2171,6 +2172,10 @@ fn cargo_runs_with_the_allow_list_only() {
         for must in ["PATH", "CARGO_TARGET_DIR", "CARGO_TERM_COLOR"] {
             assert!(names.contains(&must), "{must} is missing: {dump}");
         }
+        assert!(
+            dump.lines().any(|l| l == "CARGO_BUILD_JOBS=2"),
+            "CARGO_BUILD_JOBS did not reach cargo: {dump}"
+        );
     }
     assert!(seen >= 3, "cargo ran {seen} times");
 }
