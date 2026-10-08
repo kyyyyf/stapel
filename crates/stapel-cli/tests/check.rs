@@ -2675,3 +2675,123 @@ fn unwritable_tmpdir_is_refused() {
     }
     std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
 }
+
+#[test]
+fn cargo_home_cannot_hide_a_config_above() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    // `CARGO_HOME` is the `TMPDIR` itself, with a planted configuration in it.
+    let tmp = tempfile::tempdir().unwrap();
+    write(tmp.path(), ".cargo/config.toml", "");
+    let home = tmp.path().canonicalize().unwrap();
+    let (code, text) = check_env(dir, &[("TMPDIR", tmp.path()), ("CARGO_HOME", &home)]);
+    assert_eq!(code, 1, "same folder: {text}");
+    let want = format!("build-input-outside: {}", home.display());
+    assert!(
+        text.contains(&format!("step 1: unverified: {want}")),
+        "{text}"
+    );
+    // `CARGO_HOME` is a folder above `TMPDIR` and holds a `rust-toolchain.toml`.
+    let up = tempfile::tempdir().unwrap();
+    write(up.path(), "rust-toolchain.toml", "");
+    let inner = up.path().join("inner");
+    std::fs::create_dir(&inner).unwrap();
+    let home = up.path().canonicalize().unwrap();
+    let (code, text) = check_env(dir, &[("TMPDIR", &inner), ("CARGO_HOME", &home)]);
+    assert_eq!(code, 1, "ancestor: {text}");
+    let want = format!("build-input-outside: {}", home.display());
+    assert!(
+        text.contains(&format!("step 1: unverified: {want}")),
+        "{text}"
+    );
+    // `rust-toolchain` directly in a `.cargo` folder that is `CARGO_HOME`'s parent still counts.
+    let top = tempfile::tempdir().unwrap();
+    write(top.path(), "rust-toolchain", "");
+    write(top.path(), ".cargo/config.toml", "");
+    let home = top.path().join(".cargo");
+    let (code, text) = check_env(dir, &[("TMPDIR", top.path()), ("CARGO_HOME", &home)]);
+    assert_eq!(code, 1, "toolchain: {text}");
+    let held = top.path().canonicalize().unwrap().join("rust-toolchain");
+    assert!(
+        text.contains(&format!("build-input-outside: {}", held.display())),
+        "{text}"
+    );
+}
+
+#[test]
+fn relative_tmpdir_is_resolved() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let dumps = scripts.path().join("dumps");
+    let fake = recording_cargo(scripts.path(), &dumps);
+    set_cargo_key(dir, &fake);
+    let sibling = tempfile::tempdir_in(dir.parent().unwrap()).unwrap();
+    let rel = Path::new("..").join(sibling.path().file_name().unwrap());
+    let (code, text) = check_env(dir, &[("TMPDIR", &rel)]);
+    assert_eq!(code, 0, "{text}");
+    let real = sibling.path().canonicalize().unwrap();
+    let mut seen = 0;
+    for entry in std::fs::read_dir(&dumps).unwrap() {
+        let body = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+        assert_eq!(Path::new(body.trim()).parent(), Some(real.as_path()));
+        seen += 1;
+    }
+    assert!(seen >= 1, "cargo did not run");
+}
+
+#[test]
+fn stale_check_worktrees_are_pruned() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let tmp = tempfile::tempdir().unwrap();
+    let stale = tmp.path().join("stapel-check-crashed");
+    let other = tmp.path().join("other-gone");
+    let live = tmp.path().join("live-one");
+    for p in [&stale, &other, &live] {
+        git(
+            dir,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                p.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+    }
+    std::fs::remove_dir_all(&stale).unwrap();
+    std::fs::remove_dir_all(&other).unwrap();
+    let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
+    assert_eq!(code, 0, "{text}");
+    let list = git(dir, &["worktree", "list", "--porcelain"]);
+    assert!(!list.contains("stapel-check-crashed"), "{list}");
+    // Other worktrees are not touched, a missing folder or not.
+    assert!(list.contains("other-gone"), "{list}");
+    assert!(list.contains("live-one"), "{list}");
+}
+
+#[test]
+fn unreadable_ancestor_counts_as_found() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = passing_repo();
+    let dir = repo.path();
+    let top = tempfile::tempdir().unwrap();
+    let cargo = top.path().join(".cargo");
+    std::fs::create_dir(&cargo).unwrap();
+    let inner = top.path().join("inner");
+    std::fs::create_dir(&inner).unwrap();
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = std::fs::symlink_metadata(cargo.join("config"))
+        .map_or_else(|e| e.kind() == std::io::ErrorKind::NotFound, |_| true);
+    if !readable {
+        let (code, text) = check_env(dir, &[("TMPDIR", &inner)]);
+        assert_eq!(code, 1, "{text}");
+        assert!(
+            text.contains("step 1: unverified: build-input-outside:"),
+            "{text}"
+        );
+    }
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
