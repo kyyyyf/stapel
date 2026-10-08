@@ -247,7 +247,7 @@ pub const ENV_ALLOW: [&str; 9] = [
 ];
 
 /// The cargo program (STP-6 AC-9): `configured` if set, else the first `cargo` in an absolute
-/// `PATH` entry; relative entries are skipped.
+/// `PATH` entry that is an executable regular file; relative entries are skipped.
 pub fn resolve_cargo(configured: Option<&str>) -> Result<PathBuf, String> {
     if let Some(path) = configured {
         return Ok(PathBuf::from(path));
@@ -256,8 +256,19 @@ pub fn resolve_cargo(configured: Option<&str>) -> Result<PathBuf, String> {
     std::env::split_paths(&path)
         .filter(|p| p.is_absolute())
         .map(|p| p.join("cargo"))
-        .find(|p| p.is_file())
+        .find(|p| is_executable_file(p))
         .ok_or_else(|| "no cargo found in an absolute PATH entry".to_string())
+}
+
+#[cfg(unix)]
+fn is_executable_file(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(p: &Path) -> bool {
+    p.is_file()
 }
 
 /// The first line of `cargo --version` run in `dir`, cut to 200 bytes; `?` when empty. A failing

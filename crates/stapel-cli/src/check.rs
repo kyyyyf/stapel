@@ -1,6 +1,7 @@
 //! `stapel check [KEY] [--list]`: the RED to GREEN check of a ticket's steps (STP-4).
 
 use crate::repo;
+use stapel_core::config::validate_cargo;
 use stapel_core::journal::{append, new_id};
 use stapel_core::outcomes::{Analysis, MAX_NAMED, analyse, passing};
 use stapel_core::runner::{
@@ -127,6 +128,11 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         Ok(c) => c,
         Err(e) => return refuse(e),
     };
+    if let Some(key) = check.cargo.as_deref()
+        && let Err(e) = validate_cargo(key, &root)
+    {
+        return refuse(e);
+    }
     let target = dir.join("check-target");
     let timeout = Duration::from_secs(check.timeout_secs);
     let version = match cargo_version(&cargo, &wt.path, &target, timeout) {

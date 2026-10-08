@@ -246,7 +246,9 @@ fn validate_writable(entry: &str) -> Result<(), String> {
 }
 
 /// `[check] cargo`: an absolute path to an executable regular file outside `root`.
-fn validate_cargo(cargo: &str, root: &std::path::Path) -> Result<(), String> {
+/// Tests `[check] cargo` against the repository folder `root`; `check` runs it again before the
+/// first run, since a link may change after the load.
+pub fn validate_cargo(cargo: &str, root: &std::path::Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     let bad = |why: &str| Err(format!("check.cargo \"{cargo}\" {why}"));
     let path = std::path::Path::new(cargo);
