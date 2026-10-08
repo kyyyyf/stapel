@@ -113,6 +113,13 @@ token record, even if some steps were still performed by the orchestrator by han
 - STP-11 ticket types `bug` (reproduction, cause hypothesis, no fix) and `spike` (a question with a time box),
   with templates; ticket status outside the confirmed text.
 - STP-12 MR through `gh`/`glab`.
+- STP-13 (split from STP-6, taken right after it) hardening of `stapel check`, part two: dependency
+  redirection (`path`, `git`, `package`, `[patch]`, `[replace]`), `include*!` with a non-literal argument or a path
+  outside the repository, and a `Cargo.toml` added by a RED under `crates/*/tests/`.
+- STP-14 (after STP-13) `stapel check --history`: the outcomes that need no test run (`unpaired`, `duplicate`,
+  `no-tests`, `red-changes-code`, `tests-changed`, `build-input-changed`) from git history alone, in seconds,
+  with no record in `runs.jsonl`; run after every builder commit, later from a hook, so a builder's mistake is
+  fixed by amending its last commit instead of rewriting a chain (found during STP-6).
 
 **To discuss with the human:** a feature or epic level with its own human-facing spec and "Done when", with
 tickets limited in size and written for an agent (`docs/decisions/0003`, open question).

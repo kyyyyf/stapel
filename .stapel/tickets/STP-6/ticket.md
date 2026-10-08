@@ -109,6 +109,9 @@ proxy and certificate variables of the caller; proc-macro crates that read files
   that changes code (`red-changes-code`) counts as a non-RED commit for the build-input rules of the other
   steps, since their HEAD runs use that input. The golden fix of step 3 was moved into its RED by the human
   (a local rewrite of two unpushed commits; old ids 32d43b1 and 2cfbac9).
+- 2026-10-08, after step 3: (29) Decision: STP-14, `stapel check --history`, follows STP-13 (`docs/PHASES.md`).
+  Builder briefs from step 4 on: a GREEN changes nothing under `crates/*/tests/`; a coverage commit only adds
+  `#[test]` functions with their helpers nested inside; `stapel check` runs after every builder commit.
 ## Spec
 
 Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in golden files. Terms:
