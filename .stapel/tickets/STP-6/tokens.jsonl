@@ -6,3 +6,4 @@
 {"source":"estimate","estimate":63851,"v":1,"id":"t-9b50e51884e3","at":"2026-10-08T11:36:14Z","ticket":"STP-6","role":"builder","model":"claude-sonnet-5-5","step":"1","note":"builder, step 1 drift fixes; subagent_tokens of the end notice"}
 {"source":"estimate","estimate":73330,"v":1,"id":"t-19163b578a63","at":"2026-10-08T11:45:08Z","ticket":"STP-6","role":"builder","model":"claude-sonnet-5-5","step":"2","note":"builder step 2; subagent_tokens of the end notice"}
 {"source":"estimate","estimate":0,"v":1,"id":"t-9455e35bc192","at":"2026-10-08T11:46:18Z","ticket":"STP-6","role":"drift","model":"claude-sonnet-5-5","step":"2","note":"drift review step 2; end notice not yet received"}
+{"source":"estimate","estimate":47719,"v":1,"id":"t-dffeab8ad70a","at":"2026-10-08T11:46:22Z","ticket":"STP-6","role":"drift","model":"claude-sonnet-5-5","step":"2","note":"drift review step 2; subagent_tokens of the end notice; the 0 record before it was written early by mistake"}
