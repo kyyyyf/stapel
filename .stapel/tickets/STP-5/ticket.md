@@ -181,4 +181,21 @@ builder costs about a quarter of the cache reads on a cheaper model, but the orc
 size. The largest lever is a small orchestrator context: a new session per ticket now, and coordination by
 `stapel` itself in phase 1. One sample; the builder's output tokens come with the session's `cost-state`.
 
-After the close: escaped defects, HIGH and MEDIUM inside-promise findings, size, tokens, time.
+**Measures after the close (2026-10-08), compared with STP-4:**
+
+| Measure | STP-4 | STP-5 |
+|---|---|---|
+| Escaped defects found so far | 0 | 0 |
+| Findings before code (spec review, per-step drift) | 35 + 54 | 9 + 1 |
+| Code review findings, all / HIGH and MEDIUM inside the promise | 38 / 15 | 17 / 15 |
+| `ticket.md` | 54 KB | 18 KB |
+| Orchestrator output / cache read | 280k / 82M | ≥109k / 80M |
+| Wall time from creation to close | about 3 h | 3 days, mostly the process discussion |
+
+What improved: the ticket is a third of the size; work before code produced ten findings instead of 89; code
+review found fewer findings in all, with no review quota. What did not: HIGH and MEDIUM inside-promise
+findings of code review stayed at 15, and several were breaches of the new rules by the author (long
+criteria, prose instead of the External states table, a frame outgrown); the orchestrator's cache reads
+stayed at about 80 million, because the window holds the process work of three days in one long session and
+each call reads that session. Measured subagent output is now shown as a lower bound (`≥`); the session totals
+of this session come with its `cost-state` line, which does not exist yet.
