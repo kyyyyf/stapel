@@ -67,7 +67,7 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
     let root = stapel_root(cwd).ok_or("not inside a stapel repository")?;
     let text = std::fs::read_to_string(root.join(".stapel/stapel.toml"))
         .map_err(|e| format!(".stapel/stapel.toml: {e}"))?;
-    let config = Config::parse(&text).map_err(|e| format!(".stapel/stapel.toml: {e}"))?;
+    let config = Config::parse_at(&text, &root).map_err(|e| format!(".stapel/stapel.toml: {e}"))?;
     user_name(&root)?;
 
     let (facts, reason, tail) = if inv.action == "ok" {

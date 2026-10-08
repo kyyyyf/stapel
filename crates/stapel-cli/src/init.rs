@@ -43,7 +43,8 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
     let config_path = root.join(CONFIG);
     if config_path.exists() {
         let text = std::fs::read_to_string(&config_path).map_err(|e| format!("{CONFIG}: {e}"))?;
-        let config = Config::parse(&text).map_err(|e| format!("{CONFIG} cannot be read: {e}"))?;
+        let config =
+            Config::parse_at(&text, &root).map_err(|e| format!("{CONFIG} cannot be read: {e}"))?;
         if prefix.is_some() {
             println!(
                 "{CONFIG} already exists, the ticket key stays {}; edit the file to change it",

@@ -11,6 +11,6 @@ pub fn open() -> Result<(PathBuf, Config), String> {
         .ok_or("no .stapel/stapel.toml here or above; run stapel init in the repository first")?;
     let path = root.join(".stapel/stapel.toml");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let config = Config::parse(&text).map_err(|e| format!(".stapel/stapel.toml: {e}"))?;
+    let config = Config::parse_at(&text, &root).map_err(|e| format!(".stapel/stapel.toml: {e}"))?;
     Ok((root, config))
 }

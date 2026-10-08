@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -233,14 +233,80 @@ fn kill_group(pid: u32) {
 #[cfg(not(unix))]
 fn kill_group(_pid: u32) {}
 
+/// Variables of the caller that reach a cargo run (STP-6 AC-8); the check adds its own.
+pub const ENV_ALLOW: [&str; 8] = [
+    "HOME",
+    "USER",
+    "PATH",
+    "LANG",
+    "TMPDIR",
+    "CARGO_HOME",
+    "RUSTUP_HOME",
+    "RUSTUP_TOOLCHAIN",
+];
+
+/// The cargo program (STP-6 AC-9): `configured` if set, else the first `cargo` in an absolute
+/// `PATH` entry; relative entries are skipped.
+pub fn resolve_cargo(configured: Option<&str>) -> Result<PathBuf, String> {
+    if let Some(path) = configured {
+        return Ok(PathBuf::from(path));
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path)
+        .filter(|p| p.is_absolute())
+        .map(|p| p.join("cargo"))
+        .find(|p| p.is_file())
+        .ok_or_else(|| "no cargo found in an absolute PATH entry".to_string())
+}
+
+/// The first line of `cargo --version` run in `dir`, cut to 200 bytes; `?` when empty. A failing
+/// or slow run is an error (STP-6 AC-9, AC-11).
+pub fn cargo_version(
+    cargo: &Path,
+    dir: &Path,
+    target_dir: &Path,
+    timeout: Duration,
+) -> Result<String, String> {
+    let run = run_cargo(cargo, dir, &["--version".to_string()], target_dir, timeout)
+        .map_err(|e| format!("cargo --version: {e}"))?;
+    if run.timed_out {
+        return Err(format!(
+            "cargo --version: the time limit of {} s ran out",
+            timeout.as_secs()
+        ));
+    }
+    if run.exit != Some(0) {
+        return Err(format!("cargo --version failed (exit {:?})", run.exit));
+    }
+    let line = run.output.lines().next().unwrap_or("");
+    let mut end = line.len().min(200);
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    let line = line[..end].trim_end();
+    Ok(if line.is_empty() {
+        "?".into()
+    } else {
+        line.into()
+    })
+}
+
 /// Runs `cargo <args>` in `dir` in its own process group, killed as a group after `timeout`.
+/// The run gets an empty environment plus the allow-listed variables of the caller.
 pub fn run_cargo(
+    cargo: &Path,
     dir: &Path,
     args: &[String],
     target_dir: &Path,
     timeout: Duration,
 ) -> Result<RunResult, String> {
-    let mut cmd = Command::new("cargo");
+    let mut cmd = Command::new(cargo);
+    cmd.env_clear();
+    for name in ENV_ALLOW {
+        if let Some(value) = std::env::var_os(name) {
+            cmd.env(name, value);
+        }
+    }
     cmd.args(args)
         .current_dir(dir)
         .env("CARGO_TARGET_DIR", target_dir)

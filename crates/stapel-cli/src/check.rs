@@ -3,7 +3,9 @@
 use crate::repo;
 use stapel_core::journal::{append, new_id};
 use stapel_core::outcomes::{Analysis, MAX_NAMED, analyse, passing};
-use stapel_core::runner::{Parsed, TestState, parse_run, run_cargo, summary_counts};
+use stapel_core::runner::{
+    Parsed, TestState, cargo_version, parse_run, resolve_cargo, run_cargo, summary_counts,
+};
 use stapel_core::rust_tests::test_functions;
 use stapel_core::steps::{
     Step, TestId, git_text, package_name, show, step_commits, step_tests, steps,
@@ -121,14 +123,27 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         Ok(w) => w,
         Err(e) => return refuse(e),
     };
+    let cargo = match resolve_cargo(check.cargo.as_deref()) {
+        Ok(c) => c,
+        Err(e) => return refuse(e),
+    };
+    let target = dir.join("check-target");
+    let timeout = Duration::from_secs(check.timeout_secs);
+    let version = match cargo_version(&cargo, &wt.path, &target, timeout) {
+        Ok(v) => v,
+        Err(e) => return refuse(format!("{}: {e}", cargo.display())),
+    };
+    let cargo_text = format!("{} ({version})", cargo.display());
     let runner = Runner {
         root: &root,
         wt: &wt,
-        target: dir.join("check-target"),
-        timeout: Duration::from_secs(check.timeout_secs),
+        cargo: &cargo,
+        target,
+        timeout,
         head: &head,
     };
     println!("ticket: {} at {}", ticket.key, short(&head));
+    println!("cargo: {cargo_text}");
     let mut ok = true;
     let mut steps_json = Vec::new();
     for a in &analyses {
@@ -169,6 +184,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         "ticket": ticket.key,
         "head": head,
         "tool": format!("stapel {}", env!("CARGO_PKG_VERSION")),
+        "cargo": cargo_text,
         "result": if ok { "pass" } else { "fail" },
         "steps": steps_json,
         "suite": {
@@ -248,6 +264,7 @@ fn names_of(outcome: &str, reason: &str) -> Vec<String> {
 struct Runner<'a> {
     root: &'a Path,
     wt: &'a Worktree,
+    cargo: &'a Path,
     target: PathBuf,
     timeout: Duration,
     head: &'a str,
@@ -281,7 +298,7 @@ impl Runner<'_> {
             .map(|s| s.to_string())
             .collect();
             args.extend(names.iter().cloned());
-            let run = run_cargo(&self.wt.path, &args, &self.target, self.timeout)?;
+            let run = run_cargo(self.cargo, &self.wt.path, &args, &self.target, self.timeout)?;
             if run.timed_out {
                 return Err(format!(
                     "the time limit of {} s ran out",
@@ -418,7 +435,7 @@ impl Runner<'_> {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let run = match run_cargo(&self.wt.path, &args, &self.target, self.timeout) {
+        let run = match run_cargo(self.cargo, &self.wt.path, &args, &self.target, self.timeout) {
             Ok(r) => r,
             Err(e) => return unverified(e),
         };

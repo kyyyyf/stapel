@@ -47,6 +47,10 @@ pub struct Check {
     pub runner: String,
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
+    /// The cargo program (STP-6 AC-9): an absolute path outside the repository; absent means the
+    /// first `cargo` in an absolute `PATH` entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cargo: Option<String>,
 }
 
 fn default_runner() -> String {
@@ -114,6 +118,17 @@ pub struct Guard {
 }
 
 impl Config {
+    /// Like `parse`, and `[check] cargo` is tested against the repository folder `root`
+    /// (STP-6 AC-10): an absolute path to an executable regular file that, with links resolved,
+    /// lies outside `root`.
+    pub fn parse_at(text: &str, root: &std::path::Path) -> Result<Config, String> {
+        let config = Config::parse(text)?;
+        if let Some(cargo) = config.check.as_ref().and_then(|c| c.cargo.as_deref()) {
+            validate_cargo(cargo, root)?;
+        }
+        Ok(config)
+    }
+
     pub fn parse(text: &str) -> Result<Config, String> {
         let config: Config = toml::from_str(text).map_err(|e| e.to_string())?;
         for entry in &config.guard.always_writable {
@@ -228,4 +243,31 @@ fn validate_writable(entry: &str) -> Result<(), String> {
              repository without . and .., e.g. docs/"
         ))
     }
+}
+
+/// `[check] cargo`: an absolute path to an executable regular file outside `root`.
+fn validate_cargo(cargo: &str, root: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let bad = |why: &str| Err(format!("check.cargo \"{cargo}\" {why}"));
+    let path = std::path::Path::new(cargo);
+    if !path.is_absolute() {
+        return bad("is not an absolute path");
+    }
+    let Ok(real) = path.canonicalize() else {
+        return bad("does not exist");
+    };
+    let Ok(meta) = std::fs::metadata(&real) else {
+        return bad("cannot be read");
+    };
+    if !meta.is_file() {
+        return bad("is not a regular file");
+    }
+    if meta.permissions().mode() & 0o111 == 0 {
+        return bad("is not executable");
+    }
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    if real.starts_with(&root) {
+        return bad("lies inside the repository");
+    }
+    Ok(())
 }
