@@ -2504,3 +2504,137 @@ fn path_cargo_must_be_executable() {
         "{text}"
     );
 }
+
+/// `stapel check ABC-1` with extra environment variables: exit code and output.
+fn check_env(dir: &Path, envs: &[(&str, &Path)]) -> (i32, String) {
+    let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cmd = stapel(dir);
+    cmd.args(["check", "ABC-1"]).env("CARGO_BUILD_JOBS", "2");
+    for (n, v) in envs {
+        cmd.env(n, v);
+    }
+    let out = cmd.output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.code().unwrap_or(-1), text)
+}
+
+/// A cargo that records the folder of every run in `dumps`, then runs the real cargo.
+fn recording_cargo(scripts: &Path, dumps: &Path) -> String {
+    std::fs::create_dir_all(dumps).unwrap();
+    script(
+        scripts,
+        "cargo",
+        &format!(
+            "pwd -P > {d}/pwd.$$\nexec {r} \"$@\"",
+            d = dumps.display(),
+            r = real_cargo()
+        ),
+    )
+}
+
+#[test]
+fn worktree_is_outside_the_repository() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let dumps = scripts.path().join("dumps");
+    let fake = recording_cargo(scripts.path(), &dumps);
+    set_cargo_key(dir, &fake);
+    let tmp = tempfile::tempdir().unwrap();
+    let tmp_real = tmp.path().canonicalize().unwrap();
+    let repo_real = dir.canonicalize().unwrap();
+    let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
+    assert_eq!(code, 0, "{text}");
+    let mut seen = 0;
+    let mut folders = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(&dumps).unwrap() {
+        let body = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+        let folder = Path::new(body.trim()).to_path_buf();
+        assert_eq!(folder.parent(), Some(tmp_real.as_path()), "{folder:?}");
+        assert!(!folder.starts_with(&repo_real), "{folder:?}");
+        folders.insert(folder);
+        seen += 1;
+    }
+    assert!(seen >= 3, "cargo ran {seen} times");
+    assert_eq!(folders.len(), 1, "one worktree folder: {folders:?}");
+    // Removed when done; the lock and the target folder stay under `.git/stapel/`.
+    assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
+    assert!(dir.join(".git/stapel/check.lock").exists());
+    assert!(dir.join(".git/stapel/check-target").is_dir());
+    assert_eq!(git(dir, &["worktree", "list"]).lines().count(), 1);
+    // A leftover folder of an earlier run stays; the next check does not break on it.
+    std::fs::create_dir(tmp.path().join("stapel-check-leftover")).unwrap();
+    let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
+    assert_eq!(code, 0, "{text}");
+    assert!(tmp.path().join("stapel-check-leftover").is_dir());
+}
+
+#[test]
+fn config_above_the_worktree_is_unverified() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let dumps = scripts.path().join("dumps");
+    let fake = recording_cargo(scripts.path(), &dumps);
+    set_cargo_key(dir, &fake);
+    for file in [
+        ".cargo/config",
+        ".cargo/config.toml",
+        "rust-toolchain",
+        "rust-toolchain.toml",
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), file, "");
+        let held = tmp.path().canonicalize().unwrap().join(file);
+        let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
+        assert_eq!(code, 1, "{file}: {text}");
+        let want = format!("build-input-outside: {}", held.display());
+        assert!(
+            text.contains(&format!("step 1: unverified: {want}")),
+            "{file}: {text}"
+        );
+        assert!(
+            text.contains(&format!("suite: unverified: {want}")),
+            "{file}: {text}"
+        );
+        // Found before `cargo --version` runs.
+        assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), 0, "{file}");
+    }
+    // The configuration of `CARGO_HOME` is not promised and does not count.
+    let tmp = tempfile::tempdir().unwrap();
+    write(tmp.path(), ".cargo/config.toml", "");
+    let home = tmp.path().join(".cargo");
+    let (code, text) = check_env(dir, &[("TMPDIR", tmp.path()), ("CARGO_HOME", &home)]);
+    assert_eq!(code, 0, "{text}");
+}
+
+#[test]
+fn refuses_a_tmpdir_inside_the_repository() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let runs = dir.join(".stapel/tickets/ABC-1/runs.jsonl");
+    let inside = dir.join("scratch");
+    std::fs::create_dir(&inside).unwrap();
+    let away = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(&inside, away.path().join("link")).unwrap();
+    let missing = away.path().join("missing");
+    let cases: [(&str, &Path); 3] = [
+        ("inside", &inside),
+        ("link", &away.path().join("link")),
+        ("missing", &missing),
+    ];
+    for (what, tmp) in cases {
+        let (code, text) = check_env(dir, &[("TMPDIR", tmp)]);
+        assert_eq!(code, 2, "{what}: {text}");
+        assert!(text.contains("TMPDIR"), "{what}: {text}");
+        assert!(!runs.exists(), "{what}: a record was written");
+    }
+    // A relative `TMPDIR` is resolved against the current folder, here the repository.
+    let (code, text) = check_env(dir, &[("TMPDIR", Path::new("scratch"))]);
+    assert_eq!(code, 2, "relative: {text}");
+    assert!(!runs.exists(), "relative: a record was written");
+}
