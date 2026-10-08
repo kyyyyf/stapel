@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "key": "STP-6",
+  "title": "Hardening of stapel check against deliberate circumvention",
+  "confirmations": []
+}
