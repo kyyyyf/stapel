@@ -93,5 +93,10 @@
       "text": "| Criterion | Test |\n|---|---|\n| AC-1 | `tokens::partial_messages_lose_only_their_output` |\n| AC-2 | `tokens::final_line_is_kept` |\n| AC-3 | `tokens::older_subagent_records_show_partial_output`, `tokens::bad_partial_and_importer_values_are_problems` |\n| AC-4 | `tokens::session_totals_are_imported_once` |\n| AC-5 | `tokens::session_without_cost_state_is_refused`, `tokens::truncated_cost_state_is_refused`, `tokens::cost_state_with_bad_counts_is_refused` |\n| AC-6 | `tokens::report_shows_session_gaps` |\n| AC-7 | `tokens::report_counts_a_duplicate_import_once` |\n| AC-8 | `tokens::sessions_journal_problems_are_named` |",
       "via": "grant"
     }
-  ]
+  ],
+  "closed": {
+    "by": "kyyyyf",
+    "at": "2026-10-08T09:55:16Z",
+    "reason": "Partial subagent usage marked, session totals imported and compared; check passes; builder pilot recorded"
+  }
 }
