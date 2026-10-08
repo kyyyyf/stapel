@@ -2440,3 +2440,67 @@ fn cargo_key_is_validated_through_the_cli() {
         );
     }
 }
+
+#[test]
+fn cargo_key_is_checked_again_before_the_run() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = passing_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    // The key names a link to a program outside the repository; the link is valid at load.
+    let outside = script(scripts.path(), "outside", "exec true");
+    let link = scripts.path().join("link");
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    std::fs::create_dir(dir.join("tools")).unwrap();
+    let inside = script(&dir.join("tools"), "cargo", "exec true");
+    set_cargo_key(dir, link.to_str().unwrap());
+    // `git worktree add` runs this script after the key is loaded: the link then points into
+    // the repository.
+    let after_checkout = dir.join(".git").join("hooks").join("post-checkout");
+    std::fs::write(
+        &after_checkout,
+        format!("#!/bin/sh\nln -sfn '{inside}' '{}'\n", link.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&after_checkout, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, text) = check(dir);
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("check.cargo"), "{text}");
+    assert!(text.contains("inside the repository"), "{text}");
+    assert!(
+        !dir.join(".stapel/tickets/ABC-1/runs.jsonl").exists(),
+        "a record was written"
+    );
+}
+
+#[test]
+fn path_cargo_must_be_executable() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let real = real_cargo();
+    // A `cargo` that is not executable comes first in `PATH`; the real one comes later.
+    let plain = scripts.path().join("plain");
+    std::fs::create_dir(&plain).unwrap();
+    std::fs::write(plain.join("cargo"), "not a program\n").unwrap();
+    let path = format!("{}:{}", plain.display(), std::env::var("PATH").unwrap());
+    let out = {
+        let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
+        stapel(dir)
+            .args(["check", "ABC-1"])
+            .env("CARGO_BUILD_JOBS", "2")
+            .env("PATH", path)
+            .output()
+            .unwrap()
+    };
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        cargo_line(&text).starts_with(&format!("cargo: {real} (cargo ")),
+        "{text}"
+    );
+}
