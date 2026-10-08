@@ -139,38 +139,66 @@ pub fn resolve_tmpdir(root: &Path) -> Result<PathBuf, String> {
 }
 
 /// The first build input in a folder above `path` (STP-6 AC-7): `.cargo/config`,
-/// `.cargo/config.toml`, `rust-toolchain` or `rust-toolchain.toml`. `CARGO_HOME` (the caller's, else
-/// `$HOME/.cargo`, links resolved) is left out.
+/// `.cargo/config.toml`, `rust-toolchain` or `rust-toolchain.toml`. Only `config` and `config.toml`
+/// directly in `CARGO_HOME` (the caller's, else `$HOME/.cargo`, links resolved) are left out. A
+/// `CARGO_HOME` that is a folder above `path` counts as found, and so does a file that cannot be
+/// examined for any reason other than being absent.
 pub fn build_input_outside(path: &Path) -> Option<PathBuf> {
     let cargo_home = std::env::var_os("CARGO_HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
         .and_then(|p| std::fs::canonicalize(p).ok());
-    let is_home = |p: &Path| {
+    let resolves_to_home = |p: &Path| {
         cargo_home
             .as_deref()
             .is_some_and(|h| std::fs::canonicalize(p).is_ok_and(|c| c == h))
     };
+    let present = |c: &Path| match std::fs::symlink_metadata(c) {
+        Ok(_) => true,
+        Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+    };
     for folder in path.ancestors().skip(1) {
-        if is_home(folder) {
-            continue;
+        if resolves_to_home(folder) {
+            return cargo_home;
         }
         let mut candidates = Vec::new();
-        if !is_home(&folder.join(".cargo")) {
+        if !resolves_to_home(&folder.join(".cargo")) {
             candidates.push(folder.join(".cargo/config"));
             candidates.push(folder.join(".cargo/config.toml"));
         }
         candidates.push(folder.join("rust-toolchain"));
         candidates.push(folder.join("rust-toolchain.toml"));
-        if let Some(found) = candidates
-            .into_iter()
-            .find(|c| std::fs::symlink_metadata(c).is_ok())
-        {
+        if let Some(found) = candidates.into_iter().find(|c| present(c)) {
             return Some(found);
         }
     }
     None
+}
+
+/// Removes the git registration of every `stapel-check-*` worktree whose folder is gone (a check
+/// that crashed). Other worktrees are not touched.
+fn prune_stale_checks(common: &Path) {
+    let Ok(entries) = std::fs::read_dir(common.join("worktrees")) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(text) = std::fs::read_to_string(entry.path().join("gitdir")) else {
+            continue;
+        };
+        let folder = Path::new(text.trim()).parent().map(Path::to_path_buf);
+        let Some(folder) = folder else { continue };
+        let ours = folder
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with("stapel-check-"));
+        let gone = matches!(
+            std::fs::symlink_metadata(&folder),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound
+        );
+        if ours && gone {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 /// The detached worktree in a new, uniquely named folder under `TMPDIR`, removed when dropped.
@@ -188,6 +216,9 @@ impl Worktree {
             path: dir.join("check-worktree"),
         };
         old.remove();
+        if let Some(common) = dir.parent() {
+            prune_stale_checks(common);
+        }
         let mut path = None;
         for n in 0..100u32 {
             let nanos = std::time::SystemTime::now()

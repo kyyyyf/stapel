@@ -315,7 +315,13 @@ pub fn run_cargo(
     let mut cmd = Command::new(cargo);
     cmd.env_clear();
     for name in ENV_ALLOW {
-        if let Some(value) = std::env::var_os(name) {
+        if let Some(mut value) = std::env::var_os(name) {
+            // A relative `TMPDIR` would point elsewhere once the run changes folder.
+            if name == "TMPDIR"
+                && let Ok(abs) = std::path::absolute(&value)
+            {
+                value = abs.into_os_string();
+            }
             cmd.env(name, value);
         }
     }
