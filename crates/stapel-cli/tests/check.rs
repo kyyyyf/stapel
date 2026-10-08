@@ -3095,3 +3095,119 @@ fn unchanged_build_inputs_are_named() {
         "{text}"
     );
 }
+
+// ---- STP-6 step 3 drift review: build-input REDs, unkeyed commits, dotted TOML, other keys ----
+
+#[test]
+fn red_with_only_a_build_input_changes_code() {
+    /// Commits a step 2 RED made of `setup` and a new test, then its GREEN, and returns the RED id.
+    fn red_with_input(dir: &Path, what: &str, name: &str, setup: impl Fn(&Path)) -> String {
+        add_test(dir, "basic", name, "assert!(true);");
+        setup(dir);
+        commit(dir, &format!("ABC-1 step 2 RED: {what}"));
+        let red = head7(dir);
+        commit(dir, "ABC-1 step 2 GREEN: code");
+        red
+    }
+
+    let (repo, _scripts, dumps) = build_input_repo(|dir| write(dir, "notes.txt", "notes\n"));
+    let dir = repo.path();
+    let member = "crates/tiny/Cargo.toml";
+    let cases: [(&str, &str, Box<dyn Fn(&Path)>); 4] = [
+        (
+            "a cargo configuration",
+            ".cargo/config.toml",
+            Box::new(|d| write(d, ".cargo/config.toml", "")),
+        ),
+        (
+            "a symbolic link",
+            "lnk-out",
+            Box::new(|d| link(d, "crates", "lnk-out")),
+        ),
+        (
+            "a toolchain file",
+            "rust-toolchain.toml",
+            Box::new(|d| write(d, "rust-toolchain.toml", "")),
+        ),
+        (
+            "a lib table",
+            member,
+            Box::new(|d| {
+                let old = read(d, "crates/tiny/Cargo.toml");
+                write(d, "crates/tiny/Cargo.toml", &format!("{old}\n[lib]\n"));
+            }),
+        ),
+    ];
+    for (i, (what, path, setup)) in cases.iter().enumerate() {
+        let red = red_with_input(dir, what, &format!("input_{i}"), setup);
+        let text = expect_changed(dir, &dumps, what, path, &red);
+        assert_eq!(
+            outcome(&text, "step 2"),
+            "red-changes-code",
+            "{what}\n{text}"
+        );
+        git(dir, &["reset", "-q", "--hard", "HEAD~2"]);
+    }
+}
+
+#[test]
+fn unkeyed_commit_in_the_range_is_seen() {
+    let (repo, _scripts, dumps) = build_input_repo(|_| {});
+    let dir = repo.path();
+    write(dir, ".cargo/config.toml", "");
+    commit(dir, "fix typo");
+    expect_changed(dir, &dumps, "unkeyed", ".cargo/config.toml", &head7(dir));
+}
+
+#[test]
+fn dotted_and_inline_toml_targets_are_seen() {
+    let member = "crates/tiny/Cargo.toml";
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        write(
+            dir,
+            member,
+            "package.name = \"tiny\"\npackage.version = \"0.1.0\"\npackage.edition = \"2021\"\n",
+        );
+        write(
+            dir,
+            "Cargo.toml",
+            "workspace.members = [\"crates/tiny\"]\nworkspace.resolver = \"2\"\n",
+        );
+    });
+    let dir = repo.path();
+    let old = read(dir, member);
+    write(
+        dir,
+        member,
+        &format!("{old}lib = {{ path = \"src/other.rs\" }}\n"),
+    );
+    changed_case(dir, &dumps, "inline lib", member);
+    write(dir, member, &format!("{old}lib.path = \"src/other.rs\"\n"));
+    changed_case(dir, &dumps, "dotted lib", member);
+    write(dir, member, &format!("{old}package.build = \"gen.rs\"\n"));
+    changed_case(dir, &dumps, "dotted build", member);
+    let old = read(dir, "Cargo.toml");
+    write(
+        dir,
+        "Cargo.toml",
+        &format!("{old}workspace.exclude = [\"crates/other\"]\n"),
+    );
+    changed_case(dir, &dumps, "dotted exclude", "Cargo.toml");
+}
+
+#[test]
+fn other_workspace_keys_are_not_build_inputs() {
+    let (repo, _scripts, _dumps) = build_input_repo(|_| {});
+    let dir = repo.path();
+    let old = read(dir, "Cargo.toml");
+    write(
+        dir,
+        "Cargo.toml",
+        &format!("{old}\n[workspace.dependencies]\n"),
+    );
+    commit(dir, "ABC-1: workspace dependencies");
+    edit(dir, "Cargo.toml", "resolver = \"2\"", "resolver = \"1\"");
+    commit(dir, "ABC-1: resolver");
+    let (_, text) = check_env(dir, &[]);
+    assert!(!text.contains("build-input"), "{text}");
+}
