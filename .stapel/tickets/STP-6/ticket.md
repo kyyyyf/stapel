@@ -99,6 +99,12 @@ proxy and certificate variables of the caller; proc-macro crates that read files
 - 2026-10-08, during step 1: (22) Decision, as recommended: `CARGO_BUILD_JOBS` joins the allow list of AC-8;
   it changes only parallelism, and without it nested test builds take every core (the STP-4 crash).
   (23) Decision: STP-13 is taken right after STP-6; plan step 6 writes it into `docs/PHASES.md`.
+- 2026-10-08, step 2 drift review (D2-1 to D2-6), all as recommended: (24) only `config` and `config.toml`
+  directly in `CARGO_HOME` are skipped; `rust-toolchain*` never; a `CARGO_HOME` equal to the worktree's folder
+  or above it counts as found (D2-1). (25) Spec change AC-7: `build-input-outside` follows the build-input
+  term's order, STP-4's history outcomes first (D2-2). (26) A stale `stapel-check-*` worktree registration
+  whose folder is gone is pruned before a check; other worktrees are not touched (D2-4). (27) An ancestor
+  that cannot be read counts as found (D2-6).
 ## Spec
 
 Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in golden files. Terms:
@@ -125,7 +131,7 @@ Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in g
 | AC-4 | IF a non-RED commit changes a file that a step test's file or a helper includes THEN the check gives the build-input outcome. | `check::included_test_data_change_is_unverified` |
 | AC-5 | IF a RED changes a file that a `.rs` file outside `crates/*/tests/` includes, at the RED, its parent, any later GREEN or HEAD THEN the step is `red-changes-code` and the path is named. | `check::red_changing_an_included_file_changes_code` |
 | AC-6 | WHEN files of AC-2 exist at HEAD and no non-RED commit changes them THE report prints `build inputs: <path>, …` before the step lines, and the steps keep their outcomes. | `check::unchanged_build_inputs_are_named` |
-| AC-7 | WHEN the check runs THE worktree is a new folder with a unique name under `TMPDIR`, outside the repository folder; IF a folder above the worktree, other than `CARGO_HOME`, holds `.cargo/config`, `.cargo/config.toml`, `rust-toolchain` or `rust-toolchain.toml` THEN every step reads `unverified: build-input-outside: <path>`, found before `cargo --version` runs. | `check::worktree_is_outside_the_repository`, `check::config_above_the_worktree_is_unverified` |
+| AC-7 | WHEN the check runs THE worktree is a new folder with a unique name under `TMPDIR`, outside the repository folder; IF a folder above the worktree, other than `CARGO_HOME`, holds `.cargo/config`, `.cargo/config.toml`, `rust-toolchain` or `rust-toolchain.toml` THEN every step that STP-4's history rules do not fail reads `unverified: build-input-outside: <path>`, found before `cargo --version` runs; only `config` and `config.toml` directly in `CARGO_HOME` are skipped, and a `CARGO_HOME` that is the worktree's folder or a folder above it counts as found. | `check::worktree_is_outside_the_repository`, `check::config_above_the_worktree_is_unverified` |
 | AC-8 | WHEN the check starts a cargo run THE run gets an empty environment plus `HOME`, `USER`, `PATH`, `LANG`, `TMPDIR`, `CARGO_HOME`, `RUSTUP_HOME`, `RUSTUP_TOOLCHAIN`, `CARGO_BUILD_JOBS` when set in the caller, and the variables the check sets; no other variable of the caller reaches it. | `check::cargo_runs_with_the_allow_list_only` |
 | AC-9 | WHEN the check starts THE cargo program is `[check] cargo` if set, else the first `cargo` in an absolute `PATH` entry, resolved once; every run uses it; the report prints `cargo: <path> (<version>)`, the first line of `cargo --version` cut to 200 bytes, and the run record carries `cargo` with the same text. | `check::cargo_path_and_version_are_reported` |
 | AC-10 | IF `[check] cargo` is not an absolute path to an executable regular file, or lies under the repository folder after links are resolved THEN loading the configuration fails, naming the key. | `core::config::check_cargo_key_is_validated` |
