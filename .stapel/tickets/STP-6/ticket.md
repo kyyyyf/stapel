@@ -179,6 +179,7 @@ steps into it; each sets its own `CARGO_TARGET_DIR`. Heavy runs: `cargo test -j 
 | Ranges | the base commit; a closed ticket's range | `new::records_the_base_commit`, `check::range_starts_after_the_base`, `check::closed_ticket_range_ends_at_its_last_commit` |
 | Abuse | see the Abuse table | `check::cargo_runs_with_the_allow_list_only` and the Negative tests |
 | Step 1 drift review | the cargo key through the CLI; the cargo key checked again before the run (a link retargeted after load); a `cargo` on `PATH` that is not executable | `check::cargo_key_is_validated_through_the_cli`, `check::cargo_key_is_checked_again_before_the_run`, `check::path_cargo_must_be_executable` |
+| Step 2 drift review | `CARGO_HOME` at or above the worktree; history outcomes first; relative and unwritable `TMPDIR`; stale check worktrees after a crash; an unreadable ancestor | `check::cargo_home_cannot_hide_a_config_above`, `check::history_outcomes_come_before_build_input_outside`, `check::relative_tmpdir_is_resolved`, `check::stale_check_worktrees_are_pruned`, `check::unwritable_tmpdir_is_refused`, `check::unreadable_ancestor_counts_as_found` |
 | Integration | `stapel check STP-1` to `STP-5` on this repository (plan step 7, by hand; Decision 4); its output goes into Proof | — |
 
 ### Inputs
