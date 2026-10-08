@@ -1,2 +1,3 @@
 {"source":"estimate","estimate":114722,"v":1,"id":"t-64960e07af61","at":"2026-10-08T10:54:03Z","ticket":"STP-6","role":"external","model":"claude-fable-5-1","note":"spec review round 1; subagent_tokens of the end notice (context of last call plus final output), not a sum"}
 {"source":"estimate","estimate":96827,"v":1,"id":"t-491897b1f843","at":"2026-10-08T11:08:40Z","ticket":"STP-6","role":"external","model":"claude-fable-5-1","note":"spec review round 2; subagent_tokens of the end notice, not a sum"}
+{"source":"estimate","estimate":83572,"v":1,"id":"t-04f20b59b7c6","at":"2026-10-08T11:24:07Z","ticket":"STP-6","role":"builder","model":"claude-sonnet-5-5","step":"1","note":"builder step 1; subagent_tokens of the end notice, not a sum"}
