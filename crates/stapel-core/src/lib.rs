@@ -8,6 +8,7 @@ pub mod grant;
 pub mod guard;
 pub mod hash;
 pub mod identity;
+pub mod includes;
 pub mod journal;
 pub mod outcomes;
 pub mod runner;

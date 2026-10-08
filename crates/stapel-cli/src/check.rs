@@ -363,6 +363,9 @@ impl Runner<'_> {
         if let Some(why) = &self.outside {
             return ("unverified".into(), why.clone());
         }
+        if let Some(label) = &a.interleaved {
+            return ("unverified".into(), format!("interleaved: {label}"));
+        }
         let (Some(red), Some(green)) = (&a.red, &a.green) else {
             return ("unpaired".into(), String::new());
         };

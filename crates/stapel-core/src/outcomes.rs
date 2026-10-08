@@ -2,6 +2,7 @@
 //! `unpaired`, `duplicate`, `no-tests`, `red-changes-code`, `tests-changed`; and the notes
 //! `superseded by <label>` and `retired by <label>`.
 
+use crate::includes::Includes;
 use crate::rust_tests::{helper_text, test_functions};
 use crate::steps::{
     Marker, Step, StepCommit, TestId, changes, git, git_text, parent, show, step_tests,
@@ -28,6 +29,9 @@ pub struct Analysis {
     pub tests: Vec<TestId>,
     /// The outcome from history alone, with its reason; `None` when the tests must run.
     pub fixed: Option<(String, String)>,
+    /// The label of another step's RED that lies between this step's RED and GREEN (STP-6 AC-12):
+    /// the step reads `unverified: interleaved: <label>` unless a build-input outcome comes first.
+    pub interleaved: Option<String>,
     pub notes: Vec<Note>,
     /// Step tests that still run: not retired.
     pub to_run: Vec<TestId>,
@@ -85,7 +89,7 @@ fn manifest_without_dev(text: &str) -> Option<toml::Table> {
     Some(t)
 }
 
-fn under_tests(path: &str) -> bool {
+pub fn under_tests(path: &str) -> bool {
     let parts: Vec<&str> = path.split('/').collect();
     parts.len() >= 4 && parts[0] == "crates" && parts[2] == "tests"
 }
@@ -213,6 +217,7 @@ pub fn analyse(
         root,
         cache: HashMap::new(),
     };
+    let mut includes = Includes::new(root);
     // Every step commit of the ticket by sha: its label and marker.
     let mut by_sha: BTreeMap<String, (String, Marker)> = BTreeMap::new();
     let mut position: BTreeMap<String, usize> = BTreeMap::new();
@@ -237,6 +242,7 @@ pub fn analyse(
             green: greens.first().map(|c| (*c).clone()),
             tests: Vec::new(),
             fixed: None,
+            interleaved: None,
             notes: Vec::new(),
             to_run: Vec::new(),
         };
@@ -280,6 +286,23 @@ pub fn analyse(
             .filter(|c| is_code(&mut files, &red, &base, c.old.as_deref(), c.new.as_deref()))
             .map(|c| c.new.clone().or(c.old.clone()).unwrap_or_default())
             .collect();
+        let mut code = code;
+        // A file that a source file includes counts as code (STP-6 AC-5), at the RED, its parent,
+        // a later GREEN or HEAD.
+        let mut seen: Vec<String> = vec![red.clone(), base.clone(), head.to_string()];
+        seen.extend(
+            all.iter()
+                .filter(|c| c.marker == Marker::Green && pos(c) > pos(reds[0]))
+                .map(|c| c.sha.clone()),
+        );
+        let included = includes.included(&seen, |f| !under_tests(f))?;
+        for c in &changed {
+            for p in [c.old.as_ref(), c.new.as_ref()].into_iter().flatten() {
+                if included.contains(p) && !code.contains(p) {
+                    code.push(p.clone());
+                }
+            }
+        }
         if !code.is_empty() {
             fix(&mut a, "red-changes-code", named(&code));
             out.push(a);
@@ -403,6 +426,12 @@ pub fn analyse(
             out.push(a);
             continue;
         }
+        let own = pos(greens[0]);
+        a.interleaved = all
+            .iter()
+            .filter(|c| c.marker == Marker::Red && pos(c) > pos(reds[0]) && pos(c) < own)
+            .min_by_key(|c| pos(c))
+            .map(|c| c.label.clone());
         a.to_run = a
             .tests
             .iter()

@@ -2,8 +2,9 @@
 //! tables and keys of a `Cargo.toml`, cargo configuration, toolchain files, build scripts and
 //! symbolic links. Such a change means a test run at HEAD may not run the code under test.
 
-use crate::outcomes::red_changes_code;
-use crate::steps::{Marker, Step, git, parent, show};
+use crate::includes::Includes;
+use crate::outcomes::{red_changes_code, under_tests};
+use crate::steps::{Marker, Step, git, parent, show, step_tests};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
@@ -311,6 +312,28 @@ pub fn analyse(root: &Path, key: &str, head: &str, steps: &[Step]) -> Result<Bui
         blobs: HashMap::new(),
         broken: HashMap::new(),
     };
+    // Helpers: every `.rs` file under `crates/*/tests/` that holds no step test (AC-3). Included
+    // files: what the step test files and the helpers include at the base, every RED and GREEN
+    // and HEAD (AC-4).
+    let mut step_files: BTreeSet<String> = BTreeSet::new();
+    for c in steps.iter().flat_map(|s| s.commits.iter()) {
+        if c.marker == Marker::Red && commits.contains(&c.sha) {
+            step_files.extend(step_tests(root, &c.sha)?.iter().map(|t| t.path()));
+        }
+    }
+    let is_helper = |p: &str| p.ends_with(".rs") && under_tests(p) && !step_files.contains(p);
+    let mut seen: Vec<String> = vec![head.to_string()];
+    if let Some(first) = commits.first() {
+        seen.push(parent(root, first));
+    }
+    seen.extend(
+        steps
+            .iter()
+            .flat_map(|s| s.commits.iter())
+            .filter(|c| commits.contains(&c.sha))
+            .map(|c| c.sha.clone()),
+    );
+    let included = Includes::new(root).included(&seen, under_tests)?;
     let mut changed: Option<Change> = None;
     let mut touched: BTreeSet<String> = BTreeSet::new();
     for sha in commits.iter().filter(|s| !reds.contains(*s)) {
@@ -352,6 +375,12 @@ pub fn analyse(root: &Path, key: &str, head: &str, steps: &[Step]) -> Result<Bui
             }
             if hit.is_none() {
                 hit = manifest_hit(root, sha, &base, e);
+            }
+            if hit.is_none() {
+                hit = paths
+                    .iter()
+                    .find(|p| is_helper(p) || included.contains(**p))
+                    .map(|p| (*p).clone());
             }
             if let Some(path) = hit
                 && changed.is_none()
