@@ -104,6 +104,15 @@ External states (`.stapel/config/external-states.yml`):
 
 ### Decisions (as built)
 
+- Code review round 1 (built by the builder pilot from a 1200-token brief): a message's final line stays
+  when later streamed lines follow; the import line ends `(<n> messages, partial: <p>)` when p > 0; a measured
+  record with `partial` other than an integer ≥ 1 or `importer` other than 2 is a problem line and is not
+  counted; the last non-empty line of a transcript must be complete JSON, and a present count of the last
+  `cost-state` line must be a non-negative integer, else `tokens session` refuses naming the line; the gap is
+  `—` without a session output and `≤<n>` when a counted record is partial (a negative upper bound reads
+  `≤-300`), followed by one note line on continued sessions; of overlapping records the one with more
+  `messages`, then `importer: 2`, then the later `at` counts; a sessions line without a non-empty string `id`
+  is a problem line.
 - Step 1: `stapel-core::tokens` marks a message `complete` when its last line has a string `stop_reason`; a later line of the same message replaces usage and completeness. `tokens import` counts input and cache of every message, output only of complete ones; `partial` is the number of incomplete messages (written when > 0); `output` is absent when no message of the model is complete. The report's row output shows `≥<sum>` when any of its records is partial (field `partial`, or a subagent identity without `importer`).
 - Step 2: `stapel-core::tokens::last_cost_state` streams the transcript (16 MiB lines); a line counts as a cost-state line when its first 200 characters, without whitespace, contain `"type":"cost-state"`; the last such line must parse with `sessionId`, `startTime`, `totalDuration` and `modelUsage`, else exit 1 naming its line number. `tokens session` writes `models.<model>` with `input`, `output`, `thinking`, `cache_read`, `cache_write` (absent when the line lacks them); `id` = `s-` + 12 hex of SHA-256 over session, start and duration with NUL separators; the journal is `.stapel/sessions.jsonl` through the STP-3 journal.
 - Step 3: the sessions table is printed only for the whole report (`stapel tokens` without a key), since one ticket's records cannot be compared with a session total; the measured records of all tickets are collected while the ticket blocks are built; a sessions line without `session`, `start`, `duration_ms` or a `models` object, or not `v: 1`, is a problem line; models are the union of the session's and the records'; duplicates: records of one transcript identity and model whose `from`..`to` overlap, the one with `importer` (then the later `at`) kept; the gap is signed (`i128`); the table uses the ticket table's column widths. Step 1 drift review D1 ("≥0" when no message of a model is complete) matches the Inputs row of AC-2 and is kept.
@@ -160,5 +169,16 @@ author's tables, all inside the promise, applied; round 2, six closed, S-3 and S
 (duplicates by window), applied. After the build, the three reviewers without quotas.
 
 ## Summary
+
+**Builder pilot (decision 0002), step R1, 2026-10-08.** A context-free builder (`claude-sonnet-5-5`) received
+only a 1200-token brief and built the RED and GREEN commits correctly (seven failing tests at RED, 298 passing
+after GREEN, clippy clean, no file outside the brief touched). Measured from transcripts (input and cache are
+exact; the builder's output is partial): the builder made 17 calls with 0.93 million cache-read tokens; the
+orchestrator's own steps 2 and 3 of this ticket took 6 calls and about 3.9 million cache-read tokens each, on
+`claude-opus-5-5`. Each orchestrator call read about 650,000 tokens of its long session. Conclusion: the
+builder costs about a quarter of the cache reads on a cheaper model, but the orchestrator's calls around it
+(writing the brief, checking the result) cost about as much again, because of the orchestrator's context
+size. The largest lever is a small orchestrator context: a new session per ticket now, and coordination by
+`stapel` itself in phase 1. One sample; the builder's output tokens come with the session's `cost-state`.
 
 After the close: escaped defects, HIGH and MEDIUM inside-promise findings, size, tokens, time.
