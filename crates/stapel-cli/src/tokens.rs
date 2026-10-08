@@ -379,7 +379,14 @@ pub fn import(a: Import) -> Result<(), String> {
         // subagent records written before STP-5, whose output may be partial.
         record.insert("importer".into(), json!(2));
         append(&ticket.dir.join("tokens.jsonl"), &Value::Object(record))?;
-        println!("recorded: {id} {} ({} messages)", s.model, s.messages);
+        if s.partial > 0 {
+            println!(
+                "recorded: {id} {} ({} messages, partial: {})",
+                s.model, s.messages, s.partial
+            );
+        } else {
+            println!("recorded: {id} {} ({} messages)", s.model, s.messages);
+        }
     }
     println!("next --since: {next_since}");
     Ok(())
@@ -478,16 +485,19 @@ fn sessions_table(
         let id = m
             .get("id")
             .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
+            .filter(|i| !i.is_empty())
+            .map(String::from);
         let session = m.get("session").and_then(Value::as_str).map(String::from);
         let end = m
             .get("start")
             .and_then(Value::as_u64)
             .zip(m.get("duration_ms").and_then(Value::as_u64));
-        let (Some(session), Some((start, duration)), true) =
-            (session, end, m.get("models").is_some_and(Value::is_object))
-        else {
+        let (Some(id), Some(session), Some((start, duration)), true) = (
+            id,
+            session,
+            end,
+            m.get("models").is_some_and(Value::is_object),
+        ) else {
             problems.push(format!("problem: .stapel/sessions.jsonl:{n}"));
             continue;
         };
@@ -538,11 +548,12 @@ fn sessions_table(
                 .filter(ours)
                 .filter(|r| r.get("model").and_then(Value::as_str) == Some(model.as_str()))
                 .collect();
-            // Preferred first: a record of this importer, then the later one.
+            // Preferred first: more messages, then a record of this importer, then the later one.
             group.sort_by(|a, b| {
                 let key = |r: &Map<String, Value>| {
                     (
-                        r.contains_key("importer"),
+                        r.get("messages").and_then(Value::as_u64).unwrap_or(0),
+                        r.get("importer").and_then(Value::as_u64) == Some(2),
                         r.get("at")
                             .and_then(Value::as_str)
                             .unwrap_or("")
@@ -579,7 +590,17 @@ fn sessions_table(
             let partial = kept.iter().filter(|r| partial_output(r)).count();
             let counts = models.get(&model);
             let n = |k: &str| counts.and_then(|c| c.get(k)).and_then(Value::as_u64);
-            let gap = i128::from(n("output").unwrap_or(0)) - i128::from(sum);
+            let gap = match n("output") {
+                None => "—".to_string(),
+                Some(o) => {
+                    let g = i128::from(o) - i128::from(sum);
+                    if partial > 0 {
+                        format!("≤{g}")
+                    } else {
+                        g.to_string()
+                    }
+                }
+            };
             table.push([
                 session.clone(),
                 model.clone(),
@@ -592,12 +613,16 @@ fn sessions_table(
                 },
                 partial.to_string(),
                 duplicates.to_string(),
-                gap.to_string(),
+                gap,
             ]);
         }
     }
     let mut block = vec!["sessions".to_string()];
     block.extend(render(&table));
+    block.push(
+        "note: the gap of a session continued from another file may include that file's totals"
+            .to_string(),
+    );
     Ok(block.join("\n"))
 }
 
@@ -609,6 +634,14 @@ fn partial_output(m: &Map<String, Value>) -> bool {
         .and_then(Value::as_str)
         .is_some_and(|t| t.contains('/'));
     m.contains_key("partial") || (subagent && !m.contains_key("importer"))
+}
+
+/// A measured record's `partial` is an integer of 1 or more and its `importer` the integer 2, when
+/// present (STP-5 AC-3); anything else is a problem line.
+fn measured_fields_valid(m: &Map<String, Value>) -> bool {
+    m.get("partial")
+        .is_none_or(|p| p.as_u64().is_some_and(|n| n >= 1))
+        && m.get("importer").is_none_or(|i| i.as_u64() == Some(2))
 }
 
 fn add_to(slot: &mut Option<u64>, value: Option<u64>) {
@@ -691,6 +724,7 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
                         Some("estimate") => {
                             add_to(&mut rows.entry(key).or_default().estimate, num("estimate"))
                         }
+                        Some("measured") if !measured_fields_valid(&m) => problems.push(problem),
                         Some("measured") => {
                             measured_records.push(m.clone());
                             let row = rows.entry(key).or_default();

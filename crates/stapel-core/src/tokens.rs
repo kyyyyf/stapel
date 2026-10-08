@@ -184,10 +184,13 @@ pub fn read_transcript(path: &Path) -> Result<Transcript, String> {
                 usage,
                 complete,
             } => match index.get(&id) {
-                // A later line of the same message carries its full usage.
+                // A later line of the same message carries its fuller usage, until its final line
+                // (with a `stop_reason`) is seen: a streamed line after that is ignored (STP-5 AC-2).
                 Some(&i) => {
-                    t.messages[i].usage = usage;
-                    t.messages[i].complete = complete;
+                    if !t.messages[i].complete {
+                        t.messages[i].usage = usage;
+                        t.messages[i].complete = complete;
+                    }
                 }
                 None => {
                     index.insert(id.clone(), t.messages.len());
@@ -223,15 +226,19 @@ fn parse_cost_state(line: &str) -> Option<CostState> {
     }
     let mut models = Vec::new();
     for (model, u) in v.get("modelUsage")?.as_object()? {
-        let n = |k: &str| u.get(k).and_then(Value::as_u64);
+        // A count is absent or a non-negative integer; any other value refuses the line.
+        let n = |k: &str| match u.get(k) {
+            None => Some(None),
+            Some(c) => c.as_u64().map(Some),
+        };
         models.push((
             model.clone(),
             [
-                n("inputTokens"),
-                n("outputTokens"),
-                n("thinkingTokens"),
-                n("cacheReadInputTokens"),
-                n("cacheCreationInputTokens"),
+                n("inputTokens")?,
+                n("outputTokens")?,
+                n("thinkingTokens")?,
+                n("cacheReadInputTokens")?,
+                n("cacheCreationInputTokens")?,
             ],
         ));
     }
@@ -245,17 +252,24 @@ fn parse_cost_state(line: &str) -> Option<CostState> {
 
 /// The last `cost-state` line of a transcript. A line counts as one when it mentions the type
 /// `cost-state`; when the last such line cannot be read (half written, or without its session,
-/// start or duration), the transcript is refused rather than an earlier line taken.
+/// start or duration, or with a count that is not a non-negative integer), or the last non-empty
+/// line of the file is not complete JSON (whatever it holds), the transcript is refused rather than
+/// an earlier line taken.
 pub fn last_cost_state(path: &Path) -> Result<CostState, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut reader = std::io::BufReader::new(file);
     let mut buf = Vec::new();
+    let mut prev = Vec::new();
     let mut last: Option<(usize, Option<CostState>)> = None;
+    let mut last_line = 0;
     let mut n = 0;
     while read_bounded_line(&mut reader, &mut buf, MAX_TRANSCRIPT_LINE)
         .map_err(|e| format!("{}: {e}", path.display()))?
     {
         n += 1;
+        if !buf.iter().all(u8::is_ascii_whitespace) {
+            last_line = n;
+        }
         let text = String::from_utf8_lossy(&buf);
         let compact: String = text
             .chars()
@@ -269,6 +283,20 @@ pub fn last_cost_state(path: &Path) -> Result<CostState, String> {
                 parse_cost_state(text.trim_end())
             };
             last = Some((n, parsed));
+        }
+        if last_line == n {
+            drop(text);
+            std::mem::swap(&mut buf, &mut prev);
+        }
+    }
+    if last_line > 0 {
+        let complete = prev.len() <= MAX_TRANSCRIPT_LINE
+            && std::str::from_utf8(&prev).is_ok_and(|t| serde_json::from_str::<Value>(t).is_ok());
+        if !complete {
+            return Err(format!(
+                "{}: line {last_line}, the last line, is not complete JSON; import once it is complete",
+                path.display()
+            ));
         }
     }
     match last {
