@@ -1391,7 +1391,11 @@ fn report_matches_golden() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/check_report.txt"),
     )
     .unwrap();
-    assert_eq!(without_ids(&text), golden, "actual:\n{text}");
+    assert_eq!(
+        without_cargo_line(&without_ids(&text)),
+        golden,
+        "actual:\n{text}"
+    );
 }
 
 // ---- STP-4 AC-5: run records ----
@@ -2042,4 +2046,266 @@ fn glob_characters_in_paths_are_literal() {
     let (code, text) = check(dir);
     assert_eq!(code, 1, "{text}");
     assert_eq!(outcome(&text, "step 1"), "tests-changed", "{text}");
+}
+
+// ---- STP-6 AC-8 to AC-11: the environment and the cargo program ----
+
+/// The report with its `cargo: <path> (<version>)` line (STP-6 AC-9) replaced by a fixed one.
+fn without_cargo_line(text: &str) -> String {
+    text.lines()
+        .map(|l| {
+            if l.starts_with("cargo: ") {
+                "cargo: <cargo>\n".to_string()
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect()
+}
+
+/// An executable shell script `name` in `dir`.
+fn script(dir: &Path, name: &str, body: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+/// The first `cargo` in an absolute entry of this test's `PATH`.
+fn real_cargo() -> String {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .filter(|p| p.is_absolute())
+        .map(|p| p.join("cargo"))
+        .find(|p| p.is_file())
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Sets `[check] cargo` and commits the change.
+fn set_cargo_key(dir: &Path, cargo: &str) {
+    let text = read(dir, ".stapel/stapel.toml");
+    let text: String = text
+        .lines()
+        .filter(|l| !l.starts_with("cargo = "))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let text = text.replacen(
+        "timeout_secs = 900\n",
+        &format!("timeout_secs = 900\ncargo = \"{cargo}\"\n"),
+        1,
+    );
+    write(dir, ".stapel/stapel.toml", &text);
+    commit(dir, "ABC-1: the cargo key");
+}
+
+fn cargo_line(text: &str) -> String {
+    text.lines()
+        .find(|l| l.starts_with("cargo: "))
+        .unwrap_or("(no cargo line)")
+        .to_string()
+}
+
+#[test]
+fn cargo_runs_with_the_allow_list_only() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let dumps = scripts.path().join("dumps");
+    std::fs::create_dir(&dumps).unwrap();
+    let fake = script(
+        scripts.path(),
+        "cargo",
+        &format!(
+            "env > {}/env.$$\nexec {} \"$@\"",
+            dumps.display(),
+            real_cargo()
+        ),
+    );
+    set_cargo_key(dir, &fake);
+    let out = {
+        let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
+        stapel(dir)
+            .args(["check", "ABC-1"])
+            .env("CARGO_BUILD_JOBS", "2")
+            .env("RUSTC_WRAPPER", "/nonexistent")
+            .env("RUSTFLAGS", "--cfg=fake")
+            .env("RUSTC", "/nonexistent")
+            .env("CARGO_ALIAS_TEST", "x")
+            .env("STAPEL_TEST_SECRET", "1")
+            .output()
+            .unwrap()
+    };
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    let allowed = [
+        "HOME",
+        "USER",
+        "PATH",
+        "LANG",
+        "TMPDIR",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "RUSTUP_TOOLCHAIN",
+        "CARGO_TARGET_DIR",
+        "CARGO_TERM_COLOR",
+        // set by the shell itself
+        "PWD",
+        "OLDPWD",
+        "SHLVL",
+        "_",
+    ];
+    let mut seen = 0;
+    for entry in std::fs::read_dir(&dumps).unwrap() {
+        let dump = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+        seen += 1;
+        let names: Vec<&str> = dump
+            .lines()
+            .filter_map(|l| l.split_once('=').map(|(k, _)| k))
+            .collect();
+        for n in &names {
+            assert!(allowed.contains(n), "{n} reached cargo: {dump}");
+        }
+        for must in ["PATH", "CARGO_TARGET_DIR", "CARGO_TERM_COLOR"] {
+            assert!(names.contains(&must), "{must} is missing: {dump}");
+        }
+    }
+    assert!(seen >= 3, "cargo ran {seen} times");
+}
+
+#[test]
+fn cargo_path_and_version_are_reported() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let real = real_cargo();
+    let versioned = |print: &str| {
+        script(
+            scripts.path(),
+            "cargo",
+            &format!("if [ \"$1\" = --version ]; then {print}; exit 0; fi\nexec {real} \"$@\""),
+        )
+    };
+    let reported = |dir: &Path| {
+        let (code, text) = check(dir);
+        assert_eq!(code, 0, "{text}");
+        let records = run_records(dir);
+        let last = records.last().unwrap()["cargo"]
+            .as_str()
+            .unwrap_or("(no cargo field)")
+            .to_string();
+        (cargo_line(&text), last)
+    };
+
+    // The key names the program; the first line of `--version` is the version.
+    let fake = versioned("printf 'cargo 9.9.9 (fake)\\nsecond line\\n'");
+    set_cargo_key(dir, &fake);
+    let (line, field) = reported(dir);
+    assert_eq!(line, format!("cargo: {fake} (cargo 9.9.9 (fake))"));
+    assert_eq!(field, format!("{fake} (cargo 9.9.9 (fake))"));
+
+    // A long, non-UTF-8 line is read lossily and cut to 200 bytes.
+    let long = "a".repeat(300);
+    versioned(&format!("printf '\\377{long}\\n'"));
+    let (line, field) = reported(dir);
+    let version = field.strip_prefix(&format!("{fake} (")).unwrap();
+    let version = version.strip_suffix(')').unwrap();
+    assert_eq!(version.len(), 200, "{field}");
+    assert_eq!(version.chars().next(), Some('\u{FFFD}'));
+    assert!(version.chars().skip(1).all(|c| c == 'a'), "{field}");
+    assert_eq!(line, format!("cargo: {field}"));
+
+    // An empty version reads `?`.
+    versioned("printf ''");
+    let (line, field) = reported(dir);
+    assert_eq!(line, format!("cargo: {fake} (?)"));
+    assert_eq!(field, format!("{fake} (?)"));
+
+    // Without the key: the first `cargo` in an absolute `PATH` entry.
+    let text = read(dir, ".stapel/stapel.toml");
+    write(
+        dir,
+        ".stapel/stapel.toml",
+        &text
+            .lines()
+            .filter(|l| !l.starts_with("cargo = "))
+            .map(|l| format!("{l}\n"))
+            .collect::<String>(),
+    );
+    commit(dir, "ABC-1: no cargo key");
+    let (line, field) = reported(dir);
+    assert!(
+        line.starts_with(&format!("cargo: {real} (cargo ")) && line.ends_with(')'),
+        "{line}"
+    );
+    assert_eq!(line, format!("cargo: {field}"));
+}
+
+#[test]
+fn refuses_without_a_working_cargo() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let refused = |dir: &Path, what: &str| {
+        let (code, text) = check(dir);
+        assert_eq!(code, 2, "{what}: {text}");
+        assert!(text.contains("cargo"), "{what}: {text}");
+        assert!(
+            !dir.join(".stapel/tickets/ABC-1/runs.jsonl").exists(),
+            "{what}: a record was written"
+        );
+    };
+
+    // `cargo --version` fails.
+    let broken = script(scripts.path(), "broken", "echo broken >&2\nexit 1");
+    set_cargo_key(dir, &broken);
+    refused(dir, "version fails");
+
+    // `cargo --version` runs past `timeout_secs`.
+    let slow = script(scripts.path(), "slow", "exec sleep 60");
+    set_cargo_key(dir, &slow);
+    set_timeout(dir, 10);
+    let started = std::time::Instant::now();
+    refused(dir, "version times out");
+    assert!(started.elapsed().as_secs() < 50, "the limit did not apply");
+
+    // No `cargo` in an absolute `PATH` entry; a relative entry does not count.
+    let text = read(dir, ".stapel/stapel.toml");
+    write(
+        dir,
+        ".stapel/stapel.toml",
+        &text
+            .lines()
+            .filter(|l| !l.starts_with("cargo = "))
+            .map(|l| format!("{l}\n"))
+            .collect::<String>(),
+    );
+    // `bin/cargo` in the repository is reachable only through a relative `PATH` entry.
+    std::fs::create_dir(dir.join("bin")).unwrap();
+    script(&dir.join("bin"), "cargo", "exec true");
+    commit(dir, "ABC-1: a cargo in a relative folder");
+    let git_bin = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .find(|p| p.join("git").is_file())
+        .unwrap();
+    let only_git = scripts.path().join("only-git");
+    std::fs::create_dir(&only_git).unwrap();
+    std::os::unix::fs::symlink(git_bin.join("git"), only_git.join("git")).unwrap();
+    let out = {
+        let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
+        stapel(dir)
+            .args(["check", "ABC-1"])
+            .env("PATH", format!("bin:{}", only_git.display()))
+            .output()
+            .unwrap()
+    };
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("cargo"), "{text}");
+    assert!(!dir.join(".stapel/tickets/ABC-1/runs.jsonl").exists());
 }

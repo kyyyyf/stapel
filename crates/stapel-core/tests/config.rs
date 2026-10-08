@@ -181,3 +181,59 @@ fn check_section_is_validated() {
     assert!(Config::parse(&other).unwrap().check.is_none());
     assert!(other.lines().any(|l| l.starts_with("# [check]")), "{other}");
 }
+
+/// STP-6 AC-10: `[check] cargo` is an absolute path to an executable regular file outside the
+/// repository folder (links resolved); a bad value fails the load and names the key.
+#[test]
+fn check_cargo_key_is_validated() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let repo = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let root = repo.path().canonicalize().unwrap();
+    let out = outside.path().canonicalize().unwrap();
+    let make = |path: &std::path::Path, mode: u32| {
+        std::fs::write(path, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    make(&out.join("cargo"), 0o755);
+    make(&out.join("plain"), 0o644);
+    make(&root.join("cargo"), 0o755);
+    std::fs::create_dir(out.join("folder")).unwrap();
+    symlink(root.join("cargo"), out.join("link-into-repo")).unwrap();
+    symlink(out.join("cargo"), out.join("link-ok")).unwrap();
+
+    let base = default_toml("ABC");
+    let load = |value: &str| {
+        let value = value.replace('\\', "\\\\").replace('"', "\\\"");
+        Config::parse_at(&format!("{base}\n[check]\ncargo = \"{value}\"\n"), &root)
+    };
+    let path = |p: std::path::PathBuf| p.to_string_lossy().into_owned();
+
+    for ok in [path(out.join("cargo")), path(out.join("link-ok"))] {
+        let config = load(&ok).unwrap_or_else(|e| panic!("{ok} was refused: {e}"));
+        assert_eq!(config.check.unwrap().cargo.as_deref(), Some(ok.as_str()));
+    }
+    // Without the key nothing changes.
+    let none = Config::parse_at(&format!("{base}\n[check]\n"), &root).unwrap();
+    assert_eq!(none.check.unwrap().cargo, None);
+
+    for bad in [
+        "cargo".to_string(),
+        "./cargo".to_string(),
+        "~/cargo".to_string(),
+        String::new(),
+        path(out.join("missing")),
+        path(out.join("folder")),
+        path(out.join("plain")),
+        path(root.join("cargo")),
+        path(out.join("link-into-repo")),
+        path(
+            root.join("..")
+                .join(root.file_name().unwrap())
+                .join("cargo"),
+        ),
+    ] {
+        let e = load(&bad).expect_err(&format!("{bad:?} was accepted"));
+        assert!(e.contains("check.cargo"), "{bad:?}: {e}");
+    }
+}
