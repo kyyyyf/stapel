@@ -3211,3 +3211,22 @@ fn other_workspace_keys_are_not_build_inputs() {
     let (_, text) = check_env(dir, &[]);
     assert!(!text.contains("build-input"), "{text}");
 }
+
+#[test]
+fn build_input_reading_fails_closed() {
+    // A manifest that does not parse hides its `build` key: a change to a file next to it counts
+    // as a build-input change and names that file. A change deeper in the crate does not.
+    let member = "crates/tiny/Cargo.toml";
+    let (repo, _scripts, dumps) = build_input_repo(|d| {
+        write(d, member, "[package\n");
+        write(d, "crates/tiny/gen.rs", "fn main() {}\n");
+    });
+    let dir = repo.path();
+    write(dir, "crates/tiny/gen.rs", "fn main() { /* edited */ }\n");
+    changed_case(
+        dir,
+        &dumps,
+        "file next to a broken manifest",
+        "crates/tiny/gen.rs",
+    );
+}
