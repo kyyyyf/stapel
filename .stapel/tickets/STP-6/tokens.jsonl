@@ -15,3 +15,4 @@
 {"source":"estimate","estimate":74290,"v":1,"id":"t-2c0a3a254c36","at":"2026-10-08T14:30:40Z","ticket":"STP-6","role":"builder","model":"claude-sonnet-5-5","step":"3","note":"builder, step 3 drift fixes; subagent_tokens of the end notice"}
 {"source":"estimate","estimate":37452,"v":1,"id":"t-303eefea6e32","at":"2026-10-08T14:36:08Z","ticket":"STP-6","role":"builder","model":"claude-sonnet-5-5","step":"3","note":"builder, coverage helper moved; subagent_tokens of the end notice"}
 {"source":"estimate","estimate":1697,"v":1,"id":"t-5788f9eb2bde","at":"2026-10-08T14:43:48Z","ticket":"STP-6","role":"builder","model":"claude-sonnet-5-5","step":"3","note":"builder, coverage helper moved: rest of its final end notice (39149 minus 37452)"}
+{"source":"estimate","estimate":130609,"v":1,"id":"t-b3a0195bdeab","at":"2026-10-08T15:04:53Z","ticket":"STP-6","role":"builder","model":"claude-sonnet-5-5","step":"4","note":"builder step 4; subagent_tokens of the end notice"}
