@@ -234,7 +234,7 @@ fn kill_group(pid: u32) {
 fn kill_group(_pid: u32) {}
 
 /// Variables of the caller that reach a cargo run (STP-6 AC-8); the check adds its own.
-pub const ENV_ALLOW: [&str; 8] = [
+pub const ENV_ALLOW: [&str; 9] = [
     "HOME",
     "USER",
     "PATH",
@@ -243,6 +243,7 @@ pub const ENV_ALLOW: [&str; 8] = [
     "CARGO_HOME",
     "RUSTUP_HOME",
     "RUSTUP_TOOLCHAIN",
+    "CARGO_BUILD_JOBS",
 ];
 
 /// The cargo program (STP-6 AC-9): `configured` if set, else the first `cargo` in an absolute
