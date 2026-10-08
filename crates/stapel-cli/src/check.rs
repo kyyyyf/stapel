@@ -13,7 +13,9 @@ use stapel_core::steps::{
 };
 use stapel_core::tickets::{Status, resolve};
 use stapel_core::time::now_rfc3339;
-use stapel_core::worktree::{Lock, LockError, Worktree, dirty_paths, stapel_dir};
+use stapel_core::worktree::{
+    Lock, LockError, Worktree, build_input_outside, dirty_paths, resolve_tmpdir, stapel_dir,
+};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -120,7 +122,11 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         Ok(a) => a,
         Err(e) => return refuse(e),
     };
-    let wt = match Worktree::create(&root, &dir, &head) {
+    let tmp = match resolve_tmpdir(&root) {
+        Ok(t) => t,
+        Err(e) => return refuse(e),
+    };
+    let wt = match Worktree::create(&root, &dir, &head, &tmp) {
         Ok(w) => w,
         Err(e) => return refuse(e),
     };
@@ -135,11 +141,16 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
     }
     let target = dir.join("check-target");
     let timeout = Duration::from_secs(check.timeout_secs);
-    let version = match cargo_version(&cargo, &wt.path, &target, timeout) {
-        Ok(v) => v,
-        Err(e) => return refuse(format!("{}: {e}", cargo.display())),
+    // A configuration above the worktree is found before any cargo run (AC-7).
+    let outside = build_input_outside(&wt.path);
+    let cargo_text = if outside.is_some() {
+        cargo.display().to_string()
+    } else {
+        match cargo_version(&cargo, &wt.path, &target, timeout) {
+            Ok(v) => format!("{} ({v})", cargo.display()),
+            Err(e) => return refuse(format!("{}: {e}", cargo.display())),
+        }
     };
-    let cargo_text = format!("{} ({version})", cargo.display());
     let runner = Runner {
         root: &root,
         wt: &wt,
@@ -147,6 +158,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         target,
         timeout,
         head: &head,
+        outside: outside.map(|p| format!("build-input-outside: {}", p.display())),
     };
     println!("ticket: {} at {}", ticket.key, short(&head));
     println!("cargo: {cargo_text}");
@@ -274,6 +286,9 @@ struct Runner<'a> {
     target: PathBuf,
     timeout: Duration,
     head: &'a str,
+    /// Set when a build input lies above the worktree: no cargo runs, and every step and the suite
+    /// read `unverified: build-input-outside: <path>`.
+    outside: Option<String>,
 }
 
 /// The state of each test at one commit, or why the run does not count.
@@ -331,6 +346,9 @@ impl Runner<'_> {
     }
 
     fn step(&self, a: &Analysis) -> (String, String) {
+        if let Some(why) = &self.outside {
+            return ("unverified".into(), why.clone());
+        }
         let (Some(red), Some(green)) = (&a.red, &a.green) else {
             return ("unpaired".into(), String::new());
         };
@@ -434,6 +452,9 @@ impl Runner<'_> {
             detail: reason,
             counts: (0, 0, 0),
         };
+        if let Some(why) = &self.outside {
+            return unverified(why.clone());
+        }
         if let Err(e) = self.wt.checkout(self.head) {
             return unverified(e);
         }
