@@ -36,6 +36,9 @@ pub struct State {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracker: Option<String>,
+    /// The full id of HEAD when the ticket was created; absent in a repository without commits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
     #[serde(default)]
     pub confirmations: Vec<Confirmation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -87,6 +90,7 @@ impl State {
             key: key.to_string(),
             title: title.to_string(),
             tracker: None,
+            base: None,
             confirmations: Vec::new(),
             closed: None,
             extra: Map::new(),

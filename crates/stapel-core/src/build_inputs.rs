@@ -24,9 +24,37 @@ pub struct Change {
     pub sha: String,
 }
 
-/// The commits of the ticket's range, oldest first: the first-parent history from the oldest commit
-/// whose subject starts with `<key> ` or `<key>:` up to `head`.
-pub fn range(root: &Path, key: &str, head: &str) -> Result<Vec<String>, String> {
+/// Where a ticket's range starts and ends (STP-6 AC-13, AC-15).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Bounds<'a> {
+    /// The `base` of `state.json`: the range starts after it. Without it the range starts at the
+    /// oldest commit whose subject carries the key.
+    pub base: Option<&'a str>,
+    /// A closed ticket: the range ends at the last commit whose subject carries the key.
+    pub closed: bool,
+}
+
+/// A `base` must be a full hex commit id on the first-parent history of `head`.
+pub fn check_base(root: &Path, base: &str, head: &str) -> Result<(), String> {
+    let full = matches!(base.len(), 40 | 64)
+        && base.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    let on_line = full
+        && git(root, &["rev-list", "--first-parent", head])
+            .map(|o| o.split(|b| *b == b'\n').any(|l| l == base.as_bytes()))
+            .unwrap_or(false);
+    if on_line {
+        Ok(())
+    } else {
+        Err(format!(
+            "state.json has base {base}, which is not a full commit id on the first-parent history of HEAD"
+        ))
+    }
+}
+
+/// The commits of the ticket's range, oldest first: the first-parent history after `bounds.base`
+/// (else from the oldest commit whose subject starts with `<key> ` or `<key>:`) up to `head`, or for
+/// a closed ticket up to its last commit whose subject carries the key.
+pub fn range(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Vec<String>, String> {
     let raw = git(
         root,
         &[
@@ -48,12 +76,26 @@ pub fn range(root: &Path, key: &str, head: &str) -> Result<Vec<String>, String> 
         .map(|c| (c[0].trim_start_matches('\n').to_string(), &c[1]))
         .filter(|(sha, _)| !sha.is_empty())
         .collect();
-    let start = commits
-        .iter()
-        .position(|(_, s)| s.starts_with(&format!("{key} ")) || s.starts_with(&format!("{key}:")));
-    Ok(start
-        .map(|i| commits[i..].iter().map(|(sha, _)| sha.clone()).collect())
-        .unwrap_or_default())
+    let keyed = |s: &str| s.starts_with(&format!("{key} ")) || s.starts_with(&format!("{key}:"));
+    let start = match bounds.base {
+        Some(base) => commits
+            .iter()
+            .position(|(sha, _)| sha == base)
+            .map(|i| i + 1),
+        None => commits.iter().position(|(_, s)| keyed(s)),
+    };
+    let end = if bounds.closed {
+        commits
+            .iter()
+            .rposition(|(_, s)| keyed(s))
+            .map_or(0, |i| i + 1)
+    } else {
+        commits.len()
+    };
+    Ok(match start {
+        Some(i) if i < end => commits[i..end].iter().map(|(sha, _)| sha.clone()).collect(),
+        _ => Vec::new(),
+    })
 }
 
 /// A path that is a build input by its name: a `.cargo` component, a toolchain file or `build.rs`.
@@ -298,8 +340,14 @@ fn entries(root: &Path, sha: &str) -> Result<(String, Vec<Entry>, bool), String>
 /// Reads the range: the first commit that changes a build input, and the build inputs at HEAD that
 /// no commit changes. A RED of the ticket that changes no code is skipped; every other commit of the
 /// range counts.
-pub fn analyse(root: &Path, key: &str, head: &str, steps: &[Step]) -> Result<BuildInputs, String> {
-    let commits = range(root, key, head)?;
+pub fn analyse(
+    root: &Path,
+    key: &str,
+    head: &str,
+    steps: &[Step],
+    bounds: Bounds,
+) -> Result<BuildInputs, String> {
+    let commits = range(root, key, head, bounds)?;
     let mut reds: HashSet<String> = HashSet::new();
     for c in steps.iter().flat_map(|s| s.commits.iter()) {
         if c.marker == Marker::Red && commits.contains(&c.sha) && !red_changes_code(root, &c.sha)? {

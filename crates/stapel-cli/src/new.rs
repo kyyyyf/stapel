@@ -43,6 +43,10 @@ pub fn run(title: &str, tracker: Option<&str>) -> Result<(), String> {
 
     let mut state = State::new(&key, title);
     state.tracker = tracker.map(String::from);
+    // A repository without commits has no HEAD, and so no base.
+    state.base = stapel_core::steps::git_text(&root, &["rev-parse", "--verify", "HEAD"])
+        .ok()
+        .map(|h| h.trim().to_string());
     save(&dir.join("state.json"), &state)?;
     println!("created: {key}");
     Ok(())

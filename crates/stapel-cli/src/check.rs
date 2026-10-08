@@ -2,6 +2,7 @@
 
 use crate::repo;
 use stapel_core::build_inputs;
+use stapel_core::build_inputs::Bounds;
 use stapel_core::config::validate_cargo;
 use stapel_core::journal::{append, new_id};
 use stapel_core::outcomes::{Analysis, MAX_NAMED, analyse, named, passing};
@@ -58,6 +59,15 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         return refuse(
             "this is a shallow clone; the check reads the whole history (git fetch --unshallow)",
         );
+    }
+    let base = match &ticket.status {
+        Status::Open(s) | Status::Closed(s) => s.base.clone(),
+        _ => None,
+    };
+    if let Some(base) = &base
+        && let Err(e) = build_inputs::check_base(&root, base, &head)
+    {
+        return refuse(e);
     }
     let steps = match step_commits(&root, &ticket.key, &head) {
         Ok(c) => steps(c),
@@ -119,11 +129,15 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         }
         Err(LockError::Io(e)) => return refuse(e),
     };
+    let bounds = Bounds {
+        base: base.as_deref(),
+        closed: matches!(ticket.status, Status::Closed(_)),
+    };
     let analyses = match analyse(&root, &ticket.key, &head, &steps) {
         Ok(a) => a,
         Err(e) => return refuse(e),
     };
-    let inputs = match build_inputs::analyse(&root, &ticket.key, &head, &steps) {
+    let inputs = match build_inputs::analyse(&root, &ticket.key, &head, &steps, bounds) {
         Ok(i) => i,
         Err(e) => return refuse(e),
     };
