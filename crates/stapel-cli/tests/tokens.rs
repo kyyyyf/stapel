@@ -777,7 +777,9 @@ fn partial_messages_lose_only_their_output() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     let file = fixture(dir, "partial.jsonl");
-    import(dir, &file, None, "2026-01-02T00:00:00Z").success();
+    import(dir, &file, None, "2026-01-02T00:00:00Z")
+        .success()
+        .stdout(contains("(3 messages, partial: 2)"));
     let rs = records(dir, "ABC-1");
     assert_eq!(rs.len(), 1, "{rs:?}");
     let r = &rs[0];
@@ -799,7 +801,9 @@ fn partial_messages_lose_only_their_output() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     let file = fixture(dir, "subagent.jsonl");
-    import(dir, &file, None, "2026-01-02T00:00:00Z").success();
+    let out = import(dir, &file, None, "2026-01-02T00:00:00Z").success();
+    let text = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+    assert!(!text.contains("partial"), "{text}");
     let rs = records(dir, "ABC-1");
     assert!(
         rs.iter()
@@ -831,6 +835,59 @@ fn older_subagent_records_show_partial_output() {
     assert!(line("reviewer").contains("≥16"), "{text}");
     assert!(!line("orchestrator").contains('≥'), "{text}");
     assert!(!line("drift").contains('≥'), "{text}");
+}
+
+// STP-5 AC-2: a streamed line after the final line of a message does not replace its usage.
+#[test]
+fn final_line_is_kept() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let file = fixture(dir, "final_then_stream.jsonl");
+    import(dir, &file, None, "2026-01-02T00:00:00Z").success();
+    let rs = records(dir, "ABC-1");
+    assert_eq!(rs.len(), 1, "{rs:?}");
+    assert_eq!(rs[0]["output"], 1500, "{}", rs[0]);
+    assert!(rs[0].get("partial").is_none(), "{}", rs[0]);
+}
+
+// STP-5 AC-3: a `partial` or `importer` of another type or value is a problem and is not counted.
+#[test]
+fn bad_partial_and_importer_values_are_problems() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let rec = |role: &str, extra: &str| {
+        format!(
+            "{{\"v\":1,\"id\":\"t-{role}\",\"role\":\"{role}\",\"model\":\"m\",\"source\":\"measured\",\"input\":1,\"output\":4242,\"transcript\":\"s-1\"{extra}}}\n"
+        )
+    };
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-1/tokens.jsonl"),
+        [
+            rec("zero", ",\"partial\":0"),
+            rec("text", ",\"partial\":\"x\""),
+            rec("three", ",\"importer\":3"),
+            rec("quoted", ",\"importer\":\"2\""),
+            rec("good", ",\"partial\":2,\"importer\":2"),
+        ]
+        .concat(),
+    )
+    .unwrap();
+    let out = stapel(dir).args(["tokens", "ABC-1"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stdout);
+    for n in 1..=4 {
+        let line = format!("problem: .stapel/tickets/ABC-1/tokens.jsonl:{n}");
+        assert!(text.lines().any(|l| l == line), "{line}\n{text}");
+    }
+    assert!(!text.contains("tokens.jsonl:5"), "{text}");
+    for role in ["zero", "text", "three", "quoted"] {
+        assert!(!text.lines().any(|l| l.starts_with(role)), "{text}");
+    }
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("good") && l.contains("≥4242")),
+        "{text}"
+    );
 }
 
 fn sessions(dir: &Path) -> Vec<serde_json::Value> {
@@ -905,6 +962,48 @@ fn truncated_cost_state_is_refused() {
     assert!(!dir.join(".stapel/sessions.jsonl").exists());
 }
 
+// STP-5 AC-5: a count that is not a non-negative integer, or a last line that is not complete JSON,
+// refuses the transcript and records nothing.
+#[test]
+fn cost_state_with_bad_counts_is_refused() {
+    let state = |count: &str| {
+        format!(
+            "{{\"type\":\"cost-state\",\"sessionId\":\"s-bad\",\"startTime\":1767268800000,\"totalDuration\":60000,\"modelUsage\":{{\"m\":{{\"inputTokens\":5,\"outputTokens\":{count},\"thinkingTokens\":0}}}}}}\n"
+        )
+    };
+    let good = state("10");
+    let cases = [
+        ("float", format!("{good}{}", state("1.5")), "line 2"),
+        ("string", format!("{good}{}", state("\"7\"")), "line 2"),
+        ("negative", format!("{good}{}", state("-3")), "line 2"),
+        (
+            "cut inside the type",
+            format!("{good}{{\"type\":\"cost-"),
+            "line 2",
+        ),
+        (
+            "garbage after the state",
+            format!("{good}not json at all\n\n"),
+            "line 2",
+        ),
+    ];
+    for (name, content, line) in cases {
+        let repo = repo_with_ticket();
+        let dir = repo.path();
+        let file = dir.join("bad.jsonl");
+        std::fs::write(&file, content).unwrap();
+        stapel(dir)
+            .args(["tokens", "session", &file.display().to_string()])
+            .assert()
+            .code(1)
+            .stderr(contains(line));
+        assert!(
+            !dir.join(".stapel/sessions.jsonl").exists(),
+            "case {name} appended"
+        );
+    }
+}
+
 /// A sessions journal with an older and a newer line of one session.
 fn write_sessions(dir: &Path) {
     let line = |dur: u64, opus: u64, think: u64| {
@@ -941,6 +1040,7 @@ fn report_shows_session_gaps() {
          {\"v\":1,\"id\":\"t-2\",\"role\":\"orchestrator\",\"model\":\"claude-opus-5-5\",\"source\":\"measured\",\"output\":200,\"transcript\":\"s-sess\",\"from\":\"2026-01-01T12:05:00.000Z\",\"to\":\"2026-01-01T12:05:00.000Z\",\"importer\":2}\n\
          {\"v\":1,\"id\":\"t-3\",\"role\":\"reviewer\",\"model\":\"claude-sonnet-5-5\",\"source\":\"measured\",\"output\":1500,\"partial\":1,\"transcript\":\"s-sess/agent-x\",\"from\":\"2026-01-01T12:01:00.000Z\",\"to\":\"2026-01-01T12:02:00.000Z\",\"importer\":2}\n\
          {\"v\":1,\"id\":\"t-4\",\"role\":\"reviewer\",\"model\":\"claude-sonnet-5-5\",\"source\":\"estimate\",\"estimate\":999}\n\
+         {\"v\":1,\"id\":\"t-6\",\"role\":\"drift\",\"model\":\"claude-haiku-4-5\",\"source\":\"measured\",\"output\":50,\"transcript\":\"s-sess\",\"from\":\"2026-01-01T12:03:00.000Z\",\"to\":\"2026-01-01T12:03:00.000Z\",\"importer\":2}\n\
          {\"v\":1,\"id\":\"t-5\",\"role\":\"orchestrator\",\"model\":\"claude-opus-5-5\",\"source\":\"measured\",\"output\":77,\"transcript\":\"s-other\",\"from\":\"2026-01-01T12:00:00.000Z\",\"to\":\"2026-01-01T12:00:00.000Z\",\"importer\":2}\n",
     )
     .unwrap();
@@ -979,4 +1079,75 @@ fn report_counts_a_duplicate_import_once() {
     assert_eq!(cells[4], "310", "{part}");
     assert_eq!(cells[6], "1", "{part}");
     assert_eq!(cells[7], "490", "{part}");
+
+    // More messages beat the importer mark and the later time.
+    let rec = |id: &str, out: u64, extra: &str| {
+        format!(
+            "{{\"v\":1,\"id\":\"{id}\",\"at\":\"{}\",\"role\":\"orchestrator\",\"model\":\"claude-opus-5-5\",\"source\":\"measured\",\"output\":{out},\"transcript\":\"s-sess\",\"from\":\"2026-01-01T12:00:00.000Z\",\"to\":\"2026-01-01T12:10:00.000Z\"{extra}}}\n",
+            if id == "t-a" {
+                "2026-01-02T00:00:00Z"
+            } else {
+                "2026-01-03T00:00:00Z"
+            }
+        )
+    };
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-1/tokens.jsonl"),
+        rec("t-a", 300, ",\"messages\":5"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-2/tokens.jsonl"),
+        rec("t-b", 310, ",\"messages\":2,\"importer\":2"),
+    )
+    .unwrap();
+    let part = sessions_part(dir);
+    let opus = part
+        .lines()
+        .find(|l| l.contains("claude-opus-5-5"))
+        .unwrap_or("");
+    let cells: Vec<&str> = opus.split_whitespace().collect();
+    assert_eq!(cells[4], "300", "{part}");
+    assert_eq!(cells[6], "1", "{part}");
+}
+
+// STP-5 AC-8: a sessions line that cannot be used is a named problem; a repeated id counts once.
+#[test]
+fn sessions_journal_problems_are_named() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let valid = "{\"v\":1,\"id\":\"s-a\",\"at\":\"2026-01-02T00:00:00Z\",\"session\":\"s-sess\",\"start\":1767268800000,\"duration_ms\":60000,\"models\":{\"claude-opus-5-5\":{\"output\":450,\"thinking\":100}}}\n";
+    let no_id = "{\"v\":1,\"at\":\"2026-01-02T00:00:00Z\",\"session\":\"s-sess\",\"start\":1767268800000,\"duration_ms\":90000,\"models\":{\"claude-opus-5-5\":{\"output\":999,\"thinking\":0}}}\n";
+    let v2 = valid.replace("\"v\":1", "\"v\":2").replace("s-a", "s-b");
+    std::fs::write(
+        dir.join(".stapel/sessions.jsonl"),
+        format!("{valid}{no_id}{v2}this is not json\n{valid}"),
+    )
+    .unwrap();
+    let out = stapel(dir).args(["tokens"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stdout);
+    for n in [2, 3, 4] {
+        let line = format!("problem: .stapel/sessions.jsonl:{n}");
+        assert!(text.lines().any(|l| l == line), "{line}\n{text}");
+    }
+    assert!(!text.contains("sessions.jsonl:1\n"), "{text}");
+    assert!(!text.contains("sessions.jsonl:5"), "{text}");
+    assert_eq!(
+        text.lines()
+            .filter(|l| l.contains("claude-opus-5-5"))
+            .count(),
+        1,
+        "{text}"
+    );
+    let row = text
+        .lines()
+        .find(|l| l.contains("claude-opus-5-5"))
+        .unwrap_or("");
+    assert!(row.split_whitespace().nth(2) == Some("450"), "{text}");
+
+    // A ticket report shows no sessions table.
+    let out = stapel(dir).args(["tokens", "ABC-1"]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(!text.contains("sessions"), "{text}");
 }

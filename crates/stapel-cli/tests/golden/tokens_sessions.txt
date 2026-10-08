@@ -1,4 +1,6 @@
 sessions
 session       model                          output  thinking     records      partial  duplicates              gap
+s-sess        claude-haiku-4-5                    —         —          50            0           0                —
 s-sess        claude-opus-5-5                   800       150         500            0           0              300
-s-sess        claude-sonnet-5-5                1200         0       ≥1500            1           0             -300
+s-sess        claude-sonnet-5-5                1200         0       ≥1500            1           0            ≤-300
+note: the gap of a session continued from another file may include that file's totals
