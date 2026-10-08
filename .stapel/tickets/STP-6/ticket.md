@@ -172,6 +172,7 @@ steps into it; each sets its own `CARGO_TARGET_DIR`. Heavy runs: `cargo test -j 
 | Negative | each build input changed by a non-RED commit, before and after the first RED; a RED that changes an included source file; bad `[check] cargo`; no working cargo; a config above the worktree | `check::manifest_target_change_is_unverified`, `check::config_toolchain_build_script_and_links_are_unverified`, `check::helper_change_is_unverified`, `check::included_test_data_change_is_unverified`, `check::red_changing_an_included_file_changes_code`, `core::config::check_cargo_key_is_validated`, `check::refuses_without_a_working_cargo`, `check::config_above_the_worktree_is_unverified`, `check::interleaved_red_is_unverified`, `check::refuses_a_tmpdir_inside_the_repository` |
 | Ranges | the base commit; a closed ticket's range | `new::records_the_base_commit`, `check::range_starts_after_the_base`, `check::closed_ticket_range_ends_at_its_last_commit` |
 | Abuse | see the Abuse table | `check::cargo_runs_with_the_allow_list_only` and the Negative tests |
+| Step 1 drift review | the cargo key through the CLI; the cargo key checked again before the run (a link retargeted after load); a `cargo` on `PATH` that is not executable | `check::cargo_key_is_validated_through_the_cli`, `check::cargo_key_is_checked_again_before_the_run`, `check::path_cargo_must_be_executable` |
 | Integration | `stapel check STP-1` to `STP-5` on this repository (plan step 7, by hand; Decision 4); its output goes into Proof | — |
 
 ### Inputs
