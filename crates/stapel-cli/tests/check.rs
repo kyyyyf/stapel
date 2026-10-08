@@ -3472,3 +3472,117 @@ fn interleaved_red_is_unverified() {
     let (_, text) = check(dir);
     assert_eq!(outcome(&text, "step 1"), "tests-changed", "{text}");
 }
+
+#[test]
+fn helper_turned_step_file_stays_protected() {
+    // D4-2: a RED adds a test to `tests/common/mod.rs`, so the file holds a step test and is no
+    // longer a helper. A later GREEN edits a non-test function of that file.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    write(
+        dir,
+        "crates/tiny/tests/common/mod.rs",
+        "pub fn one() -> u32 {\n    1\n}\n",
+    );
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "#[test]",
+        "mod common;\n\n#[test]",
+    );
+    commit(dir, "setup: a shared test module");
+    with_wrong_triple(dir);
+    add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
+    let old = read(dir, "crates/tiny/tests/common/mod.rs");
+    write(
+        dir,
+        "crates/tiny/tests/common/mod.rs",
+        &format!("{old}\n#[test]\nfn trivial() {{\n    assert!(true);\n}}\n"),
+    );
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    fix_triple(dir);
+    edit(dir, "crates/tiny/tests/common/mod.rs", "    1\n", "    2\n");
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_ne!(outcome(&text, "step 1"), "pass", "{text}");
+    // The code gives the build-input outcome: the step test list does not make the file a step
+    // file, so it stays a helper and the GREEN edit counts as a helper change.
+    assert!(
+        text.contains(
+            "step 1: unverified: build-input-changed: crates/tiny/tests/common/mod.rs at "
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn include_reading_fails_closed() {
+    // D4-5: a `.rs` file that no commit of the ticket changes is read for its includes at every
+    // commit; when git cannot read it, the check fails and does not skip the file.
+    let (repo, _scripts, _dumps) = build_input_repo(|dir| {
+        write(dir, "crates/tiny/src/extra.rs", "pub const X: u32 = 7;\n");
+    });
+    let dir = repo.path();
+    let id = git(dir, &["rev-parse", "HEAD:crates/tiny/src/extra.rs"])
+        .trim()
+        .to_string();
+    let object = dir.join(".git/objects").join(&id[..2]).join(&id[2..]);
+    let mut perms = std::fs::metadata(&object).unwrap().permissions();
+    perms.set_readonly(false);
+    std::fs::set_permissions(&object, perms).unwrap();
+    std::fs::write(&object, b"not a git object").unwrap();
+    let (code, text) = check_env(dir, &[]);
+    assert_ne!(code, 0, "{text}");
+    assert!(!text.lines().any(|l| l == "step 1: pass"), "{text}");
+}
+
+#[test]
+fn interleaving_with_three_steps() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    add_test(dir, "second", "halves", "assert_eq!(tiny::half(8), 4);");
+    commit(dir, "ABC-1 step 2 RED: half is missing");
+    add_test(dir, "third", "quarters", "assert_eq!(tiny::quarter(8), 2);");
+    commit(dir, "ABC-1 step 3 RED: quarter is missing");
+    let lib = read(dir, "crates/tiny/src/lib.rs");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{lib}\npub fn quarter(x: u32) -> u32 {{\n    x / 4\n}}\n"),
+    );
+    commit(dir, "ABC-1 step 3 GREEN: quarter");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    let lib = read(dir, "crates/tiny/src/lib.rs");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{lib}\npub fn half(x: u32) -> u32 {{\n    x / 2\n}}\n"),
+    );
+    commit(dir, "ABC-1 step 2 GREEN: half");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    // Two REDs lie inside step 1: the earliest is named.
+    assert!(
+        text.lines()
+            .any(|l| l == "step 1: unverified: interleaved: step 2"),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|l| l == "step 2: unverified: interleaved: step 3"),
+        "{text}"
+    );
+    // A step with no RED inside stays `pass`.
+    assert_eq!(outcome(&text, "step 3"), "pass", "{text}");
+    // A duplicate label gives `duplicate`, not `interleaved`.
+    add_test(dir, "basic", "again", "assert!(true);");
+    commit(dir, "ABC-1 step 2 RED: again");
+    let (_, text) = check(dir);
+    assert_eq!(outcome(&text, "step 2"), "duplicate", "{text}");
+    assert!(!text.contains("step 2: unverified"), "{text}");
+}
