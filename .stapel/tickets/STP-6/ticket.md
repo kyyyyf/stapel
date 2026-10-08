@@ -41,7 +41,8 @@ program, resolved before the first run and named in the report.
 Not promised: cargo configuration in `CARGO_HOME`; `rustup` overrides and default toolchains; a compromised
 toolchain; a `rustc`, linker or other tool found through `PATH`; dependency redirection (`path`, `git`,
 `package`, `[patch]`, `[replace]`) and `include*!` with a non-literal argument or a path outside the
-repository, a `Cargo.toml` added by a RED under `crates/*/tests/` (split to STP-13, Decisions 13 and 21);
+repository, a `Cargo.toml` added by a RED under `crates/*/tests/`, includes followed through another included
+file (split to STP-13, Decisions 13, 21 and 30);
 proxy and certificate variables of the caller; proc-macro crates that read files.
 
 **Size.** Medium: about fourteen criteria, 400–500 changed lines, after the split of Decision 13.
@@ -112,6 +113,10 @@ proxy and certificate variables of the caller; proc-macro crates that read files
 - 2026-10-08, after step 3: (29) Decision: STP-14, `stapel check --history`, follows STP-13 (`docs/PHASES.md`).
   Builder briefs from step 4 on: a GREEN changes nothing under `crates/*/tests/`; a coverage commit only adds
   `#[test]` functions with their helpers nested inside; `stapel check` runs after every builder commit.
+- 2026-10-08, step 4 drift review (D4-1 to D4-6), all as recommended: (30) spec change of the term Included
+  file: every escape is decoded and an undecodable literal counts as a change (D4-1); the relation is read at
+  every commit of the range, not only at REDs, GREENs and HEAD (D4-3); a chain of includes is not promised and
+  goes to STP-13 (D4-4). D4-2, D4-5 and D4-6 get coverage tests.
 ## Spec
 
 Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in golden files. Terms:
@@ -122,8 +127,9 @@ Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in g
   ticket (STP-4's rule).
 - **Helper**: a `.rs` file under `crates/*/tests/`, any depth, that holds no step test of the ticket.
 - **Included file**: a path named by `include!`, `include_str!` or `include_bytes!` with a string literal
-  (raw strings included), relative to the including file, found by a text search (comments count) at the
-  range's base, at every RED and GREEN, and at HEAD.
+  (raw strings included, every Rust escape decoded; a literal that cannot be decoded counts as a change of its
+  includer), relative to the including file, found by a text search (comments count) at the range's base and
+  at every commit of the range.
 - **Build-input outcome**: every step of the ticket reads `unverified: build-input-changed: <path> at
   <short sha>`, naming the first such commit and path (golden file `check_report_build_inputs.txt`). A step
   that STP-4's history rules already fail (`unpaired`, `duplicate`, `no-tests`, `red-changes-code`,
