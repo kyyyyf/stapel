@@ -22,24 +22,26 @@ line in `runs.jsonl` or a deleted `[check]` (the STP-1 hole); rewritten history;
 good tests; unit tests inside `crates/*/src`.
 
 **Promise (closed list).** Against an agent that tries on purpose to make a step look verified,
-`stapel check` gives `unverified` or `fail`, never `pass`, when a step's GREEN or a later commit up to HEAD:
+`stapel check` gives `unverified` or a failing outcome, never `pass`, when a commit of the ticket's range
+(first-parent commits from the ticket's first commit to HEAD) that is not a RED of the ticket:
 
-1. changes a `[[test]]`, `[[bin]]`, `[lib]` or `[workspace]` target table, or `harness`, in any manifest;
-2. adds or changes a cargo configuration file (`.cargo/config`, `.cargo/config.toml`, at any level of the
-   repository), a `rust-toolchain` file or a `build.rs`;
-3. adds or changes a non-test file under `crates/*/tests/`, or a file that a test or source file includes
-   at compile time by a literal path.
+1. changes a target table or target key of any `Cargo.toml`, or adds or deletes a `Cargo.toml`;
+2. adds, changes or deletes a cargo configuration file, a `.cargo` path, a `rust-toolchain` file, a build
+   script or any symbolic link;
+3. changes a `.rs` file under `crates/*/tests/` other than a top-level test target, or a file that a step
+   test or such a helper includes by a literal path.
 
-And every cargo run of the check starts from a fixed environment: the variables that pick a tool or change
-the build (`RUSTC*`, `CARGO_*` apart from those the check sets, `RUSTFLAGS`, `RUSTDOCFLAGS`) are removed,
-and `cargo` is resolved once, before the first run, the path shown in the report.
+And: a RED that changes a file a source file includes by a literal path is `red-changes-code`; the check's
+worktree lies outside the repository, and a cargo configuration or toolchain file in a folder above it
+makes every step `unverified`; every cargo run starts from an allow-listed environment and one `cargo`
+program, resolved before the first run and named in the report.
 
-Not promised: a cargo configuration outside the repository (`~/.cargo/config.toml`, a parent directory);
-a compromised toolchain; include paths built by macros other than the literal-path `include*!` family;
-proc-macro crates that read files.
+Not promised: cargo configuration in `CARGO_HOME`; `rustup` overrides and default toolchains; a compromised
+toolchain; a `rustc`, linker or other tool found through `PATH`; dependency redirection (`path`, `git`,
+`package`, `[patch]`, `[replace]`) and `include*!` with a non-literal argument or a path outside the
+repository (split to STP-13, Decision 13); proc-macro crates that read files.
 
-**Size.** Medium: three to five criteria for the promise, one for the environment; about 300–500 changed
-lines. If the include check (point 3, second half) grows past that, it is split into its own ticket.
+**Size.** Medium: about eleven criteria, 400–500 changed lines, after the split of Decision 13.
 
 ### Decisions
 
@@ -62,36 +64,62 @@ lines. If the include check (point 3, second half) grows past that, it is split 
   that a step test uses gives `unverified`; other test targets may change.
 - Open question: how "a helper that a step test uses" is found (`mod` declarations and `#[path]` from the
   test file); to settle in Design.
-
+- 2026-10-08, spec review round 1 (10 findings, `findings.jsonl`): every inside-promise finding is fixed in
+  the text (SR-1, SR-2, SR-4, SR-5, SR-7, SR-9 and the LOW items); the open question above is closed by
+  SR-1. Decisions, all as recommended: (8) SR-1: every `.rs` file under `crates/*/tests/<dir>/` other than a
+  top-level target, changed after RED, gives `unverified`; this replaces Decision 7's reachability. (9) SR-2:
+  the check's worktree moves outside the repository (`TMPDIR`); a `.cargo/` or `rust-toolchain*` in any
+  ancestor of it other than `CARGO_HOME` makes every step `unverified`. (10) SR-3, promise widened: a
+  dependency entry that gains or changes `path`, `git` or `package`, any `[patch]` or `[replace]` table, or a
+  `Cargo.toml` under `crates/*/tests/` gives `unverified` after RED and `red-changes-code` in a RED;
+  crates.io dependencies and paths to workspace members stay allowed. (11) SR-6, promise widened: a build
+  input first added or changed by a commit of the ticket gives `unverified` even before the first RED;
+  Decision 5 holds only for inputs older than the ticket. (12) SR-8, promise widened: an `include*!` with a
+  path outside the repository or a non-literal argument, in a step test, its helpers or a source file,
+  gives `unverified`.
+- 2026-10-08, after spec review round 1: (13) Decision, the human chose "the more efficient" and the
+  orchestrator chose a split: SR-3 (dependency redirection) and SR-8 (non-literal and outside includes) go
+  to STP-13, so the widened promise stays within one review. Decisions 10 and 12 move with them. (14)
+  Decision: since a build input changed by any non-RED commit of the range is seen by the HEAD run of every
+  step, the build-input outcome marks every step, not only the one whose GREEN made the change (refines
+  Decisions 3 and 11). (15) Decision: a step test's `.rs` helpers are protected whole, without `mod`
+  parsing (Decision 8); included files are found at base, REDs, GREENs and HEAD (SR-7).
 ## Spec
 
-Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in golden files. "After RED"
-means a commit of the first-parent history after the step's RED up to HEAD that is not a RED of the
-ticket. A step marked by these rules reads `unverified: build-input-changed: <path> at <short sha>` in the
-report (golden file `check_report_build_inputs.txt`); the first such path and commit are named.
+Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in golden files. Terms:
+
+- **Range**: the first-parent commits from the ticket's first commit (the oldest whose subject starts with
+  `<KEY> ` or `<KEY>:`) to HEAD. A **non-RED commit** is a commit of the range that is not a RED of the
+  ticket (STP-4's rule).
+- **Helper**: a `.rs` file under `crates/*/tests/<dir>/`, any depth, that is not a top-level `.rs` target.
+- **Included file**: a path named by `include!`, `include_str!` or `include_bytes!` with a string literal
+  (raw strings included), relative to the including file, found by a text search (comments count) at the
+  range's base, at every RED and GREEN, and at HEAD.
+- **Build-input outcome**: every step of the ticket reads `unverified: build-input-changed: <path> at
+  <short sha>`, naming the first such commit and path (golden file `check_report_build_inputs.txt`).
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | IF after RED a commit changes, in any `Cargo.toml`, a `[lib]`, `[[bin]]`, `[[test]]`, `[[example]]`, `[[bench]]` or `[workspace]` table, or the `build`, `autotests`, `autobins`, `autoexamples` or `autobenches` key of `[package]` THEN the step is `unverified` with `build-input-changed`. | `check::target_table_change_after_red_is_unverified` |
-| AC-2 | IF after RED a commit adds, changes, deletes or renames a `.cargo/config` or `.cargo/config.toml`, a `rust-toolchain` or `rust-toolchain.toml`, at any depth of the repository, or a `build.rs` THEN the step is `unverified` with `build-input-changed`. | `check::cargo_config_toolchain_and_build_script_after_red_are_unverified` |
-| AC-3 | WHEN files of AC-2 exist at HEAD and no commit after a step's RED changes them THE report prints `build inputs: <path>, …` before the step lines, and the steps keep their outcomes. | `check::unchanged_build_inputs_are_named` |
-| AC-4 | IF after RED a commit changes a helper that a step test's file reaches through `mod` declarations or `#[path]` attributes, directly or through other helpers THEN the step is `unverified` with `build-input-changed`. A helper is a file under `crates/*/tests/` other than a top-level `.rs` file and a file under `golden/`. | `check::helper_change_after_red_is_unverified` |
-| AC-5 | IF a RED changes a file that a `.rs` file outside `crates/*/tests/` names in `include!`, `include_str!` or `include_bytes!` with a string literal THEN the step is `red-changes-code` and the path is named. | `check::red_changing_an_included_file_changes_code` |
-| AC-6 | IF after RED a commit changes a file that a step test's file or one of its helpers names in `include!`, `include_str!` or `include_bytes!` with a string literal THEN the step is `unverified` with `build-input-changed`. | `check::included_file_change_after_red_is_unverified` |
-| AC-7 | WHEN the check starts a cargo run THE run gets an empty environment plus `HOME`, `USER`, `PATH`, `LANG`, `TMPDIR`, `CARGO_HOME`, `RUSTUP_HOME`, `RUSTUP_TOOLCHAIN` when set in the caller, and the variables the check sets; `RUSTFLAGS`, `RUSTC_WRAPPER` or any other variable of the caller does not reach it. | `check::cargo_runs_with_the_allow_list_only` |
-| AC-8 | WHEN the check starts THE cargo program is `[check] cargo` if set, else the first `cargo` on `PATH`, resolved once to an absolute path; every run uses that path; the report prints `cargo: <path> (<first line of cargo --version>)` and the run record carries `cargo` with the same text. | `check::cargo_path_and_version_are_reported` |
-| AC-9 | IF `[check] cargo` is not an absolute path to an executable regular file THEN loading the configuration fails, naming the key; IF the key is absent and no `cargo` is on `PATH`, or `cargo --version` fails THEN `stapel check` exits 2 and appends no record. | `core::config::check_cargo_key_is_validated`, `check::refuses_without_a_cargo` |
+| AC-1 | IF a non-RED commit changes, in any `Cargo.toml`, a `[lib]`, `[[bin]]`, `[[test]]`, `[[example]]`, `[[bench]]` or `[workspace]` table, or the `build`, `autolib`, `autobins`, `autotests`, `autoexamples` or `autobenches` key of `[package]`, or adds or deletes a `Cargo.toml` THEN the check gives the build-input outcome. | `check::manifest_target_change_is_unverified` |
+| AC-2 | IF a non-RED commit adds, changes, deletes or renames a path whose last component is `.cargo`, `rust-toolchain` or `rust-toolchain.toml`, a file under a `.cargo` folder, a `build.rs`, the file a `[package] build` key names, or any symbolic link THEN the check gives the build-input outcome. | `check::config_toolchain_build_script_and_links_are_unverified` |
+| AC-3 | IF a non-RED commit changes a helper THEN the check gives the build-input outcome. | `check::helper_change_is_unverified` |
+| AC-4 | IF a non-RED commit changes a file that a step test's file or a helper includes THEN the check gives the build-input outcome. | `check::included_test_data_change_is_unverified` |
+| AC-5 | IF a RED changes a file that a `.rs` file outside `crates/*/tests/` includes, at the RED or its parent THEN the step is `red-changes-code` and the path is named. | `check::red_changing_an_included_file_changes_code` |
+| AC-6 | WHEN files of AC-2 exist at HEAD and no non-RED commit changes them THE report prints `build inputs: <path>, …` before the step lines, and the steps keep their outcomes. | `check::unchanged_build_inputs_are_named` |
+| AC-7 | WHEN the check runs THE worktree lies outside the repository folder; IF a folder above the worktree, other than `CARGO_HOME`, holds `.cargo/config`, `.cargo/config.toml`, `rust-toolchain` or `rust-toolchain.toml` THEN every step reads `unverified: build-input-outside: <path>`. | `check::worktree_is_outside_the_repository`, `check::config_above_the_worktree_is_unverified` |
+| AC-8 | WHEN the check starts a cargo run THE run gets an empty environment plus `HOME`, `USER`, `PATH`, `LANG`, `TMPDIR`, `CARGO_HOME`, `RUSTUP_HOME`, `RUSTUP_TOOLCHAIN` when set in the caller, and the variables the check sets; no other variable of the caller reaches it. | `check::cargo_runs_with_the_allow_list_only` |
+| AC-9 | WHEN the check starts THE cargo program is `[check] cargo` if set, else the first `cargo` in an absolute `PATH` entry, resolved once; every run uses it; the report prints `cargo: <path> (<version>)`, the first line of `cargo --version` cut to 200 bytes, and the run record carries `cargo` with the same text. | `check::cargo_path_and_version_are_reported` |
+| AC-10 | IF `[check] cargo` is not an absolute path to an executable regular file, or lies under the repository folder after links are resolved THEN loading the configuration fails, naming the key. | `core::config::check_cargo_key_is_validated` |
+| AC-11 | IF no `cargo` is found, or `cargo --version`, run in the worktree with the AC-8 environment, fails or passes `timeout_secs` THEN `stapel check` exits 2 and appends no record. | `check::refuses_without_a_working_cargo` |
 
 ### Guarantees
 
 - **Promised, against an agent that tries on purpose to make a step look verified** (tag `security`): the
-  three cases of the Frame's promise give `unverified` or a failing outcome, never `pass`; every cargo run
-  has the environment of AC-7 and the program of AC-8.
-- **Not promised:** the Frame's list; a `rustc`, linker or other tool that cargo finds through `PATH` or
-  `RUSTUP_TOOLCHAIN`; include paths built by `concat!`, `env!` or other macros; a submodule's files; a
-  `.cargo` directory that is a symlink to a place outside the repository changed without a commit; the
-  outcome of a closed ticket's history before this ticket (Decision 4: a step that turns `unverified` is
-  an escaped defect, recorded, not hidden).
+  Frame's promise, by AC-1 to AC-11.
+- **Not promised:** the Frame's list; a symbolic link or file outside the repository changed without a
+  commit; artifacts planted in the check's target folder (`.git/stapel/`, which the guard protects); the
+  outcome of a closed ticket's history before this ticket (Decision 4: a step that turns `unverified` is an
+  escaped defect, recorded, not hidden).
 
 ## Design
 
@@ -104,85 +132,95 @@ steps into it; each sets its own `CARGO_TARGET_DIR`. Heavy runs: `cargo test -j 
 
 | Category | Cases | Tests |
 |---|---|---|
-| Main path | unchanged build inputs are named; the cargo path and version in report and record | `check::unchanged_build_inputs_are_named`, `check::cargo_path_and_version_are_reported` |
-| Negative | each changed build input after RED; a RED that changes an included file; bad `[check] cargo`; no cargo | `check::target_table_change_after_red_is_unverified`, `check::cargo_config_toolchain_and_build_script_after_red_are_unverified`, `check::helper_change_after_red_is_unverified`, `check::included_file_change_after_red_is_unverified`, `check::red_changing_an_included_file_changes_code`, `core::config::check_cargo_key_is_validated`, `check::refuses_without_a_cargo` |
+| Main path | unchanged build inputs are named; the cargo path and version; the worktree's place | `check::unchanged_build_inputs_are_named`, `check::cargo_path_and_version_are_reported`, `check::worktree_is_outside_the_repository` |
+| Negative | each build input changed by a non-RED commit, before and after the first RED; a RED that changes an included source file; bad `[check] cargo`; no working cargo; a config above the worktree | `check::manifest_target_change_is_unverified`, `check::config_toolchain_build_script_and_links_are_unverified`, `check::helper_change_is_unverified`, `check::included_test_data_change_is_unverified`, `check::red_changing_an_included_file_changes_code`, `core::config::check_cargo_key_is_validated`, `check::refuses_without_a_working_cargo`, `check::config_above_the_worktree_is_unverified` |
 | Abuse | see the Abuse table | `check::cargo_runs_with_the_allow_list_only` and the Negative tests |
-| Integration | `stapel check STP-1` to `STP-5` on this repository (plan step 5, by hand; Decision 4) | — |
+| Integration | `stapel check STP-1` to `STP-5` on this repository (plan step 6, by hand; Decision 4); its output goes into Proof | — |
 
 ### Inputs
 
 | Input | Type | Smallest / largest | Empty | Invalid | Precision | Test |
 |---|---|---|---|---|---|---|
-| `[check] cargo` | string | an absolute path to an executable regular file | absent: `cargo` on `PATH` | relative, missing, a directory, not executable: configuration error naming the key | byte-exact path, no `~` expansion | `core::config::check_cargo_key_is_validated` |
-| Caller environment | variables | any | empty `PATH` with no key: exit 2 | — | names compared byte-exactly | `check::cargo_runs_with_the_allow_list_only`, `check::refuses_without_a_cargo` |
-| `Cargo.toml` changes | TOML diff | every manifest of the tree | — | unparsable at either side: `unverified` naming the path | tables compared as parsed values, not text | `check::target_table_change_after_red_is_unverified` |
-| `include*!` literals | Rust tokens | every `.rs` file at HEAD | none: no included files | non-UTF-8 file: read lossily; a path that leaves the repository: ignored | literal paths, relative to the including file | `check::included_file_change_after_red_is_unverified`, `check::red_changing_an_included_file_changes_code` |
-| `mod` and `#[path]` in tests | Rust tokens | nested helpers, any depth; cycles stop | no helper: nothing | a `mod` without a file: ignored | `mod x;` gives `x.rs` or `x/mod.rs` | `check::helper_change_after_red_is_unverified` |
+| `[check] cargo` | string | an absolute path to an executable regular file outside the repository | absent: `cargo` on `PATH` | relative, missing, a folder, not executable, under the repository: configuration error naming the key | byte-exact path, no `~` expansion; links resolved for the repository test | `core::config::check_cargo_key_is_validated` |
+| Caller environment | variables | any | no `cargo` found: exit 2 | relative `PATH` entries: skipped | names compared byte-exactly | `check::cargo_runs_with_the_allow_list_only`, `check::refuses_without_a_working_cargo` |
+| `cargo --version` output | bytes | first line, cut to 200 bytes | empty: the version reads `?` | non-UTF-8: read lossily | — | `check::cargo_path_and_version_are_reported` |
+| `Cargo.toml` changes | TOML diff | every manifest of the tree | added or deleted: a change | unparsable at either side: the build-input outcome naming it | tables and keys compared as parsed values | `check::manifest_target_change_is_unverified` |
+| `include*!` literals | Rust text | every `.rs` file at base, REDs, GREENs, HEAD | none: no included files | non-UTF-8 file: read lossily; non-literal argument or path outside the repository: not promised (STP-13) | plain and raw strings; matches in comments count | `check::included_test_data_change_is_unverified`, `check::red_changing_an_included_file_changes_code` |
 
 ### External states
 
 | System | Dimension | Handling | Test |
 |---|---|---|---|
-| cargo | workspace with several packages | manifests read at every depth | `check::target_table_change_after_red_is_unverified` |
-| cargo | custom targets (`[[test]]`, `harness = false`, `autotests = false`) | changed after RED: AC-1 | `check::target_table_change_after_red_is_unverified` |
-| cargo | `.cargo/config.toml` at any level, wrappers, runners | in the repository: AC-2 and AC-3; outside it: not promised | `check::cargo_config_toolchain_and_build_script_after_red_are_unverified` |
-| cargo | environment `CARGO_*`, `RUSTC*`, `RUSTFLAGS`, `PATH` | AC-7 and AC-8; tools found through `PATH`: not promised | `check::cargo_runs_with_the_allow_list_only` |
+| cargo | workspace with several packages | manifests read at every depth; an added member's manifest is AC-1 | `check::manifest_target_change_is_unverified` |
+| cargo | custom targets (`[[test]]`, `harness = false`, `autotests = false`) | AC-1 | `check::manifest_target_change_is_unverified` |
+| cargo | `.cargo/config.toml` at any level, wrappers, runners | in the repository: AC-2, AC-6; above the worktree: AC-7; in `CARGO_HOME`: not promised | `check::config_toolchain_build_script_and_links_are_unverified`, `check::config_above_the_worktree_is_unverified` |
+| cargo | environment `CARGO_*`, `RUSTC*`, `RUSTFLAGS`, `PATH` | AC-8, AC-9; tools found through `PATH`: not promised | `check::cargo_runs_with_the_allow_list_only` |
 | cargo | `Cargo.lock` out of date; offline; network errors | unchanged from STP-4 (`--locked`) | — |
-| cargo | build scripts and `include!` of files outside `src` | AC-2, AC-5, AC-6 | `check::included_file_change_after_red_is_unverified` |
+| cargo | build scripts and `include!` of files outside `src` | AC-2, AC-4, AC-5 | `check::included_test_data_change_is_unverified` |
 | cargo | libtest output format | unchanged from STP-4 | — |
-| git | renames and similarity | a rename of a build input counts as a change of both paths | `check::cargo_config_toolchain_and_build_script_after_red_are_unverified` |
-| git | paths with spaces or glob characters | literal paths, as STP-4 | `check::included_file_change_after_red_is_unverified` |
+| git | renames and similarity | a rename changes both paths | `check::config_toolchain_build_script_and_links_are_unverified` |
+| git | paths with spaces or glob characters | literal paths, as STP-4 | `check::included_test_data_change_is_unverified` |
 | git | submodules | not promised | — |
 | git | history shape, shallow clone, object format, detached HEAD, dirty tree, configuration | unchanged from STP-4 | — |
-| os | symlinks | a symlink is a file; its target's content is not followed: not promised | — |
+| os | symlinks | any link changed by a non-RED commit: AC-2; a link's target outside the repository: not promised | `check::config_toolchain_build_script_and_links_are_unverified` |
 | os | case-insensitive file systems | not promised (names compared byte-exactly) | — |
+| os | file permissions | the executable bit of `[check] cargo`: AC-10; other modes: unchanged from STP-4 | `core::config::check_cargo_key_is_validated` |
+| os | processes: signals, groups, children | unchanged from STP-4; `cargo --version` runs under `timeout_secs` | `check::refuses_without_a_working_cargo` |
+| os | time | not used by this ticket | — |
+| os | WSL: Windows binaries on `PATH` | a `cargo.exe` is not `cargo`: not found; not promised beyond that | — |
 
 ### Abuse table
 
 | Attempt | Outcome |
 |---|---|
-| A GREEN that points `[[test]] path` at a file that always passes, or sets `harness = false` | `unverified`, AC-1 |
-| A GREEN that adds `.cargo/config.toml` with a `runner` or `rustc-wrapper` | `unverified`, AC-2 |
-| A GREEN that adds `build.rs` or `rust-toolchain.toml` | `unverified`, AC-2 |
-| A GREEN that moves the code into `tests/common/mod.rs` used by the step test | `unverified`, AC-4 |
-| A GREEN that edits a file a test includes with `include_str!` | `unverified`, AC-6 |
-| A RED that adds the code as a file the library includes with `include!` | `red-changes-code`, AC-5 |
-| A caller that sets `RUSTC_WRAPPER`, `RUSTFLAGS` or `CARGO_BUILD_RUSTC` | removed, AC-7 |
-| A `PATH` with a fake `cargo` first | it runs, but the report and the record name its path and version (AC-8); not prevented |
-| A `[check] cargo` that points at a script | allowed: `stapel.toml` is a machine file the guard protects; the report names the path |
+| A GREEN that points `[[test]] path` at a file that always passes, or sets `harness = false` | build-input outcome, AC-1 |
+| A GREEN that adds a crate with `members = ["crates/*"]` | build-input outcome, AC-1 (added manifest) |
+| A GREEN that adds `.cargo/config.toml` with a `runner` or `rustc-wrapper`, or a `.cargo` link | build-input outcome, AC-2 |
+| A GREEN that adds `build.rs` or `rust-toolchain.toml` | build-input outcome, AC-2 |
+| A ticket commit before the first RED that adds a build input | build-input outcome (Decision 11) |
+| A GREEN that moves code into `tests/common/mod.rs`, or into a helper reached by `#[path]` | build-input outcome, AC-3 |
+| A GREEN that edits a file a test includes with `include_str!` | build-input outcome, AC-4 |
+| A RED that adds code as a file the library includes with `include!` | `red-changes-code`, AC-5 |
+| An ignored `.cargo/config.toml` in the main tree, or one in a folder above the repository | not seen by the worktree (AC-7); above the worktree: `build-input-outside` |
+| A caller that sets `RUSTC_WRAPPER`, `RUSTFLAGS` or `CARGO_BUILD_RUSTC` | removed, AC-8 |
+| A `PATH` with a fake `cargo` first | it runs; the report and the record name its path and version (AC-9); not prevented |
+| A `[check] cargo` that points at a script in the repository | configuration error, AC-10 |
 
 **Author self-check (CLAUDE.md item 7).** To be done before code review.
 
-**Review Focus.** Unchecked: a GREEN that adds a new `[[test]]` honestly (also `unverified`; accepted by
-Decision 3); a manifest whose `[package] build` names a script that is not `build.rs` (covered by AC-1
-through the `build` key); a helper reached only through `include!` (AC-6); `RUSTUP_TOOLCHAIN` in the allow
-list choosing another toolchain (not promised).
+**Review Focus.** Unchecked: an honest GREEN that adds a `[[test]]` (build-input outcome for every step;
+accepted by Decision 3); a link added by a RED (RED may add test files; a link in a RED is `red-changes-code`
+only if STP-4's rule says so — to confirm in Design); `RUSTUP_TOOLCHAIN` choosing another toolchain (not
+promised).
 
 ## Proof
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `check::target_table_change_after_red_is_unverified` |
-| AC-2 | `check::cargo_config_toolchain_and_build_script_after_red_are_unverified` |
-| AC-3 | `check::unchanged_build_inputs_are_named` |
-| AC-4 | `check::helper_change_after_red_is_unverified` |
+| AC-1 | `check::manifest_target_change_is_unverified` |
+| AC-2 | `check::config_toolchain_build_script_and_links_are_unverified` |
+| AC-3 | `check::helper_change_is_unverified` |
+| AC-4 | `check::included_test_data_change_is_unverified` |
 | AC-5 | `check::red_changing_an_included_file_changes_code` |
-| AC-6 | `check::included_file_change_after_red_is_unverified` |
-| AC-7 | `check::cargo_runs_with_the_allow_list_only` |
-| AC-8 | `check::cargo_path_and_version_are_reported` |
-| AC-9 | `core::config::check_cargo_key_is_validated`, `check::refuses_without_a_cargo` |
+| AC-6 | `check::unchanged_build_inputs_are_named` |
+| AC-7 | `check::worktree_is_outside_the_repository`, `check::config_above_the_worktree_is_unverified` |
+| AC-8 | `check::cargo_runs_with_the_allow_list_only` |
+| AC-9 | `check::cargo_path_and_version_are_reported` |
+| AC-10 | `core::config::check_cargo_key_is_validated` |
+| AC-11 | `check::refuses_without_a_working_cargo` |
 
 ## Plan
 
-Route: full (source: `auto`; tags `security`, `guard`; about 300–500 lines).
+Route: full (source: `auto`; tags `security`, `guard`; about 400–500 lines).
 
 | Step | What | Criteria | Must not change |
 |---|---|---|---|
-| 1 | Environment allow list; `[check] cargo`; the cargo path and version in report and record | AC-7, AC-8, AC-9 | outcomes of STP-4 tests |
-| 2 | Manifest target tables and `[package]` keys after RED | AC-1 | the RED rule of STP-4 |
-| 3 | Cargo configuration, toolchain and build script files after RED; the `build inputs` line | AC-2, AC-3 | report lines of STP-4 golden files |
-| 4 | Helpers through `mod` and `#[path]`; `include*!` literals in RED and after RED | AC-4, AC-5, AC-6 | `tests-changed` for helpers the RED changed |
-| 5 | By hand: `stapel check STP-1` to `STP-5` on this repository; record escaped defects | — | closed tickets' text |
+| 1 | Environment allow list; `[check] cargo`; the cargo path and version; refusal without a working cargo | AC-8, AC-9, AC-10, AC-11 | outcomes of STP-4 tests |
+| 2 | Worktree outside the repository; configuration above it | AC-7 | the lock and target folder under `.git/stapel/` |
+| 3 | Build inputs in manifests, configuration, toolchain, build scripts, links; the `build inputs` line | AC-1, AC-2, AC-6 | STP-4 report lines and golden files |
+| 4 | Helpers and included files | AC-3, AC-4, AC-5 | `tests-changed` for helpers the RED changed |
+| 5 | `docs/PHASES.md`: STP-13 in the list of first tickets | — | other phases |
+| 6 | By hand: `stapel check STP-1` to `STP-5` on this repository; escaped defects recorded | — | closed tickets' text |
 
 ## Review
 
