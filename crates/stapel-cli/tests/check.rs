@@ -3664,3 +3664,106 @@ fn include_seen_in_a_middle_commit() {
         &changed,
     );
 }
+
+#[test]
+fn range_starts_after_the_base() {
+    /// Sets one field of the ticket's `state.json`.
+    fn set_state(dir: &Path, field: &str, value: serde_json::Value) {
+        let mut state = common::state_json(dir, "ABC-1");
+        state[field] = value;
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+    }
+    fn head(dir: &Path) -> String {
+        git(dir, &["rev-parse", "HEAD"]).trim().to_string()
+    }
+
+    // An unkeyed commit after `base`, before the first keyed commit, is inside the range.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let dumps = scripts.path().join("dumps");
+    set_state(dir, "base", serde_json::json!(head(dir)));
+    write(dir, ".cargo/config.toml", "");
+    commit(dir, "fix typo");
+    let unkeyed = head7(dir);
+    add_step_one(dir);
+    let fake = recording_cargo(scripts.path(), &dumps);
+    set_cargo_key(dir, &fake);
+    expect_changed(dir, &dumps, "after base", ".cargo/config.toml", &unkeyed);
+
+    // A keyed commit at `base` is outside the range.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let dumps = scripts.path().join("dumps");
+    write(dir, ".cargo/config.toml", "");
+    commit(dir, "ABC-1: early config");
+    set_state(dir, "base", serde_json::json!(head(dir)));
+    commit(dir, "ABC-1: records the base");
+    add_step_one(dir);
+    let fake = recording_cargo(scripts.path(), &dumps);
+    set_cargo_key(dir, &fake);
+    let (_, text) = check_env(dir, &[]);
+    assert!(!text.contains("build-input-changed"), "{text}");
+
+    // A base that is not a full id, is unknown, or is off the first-parent line: exit 2 naming it.
+    let side = {
+        git(dir, &["checkout", "-q", "-b", "side"]);
+        commit(dir, "side work");
+        let side = head(dir);
+        git(dir, &["checkout", "-q", "-"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=test-user",
+                "-c",
+                "user.email=test-user.invalid",
+                "merge",
+                "-q",
+                "--no-ff",
+                "-m",
+                "ABC-1: merge",
+                "side",
+            ],
+        );
+        side
+    };
+    let full = head(dir);
+    for (what, bad) in [
+        ("short id", full[..12].to_string()),
+        ("not hex", "x".repeat(40)),
+        ("unknown", "0".repeat(40)),
+        ("second parent", side),
+        ("empty", String::new()),
+    ] {
+        set_state(dir, "base", serde_json::json!(bad));
+        commit(dir, "ABC-1: bad base");
+        let (code, text) = check_env(dir, &[]);
+        assert_eq!(code, 2, "{what}: {text}");
+        assert!(text.contains(&format!("base {bad}")), "{what}: {text}");
+    }
+}
+
+#[test]
+fn closed_ticket_range_ends_at_its_last_commit() {
+    let (repo, _scripts, _dumps) = build_input_repo(|_| {});
+    let dir = repo.path();
+    let mut state = common::state_json(dir, "ABC-1");
+    state["closed"] =
+        serde_json::json!({"by": "test-user", "at": "2026-01-02T00:00:00Z", "reason": "done"});
+    write(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+    );
+    commit(dir, "ABC-1: close");
+    write(dir, ".cargo/config.toml", "");
+    commit(dir, "later: config after the close");
+    let (_, text) = check_env(dir, &[]);
+    assert!(!text.contains("build-input-changed"), "{text}");
+}

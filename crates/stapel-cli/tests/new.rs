@@ -161,3 +161,41 @@ fn refuses_without_config() {
         .stderr(contains("stapel.toml"));
     assert!(!repo.path().join(".stapel").exists());
 }
+
+#[test]
+fn records_the_base_commit() {
+    // No commits: no `base`.
+    let repo = stapel_repo();
+    stapel(repo.path())
+        .args(["new", "First"])
+        .assert()
+        .success();
+    assert!(state_json(repo.path(), "ABC-1").get("base").is_none());
+
+    // With a commit: `base` is the full id of HEAD.
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=test-user",
+                "-c",
+                "user.email=test-user.invalid",
+            ])
+            .args(args)
+            .current_dir(repo.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+        String::from_utf8(out.stdout).unwrap()
+    };
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "initial"]);
+    let head = git(&["rev-parse", "HEAD"]).trim().to_string();
+    stapel(repo.path())
+        .args(["new", "Second"])
+        .assert()
+        .success();
+    let state = state_json(repo.path(), "ABC-2");
+    assert_eq!(state["base"], head.as_str());
+    assert_eq!(head.len(), 40);
+}
