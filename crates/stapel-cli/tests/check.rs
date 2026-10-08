@@ -3586,3 +3586,81 @@ fn interleaving_with_three_steps() {
     assert_eq!(outcome(&text, "step 2"), "duplicate", "{text}");
     assert!(!text.contains("step 2: unverified"), "{text}");
 }
+
+#[test]
+fn include_escapes_are_decoded() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        for name in ["x", "y", "z", "w", "v"] {
+            write(dir, &format!("crates/tiny/data/{name}.txt"), "data\n");
+        }
+        let old = read(dir, "crates/tiny/tests/basic.rs");
+        write(
+            dir,
+            "crates/tiny/tests/basic.rs",
+            &format!(
+                "{old}\nconst _A: &str = include_str!(\"\\x2e./data/x.txt\");\n\
+                 const _B: &str = include_str!(\"..\\u{{2f}}data/y.txt\");\n\
+                 const _C: &str = include_str!(\"../data/\\u{{7a}}.txt\");\n\
+                 const _D: &str = include_str!(\"../data/\\\n        w.txt\");\n\
+                 const _E: &str = include_str!(\"../d\\x61ta/v.txt\");\n"
+            ),
+        );
+    });
+    let dir = repo.path();
+    // Hex, Unicode and line-continuation escapes name the included file.
+    for name in ["x", "y", "z", "w", "v"] {
+        let path = format!("crates/tiny/data/{name}.txt");
+        write(dir, &path, "changed\n");
+        changed_case(dir, &dumps, name, &path);
+    }
+    // A literal that cannot be decoded counts as a change of its includer.
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        let old = read(dir, "crates/tiny/tests/basic.rs");
+        write(
+            dir,
+            "crates/tiny/tests/basic.rs",
+            &format!("{old}\nconst _A: &str = include_str!(\"../data/\\q.txt\");\n"),
+        );
+    });
+    let dir = repo.path();
+    let old = read(dir, "crates/tiny/tests/basic.rs");
+    write(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        &format!("{old}// edited\n"),
+    );
+    changed_case(
+        dir,
+        &dumps,
+        "undecodable literal",
+        "crates/tiny/tests/basic.rs",
+    );
+}
+
+#[test]
+fn include_seen_in_a_middle_commit() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        write(dir, "crates/tiny/data/mid.txt", "data\n");
+    });
+    let dir = repo.path();
+    let include = "const _M: &str = include_str!(\"../data/mid.txt\");\n";
+    let old = read(dir, "crates/tiny/tests/basic.rs");
+    write(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        &format!("{old}\n{include}"),
+    );
+    commit(dir, "ABC-1: adds an include");
+    write(dir, "crates/tiny/data/mid.txt", "changed\n");
+    commit(dir, "ABC-1: changes the data");
+    let changed = head7(dir);
+    edit(dir, "crates/tiny/tests/basic.rs", include, "");
+    commit(dir, "ABC-1: removes the include");
+    expect_changed(
+        dir,
+        &dumps,
+        "middle commit",
+        "crates/tiny/data/mid.txt",
+        &changed,
+    );
+}
