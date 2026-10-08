@@ -1354,9 +1354,11 @@ fn refuses_a_second_check_and_takes_over_a_dead_lock() {
 fn suite_failure_fails_the_check() {
     let repo = cargo_repo();
     let dir = repo.path();
-    with_wrong_triple(dir);
+    // The failing file exists before the ticket: a helper added by a commit of the ticket is
+    // unverified (STP-6 AC-3).
     add_test(dir, "other", "unrelated_failure", "assert!(false);");
-    commit(dir, "ABC-1: a failing test outside the steps");
+    commit(dir, "setup: a failing test outside the steps");
+    with_wrong_triple(dir);
     add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
     commit(dir, "ABC-1 step 1 RED: triple is wrong");
     fix_triple(dir);
@@ -1366,6 +1368,14 @@ fn suite_failure_fails_the_check() {
     assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
     assert!(text.lines().any(|l| l.starts_with("suite: fail")), "{text}");
     assert!(text.lines().any(|l| l == "result: fail"), "{text}");
+    add_test(dir, "third", "added_by_the_ticket", "assert!(true);");
+    commit(dir, "ABC-1: a helper file added by the ticket");
+    let (_, text) = check(dir);
+    assert!(
+        text.lines().any(|l| l
+            .starts_with("step 1: unverified: build-input-changed: crates/tiny/tests/third.rs")),
+        "{text}"
+    );
 }
 
 #[test]
@@ -3229,4 +3239,236 @@ fn build_input_reading_fails_closed() {
         "file next to a broken manifest",
         "crates/tiny/gen.rs",
     );
+}
+
+// ---- STP-6 AC-3, AC-4, AC-5, AC-12: helpers, included files, interleaved REDs ----
+
+#[test]
+fn helper_change_is_unverified() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        write(dir, "crates/tiny/tests/common/mod.rs", "pub fn one() {}\n");
+        write(dir, "crates/tiny/tests/helper.rs", "pub fn help() {}\n");
+        write(dir, "crates/tiny/tests/a/b/c.rs", "pub fn deep() {}\n");
+    });
+    let dir = repo.path();
+    // Changed at any depth, added, deleted and renamed.
+    for path in [
+        "crates/tiny/tests/common/mod.rs",
+        "crates/tiny/tests/helper.rs",
+        "crates/tiny/tests/a/b/c.rs",
+    ] {
+        write(dir, path, "pub fn changed() {}\n");
+        changed_case(dir, &dumps, path, path);
+    }
+    write(
+        dir,
+        "crates/tiny/tests/sub/new_helper.rs",
+        "pub fn added() {}\n",
+    );
+    changed_case(
+        dir,
+        &dumps,
+        "added helper",
+        "crates/tiny/tests/sub/new_helper.rs",
+    );
+    git(dir, &["rm", "-q", "crates/tiny/tests/helper.rs"]);
+    changed_case(dir, &dumps, "deleted helper", "crates/tiny/tests/helper.rs");
+    git(
+        dir,
+        &[
+            "mv",
+            "crates/tiny/tests/common/mod.rs",
+            "crates/tiny/tests/common/other.rs",
+        ],
+    );
+    changed_case(
+        dir,
+        &dumps,
+        "renamed helper",
+        "crates/tiny/tests/common/mod.rs",
+    );
+    // Not helpers: a file that holds a step test, and a `tests` folder below `src`.
+    add_test(dir, "basic", "extra", "assert!(true);");
+    write(dir, "crates/tiny/src/tests/mod.rs", "// unit tests\n");
+    commit(dir, "ABC-1: another test and a source folder");
+    let (_, text) = check_env(dir, &[]);
+    assert!(!text.contains("build-input"), "{text}");
+}
+
+#[test]
+fn included_test_data_change_is_unverified() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        for name in [
+            "plain",
+            "commented",
+            "raw",
+            "base",
+            "helper",
+            "other",
+            "late",
+            "spaced",
+        ] {
+            write(dir, &format!("crates/tiny/data/{name}.txt"), "data\n");
+        }
+        let old = read(dir, "crates/tiny/tests/basic.rs");
+        write(
+            dir,
+            "crates/tiny/tests/basic.rs",
+            &format!(
+                "{old}\nconst _A: &str = include_str!(\"../data/plain.txt\");\n\
+                 // include_bytes!(\"../data/commented.txt\")\n\
+                 const _B: &[u8] = std::include_bytes!( r#\"./../data/raw.txt\"# );\n\
+                 const _C: &str = include_str!(\"../data/base.txt\");\n\
+                 const _D: &str = include_str! (\n    \"../data/spaced.txt\"\n);\n"
+            ),
+        );
+        write(
+            dir,
+            "crates/tiny/tests/common/mod.rs",
+            "pub const H: &str = include_str!(\"../../data/helper.txt\");\n",
+        );
+    });
+    let dir = repo.path();
+    // A literal in a step test file or a helper, plain, raw, in a comment, over several lines.
+    for name in ["plain", "commented", "raw", "helper", "spaced"] {
+        let path = format!("crates/tiny/data/{name}.txt");
+        write(dir, &path, "changed\n");
+        changed_case(dir, &dumps, name, &path);
+    }
+    // The relation at the range's base: the include is gone in the same commit.
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "const _C: &str = include_str!(\"../data/base.txt\");\n",
+        "",
+    );
+    write(dir, "crates/tiny/data/base.txt", "changed\n");
+    changed_case(dir, &dumps, "at the base", "crates/tiny/data/base.txt");
+    // The relation at HEAD: the include comes in the same commit.
+    let old = read(dir, "crates/tiny/tests/basic.rs");
+    write(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        &format!("{old}\nconst _E: &str = include_str!(\"../data/late.txt\");\n"),
+    );
+    write(dir, "crates/tiny/data/late.txt", "changed\n");
+    changed_case(dir, &dumps, "at HEAD", "crates/tiny/data/late.txt");
+    // A file that nothing includes is no build input.
+    write(dir, "crates/tiny/data/other.txt", "changed\n");
+    commit(dir, "ABC-1: data that no test includes");
+    let (_, text) = check_env(dir, &[]);
+    assert!(!text.contains("build-input"), "{text}");
+}
+
+#[test]
+fn red_changing_an_included_file_changes_code() {
+    let (repo, _scripts, _dumps) = build_input_repo(|dir| {
+        // Not compiled: the text search reads any `.rs` file outside `crates/*/tests/`.
+        write(
+            dir,
+            "crates/tiny/src/seed.rs",
+            &format!(
+                "pub const SEED: &str = include_str!(\"../tests/data/seed.txt\");\n\
+                 // include_str!(\"../../../docs/comment.md\")\n"
+            ),
+        );
+        write(dir, "crates/tiny/tests/data/seed.txt", "seed\n");
+        write(dir, "docs/comment.md", "comment\n");
+    });
+    let dir = repo.path();
+    let lib = "crates/tiny/src/lib.rs";
+    let include =
+        |name: &str| format!("\npub const _X: &str = include_str!(\"../../../docs/{name}.md\");\n");
+    // The RED changes a file that the library includes at its parent, or in a comment.
+    for (what, path) in [
+        ("at the parent", "crates/tiny/tests/data/seed.txt"),
+        ("in a comment", "docs/comment.md"),
+    ] {
+        add_test(dir, "basic", "second", "assert!(true);");
+        write(dir, path, "changed\n");
+        commit(dir, "ABC-1 step 2 RED: a changed data file");
+        commit(dir, "ABC-1 step 2 GREEN: code");
+        let (_, text) = check_env(dir, &[]);
+        assert!(
+            text.lines()
+                .any(|l| l == format!("step 2: red-changes-code: {path}")),
+            "{what}: {text}"
+        );
+        git(dir, &["reset", "-q", "--hard", "HEAD~2"]);
+    }
+    // The include comes with a later GREEN, or with a later commit that is neither.
+    for (what, name, in_green) in [("later GREEN", "later", true), ("HEAD", "head", false)] {
+        add_test(dir, "basic", "second", "assert!(true);");
+        write(dir, &format!("docs/{name}.md"), "text\n");
+        commit(dir, "ABC-1 step 2 RED: a new document");
+        let old = read(dir, lib);
+        if in_green {
+            write(dir, lib, &format!("{old}{}", include(name)));
+        }
+        commit(dir, "ABC-1 step 2 GREEN: code");
+        if !in_green {
+            write(dir, lib, &format!("{old}{}", include(name)));
+            commit(dir, "ABC-1: use the document");
+        }
+        let (_, text) = check_env(dir, &[]);
+        assert!(
+            text.lines()
+                .any(|l| l == format!("step 2: red-changes-code: docs/{name}.md")),
+            "{what}: {text}"
+        );
+        git(
+            dir,
+            &[
+                "reset",
+                "-q",
+                "--hard",
+                if in_green { "HEAD~2" } else { "HEAD~3" },
+            ],
+        );
+    }
+    // A file that no source file includes stays data.
+    add_test(dir, "basic", "second", "assert!(true);");
+    write(dir, "docs/free.md", "free\n");
+    commit(dir, "ABC-1 step 2 RED: a free document");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    let (_, text) = check_env(dir, &[]);
+    assert_ne!(outcome(&text, "step 2"), "red-changes-code", "{text}");
+}
+
+#[test]
+fn interleaved_red_is_unverified() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    add_test(dir, "basic", "halves", "assert_eq!(tiny::half(8), 4);");
+    commit(dir, "ABC-1 step 2 RED: half is missing");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    let lib = read(dir, "crates/tiny/src/lib.rs");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{lib}\npub fn half(x: u32) -> u32 {{\n    x / 2\n}}\n"),
+    );
+    commit(dir, "ABC-1 step 2 GREEN: half");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l == "step 1: unverified: interleaved: step 2"),
+        "{text}"
+    );
+    assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
+    // STP-4's history outcomes come first.
+    edit(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "assert_eq!(tiny::triple(2), 6);",
+        "assert_eq!(tiny::triple(2), 3 + 3);",
+    );
+    commit(dir, "ABC-1: edits the first step's test");
+    let (_, text) = check(dir);
+    assert_eq!(outcome(&text, "step 1"), "tests-changed", "{text}");
 }
