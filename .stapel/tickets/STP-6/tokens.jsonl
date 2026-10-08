@@ -18,3 +18,4 @@
 {"source":"estimate","estimate":130609,"v":1,"id":"t-b3a0195bdeab","at":"2026-10-08T15:04:53Z","ticket":"STP-6","role":"builder","model":"claude-sonnet-5-5","step":"4","note":"builder step 4; subagent_tokens of the end notice"}
 {"source":"estimate","estimate":54722,"v":1,"id":"t-d3c84d8d7c4c","at":"2026-10-08T15:06:28Z","ticket":"STP-6","role":"drift","model":"claude-sonnet-5-5","step":"4","note":"drift review step 4; subagent_tokens of the end notice"}
 {"source":"estimate","estimate":83261,"v":1,"id":"t-41bb8acb9256","at":"2026-10-08T15:22:50Z","ticket":"STP-6","role":"builder","model":"claude-sonnet-5-5","step":"4","note":"builder, step 4 drift fixes; subagent_tokens of the end notice"}
+{"source":"estimate","estimate":77930,"v":1,"id":"t-ef00eab0a247","at":"2026-10-08T15:52:43Z","ticket":"STP-6","role":"builder","model":"claude-sonnet-5-5","step":"5","note":"builder step 5; subagent_tokens of the end notice (interim)"}

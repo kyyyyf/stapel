@@ -13,7 +13,7 @@ redirect a test target in a manifest (`[[test]] path`, `harness = false`), add a
 runner, wrapper or `rustflags`, add a `build.rs`, place code under `crates/*/tests/` for a later step, or
 include an allowed path at compile time (`include!`, `include_str!`). The run also inherits the caller's
 environment: `PATH`, `RUSTC`, `RUSTC_WRAPPER`, `CARGO_*` and `RUSTFLAGS` decide which tools run
-(`crates/stapel-core/src/runner.rs:243` sets only `CARGO_TARGET_DIR` and `CARGO_TERM_COLOR`).
+(`crates/stapel-core/src/runner.rs` set only `CARGO_TARGET_DIR` and `CARGO_TERM_COLOR`).
 
 **Risk tags:** `security`, `guard`.
 
@@ -251,7 +251,21 @@ steps into it; each sets its own `CARGO_TARGET_DIR`. Heavy runs: `cargo test -j 
 | A non-keyed commit before the ticket's first keyed commit that adds a build input | inside the range after `base`, AC-13 |
 | A `.cargo/config.toml` in a shared `/tmp` from another user | `build-input-outside`, AC-7 (a denial, not a pass) |
 
-**Author self-check (CLAUDE.md item 7).** To be done before code review.
+**Author self-check (CLAUDE.md item 7).** Done on 2026-10-08 against the Abuse table, after step 5 and before
+code review: every row has a test — target tables and the members glob (`check::manifest_target_change_is_unverified`,
+`check::dotted_and_inline_toml_targets_are_seen`); `.cargo`, links, `build.rs`, toolchain
+(`check::config_toolchain_build_script_and_links_are_unverified`, `check::red_with_only_a_build_input_changes_code`);
+a commit before the first RED (`check::unkeyed_commit_in_the_range_is_seen`, `check::range_starts_after_the_base`);
+helpers, a top-level `tests/helper.rs` included (`check::helper_change_is_unverified`,
+`check::helper_turned_step_file_stays_protected`); included test data (`check::included_test_data_change_is_unverified`,
+`check::include_escapes_are_decoded`, `check::include_seen_in_a_middle_commit`); an included source file in a RED
+(`check::red_changing_an_included_file_changes_code`); configuration in or above the main tree
+(`check::worktree_is_outside_the_repository`, `check::config_above_the_worktree_is_unverified`,
+`check::cargo_home_cannot_hide_a_config_above`); the caller's variables (`check::cargo_runs_with_the_allow_list_only`,
+`check::cargo_runs_see_every_allowed_variable_and_one_cargo`); a fake `cargo` on `PATH`, named, not prevented
+(`check::cargo_path_and_version_are_reported`); a `[check] cargo` in the repository
+(`core::config::check_cargo_key_is_validated`, `check::cargo_key_is_validated_through_the_cli`); interleaved REDs
+(`check::interleaved_red_is_unverified`, `check::interleaving_with_three_steps`). New since the spec: none.
 
 **Review Focus.** Unchecked: an honest GREEN that adds a `[[test]]` (build-input outcome for every step;
 accepted by Decision 3); a link added by a RED under `crates/*/tests/` (allowed by STP-4's rule; see Design
