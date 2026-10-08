@@ -1,0 +1,6 @@
+ticket: ABC-1 at <sha>
+cargo: <cargo>
+build inputs: .cargo/keep, crates/tiny/gen.rs, lnk, rename-me
+step 1: unverified: build-input-changed: .cargo/config.toml at <sha>
+suite: unverified: build-input-changed: .cargo/config.toml at <sha>
+result: fail

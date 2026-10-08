@@ -1588,13 +1588,17 @@ fn status_check_line(dir: &Path) -> String {
 /// A repository whose ticket has one passing step.
 fn passing_repo() -> TempDir {
     let repo = cargo_repo();
-    let dir = repo.path();
+    add_step_one(repo.path());
+    repo
+}
+
+/// Step 1 of a passing ticket: a RED and its GREEN.
+fn add_step_one(dir: &Path) {
     with_wrong_triple(dir);
     add_test(dir, "basic", "triples", "assert_eq!(tiny::triple(2), 6);");
     commit(dir, "ABC-1 step 1 RED: triple is wrong");
     fix_triple(dir);
     commit(dir, "ABC-1 step 1 GREEN: triple fixed");
-    repo
 }
 
 fn short_head(dir: &Path) -> String {
@@ -2794,4 +2798,300 @@ fn unreadable_ancestor_counts_as_found() {
         );
     }
     std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+// ---- STP-6 AC-1, AC-2, AC-6: build inputs changed by a commit of the ticket ----
+
+fn head7(dir: &Path) -> String {
+    git(dir, &["rev-parse", "HEAD"]).trim()[..7].to_string()
+}
+
+/// A check with a recording cargo: the build-input outcome runs no cargo (AC-1, AC-2).
+/// Asserts both lines for step 1 and the suite, and returns the output.
+fn expect_changed(dir: &Path, dumps: &Path, what: &str, path: &str, sha: &str) -> String {
+    let (code, text) = check_env(dir, &[]);
+    assert_eq!(code, 1, "{what}: {text}");
+    let want = format!("unverified: build-input-changed: {path} at {sha}");
+    assert!(
+        text.lines().any(|l| l == format!("step 1: {want}")),
+        "{what}: {text}"
+    );
+    assert!(
+        text.lines().any(|l| l == format!("suite: {want}")),
+        "{what}: {text}"
+    );
+    assert_eq!(std::fs::read_dir(dumps).unwrap().count(), 0, "{what}");
+    text
+}
+
+/// Commits the working tree as a commit of the ticket, checks, and drops the commit again.
+fn changed_case(dir: &Path, dumps: &Path, what: &str, path: &str) {
+    commit(dir, &format!("ABC-1: {what}"));
+    expect_changed(dir, dumps, what, path, &head7(dir));
+    git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+}
+
+/// A cargo repository with ticket commits after `setup` and a recording cargo.
+fn build_input_repo(setup: impl Fn(&Path)) -> (TempDir, TempDir, std::path::PathBuf) {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    setup(dir);
+    commit(dir, "setup: files that exist before the ticket");
+    add_step_one(dir);
+    let scripts = tempfile::tempdir().unwrap();
+    let dumps = scripts.path().join("dumps");
+    let fake = recording_cargo(scripts.path(), &dumps);
+    set_cargo_key(dir, &fake);
+    (repo, scripts, dumps)
+}
+
+#[test]
+fn manifest_target_change_is_unverified() {
+    let (repo, _scripts, dumps) = build_input_repo(|_| {});
+    let dir = repo.path();
+    let member = "crates/tiny/Cargo.toml";
+    // Target tables of a member manifest.
+    for table in [
+        "[lib]\npath = \"src/other.rs\"\n",
+        "[[bin]]\nname = \"x\"\npath = \"src/x.rs\"\n",
+        "[[test]]\nname = \"basic\"\npath = \"tests/basic.rs\"\nharness = false\n",
+        "[[example]]\nname = \"e\"\npath = \"src/e.rs\"\n",
+        "[[bench]]\nname = \"b\"\npath = \"src/b.rs\"\n",
+    ] {
+        let old = read(dir, member);
+        write(dir, member, &format!("{old}\n{table}"));
+        changed_case(dir, &dumps, table.lines().next().unwrap(), member);
+    }
+    // Workspace members, exclude and default-members.
+    for (key, value) in [
+        ("members", "[\"crates/tiny\", \"crates/other\"]"),
+        ("exclude", "[\"crates/other\"]"),
+        ("default-members", "[\"crates/tiny\"]"),
+    ] {
+        let old = read(dir, "Cargo.toml");
+        let new = if key == "members" {
+            old.replacen("[\"crates/tiny\"]", value, 1)
+        } else {
+            old.replacen("resolver", &format!("{key} = {value}\nresolver"), 1)
+        };
+        write(dir, "Cargo.toml", &new);
+        changed_case(dir, &dumps, key, "Cargo.toml");
+    }
+    // Package keys that change which targets exist.
+    for key in [
+        "build = \"gen.rs\"",
+        "autolib = false",
+        "autobins = false",
+        "autotests = false",
+        "autoexamples = false",
+        "autobenches = false",
+    ] {
+        edit(
+            dir,
+            member,
+            "edition = \"2021\"\n",
+            &format!("edition = \"2021\"\n{key}\n"),
+        );
+        changed_case(dir, &dumps, key, member);
+    }
+    // An added or a deleted manifest, a manifest that does not parse.
+    write(
+        dir,
+        "crates/extra/Cargo.toml",
+        "[package]\nname = \"extra\"\nversion = \"0.1.0\"\n",
+    );
+    changed_case(dir, &dumps, "added manifest", "crates/extra/Cargo.toml");
+    git(dir, &["rm", "-q", member]);
+    changed_case(dir, &dumps, "deleted manifest", member);
+    write(dir, member, "[package\n");
+    changed_case(dir, &dumps, "unparsable manifest", member);
+    // The first commit and path in range order, and before the first RED.
+    write(dir, member, &format!("{}\n[lib]\n", read(dir, member)));
+    commit(dir, "ABC-1: first");
+    let first = head7(dir);
+    write(dir, ".cargo/config.toml", "");
+    commit(dir, "ABC-1: second");
+    expect_changed(dir, &dumps, "range order", member, &first);
+    git(dir, &["reset", "-q", "--hard", "HEAD~2"]);
+    // A step that STP-4's history rules fail keeps its outcome.
+    write(dir, member, &format!("{}\n[lib]\n", read(dir, member)));
+    commit(dir, "ABC-1: before the second step");
+    add_test(dir, "basic", "lonely", "assert!(true);");
+    commit(dir, "ABC-1 step 2 RED: only a red");
+    let (code, text) = check_env(dir, &[]);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 2"), "unpaired", "{text}");
+    assert!(
+        text.contains("step 1: unverified: build-input-changed:"),
+        "{text}"
+    );
+    // A manifest that did not parse before the ticket is a change when it is repaired.
+    let (repo, _scripts, dumps) = build_input_repo(|d| write(d, member, "[package\n"));
+    let dir = repo.path();
+    write(
+        dir,
+        member,
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    changed_case(dir, &dumps, "repaired manifest", member);
+    // A change before the first RED counts (Decision 11).
+    let repo = cargo_repo();
+    let dir = repo.path();
+    write(dir, member, &format!("{}\n[lib]\n", read(dir, member)));
+    commit(dir, "ABC-1: early manifest change");
+    let early = head7(dir);
+    add_step_one(dir);
+    let scripts = tempfile::tempdir().unwrap();
+    let dumps = scripts.path().join("dumps");
+    let fake = recording_cargo(scripts.path(), &dumps);
+    set_cargo_key(dir, &fake);
+    expect_changed(dir, &dumps, "before the first RED", member, &early);
+}
+
+fn link(dir: &Path, target: &str, name: &str) {
+    let path = dir.join(name);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(target, path).unwrap();
+}
+
+#[test]
+fn config_toolchain_build_script_and_links_are_unverified() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        edit(
+            dir,
+            "crates/tiny/Cargo.toml",
+            "edition = \"2021\"\n",
+            "edition = \"2021\"\nbuild = \"gen.rs\"\n",
+        );
+        write(dir, "crates/tiny/gen.rs", "fn main() {}\n");
+        write(dir, ".cargo/keep", "kept\n");
+        write(dir, "plain.txt", "plain\n");
+        write(dir, "notes.txt", "notes\n");
+        link(dir, "crates/tiny/src", "lnk");
+        link(dir, "crates", "rename-me");
+    });
+    let dir = repo.path();
+    // The report with the build-input outcome (golden file).
+    write(dir, ".cargo/config.toml", "");
+    commit(dir, "ABC-1: a cargo configuration");
+    let (code, text) = check_env(dir, &[]);
+    assert_eq!(code, 1, "{text}");
+    let golden = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/check_report_build_inputs.txt"),
+    )
+    .unwrap();
+    assert_eq!(
+        without_cargo_line(&without_ids(&text)),
+        golden,
+        "actual:\n{text}"
+    );
+    git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+    // Added files.
+    for path in [
+        ".cargo/config",
+        "crates/tiny/.cargo/config.toml",
+        "other/.cargo",
+        "sub/.cargo/deep/x.txt",
+        "rust-toolchain",
+        "rust-toolchain.toml",
+        "crates/tiny/rust-toolchain.toml",
+        "build.rs",
+        "crates/tiny/build.rs",
+    ] {
+        write(dir, path, "x\n");
+        changed_case(dir, &dumps, path, path);
+    }
+    // The file that a `build` key names, changed or deleted.
+    write(dir, "crates/tiny/gen.rs", "fn main() { /* edited */ }\n");
+    changed_case(dir, &dumps, "build file changed", "crates/tiny/gen.rs");
+    git(dir, &["rm", "-q", "crates/tiny/gen.rs"]);
+    changed_case(dir, &dumps, "build file deleted", "crates/tiny/gen.rs");
+    // Paths that hold no glob or space surprises: literal names.
+    for path in ["we ird[1]", "a*b?", "quote\"d"] {
+        link(dir, "crates", path);
+        changed_case(dir, &dumps, path, path);
+    }
+    // Symbolic links: added, retargeted, deleted, renamed, and a file turned into a link.
+    link(dir, "crates", "new-link");
+    changed_case(dir, &dumps, "link added", "new-link");
+    std::fs::remove_file(dir.join("lnk")).unwrap();
+    link(dir, "crates/tiny", "lnk");
+    changed_case(dir, &dumps, "link retargeted", "lnk");
+    git(dir, &["rm", "-q", "lnk"]);
+    changed_case(dir, &dumps, "link deleted", "lnk");
+    git(dir, &["mv", "rename-me", "renamed"]);
+    changed_case(dir, &dumps, "link renamed", "rename-me");
+    std::fs::remove_file(dir.join("plain.txt")).unwrap();
+    link(dir, "notes.txt", "plain.txt");
+    changed_case(dir, &dumps, "file became a link", "plain.txt");
+    // A rename changes both paths: out of a `.cargo` folder, and into one.
+    git(dir, &["mv", ".cargo/keep", "elsewhere.txt"]);
+    changed_case(dir, &dumps, "moved out", ".cargo/keep");
+    git(dir, &["mv", "notes.txt", ".cargo/notes.txt"]);
+    changed_case(dir, &dumps, "moved in", ".cargo/notes.txt");
+    // A RED that is code does not count as a RED: its build input marks the other steps.
+    write(dir, "crates/tiny/build.rs", "fn main() {}\n");
+    add_test(dir, "basic", "second", "assert!(false);");
+    commit(dir, "ABC-1 step 2 RED: a test and a build script");
+    let sha = head7(dir);
+    let text = expect_changed(dir, &dumps, "RED with code", "crates/tiny/build.rs", &sha);
+    assert_eq!(outcome(&text, "step 2"), "unpaired", "{text}");
+}
+
+#[test]
+fn unchanged_build_inputs_are_named() {
+    let (repo, _scripts, _dumps) = build_input_repo(|dir| {
+        write(dir, ".cargo/config.toml", "");
+        write(dir, "crates/tiny/build.rs", "fn main() {}\n");
+        write(dir, "crates/tiny/rust-toolchain.toml", "");
+        link(dir, "crates", "latest");
+    });
+    let dir = repo.path();
+    // Changes that are no build inputs: other keys, other paths, a reordered manifest.
+    let member = "crates/tiny/Cargo.toml";
+    write(
+        dir,
+        member,
+        "[package]\nedition = \"2021\"\nname = \"tiny\"\nversion = \"0.1.0\"\ndescription = \"d\"\n\n[package.metadata]\nnote = \"n\"\n\n[dev-dependencies]\n",
+    );
+    write(dir, "docs/note.md", "note\n");
+    write(dir, "notes/build.rs.bak", "x\n");
+    write(dir, "notes/xrust-toolchain", "x\n");
+    write(dir, "crates/tiny/tests/golden/g.txt", "g\n");
+    commit(dir, "ABC-1: changes that are no build inputs");
+    // Real cargo again: the report must show the line and the steps keep their outcomes.
+    let real = real_cargo();
+    set_cargo_key(dir, &real);
+    let (code, text) = check_env(dir, &[]);
+    assert_eq!(code, 0, "{text}");
+    let want = "build inputs: .cargo/config.toml, crates/tiny/build.rs, crates/tiny/rust-toolchain.toml, latest";
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines.iter().position(|l| *l == want).expect(&text);
+    let step = lines
+        .iter()
+        .position(|l| l.starts_with("step 1: "))
+        .unwrap();
+    assert!(at < step, "{text}");
+    assert!(lines[at - 1].starts_with("cargo: "), "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    // A path that a commit of the ticket changes is not named, and the outcome follows.
+    write(dir, "crates/tiny/build.rs", "fn main() { /* edited */ }\n");
+    commit(dir, "ABC-1: edits the build script");
+    let sha = head7(dir);
+    let (code, text) = check_env(dir, &[]);
+    assert_eq!(code, 1, "{text}");
+    let want = "build inputs: .cargo/config.toml, crates/tiny/rust-toolchain.toml, latest";
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines.iter().position(|l| *l == want).expect(&text);
+    let step = lines
+        .iter()
+        .position(|l| l.starts_with("step 1: "))
+        .unwrap();
+    assert!(at < step, "{text}");
+    assert!(
+        text.contains(&format!(
+            "step 1: unverified: build-input-changed: crates/tiny/build.rs at {sha}"
+        )),
+        "{text}"
+    );
 }
