@@ -2181,6 +2181,110 @@ fn cargo_runs_with_the_allow_list_only() {
 }
 
 #[test]
+fn cargo_runs_see_every_allowed_variable_and_one_cargo() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let dumps = scripts.path().join("dumps");
+    std::fs::create_dir(&dumps).unwrap();
+    // The program that a `PATH` search would find after the real cargo; it must never run.
+    let late = scripts.path().join("late");
+    std::fs::create_dir(&late).unwrap();
+    script(
+        &late,
+        "cargo",
+        &format!("echo wrong > {}/late.$$\nexit 1", dumps.display()),
+    );
+    let fake = script(
+        scripts.path(),
+        "cargo",
+        &format!(
+            "env > {d}/env.$$\nprintf '%s\\n' \"$*\" > {d}/argv.$$\nexec {r} \"$@\"",
+            d = dumps.display(),
+            r = real_cargo()
+        ),
+    );
+    set_cargo_key(dir, &fake);
+    // Every allow-listed name is set in the caller; the toolchain names keep the values of this
+    // process so that the real cargo still works, the others get known values.
+    let mut sent: Vec<(&str, String)> = Vec::new();
+    for name in ["HOME", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"] {
+        if let Some(v) = std::env::var_os(name) {
+            sent.push((name, v.to_string_lossy().into_owned()));
+        }
+    }
+    if !sent.iter().any(|(n, _)| *n == "HOME") {
+        sent.push(("HOME", scripts.path().to_string_lossy().into_owned()));
+    }
+    let path = format!("{}:{}", std::env::var("PATH").unwrap(), late.display());
+    sent.push(("PATH", path));
+    sent.push(("USER", "stapel-test-user".into()));
+    sent.push(("LANG", "C".into()));
+    sent.push(("TMPDIR", scripts.path().to_string_lossy().into_owned()));
+    sent.push(("CARGO_BUILD_JOBS", "2".into()));
+    let out = {
+        let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cmd = stapel(dir);
+        cmd.args(["check", "ABC-1"])
+            .env("RUSTC_WRAPPER", "/nonexistent")
+            .env("RUSTFLAGS", "--cfg=fake")
+            .env("RUSTC", "/nonexistent")
+            .env("CARGO_ALIAS_TEST", "x")
+            .env("STAPEL_TEST_SECRET", "1");
+        for (n, v) in &sent {
+            cmd.env(n, v);
+        }
+        cmd.output().unwrap()
+    };
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    // set by the shell itself
+    let shell = ["PWD", "OLDPWD", "SHLVL", "_"];
+    let mut expected: Vec<&str> = sent.iter().map(|(n, _)| *n).collect();
+    expected.extend(["CARGO_TARGET_DIR", "CARGO_TERM_COLOR"]);
+    expected.sort_unstable();
+    let mut seen = 0;
+    let mut versions = 0;
+    let mut tests = 0;
+    for entry in std::fs::read_dir(&dumps).unwrap() {
+        let path = entry.unwrap().path();
+        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(!file.starts_with("late."), "a PATH cargo ran: {body}");
+        if file.starts_with("argv.") {
+            if body.trim() == "--version" {
+                versions += 1;
+            } else if body.starts_with("test ") {
+                tests += 1;
+            } else {
+                panic!("an unexpected cargo run: {body}");
+            }
+            continue;
+        }
+        seen += 1;
+        let mut names: Vec<&str> = body
+            .lines()
+            .filter_map(|l| l.split_once('=').map(|(k, _)| k))
+            .filter(|n| !shell.contains(n))
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, expected, "the environment of a run: {body}");
+        for (n, v) in &sent {
+            assert!(
+                body.lines().any(|l| l == format!("{n}={v}")),
+                "{n} did not arrive with {v}: {body}"
+            );
+        }
+    }
+    assert!(seen >= 3, "cargo ran {seen} times");
+    // Every run, the `--version` run included, went through the configured program: one version
+    // run, and one test run for each of the RED, GREEN and HEAD commits.
+    assert_eq!(versions, 1, "version runs");
+    assert_eq!(tests, seen - 1, "test runs of {seen} runs");
+}
+
+#[test]
 fn cargo_path_and_version_are_reported() {
     let repo = passing_repo();
     let dir = repo.path();
@@ -2313,4 +2417,26 @@ fn refuses_without_a_working_cargo() {
     assert_eq!(out.status.code(), Some(2), "{text}");
     assert!(text.contains("cargo"), "{text}");
     assert!(!dir.join(".stapel/tickets/ABC-1/runs.jsonl").exists());
+}
+
+#[test]
+fn cargo_key_is_validated_through_the_cli() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    // A program inside the repository.
+    std::fs::create_dir(dir.join("tools")).unwrap();
+    let inside = script(&dir.join("tools"), "cargo", "exec true");
+    for (what, value) in [
+        ("inside the repository", inside.as_str()),
+        ("relative", "cargo"),
+    ] {
+        set_cargo_key(dir, value);
+        let (code, text) = check(dir);
+        assert_eq!(code, 2, "{what}: {text}");
+        assert!(text.contains("check.cargo"), "{what}: {text}");
+        assert!(
+            !dir.join(".stapel/tickets/ABC-1/runs.jsonl").exists(),
+            "{what}: a record was written"
+        );
+    }
 }
