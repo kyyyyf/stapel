@@ -121,6 +121,10 @@ proxy and certificate variables of the caller; proc-macro crates that read files
   range of the build-input rules only (D5-1); "carries its key" reads "starts with `<KEY> ` or `<KEY>:`"
   (D5-2); `stapel new` fails on a git error other than a repository without commits (D5-4). D5-3 and D5-5
   get coverage tests.
+- 2026-10-09, after plan step 7: (32) Decision, as recommended: AC-16 is added. Plan step 7 showed that later
+  tickets that change shared test files (fixtures, golden files, `check.rs`) make every older closed ticket
+  `tests-changed`, which hides the real escaped defects (STP-3 step 3 `no-red`; STP-2 step 6 changed a helper).
+  A closed ticket is checked as it was at its last commit.
 ## Spec
 
 Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in golden files. Terms:
@@ -158,11 +162,12 @@ Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in g
 | AC-13 | WHEN `stapel new` creates a ticket THE `state.json` holds `base` with the full id of HEAD (absent only in a repository without commits; any other git error fails `new`), and the range starts after it. | `new::records_the_base_commit`, `check::range_starts_after_the_base` |
 | AC-14 | IF `TMPDIR`, after links are resolved, lies under the repository folder, or the worktree folder cannot be created THEN `stapel check` exits 2 and appends no record. | `check::refuses_a_tmpdir_inside_the_repository` |
 | AC-15 | WHEN the ticket is closed THE range ends at the last commit whose subject starts with `<KEY> ` or `<KEY>:`, so later commits do not change its build-input outcome. | `check::closed_ticket_range_ends_at_its_last_commit` |
+| AC-16 | WHEN the ticket is closed THE check reads STP-4's history outcomes only up to the end of its Range and runs its steps' tests and the suite at that end commit instead of HEAD; the report's first line reads `ticket: <KEY> at <short sha of the end> (closed)` and the run record carries `end` with its full id, `head` staying HEAD. | `check::closed_ticket_is_checked_at_its_last_commit` |
 
 ### Guarantees
 
 - **Promised, against an agent that tries on purpose to make a step look verified** (tag `security`): the
-  Frame's promise, by AC-1 to AC-15.
+  Frame's promise, by AC-1 to AC-16.
 - **Not promised:** the Frame's list; a symbolic link or file outside the repository changed without a
   commit; artifacts planted in the check's target folder (`.git/stapel/`, which the guard protects); the
   outcome of a closed ticket's history before this ticket (Decision 4: a step that turns `unverified` is an
@@ -194,7 +199,7 @@ steps into it; each sets its own `CARGO_TARGET_DIR`. Heavy runs: `cargo test -j 
 |---|---|---|
 | Main path | unchanged build inputs are named; the cargo path and version; the worktree's place | `check::unchanged_build_inputs_are_named`, `check::cargo_path_and_version_are_reported`, `check::worktree_is_outside_the_repository` |
 | Negative | each build input changed by a non-RED commit, before and after the first RED; a RED that changes an included source file; bad `[check] cargo`; no working cargo; a config above the worktree | `check::manifest_target_change_is_unverified`, `check::config_toolchain_build_script_and_links_are_unverified`, `check::helper_change_is_unverified`, `check::included_test_data_change_is_unverified`, `check::red_changing_an_included_file_changes_code`, `core::config::check_cargo_key_is_validated`, `check::refuses_without_a_working_cargo`, `check::config_above_the_worktree_is_unverified`, `check::interleaved_red_is_unverified`, `check::refuses_a_tmpdir_inside_the_repository` |
-| Ranges | the base commit; a closed ticket's range | `new::records_the_base_commit`, `check::range_starts_after_the_base`, `check::closed_ticket_range_ends_at_its_last_commit` |
+| Ranges | the base commit; a closed ticket's range; a closed ticket checked at its end | `new::records_the_base_commit`, `check::range_starts_after_the_base`, `check::closed_ticket_range_ends_at_its_last_commit`, `check::closed_ticket_is_checked_at_its_last_commit` |
 | Abuse | see the Abuse table | `check::cargo_runs_with_the_allow_list_only` and the Negative tests |
 | Step 1 drift review | every allowed variable and one cargo; the cargo key through the CLI; the cargo key checked again before the run (a link retargeted after load); a `cargo` on `PATH` that is not executable | `check::cargo_runs_see_every_allowed_variable_and_one_cargo`, `check::cargo_key_is_validated_through_the_cli`, `check::cargo_key_is_checked_again_before_the_run`, `check::path_cargo_must_be_executable` |
 | Step 2 drift review | `CARGO_HOME` at or above the worktree; history outcomes first; relative and unwritable `TMPDIR`; stale check worktrees after a crash; an unreadable ancestor | `check::cargo_home_cannot_hide_a_config_above`, `check::history_outcomes_come_before_build_input_outside`, `check::relative_tmpdir_is_resolved`, `check::stale_check_worktrees_are_pruned`, `check::unwritable_tmpdir_is_refused`, `check::unreadable_ancestor_counts_as_found` |
@@ -297,6 +302,7 @@ promised).
 | AC-13 | `new::records_the_base_commit`, `check::range_starts_after_the_base` |
 | AC-14 | `check::refuses_a_tmpdir_inside_the_repository` |
 | AC-15 | `check::closed_ticket_range_ends_at_its_last_commit` |
+| AC-16 | `check::closed_ticket_is_checked_at_its_last_commit` |
 | Manual run | plan step 7, 2026-10-09, at `dfc3fb6`: STP-1 cannot be checked (legacy `state.json`); STP-2 `fail` (steps 2, 3 and code review round 2 `build-input-changed: crates/stapel-cli/tests/common/mod.rs at 7a4c754`, the STP-2 step 6 GREEN; the rest `tests-changed`); STP-3 `fail` (steps 1, 2 `pass`; step 3 `no-red: stapel-cli/decisions::refusal_appends_nothing`; the rest `tests-changed`); STP-4 `fail` (every step but `step 3 review` `tests-changed`); STP-5 `fail` (every step `tests-changed`: `crates/stapel-cli/tests/golden/check_report.txt`); the suite passes in each run (338) |
 
 ## Plan
@@ -311,6 +317,7 @@ Route: full (source: `auto`; tags `security`, `guard`; about 500 lines).
 | 4 | Helpers and included files; interleaved REDs | AC-3, AC-4, AC-5, AC-12 | `tests-changed` for helpers the RED changed |
 | 5 | `base` in `state.json`; range start and end | AC-13, AC-15 | `state.json` of earlier tickets |
 | 6 | `docs/PHASES.md`: STP-13 in the list of first tickets | — | other phases |
+| 8 | A closed ticket checked at its last commit; plan step 7 repeated | AC-16 | open tickets' check at HEAD |
 | 7 | By hand: `stapel check STP-1` to `STP-5` on this repository; escaped defects recorded | — | closed tickets' text |
 
 ## Review
