@@ -25,22 +25,26 @@ published crate; `Cargo.lock` alone.
 check` gives STP-6's build-input outcome when a non-RED commit of the Range:
 
 1. adds a dependency entry, or changes one so that its source changes, in any dependency table of any
-   `Cargo.toml`, unless the new source is crates.io or a path to a workspace member, or moves an entry from a
-   `path` or `git` source to crates.io; or adds, changes or deletes a `[patch]` or `[replace]` table;
+   `Cargo.toml`, unless the new source is empty (crates.io or `workspace = true`) or, outside
+   `dev-dependencies`, a path to a workspace member; or moves an entry from a `path` or `git` source to an
+   empty one; or adds, changes or deletes a `[patch]` or `[replace]` table;
 2. adds, changes or deletes `[profile]`, `[features]`, `[lints]`, `[workspace.lints]` or the `edition` of
-   `[package]` or `[workspace.package]` of any `Cargo.toml`;
+   `[package]`, `[project]` or `[workspace.package]` of any `Cargo.toml`;
 3. adds an entry to a `dev-dependencies` table;
-4. adds, changes or deletes a file under `crates/*/tests/` that is not a `.rs` file.
+4. adds a file under `crates/*/tests/` that is not a `.rs` file, or changes, deletes or renames one in a
+   crate's tests folder that holds no step test (STP-4's `tests-changed` covers the others).
 
 It gives `red-changes-code` when a RED of the ticket:
 
 5. redirects a dev-dependency as in item 1;
-6. adds, changes or deletes a `Cargo.toml` or a symbolic link under `crates/*/tests/`;
-7. adds, changes or deletes a file that a `build` key or a target's `path` key of a manifest names.
+6. adds, changes or deletes a `Cargo.toml`, a symbolic link, a `.cargo` path or a `rust-toolchain` file under
+   `crates/*/tests/`;
+7. adds, changes or deletes a file that a `build` key or the `path` key of `[lib]`, `[[bin]]`, `[[example]]`
+   or `[[bench]]` names.
 
-Not promised: a dependency's `features`; what a crates.io version or a workspace member contains (code); a RED
-that does not compile and that a crates.io entry added by a GREEN to `[dependencies]` resolves; proc-macro
-crates that read files; STP-6's "Not promised" list.
+Not promised: a dependency's `features`; what a crates.io version or a workspace member contains (code); proc-macro
+crates that read files; a RED that does not compile and that a crates.io entry added by a GREEN to
+`[dependencies]` resolves (see Open question 6); STP-6's "Not promised" list.
 
 **Size.** Medium: about eight criteria, 600–900 changed lines, most of them tests. Beyond ten criteria the
 ticket is split again.
@@ -69,10 +73,11 @@ recommendation, waiting for the human's answer, and the build does not start bef
   (b) **recommended** after spec review SR-2: `[profile]`, `[features]`, `[lints]`, `[workspace.lints]` and
   `edition` of `[package]` and `[workspace.package]` (a lint set to `allow` or an older edition turns a RED that
   did not compile into a pass); (c) `[profile]` only. Assumption: (b).
-- Open question 4 (edge-failure): non-`.rs` files under `crates/*/tests/` after RED? (a) **recommended**: any
-  add, change or delete by a non-RED commit gives the build-input outcome, golden files included (the builder
-  rule "a GREEN changes nothing under `tests/`" becomes a check); (b) only an added file (the hole STP-6 code
-  review named; STP-4's `tests-changed` already covers files the step's RED saw). Assumption: (a).
+- Open question 4 (edge-failure): non-`.rs` files under `crates/*/tests/` after RED? (a) any add, change or
+  delete by a non-RED commit gives the build-input outcome, golden files included; it collides with STP-4's
+  per-step `tests-changed` (spec review SR2-1) and turns every step `unverified` for one file; (b)
+  **recommended** after round 2: an added file anywhere, and a change, delete or rename in a crate's tests
+  folder without a step test; STP-4's `tests-changed` keeps the rest. Assumption: (b).
 - Open question 5 (interaction-ux): the outcome text? (a) **recommended**: STP-6's `build-input-changed:
   <path> at <short sha>` with the manifest's path, no new format and no new golden file; (b) name the table or
   entry too (`<path> [dependencies.foo]`). Assumption: (a).
@@ -90,6 +95,12 @@ recommendation, waiting for the human's answer, and the build does not start bef
   under `crates/*/tests/`. (a) **recommended**: record it as a rule: fixture projects are built at run time
   (as `check.rs` does today); (b) narrow AC-6 to a manifest that a dependency table, `[patch]` or `[replace]`
   names. Assumption: (a).
+- 2026-10-09, spec review round 2 (SR2-1 to SR2-11, no HIGH; no round 3), fixed in the text under the
+  Assumptions: SR2-1 (AC-5 narrowed, Open question 4 changed), SR2-2 (`package` is a source key), SR2-3 (a
+  dev-dependency moved to a member path is a redirect), SR2-5 to SR2-10 (wording, tables, AC-7 widened to
+  `.cargo` and toolchain files). SR2-4 (any dependency added after a RED that did not compile) is an option of
+  Open question 6: (d) a dependency entry added between such a RED and its GREEN gives the build-input
+  outcome; it needs the RED's run result before the build-input rules, so it is not recommended here.
 
 ## Spec
 
@@ -99,24 +110,25 @@ Terms of STP-6 (Range, non-RED commit, build-input outcome) hold. New terms:
   (alias `build_dependencies`) of a manifest, at the top level, under `[target.<cfg>]` (quoted or bare key) or,
   for `dependencies`, under `[workspace]`; an entry is a key of such a table, in inline, dotted or
   `[dependencies.<name>]` form, compared by table and key.
-- **Source** of an entry: its values of `path`, `git`, `branch`, `tag`, `rev`, `registry`,
+- **Source** of an entry: its values of `path`, `git`, `branch`, `tag`, `rev`, `package`, `registry`,
   `registry-index`; a string entry, a table without these keys and `workspace = true` have an empty source.
 - **Member folder**: the folder of the root package or of a `members` entry of the root manifest, globs
   expanded over the commit's tree and `exclude` removed.
-- **Redirect**: an entry at a commit whose source differs from the same entry at the parent (an absent entry
-  has an empty source), unless the new source is empty, or is a lone `path` (with or without `package`) that
-  names a member folder at the commit; an entry whose source at the parent has `path` or `git` and is empty at
-  the commit is a redirect; an entry that is not a string or a table is a redirect.
+- **Redirect**: an entry present at a commit whose source differs from the same entry at the parent (an
+  absent entry has an empty source), unless the new source is empty, or the entry is not in a
+  `dev-dependencies` table and its new source is a `path` (with or without `package`) that names a member
+  folder at the commit; an entry whose source at the parent has `path` or `git` and is empty at the commit is
+  a redirect; an entry that is not a string or a table is a redirect. A deleted entry is no redirect.
 
 | № | Criterion | Test |
 |---|---|---|
 | AC-1 | IF a non-RED commit makes a redirect in any dependency table of any `Cargo.toml` THEN the check gives the build-input outcome naming the manifest. | `check::dependency_redirect_is_unverified` |
-| AC-2 | WHEN a non-RED commit adds or changes an entry of `dependencies` or `build-dependencies` whose source is empty or names a member folder THE steps keep their outcomes. | `check::crates_io_and_member_dependencies_are_allowed` |
+| AC-2 | WHEN a non-RED commit adds or changes an entry of `dependencies` or `build-dependencies` whose new source is empty or names a member folder, or changes a `dev-dependencies` entry without changing its source, THE steps keep their outcomes. | `check::crates_io_and_member_dependencies_are_allowed` |
 | AC-3 | IF a non-RED commit adds, changes or deletes `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `[workspace.lints]`, or `edition` of `[package]`, `[project]` or `[workspace.package]`, of any `Cargo.toml` THEN the check gives the build-input outcome naming the manifest. | `check::patch_profile_features_lints_and_edition_are_unverified` |
 | AC-4 | IF a non-RED commit adds an entry to a `dev-dependencies` table THEN the check gives the build-input outcome naming the manifest. | `check::green_adding_a_dev_dependency_is_unverified` |
-| AC-5 | IF a non-RED commit adds, changes, deletes or renames a file under `crates/*/tests/` that is not a `.rs` file (a submodule entry included) THEN the check gives the build-input outcome naming the file. | `check::test_data_change_is_unverified` |
+| AC-5 | IF a non-RED commit adds a file under `crates/*/tests/` that is not a `.rs` file (a submodule entry included), or changes, deletes or renames such a file in a crate's tests folder that holds no step test of the ticket, THEN the check gives the build-input outcome naming the file. | `check::test_data_change_is_unverified` |
 | AC-6 | IF a RED makes a redirect in a `dev-dependencies` table THEN the step is `red-changes-code` naming the manifest. | `check::red_redirecting_a_dev_dependency_changes_code` |
-| AC-7 | IF a RED adds, changes or deletes a `Cargo.toml` or a symbolic link under `crates/*/tests/` THEN the step is `red-changes-code` naming it. | `check::red_adding_a_test_manifest_or_link_changes_code` |
+| AC-7 | IF a RED adds, changes or deletes a `Cargo.toml`, a symbolic link, a path with a `.cargo` component, `rust-toolchain` or `rust-toolchain.toml` under `crates/*/tests/` THEN the step is `red-changes-code` naming it. | `check::red_adding_a_test_manifest_or_link_changes_code` |
 | AC-8 | IF a RED adds, changes or deletes a file that, at the RED or its parent, a manifest's `build` key of `[package]` or `[project]` or the `path` key of `[lib]`, `[[bin]]`, `[[example]]` or `[[bench]]` names THEN the step is `red-changes-code` naming the file. | `check::red_changing_a_build_or_target_file_changes_code` |
 
 ### Guarantees
@@ -167,7 +179,7 @@ repository with RED and GREEN steps. Heavy runs: `cargo test -j 4 … -- --test-
 | Dependency entry | TOML value | a string version to an inline or dotted table with every source key | absent at parent: an empty source | not a string or table: a redirect | source keys compared as parsed TOML values | `check::dependency_redirect_is_unverified` |
 | Member path | string | relative to the manifest's folder, `..` allowed | — | leaves the repository or names no member folder at the commit: a redirect | components normalised as STP-6 `build_file`; members globbed over `git ls-tree` of the commit; no link resolution (links are STP-6 AC-2) | `check::crates_io_and_member_dependencies_are_allowed` |
 | `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `[workspace.lints]`, `edition` | TOML values | absent to many keys | absent on both sides: no change; absent on one side: a change | manifest does not parse: build input (STP-6) | compared as parsed values | `check::patch_profile_features_lints_and_edition_are_unverified` |
-| Path under `crates/*/tests/` | git path | any depth; a submodule entry counts as a file | — | non-UTF-8: read lossily, as STP-6 | `.rs` by suffix, byte-exact | `check::test_data_change_is_unverified` |
+| Path under `crates/*/tests/` | git path and mode | any depth; mode 100644, 100755, 120000 (link: AC-7 in a RED), 160000 (submodule: a file for AC-5) | — | non-UTF-8: read lossily, as STP-6 | `.rs` by suffix, byte-exact | `check::test_data_change_is_unverified`, `check::red_adding_a_test_manifest_or_link_changes_code` |
 | `build` and target `path` keys | string | relative to the manifest | absent: no named file (`build.rs` stays STP-6 AC-2) | not a string: ignored; absolute: taken as relative, cargo fails first | as STP-6 `build_file` | `check::red_changing_a_build_or_target_file_changes_code` |
 
 ### External states
@@ -197,20 +209,24 @@ cargo but still counted, by AC-3); the underscore aliases. Each has a case in th
 | Attempt | Outcome |
 |---|---|
 | A GREEN that points `foo = { path = "tests/fake" }` at a crate it wrote | build-input outcome, AC-1 (and STP-6 AC-1: an added `Cargo.toml`) |
-| A GREEN that sets `git` on an existing dependency, or under `[build_dependencies]` | AC-1 |
+| A GREEN that sets `git` on an existing dependency, or under `[build_dependencies]`, or renames a crates.io dependency by `package` | AC-1 |
+| A GREEN that points an existing dev-dependency at a workspace member by `path` | AC-1 |
 | A GREEN that swaps a member `path` dependency for a crates.io crate of the same name | AC-1 |
 | A GREEN that adds `[patch.crates-io]` or `[replace]` | AC-3 |
 | A GREEN that sets `[profile.test] debug-assertions = false` | AC-3 |
 | A GREEN that drops a feature a test's `cfg` needs | AC-3 |
 | A GREEN that allows a deny-by-default lint, or sets an older `edition`, so a RED that did not compile passes | AC-3 |
 | A GREEN that adds the crates.io dev-dependency a RED that did not compile needs | AC-4 |
-| A GREEN that adds `tests/data/expected.json` a test reads, or rewrites a golden file | AC-5 |
+| A GREEN that adds the crates.io `[dependencies]` entry a RED that did not compile needs | not promised (Open question 6) |
+| A GREEN that adds `tests/data/expected.json` a test reads | AC-5 |
+| A GREEN that rewrites a golden file the step's RED saw | STP-4 `tests-changed` |
 | A RED that adds a dev-dependency with `path` outside the members, filled by a later GREEN | AC-6 |
-| A RED that adds `crates/x/tests/fake/Cargo.toml`, or a link `crates/x/tests/data -> /tmp/d` | AC-7 |
+| A RED that adds `crates/x/tests/fake/Cargo.toml`, a link `crates/x/tests/data -> /tmp/d`, or `crates/x/tests/.cargo/config.toml` | AC-7 |
 | A RED that changes a `build = "tests/gen.rs"` script | AC-8 |
 
 **Author self-check:** 2026-10-09, after spec review round 1: every promise item has a criterion and a test;
-the Inputs and External states rows come from the catalogue; open questions 1 to 7 wait for the human.
+the Inputs and External states rows come from the catalogue; round 2 fixes applied; open questions 1 to 7
+wait for the human.
 
 ## Proof
 
@@ -232,8 +248,8 @@ Route: full (source: `auto`; tags `security`, `guard`).
 | Step | What | Criteria | Must not change |
 |---|---|---|---|
 | 1 | Dependency sources and redirects in `build_inputs.rs` | AC-1, AC-2 | STP-6 outcomes and golden files |
-| 2 | `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `edition`; dev-dependencies added by a non-RED commit | AC-3, AC-4 | the manifest keys STP-6 AC-1 compares |
-| 3 | Non-`.rs` files under `crates/*/tests/` | AC-5 | `.rs` helper and step-file rules of STP-6 |
+| 2 | `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `[workspace.lints]`, `edition`; dev-dependencies added by a non-RED commit | AC-3, AC-4 | the manifest keys STP-6 AC-1 compares |
+| 3 | Non-`.rs` files under `crates/*/tests/` | AC-5 | `.rs` helper and step-file rules of STP-6; STP-4 `tests-changed` and its test `check::outcome_tests_changed_after_red` |
 | 4 | RED rules in `outcomes::is_code`, with modes for links | AC-6, AC-7, AC-8 | STP-4 RED rule for other paths |
 | 5 | `docs/PHASES.md`: STP-15 | — | other tickets |
 | 6 | By hand: `stapel check` on STP-2 to STP-6; new hits recorded as escaped defects | — | closed tickets' text |
