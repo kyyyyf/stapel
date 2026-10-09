@@ -1,7 +1,9 @@
 //! Files that a `.rs` file includes by a literal path (STP-6 AC-4, AC-5): `include!`,
 //! `include_str!` and `include_bytes!` with a plain or raw string literal, and `#[path = "<literal>"]`
-//! on a `mod`, found by a text search (comments count, comments inside a call are skipped) and taken
-//! relative to the including file's folder. Every Rust escape of a plain literal
+//! (also inside `#[cfg_attr(<predicate>, path = "<literal>")]`) on a `mod`, found by a text search
+//! (comments count, comments inside a call are skipped) and taken relative to the including file's
+//! folder. Inside an inline `mod` rustc resolves a `#[path]` under `<file stem>/<mod name>/`; this
+//! search does not model that, so such a path is not promised. Every Rust escape of a plain literal
 //! is decoded; a literal that cannot be decoded counts as a change of its includer. A non-literal
 //! argument or a path outside the repository is not promised here.
 
@@ -98,7 +100,8 @@ fn skip_blank(c: &[char], mut i: usize) -> usize {
 /// Whether the word `w` starts at `i` and ends there.
 fn word_at(c: &[char], i: usize, w: &str) -> bool {
     let n = w.chars().count();
-    c.get(i..i + n).is_some_and(|s| s.iter().copied().eq(w.chars()))
+    c.get(i..i + n)
+        .is_some_and(|s| s.iter().copied().eq(w.chars()))
         && !c
             .get(i + n)
             .is_some_and(|ch| ch.is_alphanumeric() || *ch == '_')
@@ -125,24 +128,23 @@ fn group(c: &[char], i: usize, open: char, close: char) -> Option<usize> {
     None
 }
 
-/// The literal and end of a `#[path = "<literal>"]` attribute at `i` that sits on a `mod` item
-/// (other attributes and a visibility may stand between).
+/// The literal and end of a `#[path = "<literal>"]` or `#[cfg_attr(<anything>, path = "<literal>")]`
+/// attribute at `i` that sits on a `mod` item (other attributes and a visibility may stand between).
 fn path_attribute(c: &[char], i: usize) -> Option<(Option<String>, usize)> {
     let mut j = skip_blank(c, i + 1);
     if c.get(j) != Some(&'[') {
         return None;
     }
     j = skip_blank(c, j + 1);
-    if !word_at(c, j, "path") {
+    let (lit, end, mut j) = if word_at(c, j, "path") {
+        let (lit, end) = path_value(c, j)?;
+        (lit, end, skip_blank(c, end))
+    } else if word_at(c, j, "cfg_attr") {
+        let (lit, end, close) = cfg_attr_path(c, j + 8)?;
+        (lit, end, skip_blank(c, close))
+    } else {
         return None;
-    }
-    j = skip_blank(c, j + 4);
-    if c.get(j) != Some(&'=') {
-        return None;
-    }
-    j = skip_blank(c, j + 1);
-    let (lit, end) = literal(c, j)?;
-    j = skip_blank(c, end);
+    };
     if c.get(j) != Some(&']') {
         return None;
     }
@@ -160,6 +162,75 @@ fn path_attribute(c: &[char], i: usize) -> Option<(Option<String>, usize)> {
         }
     }
     word_at(c, j, "mod").then_some((lit, end))
+}
+
+/// The literal and end of `path = "<literal>"` that starts at `i` (the word `path`).
+fn path_value(c: &[char], i: usize) -> Option<(Option<String>, usize)> {
+    let mut j = skip_blank(c, i + 4);
+    if c.get(j) != Some(&'=') {
+        return None;
+    }
+    j = skip_blank(c, j + 1);
+    literal(c, j)
+}
+
+/// The first `path = "<literal>"` item after the predicate in the parentheses of a `cfg_attr` that
+/// start at or after `i`: the literal, its end and the index after the closing parenthesis.
+fn cfg_attr_path(c: &[char], i: usize) -> Option<(Option<String>, usize, usize)> {
+    let mut j = skip_blank(c, i);
+    if c.get(j) != Some(&'(') {
+        return None;
+    }
+    j += 1;
+    let mut depth = 0usize;
+    let mut found: Option<(Option<String>, usize)> = None;
+    let mut commas = 0;
+    let mut item = true;
+    while j < c.len() {
+        let ch = c[j];
+        if ch == '"' || (ch == 'r' && literal(c, j).is_some()) {
+            // A string inside the predicate or another attribute: skipped as one token.
+            j = literal(c, j).map_or(j + 1, |(_, end)| end);
+            item = false;
+            continue;
+        }
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => {
+                return found.map(|(lit, end)| (lit, end, j + 1));
+            }
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                commas += 1;
+                item = true;
+                j += 1;
+                continue;
+            }
+            _ => {}
+        }
+        if item
+            && depth == 0
+            && commas > 0
+            && word_at(c, j, "path")
+            && (j == 0 || !is_word(c[j - 1]))
+            && found.is_none()
+            && let Some((lit, end)) = path_value(c, j)
+        {
+            found = Some((lit, end));
+            j = end;
+            item = false;
+            continue;
+        }
+        if !ch.is_whitespace() {
+            item = false;
+        }
+        j += 1;
+    }
+    None
+}
+
+fn is_word(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
 }
 
 /// The content (`None` when an escape cannot be decoded) and end of a plain or raw string literal

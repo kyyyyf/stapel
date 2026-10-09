@@ -204,8 +204,8 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
     };
     // The search is repeated after every cargo run, `cargo --version` included (AC-7).
     if blocked.is_none() {
-        blocked = build_input_outside(&wt.path)
-            .map(|p| format!("build-input-outside: {}", p.display()));
+        blocked =
+            build_input_outside(&wt.path).map(|p| format!("build-input-outside: {}", p.display()));
     }
     let runner = Runner {
         root: &root,
@@ -376,6 +376,10 @@ impl Runner<'_> {
 
     /// Runs `tests` at `commit`, one cargo run per test file.
     fn at(&self, commit: &str, tests: &[TestId], at_red: bool) -> At {
+        // After a build-input hit no further cargo run starts (AC-7).
+        if let Some(why) = self.outside.borrow().clone() {
+            return Err(why);
+        }
         self.wt.checkout(commit)?;
         let mut groups: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
         for t in tests {

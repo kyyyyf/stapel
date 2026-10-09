@@ -4,7 +4,7 @@
 
 use crate::includes::Includes;
 use crate::outcomes::{red_changes_code, under_tests};
-use crate::rust_tests::helper_text;
+use crate::rust_tests::{helper_text, test_functions};
 use crate::steps::{Marker, Step, git, parent, show, step_tests};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
@@ -367,12 +367,18 @@ pub fn analyse(
     // A path is a step file from the first RED of the range, in range order, that added or changed
     // a step test in it (AC-17, AC-18): the index of that RED in the range.
     let mut step_from: HashMap<String, usize> = HashMap::new();
+    // The names of the step tests of each path, from every RED of the ticket (AC-17).
+    let mut step_names: HashMap<String, BTreeSet<String>> = HashMap::new();
     for c in steps.iter().flat_map(|s| s.commits.iter()) {
         if c.marker != Marker::Red {
             continue;
         }
         if let Some(at) = commits.iter().position(|s| *s == c.sha) {
             for t in step_tests(root, &c.sha)? {
+                step_names
+                    .entry(t.path())
+                    .or_default()
+                    .insert(t.name.clone());
                 let first = step_from.entry(t.path()).or_insert(at);
                 *first = (*first).min(at);
             }
@@ -447,8 +453,14 @@ pub fn analyse(
                         p.ends_with(".rs")
                             && under_tests(p)
                             && is_step_file(p, at)
-                            && helper_text_of(root, &base, e.old.as_deref())
+                            && (helper_text_of(root, &base, e.old.as_deref())
                                 != helper_text_of(root, sha, e.new.as_deref())
+                                || test_functions_hit(
+                                    root,
+                                    (&base, e.old.as_deref()),
+                                    (sha, e.new.as_deref()),
+                                    step_names.get(p.as_str()),
+                                ))
                     })
                     .map(|p| (*p).clone());
             }
@@ -480,6 +492,37 @@ fn helper_text_of(root: &Path, commit: &str, path: Option<&str>) -> String {
     path.and_then(|p| show(root, commit, p))
         .map(|src| helper_text(&src))
         .unwrap_or_default()
+}
+
+/// The test functions of a step file that a non-RED commit may not touch (AC-17): a `#[test]`
+/// function that is no step test and is changed or deleted, or is added while a step test names it
+/// as a word. A new test function that no step test names stays allowed.
+fn test_functions_hit(
+    root: &Path,
+    before: (&str, Option<&str>),
+    after: (&str, Option<&str>),
+    steps: Option<&BTreeSet<String>>,
+) -> bool {
+    let read = |(commit, path): (&str, Option<&str>)| -> Vec<(String, String)> {
+        path.and_then(|p| show(root, commit, p))
+            .map(|src| test_functions(&src))
+            .unwrap_or_default()
+    };
+    let (old, new) = (read(before), read(after));
+    let is_step = |n: &str| steps.is_some_and(|s| s.contains(n));
+    let new_of = |n: &str| new.iter().find(|(m, _)| m == n).map(|(_, t)| t);
+    if old.iter().any(|(n, t)| !is_step(n) && new_of(n) != Some(t)) {
+        return true;
+    }
+    let step_words: HashSet<&str> = old
+        .iter()
+        .chain(new.iter())
+        .filter(|(n, _)| is_step(n))
+        .flat_map(|(_, t)| t.split(|c: char| !(c.is_alphanumeric() || c == '_')))
+        .collect();
+    new.iter().any(|(n, _)| {
+        !is_step(n) && !old.iter().any(|(m, _)| m == n) && step_words.contains(n.as_str())
+    })
 }
 
 /// The manifest path of an entry whose target tables or keys changed, or that was added or deleted.
