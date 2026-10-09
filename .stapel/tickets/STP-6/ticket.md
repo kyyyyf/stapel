@@ -303,7 +303,7 @@ promised).
 | AC-14 | `check::refuses_a_tmpdir_inside_the_repository` |
 | AC-15 | `check::closed_ticket_range_ends_at_its_last_commit` |
 | AC-16 | `check::closed_ticket_is_checked_at_its_last_commit` |
-| Manual run | plan step 7, 2026-10-09, at `dfc3fb6`: STP-1 cannot be checked (legacy `state.json`); STP-2 `fail` (steps 2, 3 and code review round 2 `build-input-changed: crates/stapel-cli/tests/common/mod.rs at 7a4c754`, the STP-2 step 6 GREEN; the rest `tests-changed`); STP-3 `fail` (steps 1, 2 `pass`; step 3 `no-red: stapel-cli/decisions::refusal_appends_nothing`; the rest `tests-changed`); STP-4 `fail` (every step but `step 3 review` `tests-changed`); STP-5 `fail` (every step `tests-changed`: `crates/stapel-cli/tests/golden/check_report.txt`); the suite passes in each run (338) |
+| Manual run | plan step 7, 2026-10-09; run 1 at `dfc3fb6` (before AC-16): every closed ticket `fail`, mostly `tests-changed` from later tickets' changes of shared test files. Run 2 after step 8 (closed tickets checked at their last commit): STP-1 cannot be checked (legacy `state.json`); STP-5 `pass`; STP-4 `fail`, steps 3, 4, 5, 6, 7 `interleaved` (review pairs placed between a step's RED and GREEN); STP-3 `fail`, step 3 `no-red: stapel-cli/decisions::refusal_appends_nothing`, step 5 and code review round 1 `tests-changed` by STP-3's own later commits, steps 6 and 6b `Cargo.lock is out of date`; STP-2 `fail`, `tests-changed` by its own later commits and `build-input-changed: crates/stapel-cli/tests/common/mod.rs at 7a4c754` (STP-2 step 6 GREEN). These are escaped defects by Decision 4; STP-2 and STP-3 predate the RED to GREEN check. |
 
 ## Plan
 
