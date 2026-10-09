@@ -22,6 +22,7 @@ pub fn run(title: &str, tracker: Option<&str>) -> Result<(), String> {
         }
     }
 
+    let base = read_base(&root)?;
     let key = next_key(&config, &root);
     let dir = tickets_dir(&root).join(&key);
     if std::fs::symlink_metadata(&dir).is_ok() {
@@ -43,11 +44,31 @@ pub fn run(title: &str, tracker: Option<&str>) -> Result<(), String> {
 
     let mut state = State::new(&key, title);
     state.tracker = tracker.map(String::from);
-    // A repository without commits has no HEAD, and so no base.
-    state.base = stapel_core::steps::git_text(&root, &["rev-parse", "--verify", "HEAD"])
-        .ok()
-        .map(|h| h.trim().to_string());
+    state.base = base;
     save(&dir.join("state.json"), &state)?;
     println!("created: {key}");
     Ok(())
+}
+
+/// The full id of HEAD. A repository without commits (an unborn HEAD) has no base; any other git
+/// error is returned.
+fn read_base(root: &std::path::Path) -> Result<Option<String>, String> {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "-q", "HEAD"])
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        return Ok(Some(
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        ));
+    }
+    // With `-q`, git exits 1 without a message when HEAD names no commit yet.
+    if out.status.code() == Some(1) && out.stderr.is_empty() {
+        return Ok(None);
+    }
+    Err(format!(
+        "git rev-parse --verify HEAD: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    ))
 }
