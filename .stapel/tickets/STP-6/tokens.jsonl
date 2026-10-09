@@ -24,3 +24,4 @@
 {"source":"estimate","estimate":68216,"v":1,"id":"t-4dc286e67794","at":"2026-10-09T10:17:11Z","ticket":"STP-6","role":"builder","model":"claude-sonnet-5-5","step":"8","note":"builder step 8; subagent_tokens of the end notice"}
 {"source":"estimate","estimate":125661,"v":1,"id":"t-6ad73bc2ac19","at":"2026-10-09T11:02:09Z","ticket":"STP-6","role":"drift","model":"claude-sonnet-5-5","note":"code review round 1, drift reviewer; subagent_tokens of the end notice"}
 {"source":"estimate","estimate":151648,"v":1,"id":"t-0e30e3ead926","at":"2026-10-09T11:04:30Z","ticket":"STP-6","role":"reviewer","model":"claude-sonnet-5-5","note":"code review round 1, fresh reviewer; subagent_tokens of the end notice"}
+{"source":"estimate","estimate":162228,"v":1,"id":"t-adebf76597b8","at":"2026-10-09T11:12:52Z","ticket":"STP-6","role":"external","model":"claude-fable-5-1","note":"code review round 1, external reviewer; subagent_tokens of the end notice"}
