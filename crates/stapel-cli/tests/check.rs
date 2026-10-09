@@ -4275,3 +4275,138 @@ fn closed_ticket_without_keyed_commits_is_refused() {
     );
     assert!(!dir.join(".stapel/tickets/ABC-1/runs.jsonl").exists());
 }
+
+// ---- STP-6 step 9c: test functions of step files, `cfg_attr` paths, no run after a hit ----
+
+#[test]
+fn test_functions_in_step_files_are_protected() {
+    // A RED test calls `work`; a GREEN adds it as a `#[test]` function of the same file.
+    let (repo, _scripts, dumps) = build_input_repo(|_| {});
+    let dir = repo.path();
+    add_test(dir, "basic", "t", "work();");
+    commit(dir, "ABC-1 step 2 RED: work is missing");
+    let old = read(dir, "crates/tiny/tests/basic.rs");
+    write(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        &format!("{old}\n#[test]\nfn work() {{}}\n"),
+    );
+    commit(dir, "ABC-1 step 2 GREEN: work as a test function");
+    expect_changed(
+        dir,
+        &dumps,
+        "a test function that a step test names",
+        "crates/tiny/tests/basic.rs",
+        &head7(dir),
+    );
+
+    // A non-RED commit changes or deletes a test function that is no step test.
+    for (what, from, to) in [
+        ("changed", "tiny::add(1, 1), 2", "tiny::add(1, 1), 1 + 1"),
+        ("deleted", "#[test]\nfn starts() {\n    assert_eq!(tiny::add(1, 1), 2);\n}\n", ""),
+    ] {
+        let (repo, _scripts, dumps) = build_input_repo(|_| {});
+        let dir = repo.path();
+        edit(dir, "crates/tiny/tests/basic.rs", from, to);
+        commit(dir, &format!("ABC-1: {what} an old test"));
+        expect_changed(
+            dir,
+            &dumps,
+            what,
+            "crates/tiny/tests/basic.rs",
+            &head7(dir),
+        );
+    }
+
+    // A new `#[test]` function that no step test names stays allowed.
+    let (repo, _scripts, _dumps) = build_input_repo(|_| {});
+    let dir = repo.path();
+    add_test(dir, "basic", "extra", "assert!(true);");
+    commit(dir, "ABC-1: a coverage test");
+    let (code, text) = check_env(dir, &[]);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    assert!(!text.contains("build-input"), "{text}");
+}
+
+#[test]
+fn cfg_attr_path_is_an_include() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        for name in ["a1", "a2", "a3"] {
+            write(dir, &format!("crates/tiny/data/{name}.txt"), "// a module\n");
+        }
+        let old = read(dir, "crates/tiny/tests/basic.rs");
+        write(
+            dir,
+            "crates/tiny/tests/basic.rs",
+            &format!(
+                "{old}\n#[cfg_attr(unix, path = \"../data/a1.txt\")]\nmod one;\n\
+                 #[cfg_attr(all(unix, not(windows)), path = \"../data/a2.txt\")]\npub mod two;\n\
+                 #[cfg_attr(feature = \"a,b)\", path = r#\"../data/a3.txt\"#)]\n#[allow(dead_code)]\nmod three;\n"
+            ),
+        );
+    });
+    let dir = repo.path();
+    for (what, path) in [
+        ("cfg_attr with a name", "crates/tiny/data/a1.txt"),
+        ("cfg_attr with a nested predicate", "crates/tiny/data/a2.txt"),
+        ("cfg_attr with a literal and a raw path", "crates/tiny/data/a3.txt"),
+    ] {
+        write(dir, path, "changed\n");
+        changed_case(dir, &dumps, what, path);
+    }
+}
+
+#[test]
+fn no_run_after_a_build_input_hit() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    // The RED test of step 1 writes a configuration into its own TMPDIR when it runs.
+    add_test(
+        dir,
+        "basic",
+        "plants",
+        "let t = std::env::var(\"TMPDIR\").unwrap(); \
+         std::fs::create_dir_all(format!(\"{t}/.cargo\")).unwrap(); \
+         std::fs::write(format!(\"{t}/.cargo/config.toml\"), \"\").unwrap(); \
+         assert_eq!(tiny::triple(2), 6);",
+    );
+    commit(dir, "ABC-1 step 1 RED: plants a configuration");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    add_test(dir, "basic", "quad_is_four", "assert_eq!(tiny::quad(1), 4);");
+    commit(dir, "ABC-1 step 2 RED: quad is missing");
+    let lib = read(dir, "crates/tiny/src/lib.rs");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{lib}\npub fn quad(x: u32) -> u32 {{\n    x * 4\n}}\n"),
+    );
+    commit(dir, "ABC-1 step 2 GREEN: quad");
+    let tmp = tempfile::tempdir().unwrap();
+    let held = tmp.path().canonicalize().unwrap().join(".cargo/config.toml");
+    // A fake cargo that notes every run that starts after the configuration exists.
+    let scripts = tempfile::tempdir().unwrap();
+    let late = scripts.path().join("late");
+    let fake = script(
+        scripts.path(),
+        "cargo",
+        &format!(
+            "if [ -e {h} ]; then echo run >> {l}; fi\nexec {r} \"$@\"",
+            h = held.display(),
+            l = late.display(),
+            r = real_cargo()
+        ),
+    );
+    set_cargo_key(dir, &fake);
+    let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
+    assert_eq!(code, 1, "{text}");
+    let want = format!("unverified: build-input-outside: {}", held.display());
+    assert!(
+        text.lines().any(|l| l == format!("step 1: {want}")),
+        "{text}"
+    );
+    let runs = std::fs::read_to_string(&late).unwrap_or_default();
+    assert_eq!(runs.lines().count(), 0, "cargo ran after the hit: {runs}");
+}
