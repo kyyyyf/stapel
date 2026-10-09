@@ -26,3 +26,4 @@
 {"v":1,"id":"d-ce79e6232cc2","at":"2026-10-09T14:55:56Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:15451d62fc1ea65f7f03c45e20054795f59ca824b827c53a5a56dd0b664440df","via":"grant"}
 {"v":1,"id":"d-4600c4553163","at":"2026-10-09T15:16:41Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:170aea007c547dbae4e714ed44e3f3c239a5b077b430716cc3a1ca108ef69be5","via":"grant"}
 {"v":1,"id":"d-e059605da0a7","at":"2026-10-09T15:16:42Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:15451d62fc1ea65f7f03c45e20054795f59ca824b827c53a5a56dd0b664440df","via":"grant"}
+{"v":1,"id":"d-94093803dfe7","at":"2026-10-09T15:27:11Z","by":"kyyyyf","action":"close","reason":"stapel check hardened against deliberate circumvention: build inputs, helpers and step files, includes, environment, cargo program, worktree, ranges; check passes; two code review rounds, HIGH findings fixed; rest split to STP-13"}
