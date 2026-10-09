@@ -190,6 +190,39 @@ Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in g
 
 Written as notes during the build and moved here before code review (`CLAUDE.md`, item 6).
 
+#### Step 1 (069bd6b, 53b7602)
+- `Config::parse` stays lenient and does not validate `[check] cargo`; only `Config::parse_at(text, root)` does, so the guard keeps working with a stale path.
+- The 200-byte cut is made after lossy decoding, at a char boundary, trailing whitespace trimmed.
+- `cargo --version` goes through `run_cargo`: same environment, process group and `timeout_secs`; failure exits 2 with `<path>: …`.
+- `CARGO_BUILD_JOBS` no longer reaches cargo (AC-8); the tests' `CARGO_BUILD_JOBS=2` is a no-op now. Open: see the human's answer.
+- Drift fixes (7889d5b coverage, d63dbc1/912d6a2): `validate_cargo` is public and runs again before the `--version` run (a link retargeted after load is refused, exit 2); `resolve_cargo` takes only executable regular files from `PATH`.
+#### Step 2 (abbaa6a, b4e9883)
+- `resolve_tmpdir` (worktree.rs): unset or empty TMPDIR is `/tmp`; relative is resolved against the current folder; links resolved; missing, not a folder, or under the canonical repository folder: exit 2 `TMPDIR …`, before the worktree is created, so no record.
+- Worktree folder `stapel-check-<pid>-<nanos>-<n>` made with `create_dir`; removed only by its own Drop; a crashed run's leftover is left alone; no `git worktree prune`.
+- `create` still removes the legacy `.git/stapel/check-worktree`; lock and `check-target` stay under `.git/stapel/`.
+- `build_input_outside` walks the worktree's ancestors; skips CARGO_HOME (caller's, else `$HOME/.cargo`, links resolved). When found: no `cargo --version`, the `cargo:` line shows the path only, every step and the suite read `unverified: build-input-outside: <path>`, exit 1, record written.
+- Step 2 drift fixes (ec08ecd coverage, 27cb304/bbf5d5b): history outcomes already came first (`Analysis.fixed` is read before `Runner::step`); `build_input_outside` returns CARGO_HOME when an ancestor resolves to it, skips only `.cargo/config*` when `<folder>/.cargo` is CARGO_HOME, and counts any stat error but NotFound as found; `prune_stale_checks` removes `<common>/worktrees/<id>` only for a gone `stapel-check-*` folder; `run_cargo` passes `TMPDIR` as an absolute path (a relative one broke the child's build).
+#### Step 3 (3aa3036, e3e857b)
+- New module `stapel-core/src/build_inputs.rs`; `range()` is one function (step 5 changes start and end); `analyse()` reads `git diff-tree -r -z -M --raw` of the non-RED commits.
+- A RED that changes code counts as non-RED for the build-input rules (Decision 28); new `outcomes::red_changes_code`, `named` made public.
+- With `build-input-changed` no cargo runs, `cargo --version` included; the `cargo:` line shows the path only; `build-input-changed` comes before `build-input-outside`.
+- A rename names the old path first; the `build` key is read at parent and commit; the `build inputs:` line is capped at 20 paths by `named()`.
+- Step 3 drift fixes (coverage folded with the helper move, 4392537/dc3ee5a): reading fails closed as "counts as a change": a manifest that does not parse or whose `git show` fails hides its `build` key, so any entry in that manifest's folder (base or commit) counts and is named; a malformed `diff-tree` record or short output counts as `diff of <sha>`; only a malformed `ls-tree` record is an error (exit 2).
+#### Step 4 (c7bfb38, 5f2e547)
+- New `stapel-core/src/includes.rs`: text search for `include!`, `include_str!`, `include_bytes!` with plain or raw literals, comments count; paths relative to the including file; absolute paths and paths leaving the repository skipped (STP-13); cached per blob.
+- A Helper is any `.rs` under `crates/*/tests/` that is no step-test file of a RED in the range; AC-3/AC-4 hits come after the manifest check.
+- AC-4 includers: every `.rs` under `tests/`; relation at base, every RED and GREEN, HEAD. AC-5 in `outcomes::analyse`, includers outside `tests/` read at RED, parent, later GREENs, HEAD.
+- AC-12: `Analysis.interleaved`; after the build-input outcome, before running; STP-4 history outcomes (and `retired`) first.
+- The step-4 RED changed the STP-4 test `suite_failure_fails_the_check`: its keyed non-RED commit adding `tests/other.rs` is now a Helper change; the setup commit became unkeyed and a case for a keyed new test file was added. To verify with `stapel check STP-4` in plan step 7.
+- Step 4 drift fixes (190ea5a coverage, 44945a6/4b72325): `literals()` returns `Option<String>` per literal, `None` for an undecodable one, whose includer then joins the included set; `seen` is HEAD, the parent of the first range commit and every range commit, cached per blob. A RED that adds a test to `tests/common/mod.rs` does not make it a step file: a later change gives the build-input outcome.
+#### Step 5 (1a5130f, 443ed98)
+- `State.base: Option<String>`; old `state.json` files load; `stapel new` takes `git rev-parse --verify HEAD`, absent without commits.
+- `build_inputs::range` takes `Bounds { base, closed }`: after `base` on the first-parent line, else the subject rule; a closed ticket (`closed` in `state.json`, written by `stapel close` with its fact) ends at its last keyed commit, empty if none.
+- `build_inputs::check_base`: 40 or 64 lowercase hex and on `git rev-list --first-parent HEAD`, checked before `step_commits`; else exit 2 `state.json has base <x>, which is not a full commit id on the first-parent history of HEAD`.
+- Step 5 drift fixes (677d156 coverage, 8a4c98e/725f532): `read_base` in `new.rs` runs before the folder is made; `git rev-parse --verify -q HEAD`: success records `base`, exit 1 with empty stderr records none (an unborn HEAD; git also reports a ref with a garbage hash so), anything else fails `new` with `git rev-parse --verify HEAD: <stderr>`.
+#### Step 8 (b958684, c2bdebb)
+- Only `check.rs` changed: for a closed ticket `build_inputs::range(...).last()` is `end`; it replaces HEAD in `outcomes::analyse`, `Worktree::create` and `Runner.head` (step runs, suite, `removed`); `build_inputs::analyse` keeps the real HEAD with `Bounds { closed }`. First line `ticket: K at <short end> (closed)`; the record gets `end`, `head` stays HEAD; open tickets unchanged, no `end`. A closed ticket with an empty range: exit 2 naming it (untested).
+
 ## Test plan
 
 CLI tests build a tiny `cargo` crate in a temporary git repository, as in STP-4, and commit RED and GREEN
