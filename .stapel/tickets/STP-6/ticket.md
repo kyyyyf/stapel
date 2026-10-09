@@ -297,7 +297,7 @@ promised).
 | AC-13 | `new::records_the_base_commit`, `check::range_starts_after_the_base` |
 | AC-14 | `check::refuses_a_tmpdir_inside_the_repository` |
 | AC-15 | `check::closed_ticket_range_ends_at_its_last_commit` |
-| Manual run | output of plan step 7, added after the run |
+| Manual run | plan step 7, 2026-10-09, at `dfc3fb6`: STP-1 cannot be checked (legacy `state.json`); STP-2 `fail` (steps 2, 3 and code review round 2 `build-input-changed: crates/stapel-cli/tests/common/mod.rs at 7a4c754`, the STP-2 step 6 GREEN; the rest `tests-changed`); STP-3 `fail` (steps 1, 2 `pass`; step 3 `no-red: stapel-cli/decisions::refusal_appends_nothing`; the rest `tests-changed`); STP-4 `fail` (every step but `step 3 review` `tests-changed`); STP-5 `fail` (every step `tests-changed`: `crates/stapel-cli/tests/golden/check_report.txt`); the suite passes in each run (338) |
 
 ## Plan
 
