@@ -3934,3 +3934,71 @@ fn bad_base_is_refused_exactly() {
         assert_eq!(std::fs::read_to_string(&runs).ok(), before, "{what}");
     }
 }
+
+#[test]
+fn closed_ticket_is_checked_at_its_last_commit() {
+    // One history: a golden file read by the step test, the ticket's close commit when `closed`,
+    // then a commit of another ticket that changes the golden file.
+    fn history(closed: bool) -> (TempDir, String) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        write(dir, "crates/tiny/tests/golden/out.txt", "four\n");
+        commit(dir, "setup: a golden file before the ticket");
+        add_test(
+            dir,
+            "golden",
+            "renders",
+            "assert_eq!(tiny::render(), include_str!(\"golden/out.txt\"));",
+        );
+        commit(dir, "ABC-1 step 1 RED: compare with the golden file");
+        let lib = read(dir, "crates/tiny/src/lib.rs");
+        write(
+            dir,
+            "crates/tiny/src/lib.rs",
+            &format!("{lib}\npub fn render() -> &'static str {{\n    \"four\\n\"\n}}\n"),
+        );
+        commit(dir, "ABC-1 step 1 GREEN: render");
+        if closed {
+            let mut state = common::state_json(dir, "ABC-1");
+            state["closed"] = serde_json::json!(
+                {"by": "test-user", "at": "2026-01-02T00:00:00Z", "reason": "done"}
+            );
+            write(
+                dir,
+                ".stapel/tickets/ABC-1/state.json",
+                &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+            );
+            commit(dir, "ABC-1: close");
+        }
+        let end = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        write(dir, "crates/tiny/tests/golden/out.txt", "four\nmore\n");
+        commit(dir, "XYZ-2: another ticket changes the golden file");
+        (repo, end)
+    }
+
+    let (repo, end) = history(true);
+    let dir = repo.path();
+    let (code, text) = check(dir);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(
+        text.lines().next().unwrap(),
+        format!("ticket: ABC-1 at {} (closed)", &end[..7]),
+        "{text}"
+    );
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    let record = &run_records(dir)[0];
+    assert_eq!(record["end"], end.as_str(), "{record}");
+    assert_eq!(record["head"], git(dir, &["rev-parse", "HEAD"]).trim(), "{record}");
+
+    let (repo, _) = history(false);
+    let dir = repo.path();
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(
+        text.lines().next().unwrap(),
+        format!("ticket: ABC-1 at {}", short_head(dir)),
+        "{text}"
+    );
+    assert_eq!(outcome(&text, "step 1"), "tests-changed", "{text}");
+    assert!(run_records(dir)[0].get("end").is_none());
+}
