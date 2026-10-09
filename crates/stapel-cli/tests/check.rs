@@ -3767,3 +3767,170 @@ fn closed_ticket_range_ends_at_its_last_commit() {
     let (_, text) = check_env(dir, &[]);
     assert!(!text.contains("build-input-changed"), "{text}");
 }
+
+#[test]
+fn range_edges() {
+    fn set_state(dir: &Path, field: &str, value: serde_json::Value) {
+        let mut state = common::state_json(dir, "ABC-1");
+        state[field] = value;
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+    }
+    fn head(dir: &Path) -> String {
+        git(dir, &["rev-parse", "HEAD"]).trim().to_string()
+    }
+    fn fresh() -> (TempDir, TempDir, std::path::PathBuf) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        let scripts = tempfile::tempdir().unwrap();
+        let dumps = scripts.path().join("dumps");
+        add_step_one(dir);
+        let fake = recording_cargo(scripts.path(), &dumps);
+        set_cargo_key(dir, &fake);
+        (repo, scripts, dumps)
+    }
+
+    // Keys `ABC-1` and `ABC-10` in one history: `ABC-10:` commits are not commits of `ABC-1`.
+    let (repo, _scripts, _dumps) = fresh();
+    let dir = repo.path();
+    set_state(
+        dir,
+        "closed",
+        serde_json::json!({"by": "test-user", "at": "2026-01-02T00:00:00Z", "reason": "done"}),
+    );
+    commit(dir, "ABC-1: close");
+    write(dir, ".cargo/config.toml", "");
+    commit(dir, "ABC-10: config of another ticket");
+    let (_, text) = check_env(dir, &[]);
+    assert!(!text.contains("build-input-changed"), "prefix key: {text}");
+
+    // A keyed commit of another ticket before the first `ABC-1` commit is outside the range.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let dumps = scripts.path().join("dumps");
+    write(dir, ".cargo/config.toml", "");
+    commit(dir, "ABC-10: early config");
+    add_step_one(dir);
+    let fake = recording_cargo(scripts.path(), &dumps);
+    set_cargo_key(dir, &fake);
+    let (_, text) = check_env(dir, &[]);
+    assert!(
+        !text.contains("build-input-changed"),
+        "early prefix: {text}"
+    );
+
+    // A closed ticket's range ends at its last commit: a later commit of another key is outside.
+    let (repo, _scripts, _dumps) = fresh();
+    let dir = repo.path();
+    set_state(
+        dir,
+        "closed",
+        serde_json::json!({"by": "test-user", "at": "2026-01-02T00:00:00Z", "reason": "done"}),
+    );
+    commit(dir, "ABC-1: close");
+    write(dir, ".cargo/config.toml", "");
+    commit(dir, "XYZ-2: after the close");
+    let (_, text) = check_env(dir, &[]);
+    assert!(!text.contains("build-input-changed"), "after close: {text}");
+
+    // `base` equal to HEAD: the range is empty.
+    let (repo, _scripts, _dumps) = fresh();
+    let dir = repo.path();
+    write(dir, ".cargo/config.toml", "");
+    commit(dir, "ABC-1: config");
+    set_state(dir, "base", serde_json::json!(head(dir)));
+    let (_, text) = check_env(dir, &[]);
+    assert!(
+        !text.contains("build-input-changed"),
+        "base at HEAD: {text}"
+    );
+    assert!(!text.contains("base "), "base at HEAD: {text}");
+
+    // A merge commit in the range: only the first-parent line counts.
+    let (repo, _scripts, dumps) = fresh();
+    let dir = repo.path();
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write(dir, ".cargo/config.toml", "");
+    commit(dir, "side work");
+    let side = head7(dir);
+    git(dir, &["checkout", "-q", "-"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.name=test-user",
+            "-c",
+            "user.email=test-user.invalid",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "ABC-1: merge",
+            "side",
+        ],
+    );
+    let merge = head7(dir);
+    let text = expect_changed(dir, &dumps, "merge", ".cargo/config.toml", &merge);
+    assert!(!text.contains(&side), "merge: {text}");
+}
+
+#[test]
+fn bad_base_is_refused_exactly() {
+    fn head(dir: &Path) -> String {
+        git(dir, &["rev-parse", "HEAD"]).trim().to_string()
+    }
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_step_one(dir);
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    commit(dir, "side work");
+    let side = head(dir);
+    git(dir, &["checkout", "-q", "-"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.name=test-user",
+            "-c",
+            "user.email=test-user.invalid",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "ABC-1: merge",
+            "side",
+        ],
+    );
+    let full = head(dir);
+    let runs = dir.join(".stapel/tickets/ABC-1/runs.jsonl");
+    for (what, bad) in [
+        ("empty", String::new()),
+        ("short id", full[..12].to_string()),
+        ("uppercase", full.to_uppercase()),
+        ("off the first-parent line", side),
+    ] {
+        let mut state = common::state_json(dir, "ABC-1");
+        state["base"] = serde_json::json!(bad);
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: bad base");
+        let before = std::fs::read_to_string(&runs).ok();
+        let (code, text) = check_env(dir, &[]);
+        assert_eq!(code, 2, "{what}: {text}");
+        assert_eq!(
+            text.trim_end(),
+            format!(
+                "stapel: state.json has base {bad}, which is not a full commit id on the first-parent history of HEAD"
+            ),
+            "{what}"
+        );
+        assert_eq!(std::fs::read_to_string(&runs).ok(), before, "{what}");
+    }
+}
