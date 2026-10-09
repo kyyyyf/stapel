@@ -3651,17 +3651,19 @@ fn include_seen_in_a_middle_commit() {
         &format!("{old}\n{include}"),
     );
     commit(dir, "ABC-1: adds an include");
+    // AC-17 (step 9a): adding the include changes the step file's text outside its tests, which is caught
+    // first, at the commit that adds it.
+    let added = head7(dir);
     write(dir, "crates/tiny/data/mid.txt", "changed\n");
     commit(dir, "ABC-1: changes the data");
-    let changed = head7(dir);
     edit(dir, "crates/tiny/tests/basic.rs", include, "");
     commit(dir, "ABC-1: removes the include");
     expect_changed(
         dir,
         &dumps,
         "middle commit",
-        "crates/tiny/data/mid.txt",
-        &changed,
+        "crates/tiny/tests/basic.rs",
+        &added,
     );
 }
 
@@ -4001,4 +4003,62 @@ fn closed_ticket_is_checked_at_its_last_commit() {
     );
     assert_eq!(outcome(&text, "step 1"), "tests-changed", "{text}");
     assert!(run_records(dir)[0].get("end").is_none());
+}
+
+// ---- STP-6 AC-17, AC-18: step file helper text, later RED ----
+
+#[test]
+fn step_file_helper_text_is_protected() {
+    let (repo, _scripts, dumps) = build_input_repo(|_| {});
+    let dir = repo.path();
+    // A new test function of a step file by a non-RED commit stays allowed.
+    add_test(dir, "basic", "extra", "assert!(true);");
+    commit(dir, "ABC-1: another test");
+    let (_, text) = check_env(dir, &[]);
+    assert!(!text.contains("build-input"), "{text}");
+    // A RED adds a test that calls a function; the GREEN adds the function to the same file.
+    add_test(dir, "basic", "t", "work();");
+    commit(dir, "ABC-1 step 2 RED: work is missing");
+    let old = read(dir, "crates/tiny/tests/basic.rs");
+    write(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        &format!("{old}\nfn work() {{}}\n"),
+    );
+    commit(dir, "ABC-1 step 2 GREEN: work");
+    // The earlier check ran cargo; the build-input outcome runs none.
+    std::fs::remove_dir_all(&dumps).unwrap();
+    std::fs::create_dir_all(&dumps).unwrap();
+    expect_changed(
+        dir,
+        &dumps,
+        "helper text of a step file",
+        "crates/tiny/tests/basic.rs",
+        &head7(dir),
+    );
+}
+
+#[test]
+fn later_red_does_not_launder_a_helper() {
+    let (repo, _scripts, dumps) = build_input_repo(|_| {});
+    let dir = repo.path();
+    write(
+        dir,
+        "crates/tiny/tests/second.rs",
+        "mod util;\n\n#[test]\nfn uses_util() {\n    util::work();\n}\n",
+    );
+    commit(dir, "ABC-1 step 2 RED: util is missing");
+    write(dir, "crates/tiny/tests/util.rs", "pub fn work() {}\n");
+    commit(dir, "ABC-1 step 2 GREEN: util");
+    let green1 = head7(dir);
+    add_test(dir, "util", "trivial", "assert!(true);");
+    commit(dir, "ABC-1 step 3 RED: a test in util");
+    commit(dir, "ABC-1 step 3 GREEN: trivial");
+    expect_changed(
+        dir,
+        &dumps,
+        "later RED",
+        "crates/tiny/tests/util.rs",
+        &green1,
+    );
 }
