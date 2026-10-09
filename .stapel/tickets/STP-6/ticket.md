@@ -397,4 +397,31 @@ TODO
 
 ## Summary
 
-TODO
+**Measures at the close (2026-10-09), compared with STP-5.** Subagent tokens are estimates from the end
+notices (`subagent_tokens`, not a sum); measured session totals are imported with this session's `cost-state`
+line in the next session.
+
+| Measure | STP-5 | STP-6 |
+|---|---|---|
+| Escaped defects found so far | 0 | 0 in STP-6; plan step 7 found older ones: STP-3 step 3 `no-red`, STP-2 step 6 changed a shared helper, STP-4 review pairs placed inside steps (`interleaved`) |
+| Findings before code (spec review, per-step drift) | 9 + 1 | 23 + 33 (HIGH and MEDIUM: 16 + 22) |
+| Code review findings, all / HIGH and MEDIUM inside the promise | 17 / 15 | 32 over two rounds / 10 (4 HIGH) |
+| Code review HIGH and MEDIUM by `catchable_at` | — | spec 7, design 5, code 4, test-plan 3 |
+| `ticket.md` | 18 KB | 46 KB |
+| Changed lines (frame estimate 400–500) | — | about 3 600 |
+| Subagent estimates by role | — | builder 1.40M, external 0.53M, drift 0.39M, reviewer 0.15M |
+| Wall time | 3 days | 2 days |
+
+What improved: builders did every step from briefs; the per-step drift reviews found 22 HIGH and MEDIUM
+findings before code review, among them real defects (fail-open reading of git output, `CARGO_HOME` hiding a
+config, a relative `TMPDIR` that broke the child build); the final check passes on 15 steps with 349 tests.
+What did not: the ticket outgrew its frame about seven times and was not split (security work found new
+bypasses at every review); code review still found four HIGH holes, all of one class (work hidden in the test
+files a step owns), which the spec review did not list; the builder rules had gaps that forced three local
+history rewrites (a GREEN that changed a golden file, coverage commits that changed a step test and added a
+file-level helper); the rule "a coverage test goes in a commit of its own" now says how (only new `#[test]`
+functions, helpers nested), and STP-14 (`stapel check --history`) is planned to catch such slips at once.
+
+**Process ledger (CLAUDE.md item 9), code review HIGH and MEDIUM by the rule that should have caught them:**
+item 4 (spec review bypass list) 9, item 3 (tables and boundaries) 6, item 1 (frame and non-goals) 2, item 5 1,
+item 6 1, none 3.
