@@ -199,3 +199,17 @@ fn records_the_base_commit() {
     assert_eq!(state["base"], head.as_str());
     assert_eq!(head.len(), 40);
 }
+
+#[test]
+fn base_read_errors_fail_new() {
+    // A corrupted `.git/HEAD` is a git error that is not a repository without commits.
+    let repo = stapel_repo();
+    let dir = repo.path();
+    std::fs::write(dir.join(".git/HEAD"), "garbage\n").unwrap();
+    stapel(dir)
+        .args(["new", "First"])
+        .assert()
+        .code(1)
+        .stderr(contains("git"));
+    assert!(tickets(dir).is_empty(), "{:?}", tickets(dir));
+}
