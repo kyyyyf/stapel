@@ -117,13 +117,18 @@ proxy and certificate variables of the caller; proc-macro crates that read files
   file: every escape is decoded and an undecodable literal counts as a change (D4-1); the relation is read at
   every commit of the range, not only at REDs, GREENs and HEAD (D4-3); a chain of includes is not promised and
   goes to STP-13 (D4-4). D4-2, D4-5 and D4-6 get coverage tests.
+- 2026-10-09, step 5 drift review (D5-1 to D5-5), all as recommended: (31) spec change: the Range is the
+  range of the build-input rules only (D5-1); "carries its key" reads "starts with `<KEY> ` or `<KEY>:`"
+  (D5-2); `stapel new` fails on a git error other than a repository without commits (D5-4). D5-3 and D5-5
+  get coverage tests.
 ## Spec
 
 Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in golden files. Terms:
 
-- **Range**: the first-parent commits after `base` of `state.json` (else from the oldest commit whose
+- **Range** (of the build-input rules; STP-4's history outcomes keep their own walk from each RED): the
+  first-parent commits after `base` of `state.json` (else from the oldest commit whose
   subject starts with `<KEY> ` or `<KEY>:`) up to HEAD, or, for a closed ticket, up to the last commit
-  whose subject carries the key. A **non-RED commit** is a commit of the range that is not a RED of the
+  whose subject starts with `<KEY> ` or `<KEY>:`. A **non-RED commit** is a commit of the range that is not a RED of the
   ticket (STP-4's rule).
 - **Helper**: a `.rs` file under `crates/*/tests/`, any depth, that holds no step test of the ticket.
 - **Included file**: a path named by `include!`, `include_str!` or `include_bytes!` with a string literal
@@ -150,9 +155,9 @@ Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in g
 | AC-10 | IF `[check] cargo` is not an absolute path to an executable regular file, or lies under the repository folder after links are resolved THEN loading the configuration fails, naming the key. | `core::config::check_cargo_key_is_validated` |
 | AC-11 | IF no `cargo` is found, or `cargo --version`, run in the worktree with the AC-8 environment, fails or passes `timeout_secs` THEN `stapel check` exits 2 and appends no record. | `check::refuses_without_a_working_cargo` |
 | AC-12 | IF a RED of the ticket lies between another step's RED and its GREEN THEN that step reads `unverified: interleaved: <label of the RED>`. | `check::interleaved_red_is_unverified` |
-| AC-13 | WHEN `stapel new` creates a ticket THE `state.json` holds `base` with the full id of HEAD (absent in a repository without commits), and the check's range starts after it. | `new::records_the_base_commit`, `check::range_starts_after_the_base` |
+| AC-13 | WHEN `stapel new` creates a ticket THE `state.json` holds `base` with the full id of HEAD (absent only in a repository without commits; any other git error fails `new`), and the range starts after it. | `new::records_the_base_commit`, `check::range_starts_after_the_base` |
 | AC-14 | IF `TMPDIR`, after links are resolved, lies under the repository folder, or the worktree folder cannot be created THEN `stapel check` exits 2 and appends no record. | `check::refuses_a_tmpdir_inside_the_repository` |
-| AC-15 | WHEN the ticket is closed THE range ends at the last commit whose subject carries its key, so later commits do not change its build-input outcome. | `check::closed_ticket_range_ends_at_its_last_commit` |
+| AC-15 | WHEN the ticket is closed THE range ends at the last commit whose subject starts with `<KEY> ` or `<KEY>:`, so later commits do not change its build-input outcome. | `check::closed_ticket_range_ends_at_its_last_commit` |
 
 ### Guarantees
 
