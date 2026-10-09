@@ -4,6 +4,7 @@
 
 use crate::includes::Includes;
 use crate::outcomes::{red_changes_code, under_tests};
+use crate::rust_tests::helper_text;
 use crate::steps::{Marker, Step, git, parent, show, step_tests};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
@@ -363,13 +364,23 @@ pub fn analyse(
     // Helpers: every `.rs` file under `crates/*/tests/` that holds no step test (AC-3). Included
     // files: what the step test files and the helpers include at the base and at every commit of the
     // range (AC-4).
-    let mut step_files: BTreeSet<String> = BTreeSet::new();
+    // A path is a step file from the first RED of the range, in range order, that added or changed
+    // a step test in it (AC-17, AC-18): the index of that RED in the range.
+    let mut step_from: HashMap<String, usize> = HashMap::new();
     for c in steps.iter().flat_map(|s| s.commits.iter()) {
-        if c.marker == Marker::Red && commits.contains(&c.sha) {
-            step_files.extend(step_tests(root, &c.sha)?.iter().map(|t| t.path()));
+        if c.marker != Marker::Red {
+            continue;
+        }
+        if let Some(at) = commits.iter().position(|s| *s == c.sha) {
+            for t in step_tests(root, &c.sha)? {
+                let first = step_from.entry(t.path()).or_insert(at);
+                *first = (*first).min(at);
+            }
         }
     }
-    let is_helper = |p: &str| p.ends_with(".rs") && under_tests(p) && !step_files.contains(p);
+    let is_step_file = |p: &str, at: usize| step_from.get(p).is_some_and(|from| *from <= at);
+    let is_helper =
+        |p: &str, at: usize| p.ends_with(".rs") && under_tests(p) && !is_step_file(p, at);
     let mut seen: Vec<String> = vec![head.to_string()];
     if let Some(first) = commits.first() {
         seen.push(parent(root, first));
@@ -378,7 +389,11 @@ pub fn analyse(
     let included = Includes::new(root).included(&seen, under_tests)?;
     let mut changed: Option<Change> = None;
     let mut touched: BTreeSet<String> = BTreeSet::new();
-    for sha in commits.iter().filter(|s| !reds.contains(*s)) {
+    for (at, sha) in commits
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| !reds.contains(*s))
+    {
         let (base, list, bad) = entries(root, sha)?;
         if list.is_empty() && !bad {
             continue;
@@ -421,7 +436,20 @@ pub fn analyse(
             if hit.is_none() {
                 hit = paths
                     .iter()
-                    .find(|p| is_helper(p) || included.contains(**p))
+                    .find(|p| is_helper(p, at) || included.contains(**p))
+                    .map(|p| (*p).clone());
+            }
+            // The text of a step file outside its test functions is a helper's text (AC-17).
+            if hit.is_none() {
+                hit = paths
+                    .iter()
+                    .find(|p| {
+                        p.ends_with(".rs")
+                            && under_tests(p)
+                            && is_step_file(p, at)
+                            && helper_text_of(root, &base, e.old.as_deref())
+                                != helper_text_of(root, sha, e.new.as_deref())
+                    })
                     .map(|p| (*p).clone());
             }
             if let Some(path) = hit
@@ -445,6 +473,13 @@ pub fn analyse(
         .into_iter()
         .collect();
     Ok(BuildInputs { changed, unchanged })
+}
+
+/// The text of a `.rs` file at a commit without its test functions; a missing file has none.
+fn helper_text_of(root: &Path, commit: &str, path: Option<&str>) -> String {
+    path.and_then(|p| show(root, commit, p))
+        .map(|src| helper_text(&src))
+        .unwrap_or_default()
 }
 
 /// The manifest path of an entry whose target tables or keys changed, or that was added or deleted.
