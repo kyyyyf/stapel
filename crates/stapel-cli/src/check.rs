@@ -133,7 +133,26 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         base: base.as_deref(),
         closed: matches!(ticket.status, Status::Closed(_)),
     };
-    let analyses = match analyse(&root, &ticket.key, &head, &steps) {
+    // A closed ticket is checked at the end of its range, not at HEAD (STP-6 AC-16).
+    let end = if bounds.closed {
+        match build_inputs::range(&root, &ticket.key, &head, bounds) {
+            Ok(r) => match r.last() {
+                Some(e) => Some(e.clone()),
+                None => {
+                    return refuse(format!(
+                        "ticket {} is closed and has no commit whose subject starts with `{key} ` or `{key}:`",
+                        ticket.key,
+                        key = ticket.key
+                    ));
+                }
+            },
+            Err(e) => return refuse(e),
+        }
+    } else {
+        None
+    };
+    let at = end.clone().unwrap_or_else(|| head.clone());
+    let analyses = match analyse(&root, &ticket.key, &at, &steps) {
         Ok(a) => a,
         Err(e) => return refuse(e),
     };
@@ -145,7 +164,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         Ok(t) => t,
         Err(e) => return refuse(e),
     };
-    let wt = match Worktree::create(&root, &dir, &head, &tmp) {
+    let wt = match Worktree::create(&root, &dir, &at, &tmp) {
         Ok(w) => w,
         Err(e) => return refuse(e),
     };
@@ -182,10 +201,14 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         cargo: &cargo,
         target,
         timeout,
-        head: &head,
+        head: &at,
         outside: blocked,
     };
-    println!("ticket: {} at {}", ticket.key, short(&head));
+    if end.is_some() {
+        println!("ticket: {} at {} (closed)", ticket.key, short(&at));
+    } else {
+        println!("ticket: {} at {}", ticket.key, short(&head));
+    }
     println!("cargo: {cargo_text}");
     if !inputs.unchanged.is_empty() {
         println!("build inputs: {}", named(&inputs.unchanged));
@@ -240,6 +263,9 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
             "ignored": suite.counts.2,
         },
     });
+    if let Some(end) = &end {
+        record["end"] = serde_json::json!(end);
+    }
     if analyses.len() > MAX_STEPS {
         record["steps_truncated"] = serde_json::json!(true);
     }
