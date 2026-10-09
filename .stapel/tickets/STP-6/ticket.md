@@ -253,6 +253,12 @@ by their subjects (`STP-6 step <n> …`); two local rewrites changed their ids (
 - The search above the worktree also runs after `cargo --version` and after every cargo run; a hit makes the current step, later steps and the suite `unverified: build-input-outside`, and no further cargo run starts (step 9c).
 - `validate_path_cargo` (config.rs) refuses a `PATH` cargo inside the repository ("inside the repository", exit 2); the AC-19 refusal of a closed ticket without keyed commits comes before the empty-steps refusal.
 
+#### Step 9c (code review round 2)
+- `test_functions_hit` (build_inputs.rs) runs when `helper_text` is equal: `step_names` holds the step-test names per path from every RED; a changed or deleted `#[test]` function that is no step test is a hit; an added one is a hit when its name is a word in a step test's text (old or new version of the file). STP-6's own non-RED commits were replayed against the rule: no hit.
+- `path_attribute` accepts `cfg_attr(<predicate>, … path = "<literal>" …)`, skipping strings and nested brackets.
+- `Runner::at` returns the stored `build-input-outside` reason before any cargo run.
+- The `includes.rs` doc says a `#[path]` inside an inline `mod` resolves under `<file stem>/<mod name>/` and is not promised.
+
 ## Test plan
 
 CLI tests build a tiny `cargo` crate in a temporary git repository, as in STP-4, and commit RED and GREEN
