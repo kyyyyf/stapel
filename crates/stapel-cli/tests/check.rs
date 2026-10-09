@@ -4062,3 +4062,216 @@ fn later_red_does_not_launder_a_helper() {
         &green1,
     );
 }
+
+// ---- STP-6 step 9b: a closed ticket's build inputs, includes, planted config, PATH cargo ----
+
+#[test]
+fn closed_ticket_build_inputs_are_read_at_its_end() {
+    let (repo, _scripts, _dumps) = build_input_repo(|_| {});
+    let dir = repo.path();
+    // A commit of the ticket changes a data file that no test includes yet.
+    write(dir, "crates/tiny/data/f.txt", "data\n");
+    commit(dir, "ABC-1: a data file");
+    let mut state = common::state_json(dir, "ABC-1");
+    state["closed"] =
+        serde_json::json!({"by": "test-user", "at": "2026-01-02T00:00:00Z", "reason": "done"});
+    write(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+    );
+    commit(dir, "ABC-1: close");
+    let end = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    // A later commit of another ticket adds a configuration and a test that includes the file.
+    write(dir, ".cargo/config.toml", "");
+    write(
+        dir,
+        "crates/tiny/tests/later.rs",
+        "const _F: &str = include_str!(\"../data/f.txt\");\n\n#[test]\nfn later() {}\n",
+    );
+    commit(dir, "XYZ-2: a configuration and a test that includes the data file");
+    let (code, text) = check_env(dir, &[]);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    assert!(!text.contains(".cargo/config.toml"), "{text}");
+    assert!(!text.contains("build-input"), "{text}");
+
+    // The notice for a HEAD that moved during the check names the commit that was checked.
+    let scripts = tempfile::tempdir().unwrap();
+    let mark = scripts.path().join("moved");
+    let mover = script(
+        scripts.path(),
+        "cargo",
+        &format!(
+            "if [ ! -e {m} ]; then touch {m}; git -C {d} -c user.name=test-user \
+             -c user.email=test-user.invalid commit -q --allow-empty -m 'XYZ-3: moved'; fi\n\
+             exec {r} \"$@\"",
+            m = mark.display(),
+            d = dir.display(),
+            r = real_cargo()
+        ),
+    );
+    let text = read(dir, ".stapel/stapel.toml");
+    let text: String = text
+        .lines()
+        .filter(|l| !l.starts_with("cargo = "))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    write(
+        dir,
+        ".stapel/stapel.toml",
+        &text.replacen(
+            "timeout_secs = 900\n",
+            &format!("timeout_secs = 900\ncargo = \"{mover}\"\n"),
+            1,
+        ),
+    );
+    commit(dir, "XYZ-4: the cargo key");
+    let (code, text) = check_env(dir, &[]);
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("HEAD moved to"), "{text}");
+    assert!(
+        text.contains(&format!("this check is of {}", &end[..7])),
+        "{text}"
+    );
+}
+
+#[test]
+fn include_comments_and_path_attributes_are_seen() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        for name in ["c1", "c2", "c3", "impl"] {
+            write(dir, &format!("crates/tiny/data/{name}.txt"), "data\n");
+        }
+        // The module file is Rust source, as the compiler reads it.
+        write(dir, "crates/tiny/data/impl.txt", "// a module\n");
+        let old = read(dir, "crates/tiny/tests/basic.rs");
+        write(
+            dir,
+            "crates/tiny/tests/basic.rs",
+            &format!(
+                "{old}\nconst _A: &str = include_str!(/**/\"../data/c1.txt\");\n\
+                 const _B: &str = include_str!/**/(\"../data/c2.txt\");\n\
+                 const _C: &str = include_str!( // a comment\n    \"../data/c3.txt\");\n\
+                 #[path = \"../data/impl.txt\"]\nmod imp;\n"
+            ),
+        );
+        // Not compiled by a test: the text search reads any `.rs` file outside `crates/*/tests/`.
+        write(
+            dir,
+            "crates/tiny/src/seed.rs",
+            "#[path = \"../tests/common/impl.rs\"]\nmod imp;\n",
+        );
+        write(dir, "crates/tiny/tests/common/impl.rs", "pub fn f() {}\n");
+    });
+    let dir = repo.path();
+    // A comment inside the call is skipped, and a `#[path]` attribute is an include.
+    for (what, path) in [
+        ("comment in the call", "crates/tiny/data/c1.txt"),
+        ("comment before the parenthesis", "crates/tiny/data/c2.txt"),
+        ("line comment", "crates/tiny/data/c3.txt"),
+        ("path attribute", "crates/tiny/data/impl.txt"),
+    ] {
+        write(dir, path, "changed\n");
+        changed_case(dir, &dumps, what, path);
+    }
+    // A `#[path]` in a source file makes the included helper code for a RED.
+    add_test(dir, "basic", "second", "assert!(true);");
+    write(dir, "crates/tiny/tests/common/impl.rs", "pub fn f() {}\n// changed\n");
+    commit(dir, "ABC-1 step 2 RED: a changed helper");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    let (_, text) = check_env(dir, &[]);
+    assert!(
+        text.lines()
+            .any(|l| l == "step 2: red-changes-code: crates/tiny/tests/common/impl.rs"),
+        "{text}"
+    );
+}
+
+#[test]
+fn config_planted_during_a_run_is_seen() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    with_wrong_triple(dir);
+    // The RED test of step 1 writes a configuration into its own TMPDIR when it runs.
+    add_test(
+        dir,
+        "basic",
+        "plants",
+        "let t = std::env::var(\"TMPDIR\").unwrap(); \
+         std::fs::create_dir_all(format!(\"{t}/.cargo\")).unwrap(); \
+         std::fs::write(format!(\"{t}/.cargo/config.toml\"), \"\").unwrap(); \
+         assert_eq!(tiny::triple(2), 6);",
+    );
+    commit(dir, "ABC-1 step 1 RED: plants a configuration");
+    fix_triple(dir);
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    add_test(dir, "basic", "quad_is_four", "assert_eq!(tiny::quad(1), 4);");
+    commit(dir, "ABC-1 step 2 RED: quad is missing");
+    let lib = read(dir, "crates/tiny/src/lib.rs");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        &format!("{lib}\npub fn quad(x: u32) -> u32 {{\n    x * 4\n}}\n"),
+    );
+    commit(dir, "ABC-1 step 2 GREEN: quad");
+    let tmp = tempfile::tempdir().unwrap();
+    let held = tmp.path().canonicalize().unwrap().join(".cargo/config.toml");
+    let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
+    assert_eq!(code, 1, "{text}");
+    let want = format!("unverified: build-input-outside: {}", held.display());
+    for line in [
+        format!("step 1: {want}"),
+        format!("step 2: {want}"),
+        format!("suite: {want}"),
+    ] {
+        assert!(text.lines().any(|l| l == line), "{line}: {text}");
+    }
+}
+
+#[test]
+fn path_cargo_inside_the_repository_is_refused() {
+    let repo = passing_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.join("bin")).unwrap();
+    script(&dir.join("bin"), "cargo", "exec true");
+    commit(dir, "ABC-1: a cargo in the repository");
+    // A link to it from outside the repository is the same program.
+    let links = scripts.path().join("links");
+    std::fs::create_dir(&links).unwrap();
+    std::os::unix::fs::symlink(dir.join("bin/cargo"), links.join("cargo")).unwrap();
+    let old = std::env::var("PATH").unwrap();
+    for (what, first) in [("direct", dir.join("bin")), ("through a link", links)] {
+        let path = format!("{}:{old}", first.display());
+        let (code, text) = check_env(dir, &[("PATH", Path::new(&path))]);
+        assert_eq!(code, 2, "{what}: {text}");
+        assert!(text.contains("cargo"), "{what}: {text}");
+        assert!(text.contains("inside the repository"), "{what}: {text}");
+        assert!(
+            !dir.join(".stapel/tickets/ABC-1/runs.jsonl").exists(),
+            "{what}: a record was written"
+        );
+    }
+}
+
+#[test]
+fn closed_ticket_without_keyed_commits_is_refused() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let mut state = common::state_json(dir, "ABC-1");
+    state["closed"] =
+        serde_json::json!({"by": "test-user", "at": "2026-01-02T00:00:00Z", "reason": "done"});
+    write(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+    );
+    commit(dir, "setup: a closed ticket without commits of its own");
+    let (code, text) = check_env(dir, &[]);
+    assert_eq!(code, 2, "{text}");
+    assert_eq!(
+        text.trim_end(),
+        "stapel: ticket ABC-1 is closed and has no commit whose subject starts with `ABC-1 ` or `ABC-1:`"
+    );
+    assert!(!dir.join(".stapel/tickets/ABC-1/runs.jsonl").exists());
+}
