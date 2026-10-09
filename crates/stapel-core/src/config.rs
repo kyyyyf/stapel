@@ -273,3 +273,17 @@ pub fn validate_cargo(cargo: &str, root: &std::path::Path) -> Result<(), String>
     }
     Ok(())
 }
+
+/// A `cargo` found on `PATH` must not lie under the repository folder once links are resolved
+/// (STP-6 AC-9).
+pub fn validate_path_cargo(cargo: &std::path::Path, root: &std::path::Path) -> Result<(), String> {
+    let real = cargo.canonicalize().unwrap_or_else(|_| cargo.to_path_buf());
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    if real.starts_with(&root) {
+        return Err(format!(
+            "cargo {} found on PATH lies inside the repository",
+            cargo.display()
+        ));
+    }
+    Ok(())
+}

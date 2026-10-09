@@ -1,6 +1,7 @@
 //! Files that a `.rs` file includes by a literal path (STP-6 AC-4, AC-5): `include!`,
-//! `include_str!` and `include_bytes!` with a plain or raw string literal, found by a text search
-//! (comments count) and taken relative to the including file. Every Rust escape of a plain literal
+//! `include_str!` and `include_bytes!` with a plain or raw string literal, and `#[path = "<literal>"]`
+//! on a `mod`, found by a text search (comments count, comments inside a call are skipped) and taken
+//! relative to the including file's folder. Every Rust escape of a plain literal
 //! is decoded; a literal that cannot be decoded counts as a change of its includer. A non-literal
 //! argument or a path outside the repository is not promised here.
 
@@ -13,15 +14,19 @@ use std::path::Path;
 pub fn literals(text: &str) -> Vec<Option<String>> {
     let c: Vec<char> = text.chars().collect();
     let word = |ch: char| ch.is_alphanumeric() || ch == '_';
-    let skip = |mut i: usize| {
-        while c.get(i).is_some_and(|ch| ch.is_whitespace()) {
-            i += 1;
-        }
-        i
-    };
+    let skip = |i: usize| skip_blank(&c, i);
     let mut out = Vec::new();
     let mut i = 0;
     while i < c.len() {
+        if c[i] == '#' {
+            if let Some((lit, end)) = path_attribute(&c, i) {
+                out.push(lit);
+                i = end;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
         if c[i] != 'i' || (i > 0 && word(c[i - 1])) {
             i += 1;
             continue;
@@ -54,6 +59,107 @@ pub fn literals(text: &str) -> Vec<Option<String>> {
         }
     }
     out
+}
+
+/// The index after the whitespace and comments (`//`, nested `/* */`) that start at `i`.
+fn skip_blank(c: &[char], mut i: usize) -> usize {
+    loop {
+        while c.get(i).is_some_and(|ch| ch.is_whitespace()) {
+            i += 1;
+        }
+        match (c.get(i), c.get(i + 1)) {
+            (Some('/'), Some('/')) => {
+                while c.get(i).is_some_and(|ch| *ch != '\n') {
+                    i += 1;
+                }
+            }
+            (Some('/'), Some('*')) => {
+                let mut depth = 1;
+                i += 2;
+                while depth > 0 && i < c.len() {
+                    match (c[i], c.get(i + 1)) {
+                        ('/', Some('*')) => {
+                            depth += 1;
+                            i += 2;
+                        }
+                        ('*', Some('/')) => {
+                            depth -= 1;
+                            i += 2;
+                        }
+                        _ => i += 1,
+                    }
+                }
+            }
+            _ => return i,
+        }
+    }
+}
+
+/// Whether the word `w` starts at `i` and ends there.
+fn word_at(c: &[char], i: usize, w: &str) -> bool {
+    let n = w.chars().count();
+    c.get(i..i + n).is_some_and(|s| s.iter().copied().eq(w.chars()))
+        && !c
+            .get(i + n)
+            .is_some_and(|ch| ch.is_alphanumeric() || *ch == '_')
+}
+
+/// The index after a bracketed group that starts at `i` with `open`; `None` when it does not close.
+fn group(c: &[char], i: usize, open: char, close: char) -> Option<usize> {
+    if c.get(i) != Some(&open) {
+        return None;
+    }
+    let mut depth = 0;
+    let mut k = i;
+    while k < c.len() {
+        if c[k] == open {
+            depth += 1;
+        } else if c[k] == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(k + 1);
+            }
+        }
+        k += 1;
+    }
+    None
+}
+
+/// The literal and end of a `#[path = "<literal>"]` attribute at `i` that sits on a `mod` item
+/// (other attributes and a visibility may stand between).
+fn path_attribute(c: &[char], i: usize) -> Option<(Option<String>, usize)> {
+    let mut j = skip_blank(c, i + 1);
+    if c.get(j) != Some(&'[') {
+        return None;
+    }
+    j = skip_blank(c, j + 1);
+    if !word_at(c, j, "path") {
+        return None;
+    }
+    j = skip_blank(c, j + 4);
+    if c.get(j) != Some(&'=') {
+        return None;
+    }
+    j = skip_blank(c, j + 1);
+    let (lit, end) = literal(c, j)?;
+    j = skip_blank(c, end);
+    if c.get(j) != Some(&']') {
+        return None;
+    }
+    j = skip_blank(c, j + 1);
+    loop {
+        if c.get(j) == Some(&'#') {
+            j = skip_blank(c, group(c, skip_blank(c, j + 1), '[', ']')?);
+        } else if word_at(c, j, "pub") {
+            j = skip_blank(c, j + 3);
+            if c.get(j) == Some(&'(') {
+                j = skip_blank(c, group(c, j, '(', ')')?);
+            }
+        } else {
+            break;
+        }
+    }
+    word_at(c, j, "mod").then_some((lit, end))
 }
 
 /// The content (`None` when an escape cannot be decoded) and end of a plain or raw string literal

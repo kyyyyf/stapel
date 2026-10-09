@@ -3,7 +3,7 @@
 use crate::repo;
 use stapel_core::build_inputs;
 use stapel_core::build_inputs::Bounds;
-use stapel_core::config::validate_cargo;
+use stapel_core::config::{validate_cargo, validate_path_cargo};
 use stapel_core::journal::{append, new_id};
 use stapel_core::outcomes::{Analysis, MAX_NAMED, analyse, named, passing};
 use stapel_core::runner::{
@@ -89,6 +89,28 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
             Err(e) => refuse(e),
         };
     }
+    let bounds = Bounds {
+        base: base.as_deref(),
+        closed: matches!(ticket.status, Status::Closed(_)),
+    };
+    // A closed ticket is checked at the end of its range, not at HEAD (STP-6 AC-16).
+    let end = if bounds.closed {
+        match build_inputs::range(&root, &ticket.key, &head, bounds) {
+            Ok(r) => match r.last() {
+                Some(e) => Some(e.clone()),
+                None => {
+                    return refuse(format!(
+                        "ticket {} is closed and has no commit whose subject starts with `{key} ` or `{key}:`",
+                        ticket.key,
+                        key = ticket.key
+                    ));
+                }
+            },
+            Err(e) => return refuse(e),
+        }
+    } else {
+        None
+    };
     let Some(check) = config.check.clone() else {
         return refuse(
             "check is not configured: add `[check]` with `runner = \"cargo\"` to .stapel/stapel.toml",
@@ -129,34 +151,12 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         }
         Err(LockError::Io(e)) => return refuse(e),
     };
-    let bounds = Bounds {
-        base: base.as_deref(),
-        closed: matches!(ticket.status, Status::Closed(_)),
-    };
-    // A closed ticket is checked at the end of its range, not at HEAD (STP-6 AC-16).
-    let end = if bounds.closed {
-        match build_inputs::range(&root, &ticket.key, &head, bounds) {
-            Ok(r) => match r.last() {
-                Some(e) => Some(e.clone()),
-                None => {
-                    return refuse(format!(
-                        "ticket {} is closed and has no commit whose subject starts with `{key} ` or `{key}:`",
-                        ticket.key,
-                        key = ticket.key
-                    ));
-                }
-            },
-            Err(e) => return refuse(e),
-        }
-    } else {
-        None
-    };
     let at = end.clone().unwrap_or_else(|| head.clone());
     let analyses = match analyse(&root, &ticket.key, &at, &steps) {
         Ok(a) => a,
         Err(e) => return refuse(e),
     };
-    let inputs = match build_inputs::analyse(&root, &ticket.key, &head, &steps, bounds) {
+    let inputs = match build_inputs::analyse(&root, &ticket.key, &at, &steps, bounds) {
         Ok(i) => i,
         Err(e) => return refuse(e),
     };
@@ -172,17 +172,24 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         Ok(c) => c,
         Err(e) => return refuse(e),
     };
-    if let Some(key) = check.cargo.as_deref()
-        && let Err(e) = validate_cargo(key, &root)
-    {
-        return refuse(e);
+    match check.cargo.as_deref() {
+        Some(key) => {
+            if let Err(e) = validate_cargo(key, &root) {
+                return refuse(e);
+            }
+        }
+        None => {
+            if let Err(e) = validate_path_cargo(&cargo, &root) {
+                return refuse(e);
+            }
+        }
     }
     let target = dir.join("check-target");
     let timeout = Duration::from_secs(check.timeout_secs);
     // A configuration above the worktree is found before any cargo run (AC-7).
     let outside = build_input_outside(&wt.path);
     // A build input changed by a commit of the ticket comes first (STP-6 AC-1, AC-2); no cargo runs.
-    let blocked = inputs
+    let mut blocked = inputs
         .changed
         .as_ref()
         .map(|c| format!("build-input-changed: {} at {}", c.path, short(&c.sha)))
@@ -195,6 +202,11 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
             Err(e) => return refuse(format!("{}: {e}", cargo.display())),
         }
     };
+    // The search is repeated after every cargo run, `cargo --version` included (AC-7).
+    if blocked.is_none() {
+        blocked = build_input_outside(&wt.path)
+            .map(|p| format!("build-input-outside: {}", p.display()));
+    }
     let runner = Runner {
         root: &root,
         wt: &wt,
@@ -202,7 +214,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         target,
         timeout,
         head: &at,
-        outside: blocked,
+        outside: std::cell::RefCell::new(blocked),
     };
     if end.is_some() {
         println!("ticket: {} at {} (closed)", ticket.key, short(&at));
@@ -289,7 +301,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         eprintln!(
             "notice: HEAD moved to {} while the check ran; this check is of {}",
             short(now.trim()),
-            short(&head)
+            short(&at)
         );
     }
     if ok {
@@ -342,13 +354,22 @@ struct Runner<'a> {
     head: &'a str,
     /// Set when a build input lies above the worktree: no cargo runs, and every step and the suite
     /// read `unverified: build-input-outside: <path>`.
-    outside: Option<String>,
+    outside: std::cell::RefCell<Option<String>>,
 }
 
 /// The state of each test at one commit, or why the run does not count.
 type At = Result<BTreeMap<TestId, TestState>, String>;
 
 impl Runner<'_> {
+    /// The search above the worktree, repeated after a cargo run (AC-7): a hit is kept, and every
+    /// later run is refused.
+    fn found_outside(&self) -> Option<String> {
+        let path = build_input_outside(&self.wt.path)?;
+        let why = format!("build-input-outside: {}", path.display());
+        *self.outside.borrow_mut() = Some(why.clone());
+        Some(why)
+    }
+
     fn package(&self, commit: &str, dir: &str) -> Result<String, String> {
         package_name(self.root, commit, dir)
     }
@@ -374,6 +395,9 @@ impl Runner<'_> {
             .collect();
             args.extend(names.iter().cloned());
             let run = run_cargo(self.cargo, &self.wt.path, &args, &self.target, self.timeout)?;
+            if let Some(why) = self.found_outside() {
+                return Err(why);
+            }
             if run.timed_out {
                 return Err(format!(
                     "the time limit of {} s ran out",
@@ -400,8 +424,8 @@ impl Runner<'_> {
     }
 
     fn step(&self, a: &Analysis) -> (String, String) {
-        if let Some(why) = &self.outside {
-            return ("unverified".into(), why.clone());
+        if let Some(why) = self.outside.borrow().clone() {
+            return ("unverified".into(), why);
         }
         if let Some(label) = &a.interleaved {
             return ("unverified".into(), format!("interleaved: {label}"));
@@ -509,8 +533,8 @@ impl Runner<'_> {
             detail: reason,
             counts: (0, 0, 0),
         };
-        if let Some(why) = &self.outside {
-            return unverified(why.clone());
+        if let Some(why) = self.outside.borrow().clone() {
+            return unverified(why);
         }
         if let Err(e) = self.wt.checkout(self.head) {
             return unverified(e);
@@ -523,6 +547,9 @@ impl Runner<'_> {
             Ok(r) => r,
             Err(e) => return unverified(e),
         };
+        if let Some(why) = self.found_outside() {
+            return unverified(why);
+        }
         if run.timed_out {
             return unverified(format!(
                 "the time limit of {} s ran out",
