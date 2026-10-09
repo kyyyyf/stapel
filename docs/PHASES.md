@@ -115,7 +115,9 @@ token record, even if some steps were still performed by the orchestrator by han
 - STP-12 MR through `gh`/`glab`.
 - STP-13 (split from STP-6, taken right after it) hardening of `stapel check`, part two: dependency
   redirection (`path`, `git`, `package`, `[patch]`, `[replace]`), `include*!` with a non-literal argument or a path
-  outside the repository, and a `Cargo.toml` added by a RED under `crates/*/tests/`.
+  outside the repository, a `Cargo.toml` added by a RED under `crates/*/tests/`, includes followed through another included file, a later
+  RED that rewrites a helper or included file an earlier step relies on, non-`.rs` files added under `tests/`
+  after a RED, a `build` key that points under `tests/`, and `[features]`, `[profile]`, `[lints]`.
 - STP-14 (after STP-13) `stapel check --history`: the outcomes that need no test run (`unpaired`, `duplicate`,
   `no-tests`, `red-changes-code`, `tests-changed`, `build-input-changed`) from git history alone, in seconds,
   with no record in `runs.jsonl`; run after every builder commit, later from a hook, so a builder's mistake is

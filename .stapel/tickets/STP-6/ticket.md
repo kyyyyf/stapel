@@ -42,10 +42,13 @@ Not promised: cargo configuration in `CARGO_HOME`; `rustup` overrides and defaul
 toolchain; a `rustc`, linker or other tool found through `PATH`; dependency redirection (`path`, `git`,
 `package`, `[patch]`, `[replace]`) and `include*!` with a non-literal argument or a path outside the
 repository, a `Cargo.toml` added by a RED under `crates/*/tests/`, includes followed through another included
-file (split to STP-13, Decisions 13, 21 and 30);
+file, a later RED that rewrites a helper or included file an earlier step relies on, non-`.rs` files added under
+`tests/` after a RED, a `build` key that points under `tests/`, `[features]`, `[profile]` and `[lints]` (split
+to STP-13, Decisions 13, 21, 30 and 33);
 proxy and certificate variables of the caller; proc-macro crates that read files.
 
-**Size.** Medium: about fourteen criteria, 400–500 changed lines, after the split of Decision 13.
+**Size.** Framed as medium (about fourteen criteria, 400–500 changed lines); built as nineteen criteria and
+about 3 200 changed lines, most of them tests from the per-step drift reviews (recorded in the Summary).
 
 ### Decisions
 
@@ -125,6 +128,13 @@ proxy and certificate variables of the caller; proc-macro crates that read files
   tickets that change shared test files (fixtures, golden files, `check.rs`) make every older closed ticket
   `tests-changed`, which hides the real escaped defects (STP-3 step 3 `no-red`; STP-2 step 6 changed a helper).
   A closed ticket is checked as it was at its last commit.
+- 2026-10-09, code review round 1 (25 findings), all as recommended: (33) inside-promise fixes: a step file is
+  one from the RED that made it so, and its text outside `#[test]` functions is protected from then (E-1, E-2,
+  C-1; AC-17, AC-18); a closed ticket's build inputs are read at its end (F-1, C-3); comments inside an include
+  call are skipped and `#[path = …]` is an include (C-2, E-3); the search above the worktree is repeated after
+  every cargo run (E-5); a `PATH` cargo inside the repository is refused (E-6); the `base` and closed-ticket
+  refusals become AC-19 (F-4). To STP-13: C-5, E-7, C-7 and non-`.rs` files added under `tests/` after a RED.
+  Not promised: C-4 and C-6 (the STP-1 hole class), E-4 (an open ticket without `base`).
 ## Spec
 
 Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in golden files. Terms:
@@ -134,15 +144,18 @@ Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in g
   subject starts with `<KEY> ` or `<KEY>:`) up to HEAD, or, for a closed ticket, up to the last commit
   whose subject starts with `<KEY> ` or `<KEY>:`. A **non-RED commit** is a commit of the range that is not a RED of the
   ticket (STP-4's rule).
-- **Helper**: a `.rs` file under `crates/*/tests/`, any depth, that holds no step test of the ticket.
-- **Included file**: a path named by `include!`, `include_str!` or `include_bytes!` with a string literal
+- **Step file**: a `.rs` file under `crates/*/tests/` to which a RED of the ticket added or changed a step
+  test; it is a step file from that RED on, not before.
+- **Helper**: a `.rs` file under `crates/*/tests/`, any depth, that is not a step file at the commit read.
+- **Included file**: a path named by `include!`, `include_str!`, `include_bytes!` or a `#[path = …]`
+  attribute with a string literal (comments inside the call skipped)
   (raw strings included, every Rust escape decoded; a literal that cannot be decoded counts as a change of its
   includer), relative to the including file, found by a text search (comments count) at the range's base and
   at every commit of the range.
 - **Build-input outcome**: every step of the ticket reads `unverified: build-input-changed: <path> at
   <short sha>`, naming the first such commit and path (golden file `check_report_build_inputs.txt`). A step
-  that STP-4's history rules already fail (`unpaired`, `duplicate`, `no-tests`, `red-changes-code`,
-  `tests-changed`) keeps that outcome; the rest get this one. With it, no cargo runs and the report reads
+  that STP-4's history rules already fail or retire (`unpaired`, `duplicate`, `no-tests`, `red-changes-code`,
+  `tests-changed`, `retired`) keeps that outcome; the rest get this one. With it, no cargo runs and the report reads
   `suite: unverified: build-input-changed`.
 
 | № | Criterion | Test |
@@ -153,25 +166,30 @@ Criteria are short (`CLAUDE.md`, the spec process, item 3); exact output is in g
 | AC-4 | IF a non-RED commit changes a file that a step test's file or a helper includes THEN the check gives the build-input outcome. | `check::included_test_data_change_is_unverified` |
 | AC-5 | IF a RED changes a file that a `.rs` file outside `crates/*/tests/` includes, at the RED, its parent, any later GREEN or HEAD THEN the step is `red-changes-code` and the path is named. | `check::red_changing_an_included_file_changes_code` |
 | AC-6 | WHEN files of AC-2 exist at HEAD and no non-RED commit changes them THE report prints `build inputs: <path>, …` before the step lines, and the steps keep their outcomes. | `check::unchanged_build_inputs_are_named` |
-| AC-7 | WHEN the check runs THE worktree is a new folder with a unique name under `TMPDIR`, outside the repository folder; IF a folder above the worktree, other than `CARGO_HOME`, holds `.cargo/config`, `.cargo/config.toml`, `rust-toolchain` or `rust-toolchain.toml` THEN every step that STP-4's history rules do not fail reads `unverified: build-input-outside: <path>`, found before `cargo --version` runs; only `config` and `config.toml` directly in `CARGO_HOME` are skipped, and a `CARGO_HOME` that is the worktree's folder or a folder above it counts as found. | `check::worktree_is_outside_the_repository`, `check::config_above_the_worktree_is_unverified` |
+| AC-7 | WHEN the check runs THE worktree is a new folder with a unique name under `TMPDIR`, outside the repository folder; IF a folder above the worktree, other than `CARGO_HOME`, holds `.cargo/config`, `.cargo/config.toml`, `rust-toolchain` or `rust-toolchain.toml` THEN every step that STP-4's history rules do not fail reads `unverified: build-input-outside: <path>`, found before `cargo --version` runs; only `config` and `config.toml` directly in `CARGO_HOME` are skipped, and a `CARGO_HOME` that is a folder above the worktree counts as found; the search is repeated after every cargo run, and a hit then makes the rest and the suite `unverified` the same way. | `check::worktree_is_outside_the_repository`, `check::config_above_the_worktree_is_unverified` |
 | AC-8 | WHEN the check starts a cargo run THE run gets an empty environment plus `HOME`, `USER`, `PATH`, `LANG`, `TMPDIR`, `CARGO_HOME`, `RUSTUP_HOME`, `RUSTUP_TOOLCHAIN`, `CARGO_BUILD_JOBS` when set in the caller, and the variables the check sets; no other variable of the caller reaches it. | `check::cargo_runs_with_the_allow_list_only` |
-| AC-9 | WHEN the check starts THE cargo program is `[check] cargo` if set, else the first `cargo` in an absolute `PATH` entry, resolved once; every run uses it; the report prints `cargo: <path> (<version>)`, the first line of `cargo --version` cut to 200 bytes, and the run record carries `cargo` with the same text. | `check::cargo_path_and_version_are_reported` |
+| AC-9 | WHEN the check starts THE cargo program is `[check] cargo` if set, else the first `cargo` in an absolute `PATH` entry, resolved once; every run uses it; the report prints `cargo: <path> (<version>)`, the first line of `cargo --version` cut to 200 bytes, or `cargo: <path>` when a build-input outcome stops every run, and the run record carries `cargo` with the same text; a `cargo` found on `PATH` that lies under the repository folder after links are resolved is refused as in AC-11. | `check::cargo_path_and_version_are_reported` |
 | AC-10 | IF `[check] cargo` is not an absolute path to an executable regular file, or lies under the repository folder after links are resolved THEN loading the configuration fails, naming the key. | `core::config::check_cargo_key_is_validated` |
 | AC-11 | IF no `cargo` is found, or `cargo --version`, run in the worktree with the AC-8 environment, fails or passes `timeout_secs` THEN `stapel check` exits 2 and appends no record. | `check::refuses_without_a_working_cargo` |
 | AC-12 | IF a RED of the ticket lies between another step's RED and its GREEN THEN that step reads `unverified: interleaved: <label of the RED>`. | `check::interleaved_red_is_unverified` |
 | AC-13 | WHEN `stapel new` creates a ticket THE `state.json` holds `base` with the full id of HEAD (absent only in a repository without commits; any other git error fails `new`), and the range starts after it. | `new::records_the_base_commit`, `check::range_starts_after_the_base` |
 | AC-14 | IF `TMPDIR`, after links are resolved, lies under the repository folder, or the worktree folder cannot be created THEN `stapel check` exits 2 and appends no record. | `check::refuses_a_tmpdir_inside_the_repository` |
-| AC-15 | WHEN the ticket is closed THE range ends at the last commit whose subject starts with `<KEY> ` or `<KEY>:`, so later commits do not change its build-input outcome. | `check::closed_ticket_range_ends_at_its_last_commit` |
+| AC-15 | WHEN the ticket is closed THE range ends at the last commit whose subject starts with `<KEY> ` or `<KEY>:`, so later commits do not change its build-input outcome; included files, unchanged build inputs and the `build inputs` line are read at that end commit. | `check::closed_ticket_range_ends_at_its_last_commit` |
 | AC-16 | WHEN the ticket is closed THE check reads STP-4's history outcomes only up to the end of its Range and runs its steps' tests and the suite at that end commit instead of HEAD; the report's first line reads `ticket: <KEY> at <short sha of the end> (closed)` and the run record carries `end` with its full id, `head` staying HEAD. | `check::closed_ticket_is_checked_at_its_last_commit` |
+| AC-17 | IF a non-RED commit changes the text outside the `#[test]` functions of a step file after the RED that made it one THEN the check gives the build-input outcome. | `check::step_file_helper_text_is_protected` |
+| AC-18 | IF a non-RED commit changes a file before a later RED makes it a step file THEN that change counts as a helper change (AC-3). | `check::later_red_does_not_launder_a_helper` |
+| AC-19 | IF `state.json` holds a `base` that is not a full commit id on the first-parent history of HEAD THEN `stapel check` exits 2 with `state.json has base <x>, which is not a full commit id on the first-parent history of HEAD` and appends no record; IF a closed ticket has no commit whose subject starts with its key THEN it exits 2 naming the ticket. | `check::bad_base_is_refused_exactly`, `check::closed_ticket_without_keyed_commits_is_refused` |
 
 ### Guarantees
 
 - **Promised, against an agent that tries on purpose to make a step look verified** (tag `security`): the
-  Frame's promise, by AC-1 to AC-16.
+  Frame's promise, by AC-1 to AC-19.
 - **Not promised:** the Frame's list; a symbolic link or file outside the repository changed without a
   commit; artifacts planted in the check's target folder (`.git/stapel/`, which the guard protects); the
   outcome of a closed ticket's history before this ticket (Decision 4: a step that turns `unverified` is an
-  escaped defect, recorded, not hidden).
+  escaped defect, recorded, not hidden); a `base`, `closed` or `[check]` changed in a machine file through
+  Bash (the STP-1 hole class: the write tools cannot write them); an open ticket without `base` (created
+  before plan step 5; only STP-6 itself), whose range starts at its first keyed commit.
 
 ## Design
 
@@ -195,11 +213,11 @@ by their subjects (`STP-6 step <n> …`); two local rewrites changed their ids (
 - `Config::parse` stays lenient and does not validate `[check] cargo`; only `Config::parse_at(text, root)` does, so the guard keeps working with a stale path.
 - The 200-byte cut is made after lossy decoding, at a char boundary, trailing whitespace trimmed.
 - `cargo --version` goes through `run_cargo`: same environment, process group and `timeout_secs`; failure exits 2 with `<path>: …`.
-- `CARGO_BUILD_JOBS` no longer reaches cargo (AC-8); the tests' `CARGO_BUILD_JOBS=2` is a no-op now. Open: see the human's answer.
+- `CARGO_BUILD_JOBS` joined the allow list in step 1b (Decision 22), so the tests' job limit reaches nested builds.
 - Drift fixes: `validate_cargo` is public and runs again before the `--version` run (a link retargeted after load is refused, exit 2); `resolve_cargo` takes only executable regular files from `PATH`.
 #### Step 2
 - `resolve_tmpdir` (worktree.rs): unset or empty TMPDIR is `/tmp`; relative is resolved against the current folder; links resolved; missing, not a folder, or under the canonical repository folder: exit 2 `TMPDIR …`, before the worktree is created, so no record.
-- Worktree folder `stapel-check-<pid>-<nanos>-<n>` made with `create_dir`; removed only by its own Drop; a crashed run's leftover is left alone; no `git worktree prune`.
+- Worktree folder `stapel-check-<pid>-<nanos>-<n>` made with `create_dir`; removed only by its own Drop; a crashed run's leftover folder is left alone, and its registration is pruned later (step 2 drift fixes).
 - `create` still removes the legacy `.git/stapel/check-worktree`; lock and `check-target` stay under `.git/stapel/`.
 - `build_input_outside` walks the worktree's ancestors; skips CARGO_HOME (caller's, else `$HOME/.cargo`, links resolved). When found: no `cargo --version`, the `cargo:` line shows the path only, every step and the suite read `unverified: build-input-outside: <path>`, exit 1, record written.
 - Step 2 drift fixes: history outcomes already came first (`Analysis.fixed` is read before `Runner::step`); `build_input_outside` returns CARGO_HOME when an ancestor resolves to it, skips only `.cargo/config*` when `<folder>/.cargo` is CARGO_HOME, and counts any stat error but NotFound as found; `prune_stale_checks` removes `<common>/worktrees/<id>` only for a gone `stapel-check-*` folder; `run_cargo` passes `TMPDIR` as an absolute path (a relative one broke the child's build).
@@ -212,7 +230,7 @@ by their subjects (`STP-6 step <n> …`); two local rewrites changed their ids (
 #### Step 4
 - New `stapel-core/src/includes.rs`: text search for `include!`, `include_str!`, `include_bytes!` with plain or raw literals, comments count; paths relative to the including file; absolute paths and paths leaving the repository skipped (STP-13); cached per blob.
 - A Helper is any `.rs` under `crates/*/tests/` that is no step-test file of a RED in the range; AC-3/AC-4 hits come after the manifest check.
-- AC-4 includers: every `.rs` under `tests/`; relation at base, every RED and GREEN, HEAD. AC-5 in `outcomes::analyse`, includers outside `tests/` read at RED, parent, later GREENs, HEAD.
+- AC-4 includers: every `.rs` under `tests/`; relation at base, every RED and GREEN, HEAD (widened to every range commit by the step 4 drift fixes). AC-5 in `outcomes::analyse`, includers outside `tests/` read at RED, parent, later GREENs, HEAD.
 - AC-12: `Analysis.interleaved`; after the build-input outcome, before running; STP-4 history outcomes (and `retired`) first.
 - The step-4 RED changed the STP-4 test `suite_failure_fails_the_check`: its keyed non-RED commit adding `tests/other.rs` is now a Helper change; the setup commit became unkeyed and a case for a keyed new test file was added. To verify with `stapel check STP-4` in plan step 7.
 - Step 4 drift fixes: `literals()` returns `Option<String>` per literal, `None` for an undecodable one, whose includer then joins the included set; `seen` is HEAD, the parent of the first range commit and every range commit, cached per blob. A RED that adds a test to `tests/common/mod.rs` does not make it a step file: a later change gives the build-input outcome.
@@ -240,6 +258,7 @@ steps into it; each sets its own `CARGO_TARGET_DIR`. Heavy runs: `cargo test -j 
 | Step 3 drift review | a RED with only a build input; an unkeyed commit in the range; dotted and inline TOML targets; other `[workspace]` keys; reading that fails closed | `check::red_with_only_a_build_input_changes_code`, `check::unkeyed_commit_in_the_range_is_seen`, `check::dotted_and_inline_toml_targets_are_seen`, `check::other_workspace_keys_are_not_build_inputs`, `check::build_input_reading_fails_closed` |
 | Step 4 drift review | a helper turned into a step file; include reading that fails closed; three interleaved steps and a duplicate label; escapes in include literals; an include seen only in a middle commit | `check::helper_turned_step_file_stays_protected`, `check::include_reading_fails_closed`, `check::interleaving_with_three_steps`, `check::include_escapes_are_decoded`, `check::include_seen_in_a_middle_commit` |
 | Step 5 drift review | prefix keys, `base` at HEAD, merges, commits after a close; exact refusals of a bad `base`; a git error in `stapel new` | `check::range_edges`, `check::bad_base_is_refused_exactly`, `new::base_read_errors_fail_new` |
+| Code review round 1 | step files' helper text; a helper laundered by a later RED; a bad `base`; a closed ticket without keyed commits; a closed ticket's build inputs at its end; comments inside an include call and `#[path]`; a config planted during a run; a `PATH` cargo inside the repository | `check::step_file_helper_text_is_protected`, `check::later_red_does_not_launder_a_helper`, `check::closed_ticket_without_keyed_commits_is_refused`, `check::closed_ticket_build_inputs_are_read_at_its_end`, `check::include_comments_and_path_attributes_are_seen`, `check::config_planted_during_a_run_is_seen`, `check::path_cargo_inside_the_repository_is_refused` |
 | Integration | `stapel check STP-1` to `STP-5` on this repository (plan step 7, by hand; Decision 4); its output goes into Proof | — |
 
 ### Inputs
@@ -337,6 +356,9 @@ promised).
 | AC-14 | `check::refuses_a_tmpdir_inside_the_repository` |
 | AC-15 | `check::closed_ticket_range_ends_at_its_last_commit` |
 | AC-16 | `check::closed_ticket_is_checked_at_its_last_commit` |
+| AC-17 | `check::step_file_helper_text_is_protected` |
+| AC-18 | `check::later_red_does_not_launder_a_helper` |
+| AC-19 | `check::bad_base_is_refused_exactly`, `check::closed_ticket_without_keyed_commits_is_refused` |
 | Manual run | plan step 7, 2026-10-09; run 1 at `dfc3fb6` (before AC-16): every closed ticket `fail`, mostly `tests-changed` from later tickets' changes of shared test files. Run 2 after step 8 (closed tickets checked at their last commit): STP-1 cannot be checked (legacy `state.json`); STP-5 `pass`; STP-4 `fail`, steps 3, 4, 5, 6, 7 `interleaved` (review pairs placed between a step's RED and GREEN); STP-3 `fail`, step 3 `no-red: stapel-cli/decisions::refusal_appends_nothing`, step 5 and code review round 1 `tests-changed` by STP-3's own later commits, steps 6 and 6b `Cargo.lock is out of date`; STP-2 `fail`, `tests-changed` by its own later commits and `build-input-changed: crates/stapel-cli/tests/common/mod.rs at 7a4c754` (STP-2 step 6 GREEN). These are escaped defects by Decision 4; STP-2 and STP-3 predate the RED to GREEN check. |
 
 ## Plan
@@ -345,13 +367,14 @@ Route: full (source: `auto`; tags `security`, `guard`; about 500 lines).
 
 | Step | What | Criteria | Must not change |
 |---|---|---|---|
-| 1 | Environment allow list; `[check] cargo`; the cargo path and version; refusal without a working cargo | AC-8, AC-9, AC-10, AC-11 | outcomes of STP-4 tests |
+| 1 | Environment allow list; `[check] cargo`; the cargo path and version; refusal without a working cargo | AC-8, AC-9, AC-10, AC-11 | outcomes of STP-4 tests; `golden/check_report.txt` gains only the `cargo:` line |
 | 2 | Worktree in a unique folder under `TMPDIR`; configuration above it; bad `TMPDIR` | AC-7, AC-14 | the lock and target folder under `.git/stapel/` |
 | 3 | Build inputs in manifests, configuration, toolchain, build scripts, links; the `build inputs` line | AC-1, AC-2, AC-6 | STP-4 report lines and golden files |
-| 4 | Helpers and included files; interleaved REDs | AC-3, AC-4, AC-5, AC-12 | `tests-changed` for helpers the RED changed |
+| 4 | Helpers and included files; interleaved REDs | AC-3, AC-4, AC-5, AC-12 | `tests-changed` for helpers the RED changed; the STP-4 test `suite_failure_fails_the_check` changes only in the RED (Design as built, step 4) |
 | 5 | `base` in `state.json`; range start and end | AC-13, AC-15 | `state.json` of earlier tickets |
 | 6 | `docs/PHASES.md`: STP-13 in the list of first tickets | — | other phases |
 | 8 | A closed ticket checked at its last commit; plan step 7 repeated | AC-16 | open tickets' check at HEAD |
+| 9 | Code review round 1 fixes | AC-7, AC-9, AC-15, AC-17, AC-18, AC-19 | open tickets' outcomes apart from the new rules |
 | 7 | By hand: `stapel check STP-1` to `STP-5` on this repository; escaped defects recorded | — | closed tickets' text |
 
 ## Review
