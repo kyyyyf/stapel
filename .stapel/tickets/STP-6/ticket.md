@@ -242,6 +242,13 @@ by their subjects (`STP-6 step <n> …`); two local rewrites changed their ids (
 #### Step 8
 - Only `check.rs` changed: for a closed ticket `build_inputs::range(...).last()` is `end`; it replaces HEAD in `outcomes::analyse`, `Worktree::create` and `Runner.head` (step runs, suite, `removed`); `build_inputs::analyse` keeps the real HEAD with `Bounds { closed }`. First line `ticket: K at <short end> (closed)`; the record gets `end`, `head` stays HEAD; open tickets unchanged, no `end`. A closed ticket with an empty range: exit 2 naming it (untested).
 
+#### Step 9a and 9b (code review round 1)
+- `build_inputs.rs` keeps `step_from`, the index of the first RED in range order that added or changed a step test in a path; `is_helper(p, at)` is order-aware; for a non-RED commit a step file counts as changed when its `helper_text` (STP-4's function) differs (AC-17, AC-18). The STP-4-era test `include_seen_in_a_middle_commit` now expects the include's own commit, named at `basic.rs`, and was changed in the 9a RED (the human's choice).
+- A closed ticket's `build_inputs::analyse` reads at the end commit; the HEAD-moved notice names the commit checked.
+- `includes.rs` skips comments inside the call; `#[path = "<literal>"]` counts on a `mod` item, other attributes and `pub` allowed between.
+- The search above the worktree also runs after `cargo --version` and after every cargo run; a hit makes the current step, later steps and the suite `unverified: build-input-outside`.
+- `validate_path_cargo` (config.rs) refuses a `PATH` cargo inside the repository ("inside the repository", exit 2); the AC-19 refusal of a closed ticket without keyed commits comes before the empty-steps refusal.
+
 ## Test plan
 
 CLI tests build a tiny `cargo` crate in a temporary git repository, as in STP-4, and commit RED and GREEN
@@ -313,23 +320,17 @@ steps into it; each sets its own `CARGO_TARGET_DIR`. Heavy runs: `cargo test -j 
 | A later step's RED, between step 1's RED and GREEN, that rewrites step 1's helper | `interleaved`, AC-12 |
 | A GREEN that edits a top-level `tests/common.rs` that a step test reaches by `mod common;` | build-input outcome, AC-3 |
 | A non-keyed commit before the ticket's first keyed commit that adds a build input | inside the range after `base`, AC-13 |
+| A GREEN that adds the work as a non-test function in the step's own test file | build-input outcome, AC-17 |
+| A later RED that makes a helper with the work a step file | build-input outcome, AC-18 |
+| A test run that plants `$TMPDIR/.cargo/config.toml` | `build-input-outside`, AC-7 |
+| A `PATH` entry into the repository with a fake `cargo` | refused, AC-9 |
 | A `.cargo/config.toml` in a shared `/tmp` from another user | `build-input-outside`, AC-7 (a denial, not a pass) |
 
-**Author self-check (CLAUDE.md item 7).** Done on 2026-10-08 against the Abuse table, after step 5 and before
-code review: every row has a test — target tables and the members glob (`check::manifest_target_change_is_unverified`,
-`check::dotted_and_inline_toml_targets_are_seen`); `.cargo`, links, `build.rs`, toolchain
-(`check::config_toolchain_build_script_and_links_are_unverified`, `check::red_with_only_a_build_input_changes_code`);
-a commit before the first RED (`check::unkeyed_commit_in_the_range_is_seen`, `check::range_starts_after_the_base`);
-helpers, a top-level `tests/helper.rs` included (`check::helper_change_is_unverified`,
-`check::helper_turned_step_file_stays_protected`); included test data (`check::included_test_data_change_is_unverified`,
-`check::include_escapes_are_decoded`, `check::include_seen_in_a_middle_commit`); an included source file in a RED
-(`check::red_changing_an_included_file_changes_code`); configuration in or above the main tree
-(`check::worktree_is_outside_the_repository`, `check::config_above_the_worktree_is_unverified`,
-`check::cargo_home_cannot_hide_a_config_above`); the caller's variables (`check::cargo_runs_with_the_allow_list_only`,
-`check::cargo_runs_see_every_allowed_variable_and_one_cargo`); a fake `cargo` on `PATH`, named, not prevented
-(`check::cargo_path_and_version_are_reported`); a `[check] cargo` in the repository
-(`core::config::check_cargo_key_is_validated`, `check::cargo_key_is_validated_through_the_cli`); interleaved REDs
-(`check::interleaved_red_is_unverified`, `check::interleaving_with_three_steps`). New since the spec: none.
+**Author self-check (CLAUDE.md item 7).** Redone on 2026-10-09 after step 9b, against the Abuse table and the
+code review round 1 findings: every row has a test (see the Test plan rows "Negative", "Abuse", the step drift
+reviews and "Code review round 1"); new since the first self-check: AC-16 to AC-19 (closed tickets checked at
+their end, step files' helper text, helpers laundered by a later RED, bad `base`), comments and `#[path]` in
+includes, a config planted during a run, a `PATH` cargo inside the repository, each with its named test.
 
 **Review Focus.** Unchecked: an honest GREEN that adds a `[[test]]` (build-input outcome for every step;
 accepted by Decision 3); a link added by a RED under `crates/*/tests/` (allowed by STP-4's rule; see Design
