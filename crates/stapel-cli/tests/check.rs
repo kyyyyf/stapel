@@ -5102,3 +5102,154 @@ fn test_data_change_is_unverified() {
     assert_eq!(outcome(&text, "step 1"), "tests-changed", "{text}");
     assert!(!text.contains("build-input"), "{text}");
 }
+
+// ---- STP-13 step 4: a RED that redirects, links or names a build file is code ----
+
+/// The report line of a step: `step N: <outcome>: <reason>`.
+fn step_line<'a>(text: &'a str, label: &str) -> &'a str {
+    text.lines()
+        .find(|l| l.starts_with(&format!("{label}: ")))
+        .unwrap_or_else(|| panic!("no line for {label}:\n{text}"))
+}
+
+// STP-13 AC-6: a RED that adds or redirects a `dev-dependencies` entry to another source is code.
+#[test]
+fn red_redirecting_a_dev_dependency_changes_code() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let manifest = "crates/tiny/Cargo.toml";
+    let edition = "edition = \"2021\"\n";
+    let mut n = 0;
+    let mut step = |dir: &Path, from: &str, to: &str| {
+        n += 1;
+        add_test(dir, "basic", &format!("dev{n}"), "assert!(true);");
+        edit(dir, manifest, from, to);
+        commit(dir, &format!("ABC-1 step {n} RED: dev-dependency source"));
+        commit(dir, &format!("ABC-1 step {n} GREEN: code"));
+    };
+    step(
+        dir,
+        edition,
+        &format!("{edition}\n[dev-dependencies]\nfoo = {{ path = \"../outside\" }}\n"),
+    );
+    step(
+        dir,
+        "path = \"../outside\"",
+        "git = \"https://example.invalid/foo\"",
+    );
+    step(
+        dir,
+        "[dev-dependencies]\n",
+        "[dev_dependencies]\nbar = { git = \"https://example.invalid/bar\", rev = \"abc\" }\n",
+    );
+    step(
+        dir,
+        "[dev_dependencies]\n",
+        "[target.'cfg(unix)'.dev-dependencies]\nbaz = { path = \"../outside\" }\n\n[dev_dependencies]\n",
+    );
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    for label in ["step 1", "step 2", "step 3", "step 4"] {
+        let line = step_line(&text, label);
+        assert!(
+            line.starts_with(&format!("{label}: red-changes-code: ")) && line.contains(manifest),
+            "{line}\n{text}"
+        );
+    }
+}
+
+// STP-13 AC-7: a RED that adds, changes or deletes a manifest, a link, a `.cargo` path or a
+// toolchain file under `crates/*/tests/` is code.
+#[test]
+fn red_adding_a_test_manifest_or_link_changes_code() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let mut n = 0;
+    let mut paths = Vec::new();
+    let mut step = |dir: &Path, path: &str, make: &dyn Fn(&Path)| {
+        n += 1;
+        add_test(dir, "basic", &format!("odd{n}"), "assert!(true);");
+        make(&dir.join(path));
+        paths.push(path.to_string());
+        commit(dir, &format!("ABC-1 step {n} RED: {path}"));
+        commit(dir, &format!("ABC-1 step {n} GREEN: code"));
+    };
+    let file = |text: &'static str| {
+        move |p: &Path| {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        }
+    };
+    let manifest = "crates/tiny/tests/fake/Cargo.toml";
+    step(dir, manifest, &file("[package]\nname = \"fake\"\n"));
+    step(
+        dir,
+        "crates/tiny/tests/.cargo/config.toml",
+        &file("[build]\n"),
+    );
+    step(dir, "crates/tiny/tests/data", &|p| {
+        std::os::unix::fs::symlink("/tmp/d", p).unwrap();
+    });
+    step(
+        dir,
+        "crates/tiny/tests/rust-toolchain.toml",
+        &file("[toolchain]\n"),
+    );
+    step(dir, "crates/tiny/tests/rust-toolchain", &file("stable\n"));
+    step(dir, manifest, &file("[package]\nname = \"fake2\"\n"));
+    n += 1;
+    add_test(dir, "basic", &format!("odd{n}"), "assert!(true);");
+    std::fs::remove_file(dir.join(manifest)).unwrap();
+    paths.push(manifest.to_string());
+    commit(dir, &format!("ABC-1 step {n} RED: delete the manifest"));
+    commit(dir, &format!("ABC-1 step {n} GREEN: code"));
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    for (i, path) in paths.iter().enumerate() {
+        let label = format!("step {}", i + 1);
+        let line = step_line(&text, &label);
+        assert!(
+            line.starts_with(&format!("{label}: red-changes-code: ")) && line.contains(path),
+            "{line}\n{text}"
+        );
+    }
+}
+
+// STP-13 AC-8: a RED that changes a file that a manifest names by `build` or a target `path` is code.
+#[test]
+fn red_changing_a_build_or_target_file_changes_code() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    edit(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "edition = \"2021\"\n",
+        "edition = \"2021\"\nbuild = \"tests/gen.rs\"\n\n[[bin]]\nname = \"b\"\npath = \"tests/b.rs\"\n\n[[example]]\nname = \"e\"\npath = \"tests/e.rs\"\n\n[[bench]]\nname = \"h\"\npath = \"tests/h.rs\"\nharness = false\n",
+    );
+    for f in ["gen", "b", "e", "h"] {
+        write(dir, &format!("crates/tiny/tests/{f}.rs"), "fn main() {}\n");
+    }
+    commit(dir, "named files and targets");
+    let files = ["gen", "b", "e", "h"];
+    for (i, f) in files.iter().enumerate() {
+        add_test(dir, "basic", &format!("named{i}"), "assert!(true);");
+        write(
+            dir,
+            &format!("crates/tiny/tests/{f}.rs"),
+            "fn main() {\n    let _ = 1;\n}\n",
+        );
+        commit(dir, &format!("ABC-1 step {} RED: change {f}", i + 1));
+        commit(dir, &format!("ABC-1 step {} GREEN: code", i + 1));
+    }
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    for (i, f) in files.iter().enumerate() {
+        let label = format!("step {}", i + 1);
+        let line = step_line(&text, &label);
+        assert!(
+            line.starts_with(&format!("{label}: red-changes-code: "))
+                && line.contains(&format!("crates/tiny/tests/{f}.rs")),
+            "{line}\n{text}"
+        );
+    }
+}
