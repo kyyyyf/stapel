@@ -43,7 +43,7 @@ struct Files<'a> {
     root: &'a Path,
     cache: HashMap<(String, String), Option<String>>,
     /// The files that the manifests of a commit name, per commit (STP-13 AC-8).
-    named: HashMap<String, HashSet<String>>,
+    named: HashMap<String, Option<HashSet<String>>>,
 }
 
 impl Files<'_> {
@@ -57,23 +57,26 @@ impl Files<'_> {
         v
     }
 
-    /// The files named by `build` and target `path` keys of every manifest at a commit.
-    fn named_files(&mut self, commit: &str) -> &HashSet<String> {
+    /// The files named by `build` and target `path` keys of every manifest at a commit; `None` when
+    /// the listing or a manifest cannot be read: the caller counts the commit as code (D4-1).
+    fn named_files(&mut self, commit: &str) -> Option<&HashSet<String>> {
         if !self.named.contains_key(commit) {
-            let mut set = HashSet::new();
-            let listed =
-                git(self.root, &["ls-tree", "-r", "-z", "--name-only", commit]).unwrap_or_default();
-            for path in listed.split(|b| *b == 0) {
-                let path = String::from_utf8_lossy(path).into_owned();
-                if path.rsplit('/').next() == Some("Cargo.toml")
-                    && let Some(text) = self.get(commit, &path)
-                {
-                    set.extend(target_files(&path, &text));
-                }
-            }
+            let set = self.read_named(commit);
             self.named.insert(commit.to_string(), set);
         }
-        &self.named[commit]
+        self.named[commit].as_ref()
+    }
+
+    fn read_named(&mut self, commit: &str) -> Option<HashSet<String>> {
+        let mut set = HashSet::new();
+        let listed = git(self.root, &["ls-tree", "-r", "-z", "--name-only", commit]).ok()?;
+        for path in listed.split(|b| *b == 0) {
+            let path = String::from_utf8_lossy(path).into_owned();
+            if path.rsplit('/').next() == Some("Cargo.toml") {
+                set.extend(target_files(&path, &self.get(commit, &path)?));
+            }
+        }
+        Some(set)
     }
 }
 
@@ -175,7 +178,10 @@ fn is_code(files: &mut Files, red: &str, base: &str, c: &Change) -> bool {
         {
             return true;
         }
-        if files.named_files(red).contains(*path) || files.named_files(base).contains(*path) {
+        // A commit whose manifests cannot be listed counts as code (D4-1).
+        let at_red = files.named_files(red).map(|s| s.contains(*path));
+        let at_base = files.named_files(base).map(|s| s.contains(*path));
+        if at_red != Some(false) || at_base != Some(false) {
             return true;
         }
     }
@@ -186,7 +192,8 @@ fn is_code(files: &mut Files, red: &str, base: &str, c: &Change) -> bool {
         let before = files.get(base, o);
         let after = files.get(red, n);
         if let (Some(b), Some(a)) = (before, after) {
-            return dev_redirect(&b, &a, n);
+            let roots = (files.get(base, "Cargo.toml"), files.get(red, "Cargo.toml"));
+            return dev_redirect(&b, &a, n, (roots.0.as_deref(), roots.1.as_deref()));
         }
     }
     false

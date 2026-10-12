@@ -510,14 +510,24 @@ fn crate_of(path: &str) -> Option<&str> {
 /// or changes, deletes or renames in a crate that holds no step test of the ticket (STP-13 AC-5).
 /// A path is added when the entry has no old path or the old path is in another crate.
 fn data_hit(e: &Entry, step_crates: &HashSet<String>) -> Option<String> {
-    let data = |p: &&String| under_tests(p) && !p.ends_with(".rs");
+    // A symbolic link or a submodule entry is data whatever its name (D3-2).
+    let special = |m: &str| m == "120000" || m == "160000";
+    let data = |p: &&String, mode: &str| under_tests(p) && (!p.ends_with(".rs") || special(mode));
     let free = |p: &String| !step_crates.contains(crate_of(p).unwrap_or(""));
     // A rename names the old path first, as the other build-input rules do.
-    if let Some(old) = e.old.as_ref().filter(data).filter(|o| free(o)) {
+    if let Some(old) = e
+        .old
+        .as_ref()
+        .filter(|p| data(p, &e.old_mode))
+        .filter(|o| free(o))
+    {
         return Some(old.clone());
     }
-    let new = e.new.as_ref().filter(data)?;
-    let added = e.old.as_ref().is_none_or(|o| crate_of(o) != crate_of(new));
+    let new = e.new.as_ref().filter(|p| data(p, &e.new_mode))?;
+    // A path is added when it has no old path, the old path is in another crate, or the entry
+    // became a link or a submodule.
+    let added = e.old.as_ref().is_none_or(|o| crate_of(o) != crate_of(new))
+        || (special(&e.new_mode) && !special(&e.old_mode));
     (added || free(new)).then(|| new.clone())
 }
 
@@ -594,8 +604,60 @@ fn manifest_hit(root: &Path, sha: &str, base: &str, e: &Entry) -> Option<String>
             .as_ref()
             .is_some_and(|m| m.contains(folder))
     };
-    (build_tables(&b) != build_tables(&a) || dependency_redirect(&b, &a, manifest, &is_member))
-        .then(|| path.clone())
+    // `workspace = true` takes the entry of the root manifest's `[workspace.dependencies]` at the
+    // commit that holds the manifest (D1-2).
+    let (deps_before, deps_after) = (
+        workspace_dependencies(show(root, base, "Cargo.toml").as_deref()),
+        workspace_dependencies(show(root, sha, "Cargo.toml").as_deref()),
+    );
+    let redirect = dependency_redirect(&b, &a, manifest, &is_member, (&deps_before, &deps_after))
+        || (manifest == "Cargo.toml"
+            && deps_before != deps_after
+            && inheritors_redirect(root, sha, &is_member, (&deps_before, &deps_after)));
+    (build_tables(&b) != build_tables(&a) || redirect).then(|| path.clone())
+}
+
+/// The `[workspace.dependencies]` table of a root manifest text; empty when it is absent or does not
+/// parse.
+fn workspace_dependencies(text: Option<&str>) -> toml::Table {
+    text.and_then(|t| toml::from_str::<toml::Table>(t).ok())
+        .and_then(|t| match t.get("workspace")?.get("dependencies")? {
+            toml::Value::Table(d) => Some(d.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// Whether a change of the root's `[workspace.dependencies]` redirects an entry of any manifest at
+/// the commit that inherits it by `workspace = true` (D1-2). A listing that fails counts as a
+/// redirect.
+fn inheritors_redirect(
+    root: &Path,
+    sha: &str,
+    is_member: &dyn Fn(&str) -> bool,
+    deps: (&toml::Table, &toml::Table),
+) -> bool {
+    let Ok(listed) = git(root, &["ls-tree", "-r", "-z", sha]) else {
+        return true;
+    };
+    listed
+        .split(|b| *b == 0)
+        .map(|r| String::from_utf8_lossy(r).into_owned())
+        .filter_map(|rec| {
+            let (meta, path) = rec.split_once('\t')?;
+            (!meta.starts_with("120000") && is_manifest(path)).then(|| path.to_string())
+        })
+        .any(|path| {
+            let Some(t) =
+                show(root, sha, &path).and_then(|text| toml::from_str::<toml::Table>(&text).ok())
+            else {
+                return false;
+            };
+            let old = dependency_entries(&t, deps.0);
+            dependency_entries(&t, deps.1)
+                .iter()
+                .any(|(id, dep)| entry_redirect(id, dep, old.get(id), &path, is_member))
+        })
 }
 
 /// The tables and keys of a manifest that change how a test is built apart from its targets and
@@ -637,10 +699,22 @@ fn dependency_kind(key: &str) -> Option<&'static str> {
     }
 }
 
+/// A dependency entry as it counts for a redirect: its value, and whether it is the root's entry
+/// that `workspace = true` inherits.
+#[derive(Debug, Clone, PartialEq)]
+struct Dep {
+    value: toml::Value,
+    inherited: bool,
+}
+
+type DepId = (String, &'static str, String);
+
 /// Every dependency entry of a manifest by scope (top level, `target.<cfg>`, `[workspace]`), kind
-/// and name, whatever its form (STP-13 AC-1).
-fn dependency_entries(t: &toml::Table) -> BTreeMap<(String, &'static str, String), toml::Value> {
-    let mut out = BTreeMap::new();
+/// and name, whatever its form (STP-13 AC-1). An entry with `workspace = true` is the entry of
+/// `workspace_deps` (the root's `[workspace.dependencies]`); one present under both spellings of
+/// its table is an array of both values, which is no string or table (D1-1).
+fn dependency_entries(t: &toml::Table, workspace_deps: &toml::Table) -> BTreeMap<DepId, Dep> {
+    let mut out: BTreeMap<DepId, Dep> = BTreeMap::new();
     let mut add = |scope: &str, tables: &toml::Table, workspace: bool| {
         for (key, value) in tables {
             let kind = if workspace {
@@ -650,7 +724,37 @@ fn dependency_entries(t: &toml::Table) -> BTreeMap<(String, &'static str, String
             };
             if let (Some(kind), toml::Value::Table(entries)) = (kind, value) {
                 for (name, entry) in entries {
-                    out.insert((scope.to_string(), kind, name.clone()), entry.clone());
+                    let inherits =
+                        !workspace && entry.get("workspace") == Some(&toml::Value::Boolean(true));
+                    let dep = if inherits {
+                        Dep {
+                            value: workspace_deps
+                                .get(name)
+                                .cloned()
+                                .unwrap_or_else(|| toml::Value::String(String::new())),
+                            inherited: true,
+                        }
+                    } else {
+                        Dep {
+                            value: entry.clone(),
+                            inherited: false,
+                        }
+                    };
+                    let id = (scope.to_string(), kind, name.clone());
+                    match out.remove(&id) {
+                        Some(first) => {
+                            out.insert(
+                                id,
+                                Dep {
+                                    value: toml::Value::Array(vec![first.value, dep.value]),
+                                    inherited: false,
+                                },
+                            );
+                        }
+                        None => {
+                            out.insert(id, dep);
+                        }
+                    }
                 }
             }
         }
@@ -698,68 +802,87 @@ fn dependency_source(entry: &toml::Value) -> Option<BTreeMap<&'static str, &toml
 /// `dev-dependencies`, a `path` (with or without `package`) to a member folder; an entry moved from
 /// `path` or `git` to an empty source; an entry that changes and is neither a string nor a table.
 /// A deleted entry is no redirect. An entry added to a `dev-dependencies` table is one whatever its
-/// source (STP-13 AC-4): a RED that does not compile may be made to pass by it.
+/// source (STP-13 AC-4): a RED that does not compile may be made to pass by it. `roots` are the
+/// `[workspace.dependencies]` tables before and after, that `workspace = true` entries take.
 fn dependency_redirect(
     before: &toml::Table,
     after: &toml::Table,
     manifest: &str,
     is_member: &dyn Fn(&str) -> bool,
+    roots: (&toml::Table, &toml::Table),
 ) -> bool {
-    let old = dependency_entries(before);
-    dependency_entries(after).iter().any(|(id, entry)| {
-        let old_entry = old.get(id);
-        if old_entry != Some(entry) && old_entry.is_none() && id.1 == "dev" {
+    let old = dependency_entries(before, roots.0);
+    dependency_entries(after, roots.1).iter().any(|(id, dep)| {
+        let old_dep = old.get(id);
+        if old_dep != Some(dep) && old_dep.is_none() && id.1 == "dev" {
             return true;
         }
-        entry_redirect(id, entry, old_entry, manifest, is_member)
+        entry_redirect(id, dep, old_dep, manifest, is_member)
     })
 }
 
 /// The pure redirect of an entry (STP-13 AC-1): it changes and its new source is not empty and no
 /// member `path`, or it moves from `path` or `git` to an empty source, or it is neither a string
-/// nor a table. An entry added to `dev-dependencies` with an empty source is no redirect.
+/// nor a table. An entry added to `dev-dependencies` with an empty source is no redirect. The `path`
+/// of an inherited entry is relative to the root manifest; an absolute `path` or one that holds a
+/// backslash names no member folder (D1-3).
 fn entry_redirect(
-    id: &(String, &'static str, String),
-    entry: &toml::Value,
-    old_entry: Option<&toml::Value>,
+    id: &DepId,
+    dep: &Dep,
+    old_dep: Option<&Dep>,
     manifest: &str,
     is_member: &dyn Fn(&str) -> bool,
 ) -> bool {
-    if old_entry == Some(entry) {
+    if old_dep == Some(dep) {
         return false;
     }
-    let Some(new_src) = dependency_source(entry) else {
+    let Some(new_src) = dependency_source(&dep.value) else {
         return true;
     };
-    let old_src = old_entry.and_then(dependency_source).unwrap_or_default();
+    let old_src = old_dep
+        .and_then(|d| dependency_source(&d.value))
+        .unwrap_or_default();
     if new_src == old_src {
         return false;
     }
     if new_src.is_empty() {
         return old_src.contains_key("path") || old_src.contains_key("git");
     }
+    let base = if dep.inherited {
+        "Cargo.toml"
+    } else {
+        manifest
+    };
     let member_path = id.1 != "dev"
         && new_src.keys().all(|k| matches!(*k, "path" | "package"))
         && matches!(new_src.get("path"), Some(toml::Value::String(rel))
-            if resolve(manifest, rel).is_some_and(|f| is_member(&f)));
+            if !rel.starts_with('/')
+                && !rel.contains('\\')
+                && resolve(base, rel).is_some_and(|f| is_member(&f)));
     !member_path
 }
 
 /// Whether a manifest change makes a `dev-dependencies` entry point at other code (STP-13 AC-6):
 /// the pure redirect of a `dev` entry, without the rule that an added entry is a hit. A crates.io
-/// dev-dependency added is no redirect. A text that does not parse gives `false`.
-pub(crate) fn dev_redirect(before: &str, after: &str, manifest: &str) -> bool {
+/// dev-dependency added is no redirect. A text that does not parse gives `false`. `roots` are the
+/// texts of the root manifest before and after, for `workspace = true`.
+pub(crate) fn dev_redirect(
+    before: &str,
+    after: &str,
+    manifest: &str,
+    roots: (Option<&str>, Option<&str>),
+) -> bool {
     let (Ok(b), Ok(a)) = (
         toml::from_str::<toml::Table>(before),
         toml::from_str::<toml::Table>(after),
     ) else {
         return false;
     };
-    let old = dependency_entries(&b);
-    dependency_entries(&a)
+    let old = dependency_entries(&b, &workspace_dependencies(roots.0));
+    dependency_entries(&a, &workspace_dependencies(roots.1))
         .iter()
         .filter(|(id, _)| id.1 == "dev")
-        .any(|(id, entry)| entry_redirect(id, entry, old.get(id), manifest, &|_| false))
+        .any(|(id, dep)| entry_redirect(id, dep, old.get(id), manifest, &|_| false))
 }
 
 /// The files a manifest names: `build` of `[package]` or `[project]`, and `path` of `[lib]`,
