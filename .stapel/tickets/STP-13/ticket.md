@@ -324,8 +324,38 @@ Route: full (source: `auto`; tags `security`, `guard`).
 
 ## Review
 
-TODO
+Round 1 (2026-10-12), on a read-only copy at `2f61cd1` with the as-built notes: fresh reviewer (Sonnet, R-1 to
+R-8), external reviewer (Fable, E-1 to E-4), drift reviewer (Sonnet, DR-1 to DR-9). No HIGH, so no round 2.
+Eight MEDIUM, seven of them inside the promise, all of one class: promise item 4 said STP-4's `tests-changed`
+covers changes in a step crate, but it misses a delete, a rename, a mode, link or submodule change, and the
+step crates were taken without the order of the REDs. Fixed in plan steps 7 and 7b (with drift D7-1, D7-2);
+DR-5 rejected; E-1 is outside the promise and waits as Open question 8.
 
 ## Summary
 
-TODO
+**Measures (2026-10-12), compared with STP-6.** Subagent tokens are estimates from the end notices
+(`subagent_tokens`, not a sum); measured session totals are imported with this session's `cost-state` line in
+the next session.
+
+| Measure | STP-6 | STP-13 |
+|---|---|---|
+| Escaped defects found so far | 0 in STP-6; older ones in STP-2, STP-3, STP-4 | 0 in STP-13; plan step 6: no new hits of the STP-13 rules on STP-2 to STP-6; STP-3 and STP-4 now show `build-input-changed` on `ticket_drift.rs` (STP-6 helper rule, GREENs of STP-3 step 1 and STP-4 step 1); B4b-1 (STP-4 ignores a deleted protected file) fixed here |
+| Findings before code (spec review, per-step drift) | 23 + 33 | 13 + 22 (HIGH and MEDIUM: 11 + 13) |
+| Code review findings, all / HIGH and MEDIUM inside the promise | 32 over two rounds / 10 (4 HIGH) | 12 rows in one round / 7 (0 HIGH) |
+| Code review HIGH and MEDIUM by `catchable_at` | spec 7, design 5, code 4, test-plan 3 | design 5, spec 2, code 1 |
+| `ticket.md` | 46 KB | 34 KB |
+| Changed lines (frame estimate) | about 3 600 (400–500) | about 2 170: 650 source, 1 520 tests (600–900) |
+| Subagent estimates by role | builder 1.40M, external 0.53M, drift 0.39M, reviewer 0.15M | builder 0.69M, drift 0.43M, external 0.27M, reviewer 0.12M |
+| Local history rewrites | 3 | 3 (steps 1, 3, 4b), run by the human |
+| Wall time | 2 days | 3 days (the human away for most of it) |
+
+What improved: the split held (eight criteria, one round of code review, no HIGH); the spec review and the
+per-step drift reviews caught the dependency and data-file bypasses before code review; the orchestrator only
+coordinated, every code step came from a builder brief. What did not: the frame's line estimate counted too
+few test lines; the promise leaned on an older rule (STP-4 `tests-changed`) without checking what it covers,
+and code review found that gap; builders still caused three history rewrites (a coverage test in a RED, an
+existing test changed in a RED that passed at RED, a coverage test fixed after its commit), each now a rule in
+the builder briefs; STP-14 (`stapel check --history`) would have shown all three at once.
+
+**Process ledger (CLAUDE.md item 9), code review HIGH and MEDIUM by the rule that should have caught them:**
+item 3 (tables and promise against an older rule) 5, item 4 1, item 2 1, item 8 1.
