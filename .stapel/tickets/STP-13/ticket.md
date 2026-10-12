@@ -31,8 +31,10 @@ check` gives STP-6's build-input outcome when a non-RED commit of the Range:
 2. adds, changes or deletes `[profile]`, `[features]`, `[lints]`, `[workspace.lints]` or the `edition` of
    `[package]`, `[project]` or `[workspace.package]` of any `Cargo.toml`;
 3. adds an entry to a `dev-dependencies` table;
-4. adds a file under `crates/*/tests/` that is not a `.rs` file, or changes, deletes or renames one in a
-   crate's tests folder that holds no step test (STP-4's `tests-changed` covers the others).
+4. adds a file under `crates/*/tests/` that is not a regular `.rs` file, or changes, deletes or renames one
+   in a crate's tests folder that holds no step test of a RED before the commit; in a tests folder that does,
+   deletes or renames one or changes its mode, link target or submodule commit (STP-4's `tests-changed`
+   covers a change of its content; code review round 1).
 
 It gives `red-changes-code` when a RED of the ticket:
 
@@ -42,12 +44,14 @@ It gives `red-changes-code` when a RED of the ticket:
 7. adds, changes or deletes a file that a `build` key or the `path` key of `[lib]`, `[[bin]]`, `[[example]]`
    or `[[bench]]` names.
 
-Not promised: a dependency's `features`; what a crates.io version or a workspace member contains (code); proc-macro
+Not promised: a dependency's `features`, and a dev entry's version or `features` changed by a non-RED commit
+(code review E-1, Open question 8); what a crates.io version or a workspace member contains (code); proc-macro
 crates that read files; a RED that does not compile and that a crates.io entry added by a GREEN to
 `[dependencies]` resolves (see Open question 6); STP-6's "Not promised" list.
 
 **Size.** Medium: about eight criteria, 600–900 changed lines, most of them tests. Beyond ten criteria the
-ticket is split again.
+ticket is split again. As built after step 4b (2026-10-12): eight criteria, about 540 changed source lines and
+1600 test lines; the estimate counted too few test lines, no split needed.
 
 ### Decisions
 
@@ -107,6 +111,16 @@ recommendation, waiting for the human's answer, and the build does not start bef
   away; needs a new confirmation): D1-1 (an entry under both spellings of a table is a redirect), D1-2
   (`workspace = true` takes the root's `[workspace.dependencies]` source), D1-3 (an absolute or backslash
   `path` names no member folder), D3-2 (AC-5 counts a link or submodule entry whatever its name). Plan step 4b.
+- 2026-10-12, code review round 1 (R, E, DR; no HIGH), orchestrator, the human away; needs a new
+  confirmation. Inside the promise, fixed in plan step 7 (spec change of promise item 4 and AC-5 to what
+  item 4 already claimed): R-1, E-2, DR-1, DR-2 (a delete, rename, mode, link or submodule change in a step
+  crate), R-2, DR-3 (a crate is a step crate for a commit only after the RED of a step with a test in it),
+  R-3, DR-5 (fail closed), DR-7, DR-8, E-3 (text). B4b-1 and D4b-2 are covered by the same fix.
+- Open question 8 (code review E-1, outside the promise): a non-RED commit changes a dev entry's version or
+  `features` without changing its source, and a RED that did not compile then passes. (a) **recommended**:
+  widen promise item 3 and AC-4 to "adds or changes an entry of a `dev-dependencies` table" (AC-2 keeps
+  `dependencies` and `build-dependencies`); (b) leave it in Not promised. Assumption: (b) until the human
+  answers; the build does not start on it.
 
 ## Spec
 
@@ -136,7 +150,7 @@ Terms of STP-6 (Range, non-RED commit, build-input outcome) hold. New terms:
 | AC-2 | WHEN a non-RED commit adds or changes an entry of `dependencies` or `build-dependencies` whose new source is empty or names a member folder, or changes a `dev-dependencies` entry without changing its source, THE steps keep their outcomes. | `check::crates_io_and_member_dependencies_are_allowed` |
 | AC-3 | IF a non-RED commit adds, changes or deletes `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `[workspace.lints]`, or `edition` of `[package]`, `[project]` or `[workspace.package]`, of any `Cargo.toml` THEN the check gives the build-input outcome naming the manifest. | `check::patch_profile_features_lints_and_edition_are_unverified` |
 | AC-4 | IF a non-RED commit adds an entry to a `dev-dependencies` table THEN the check gives the build-input outcome naming the manifest. | `check::green_adding_a_dev_dependency_is_unverified` |
-| AC-5 | IF a non-RED commit adds an entry under `crates/*/tests/` that is not a regular `.rs` file (a symbolic link or submodule entry counts whatever its name, D3-2), or changes, deletes or renames such an entry in a crate's tests folder that holds no step test of the ticket, THEN the check gives the build-input outcome naming it. | `check::test_data_change_is_unverified` |
+| AC-5 | IF a non-RED commit adds an entry under `crates/*/tests/` that is not a regular `.rs` file (a symbolic link or submodule entry counts whatever its name, D3-2), or changes, deletes or renames such an entry in a crate's tests folder that holds no step test of a RED before the commit, or deletes or renames such an entry or changes its mode, link target or submodule commit in a tests folder that does, THEN the check gives the build-input outcome naming it. | `check::test_data_change_is_unverified` |
 | AC-6 | IF a RED makes a redirect in a `dev-dependencies` table THEN the step is `red-changes-code` naming the manifest. | `check::red_redirecting_a_dev_dependency_changes_code`, `check::red_inheriting_a_path_into_a_dev_table_changes_code` |
 | AC-7 | IF a RED adds, changes or deletes a `Cargo.toml`, a symbolic link, a path with a `.cargo` component, `rust-toolchain` or `rust-toolchain.toml` under `crates/*/tests/` THEN the step is `red-changes-code` naming it. | `check::red_adding_a_test_manifest_or_link_changes_code` |
 | AC-8 | IF a RED adds, changes or deletes a file that, at the RED or its parent, a manifest's `build` key of `[package]` or `[project]` or the `path` key of `[lib]`, `[[bin]]`, `[[example]]` or `[[bench]]` names THEN the step is `red-changes-code` naming the file. | `check::red_changing_a_build_or_target_file_changes_code`, `red_fails_closed::unreadable_tree_counts_as_code` |
@@ -164,12 +178,38 @@ Terms of STP-6 (Range, non-RED commit, build-input outcome) hold. New terms:
 | STP-4 `is_code`: a RED's `.rs` or other file under `crates/*/tests/` is not code, a `Cargo.toml` there included; a manifest change only in `dev-dependencies` is not code | `crates/stapel-core/src/outcomes.rs` | verified |
 | STP-4 `tests-changed` protects every file under the tests folder of a crate with a step test as it was at the RED, not files added later | same | verified |
 | Cargo still reads the aliases `dev_dependencies`, `build_dependencies` and `[project]` (deprecated; refused in edition 2024) | Cargo book, "The Manifest Format"; `outcomes::manifest_without_dev` strips both aliases | documented, verified |
-| `steps::changes` reads `--name-status`, without modes, so a RED's symbolic link under `crates/*/tests/` is not seen as a link today | `crates/stapel-core/src/steps.rs` | verified |
+| `steps::changes` read `--name-status`, without modes, before STP-13 step 4, so a RED's symbolic link under `crates/*/tests/` was not seen as a link; it now reads `--raw -z` with modes | `crates/stapel-core/src/steps.rs` | verified |
 | A RED whose step test does not compile counts as a RED (`TestState::Compile`) | `crates/stapel-cli/src/check.rs` | verified |
 
 ### Decisions (as built)
 
 Written as notes during the build and moved here before code review (`CLAUDE.md`, item 6).
+
+#### Step 1
+- `manifest_hit` (status M/T) parses both texts after STP-6's `targets()` comparison and returns the manifest path when `dependency_redirect(before, after, manifest, is_member)` holds.
+- `dependency_entries` maps (scope, kind, name) to the TOML value; scope is top level, `target <cfg>` or `workspace`; `dev_dependencies`/`build_dependencies` fold into the hyphenated kinds.
+- Source = the eight source keys; a changed entry is a redirect when it is not a string or table, when its new source is non-empty unless outside `dev-dependencies` and a `path` (optionally `package`) naming a member folder, or when it moves from `path`/`git` to empty. An unchanged invalid entry is not flagged (cargo rejects it).
+- `member_folders(root, commit)`: root package folder, `members` globs over `git ls-tree` manifest folders (links skipped), `exclude` removed as folder or prefix; in-code `glob_path` (`*`, `?`, `[..]`), no new crate; lazy per commit; unreadable root manifest: no members (fails closed). `resolve()` extracted from `build_file`.
+- The AC-2 test passed at RED and moved to a coverage commit after the GREEN (a local rewrite by the human; old ids 99d5f62, 3fd2856).
+#### Step 2
+- `build_tables(&toml::Table)` collects `patch`, `replace`, `profile`, `features`, `lints`, `package.edition`, `project.edition`, `workspace.lints`, `workspace.package.edition`; a member's `[patch]` counts.
+- `manifest_hit`: STP-6 `targets()` first; then `build_tables` differ (absent vs present counts) or `dependency_redirect` fires; `edition.workspace = true` is a parsed value, so a change.
+- `dependency_redirect` is true for an entry absent at the parent whose kind is `dev`, whatever its source (AC-4); a dependency moved from `[dependencies]` to `[dev-dependencies]` counts as added; a move between the two dev spellings does not.
+#### Step 3
+- "Holds a step test" follows STP-4: `analyse()` collects `step_crates`, the `t.dir` of the step tests of every RED of the range (same loop as `step_names`); in such a crate a change, delete or rename of a data file stays STP-4's `tests-changed`.
+- `data_hit` runs after the manifest rule and before the `.rs` helper rule; a data path counts as added when the entry has no old path or the old path is in another crate; a gitlink is an ordinary entry; a rename names the old path first.
+- The RED moved the example data file of the STP-6 test `unchanged_build_inputs_are_named` from `crates/<tiny>/tests/golden/g.txt` to `notes/golden/g.txt` (AC-5 now counts the old place).
+#### Step 4
+- `steps::changes` reads `git diff --raw -M -z`; `Change` gains `old_mode`/`new_mode` (`120000` is a link; a type change T counts through either side).
+- `outcomes::is_code` is STP-4's rule (renamed `is_code_stp4`, unchanged) plus the STP-13 rules over a `Change`: under `crates/*/tests/` a link, `Cargo.toml`, `rust-toolchain(.toml)` or `.cargo` component on the old or new path (AC-7); a path named by a manifest at the RED or its parent (AC-8); a manifest whose `dev-dependencies` hold a pure redirect (AC-6).
+- `build_inputs::entry_redirect` is the pure redirect of one entry; `dependency_redirect` (AC-1/AC-4) adds "an added dev entry is a hit" on top, so AC-4 is unchanged. `dev_redirect(before, after, manifest)` runs `entry_redirect` over `dev` entries only, with no member folders (a dev `path` is never a member exemption); a crates.io dev entry added is no redirect.
+- `target_files(manifest, text)`: `build` of `[package]`/`[project]`, `path` of `[lib]`, `[[bin]]`, `[[example]]`, `[[bench]]`, resolved as `resolve`; `Files::named_files(commit)` lists every `Cargo.toml` of the commit over `git ls-tree` once and caches the set.
+#### Step 4b
+- `dependency_entries(t, workspace_deps)` returns `Dep { value, inherited }`; `workspace = true` takes the root's `[workspace.dependencies]` entry (absent: empty string, empty source) and its `path` resolves against `Cargo.toml`; an entry under both spellings of one table becomes an array of both values (neither string nor table), so a change is a redirect.
+- `manifest_hit` reads the root manifest at the parent and at the commit; when the root is the changed manifest and its `[workspace.dependencies]` differ, `inheritors_redirect` re-evaluates every manifest of the commit with old and new root deps (a failed `ls-tree` counts as a redirect). `dev_redirect` takes the root texts at the RED's parent and at the RED.
+- `entry_redirect`: an absolute `path` or one with a backslash names no member folder (`resolve`, used by AC-8, is unchanged: absolute is taken as relative there).
+- `data_hit`: a mode 120000 or 160000 entry is data whatever its name; an entry that became a link or submodule counts as added. Already caught before by the STP-6 link rule and the `.rs` helper rule, so its test is a coverage test.
+- `Files::named_files` returns `Option`; a failed `ls-tree` or an unreadable manifest is `None` and `is_code` returns true. `member_folders` already returned `None` (not a member, a redirect) on a git error or an unreadable root manifest.
 
 ## Test plan
 
@@ -239,6 +279,8 @@ cargo but still counted, by AC-3); the underscore aliases. Each has a case in th
 **Author self-check:** 2026-10-09, after spec review round 1: every promise item has a criterion and a test;
 the Inputs and External states rows come from the catalogue; round 2 fixes applied; open questions 1 to 7
 wait for the human.
+2026-10-12, after code review round 1: promise item 4 and AC-5 rewritten to the behaviour item 4 claimed;
+every promise item still has a criterion and a test; Open question 8 waits for the human.
 
 ## Proof
 
@@ -266,6 +308,7 @@ Route: full (source: `auto`; tags `security`, `guard`).
 | 4b | Drift fixes: D1-1, D1-2, D1-3, D3-2 (spec change, AC-1, AC-2, AC-5), D4-1 (fail closed); tests for D2-2, D4-2 and the LOW gaps | AC-1, AC-2, AC-5, AC-8 | the outcomes of steps 1 to 4 |
 | 5 | `docs/PHASES.md`: STP-15 | — | other tickets |
 | 6 | By hand: `stapel check` on STP-2 to STP-6; new hits recorded as escaped defects | — | closed tickets' text |
+| 7 | Code review round 1 fixes: R-1, R-2, R-3, DR-2, DR-5 in code; tests for DR-8 rows | AC-5, AC-8 | STP-4 `tests-changed`; outcomes of steps 1 to 4b |
 
 ## Review
 
