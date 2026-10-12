@@ -567,7 +567,36 @@ fn manifest_hit(root: &Path, sha: &str, base: &str, e: &Entry) -> Option<String>
             .as_ref()
             .is_some_and(|m| m.contains(folder))
     };
-    dependency_redirect(&b, &a, manifest, &is_member).then(|| path.clone())
+    (build_tables(&b) != build_tables(&a) || dependency_redirect(&b, &a, manifest, &is_member))
+        .then(|| path.clone())
+}
+
+/// The tables and keys of a manifest that change how a test is built apart from its targets and
+/// dependencies (STP-13 AC-3): `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`,
+/// `[workspace.lints]` and `edition` of `[package]`, `[project]` and `[workspace.package]`. A key
+/// that is absent is left out, so adding and deleting one differ from the other side.
+fn build_tables(t: &toml::Table) -> toml::Table {
+    let mut out = toml::Table::new();
+    for k in ["patch", "replace", "profile", "features", "lints"] {
+        if let Some(v) = t.get(k) {
+            out.insert(k.into(), v.clone());
+        }
+    }
+    let edition = |t: &toml::Table, section: &str| t.get(section)?.get("edition").cloned();
+    for section in ["package", "project"] {
+        if let Some(v) = edition(t, section) {
+            out.insert(format!("{section}.edition"), v);
+        }
+    }
+    if let Some(toml::Value::Table(ws)) = t.get("workspace") {
+        if let Some(v) = ws.get("lints") {
+            out.insert("workspace.lints".into(), v.clone());
+        }
+        if let Some(v) = edition(ws, "package") {
+            out.insert("workspace.package.edition".into(), v);
+        }
+    }
+    out
 }
 
 /// The kind of a dependency table by its key: `dev-dependencies` and `build-dependencies` have
@@ -641,7 +670,8 @@ fn dependency_source(entry: &toml::Value) -> Option<BTreeMap<&'static str, &toml
 /// that is added or whose source changes, unless the new source is empty or, outside
 /// `dev-dependencies`, a `path` (with or without `package`) to a member folder; an entry moved from
 /// `path` or `git` to an empty source; an entry that changes and is neither a string nor a table.
-/// A deleted entry is no redirect.
+/// A deleted entry is no redirect. An entry added to a `dev-dependencies` table is one whatever its
+/// source (STP-13 AC-4): a RED that does not compile may be made to pass by it.
 fn dependency_redirect(
     before: &toml::Table,
     after: &toml::Table,
@@ -653,6 +683,9 @@ fn dependency_redirect(
         let old_entry = old.get(id);
         if old_entry == Some(entry) {
             return false;
+        }
+        if old_entry.is_none() && id.1 == "dev" {
+            return true;
         }
         let Some(new_src) = dependency_source(entry) else {
             return true;
