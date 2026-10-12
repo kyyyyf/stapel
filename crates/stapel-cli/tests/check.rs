@@ -5253,3 +5253,28 @@ fn red_changing_a_build_or_target_file_changes_code() {
         );
     }
 }
+
+// STP-13 AC-6 and AC-7, coverage: a RED that adds a crates.io dev-dependency, or a plain data file
+// under `crates/*/tests/`, stays a valid RED.
+#[test]
+fn red_adding_a_crates_io_dev_dependency_stays_valid() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "basic", "plain1", "assert!(true);");
+    edit(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "edition = \"2021\"\n",
+        "edition = \"2021\"\n\n[dev-dependencies]\nfoo = \"1\"\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: a crates.io dev-dependency");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    add_test(dir, "basic", "plain2", "assert!(true);");
+    write(dir, "crates/tiny/tests/golden/new.txt", "golden\n");
+    commit(dir, "ABC-1 step 2 RED: a data file");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    let (_, text) = check(dir);
+    for label in ["step 1", "step 2"] {
+        assert_ne!(outcome(&text, label), "red-changes-code", "{text}");
+    }
+}
