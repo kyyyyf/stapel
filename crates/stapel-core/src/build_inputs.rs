@@ -527,7 +527,9 @@ fn data_hit(e: &Entry, step_crates: &HashMap<String, usize>, at: usize) -> Optio
         let moved = e.new.is_none()
             || e.status == 'R'
             || e.old_mode != e.new_mode
-            || e.old_mode == "160000";
+            || e.old_mode == "160000"
+            // A link whose target changed (D7-1).
+            || e.old_mode == "120000";
         if !protected(old) || moved {
             return Some(old.clone());
         }
@@ -536,7 +538,11 @@ fn data_hit(e: &Entry, step_crates: &HashMap<String, usize>, at: usize) -> Optio
     // A path is added when it has no old path, the old path is in another crate, or the entry
     // became a link or a submodule.
     let added = e.old.as_ref().is_none_or(|o| crate_of(o) != crate_of(new))
-        || (special(&e.new_mode) && !special(&e.old_mode));
+        || (special(&e.new_mode) && !special(&e.old_mode))
+        // A regular `.rs` file renamed or copied to a data path (D7-2).
+        || (matches!(e.status, 'R' | 'C')
+            && !special(&e.old_mode)
+            && e.old.as_ref().is_some_and(|o| o.ends_with(".rs")));
     (added || !protected(new)).then(|| new.clone())
 }
 
