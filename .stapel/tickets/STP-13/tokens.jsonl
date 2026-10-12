@@ -10,3 +10,4 @@
 {"source":"estimate","estimate":49208,"v":1,"id":"t-7728d0ffdb01","at":"2026-10-12T10:33:38Z","ticket":"STP-13","role":"drift","model":"claude-sonnet-5-5","step":"4","note":"drift review step 4; subagent_tokens of the end notice"}
 {"source":"estimate","estimate":37767,"v":1,"id":"t-1ecc3fdef253","at":"2026-10-12T10:34:34Z","ticket":"STP-13","role":"builder","model":"claude-haiku-5-5","step":"5","note":"builder step 5 (docs); subagent_tokens of the end notice"}
 {"source":"estimate","estimate":147146,"v":1,"id":"t-aa4461ae7144","at":"2026-10-12T11:33:59Z","ticket":"STP-13","role":"builder","model":"claude-sonnet-5-5","step":"4b","note":"builder step 4b; subagent_tokens of the end notice, not a sum"}
+{"source":"estimate","estimate":56158,"v":1,"id":"t-e1fdfb78d29f","at":"2026-10-12T11:35:50Z","ticket":"STP-13","role":"drift","model":"claude-sonnet-5-5","step":"4b","note":"drift review step 4b; subagent_tokens of the end notice"}
