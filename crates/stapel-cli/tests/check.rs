@@ -3542,6 +3542,303 @@ fn crates_io_and_member_dependencies_are_allowed() {
     }
     allowed(dir, "deleted entries");
 }
+// ---- STP-13 AC-3, AC-4: other manifest tables, dev-dependencies added ----
+
+const TBL_ROOT: &str = "[package]\nname = \"rootpkg\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+    [features]\nf1 = []\nf2 = [\"f1\"]\n\n[lints.rust]\nunused = \"warn\"\n\n\
+    [workspace]\nmembers = [\"crates/tiny\", \"crates/old\", \"crates/bare\"]\nresolver = \"2\"\n\n\
+    [workspace.package]\nedition = \"2018\"\n\n[workspace.lints.rust]\nunused = \"warn\"\n\
+    dead_code = \"warn\"\n\n[patch.crates-io]\npa = { path = \"libs/pa\" }\n\
+    pa2 = { path = \"libs/pa2\" }\n\n[patch.\"https://example.invalid/reg\"]\n\
+    pb = { path = \"libs/pb\" }\n\n[replace]\n\"pc:1.0.0\" = { path = \"libs/pc\" }\n\n\
+    [profile.dev]\nopt-level = 0\n\n[profile.test]\ndebug-assertions = true\noverflow-checks = true\n\n\
+    [profile.dev.build-override]\nopt-level = 1\n";
+const TBL_TINY: &str = "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+    [features]\nf = []\ng = [\"f\"]\n\n[lints]\nworkspace = true\n\n\
+    [patch.crates-io]\npm = { path = \"../../libs/pm\" }\n\n[profile.release]\nlto = false\n\n\
+    [dependencies]\nplain = \"1\"\n\n[dev-dependencies]\ndevdep = \"1\"\n";
+const TBL_OLD: &str = "[project]\nname = \"old\"\nversion = \"0.1.0\"\nedition = \"2015\"\n";
+const TBL_BARE: &str = "[package]\nname = \"bare\"\nversion = \"0.1.0\"\n";
+
+/// A repository whose manifests hold every table of STP-13 AC-3 before the ticket.
+fn table_repo() -> (TempDir, TempDir, std::path::PathBuf) {
+    build_input_repo(|dir| {
+        write(dir, "Cargo.toml", TBL_ROOT);
+        write(dir, "src/lib.rs", "");
+        write(dir, DEP_MEMBER, TBL_TINY);
+        write(dir, "crates/old/Cargo.toml", TBL_OLD);
+        write(dir, "crates/old/src/lib.rs", "");
+        write(dir, "crates/bare/Cargo.toml", TBL_BARE);
+        write(dir, "crates/bare/src/lib.rs", "");
+    })
+}
+
+/// Commits `text` as `path` and records `what` in `missed` unless the check gives the build-input
+/// outcome naming `path`; the commit is dropped afterwards.
+fn probe(dir: &Path, path: &str, text: &str, what: &str, missed: &mut Vec<String>) {
+    write(dir, path, text);
+    commit(dir, &format!("ABC-1: {what}"));
+    let (code, out) = check_env(dir, &[]);
+    let want = format!(
+        "step 1: unverified: build-input-changed: {path} at {}",
+        head7(dir)
+    );
+    if code != 1 || !out.lines().any(|l| l == want) {
+        missed.push(format!("{path}: {what}"));
+    }
+    git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+}
+
+#[test]
+fn patch_profile_features_lints_and_edition_are_unverified() {
+    let (repo, _scripts, dumps) = table_repo();
+    let dir = repo.path();
+    let (root, tiny, old, bare) = (
+        "Cargo.toml",
+        DEP_MEMBER,
+        "crates/old/Cargo.toml",
+        "crates/bare/Cargo.toml",
+    );
+    // Each case edits `from` to `to` in `path` and expects the build-input outcome naming it.
+    let mut cases: Vec<(&str, &str, &str)> = Vec::new();
+    let mut case = |path: &'static str, from: &'static str, to: &'static str| {
+        cases.push((path, from, to));
+    };
+    // `[patch]`: a key changed, added and deleted; a table added and deleted; a URL table.
+    case(
+        root,
+        "pa = { path = \"libs/pa\" }",
+        "pa = { path = \"libs/x\" }",
+    );
+    case(
+        root,
+        "pa2 = { path = \"libs/pa2\" }\n",
+        "pa2 = { path = \"libs/pa2\" }\npa3 = \"1\"\n",
+    );
+    case(root, "pa2 = { path = \"libs/pa2\" }\n", "");
+    case(
+        root,
+        "pb = { path = \"libs/pb\" }",
+        "pb = { path = \"libs/other\" }",
+    );
+    case(
+        root,
+        "pb = { path = \"libs/pb\" }\n",
+        "pb = { path = \"libs/pb\" }\npb2 = \"1\"\n",
+    );
+    case(
+        root,
+        "[patch.\"https://example.invalid/reg\"]\npb = { path = \"libs/pb\" }\n\n",
+        "",
+    );
+    case(
+        root,
+        "[replace]\n",
+        "[patch.\"https://example.invalid/new\"]\npn = \"1\"\n\n[replace]\n",
+    );
+    case(
+        root,
+        "[patch.crates-io]\npa = { path = \"libs/pa\" }\npa2 = { path = \"libs/pa2\" }\n\n",
+        "",
+    );
+    // `[replace]`.
+    case(root, "{ path = \"libs/pc\" }", "{ path = \"libs/pd\" }");
+    case(
+        root,
+        "[replace]\n\"pc:1.0.0\" = { path = \"libs/pc\" }\n",
+        "[replace]\n\"pc:1.0.0\" = { path = \"libs/pc\" }\n\"pe:1.0.0\" = { path = \"libs/pe\" }\n",
+    );
+    case(
+        root,
+        "[replace]\n\"pc:1.0.0\" = { path = \"libs/pc\" }\n\n",
+        "",
+    );
+    // A `[patch]` in a member manifest: cargo ignores it, the check still counts it.
+    case(
+        tiny,
+        "pm = { path = \"../../libs/pm\" }",
+        "pm = { path = \"../../libs/other\" }",
+    );
+    case(
+        tiny,
+        "[patch.crates-io]\npm = { path = \"../../libs/pm\" }\n\n",
+        "",
+    );
+    case(
+        bare,
+        "version = \"0.1.0\"\n",
+        "version = \"0.1.0\"\n\n[patch.crates-io]\npx = \"1\"\n",
+    );
+    // `[profile]`: `[profile.test]`, a build override, a new profile, a deleted one, a member's.
+    case(root, "debug-assertions = true", "debug-assertions = false");
+    case(root, "overflow-checks = true\n", "");
+    case(
+        root,
+        "overflow-checks = true\n",
+        "overflow-checks = true\nlto = true\n",
+    );
+    case(
+        root,
+        "[profile.dev.build-override]\nopt-level = 1\n",
+        "[profile.dev.build-override]\nopt-level = 3\n",
+    );
+    case(root, "\n[profile.dev.build-override]\nopt-level = 1\n", "");
+    case(
+        root,
+        "[profile.test]\ndebug-assertions = true\noverflow-checks = true\n\n",
+        "",
+    );
+    case(
+        root,
+        "[profile.dev]\nopt-level = 0\n",
+        "[profile.dev]\nopt-level = 0\n\n[profile.bench]\nlto = true\n",
+    );
+    case(root, "[profile.dev]\nopt-level = 0\n\n", "");
+    case(tiny, "lto = false", "lto = true");
+    case(
+        bare,
+        "version = \"0.1.0\"\n",
+        "version = \"0.1.0\"\n\n[profile.test]\nopt-level = 3\n",
+    );
+    // `[features]`: a feature added, changed and deleted; the table added and deleted.
+    case(root, "f2 = [\"f1\"]\n", "f2 = [\"f1\"]\nf3 = []\n");
+    case(root, "f2 = [\"f1\"]\n", "f2 = []\n");
+    case(root, "f2 = [\"f1\"]\n", "");
+    case(root, "[features]\nf1 = []\nf2 = [\"f1\"]\n\n", "");
+    case(tiny, "g = [\"f\"]\n", "");
+    case(
+        bare,
+        "version = \"0.1.0\"\n",
+        "version = \"0.1.0\"\n\n[features]\nz = []\n",
+    );
+    // `[lints]` and `[workspace.lints]`.
+    case(
+        root,
+        "[lints.rust]\nunused = \"warn\"\n",
+        "[lints.rust]\nunused = \"allow\"\n",
+    );
+    case(root, "[lints.rust]\nunused = \"warn\"\n\n", "");
+    case(tiny, "workspace = true", "workspace = false");
+    case(tiny, "[lints]\nworkspace = true\n\n", "");
+    case(
+        bare,
+        "version = \"0.1.0\"\n",
+        "version = \"0.1.0\"\n\n[lints.clippy]\nall = \"allow\"\n",
+    );
+    case(root, "dead_code = \"warn\"", "dead_code = \"allow\"");
+    case(root, "dead_code = \"warn\"\n", "");
+    case(
+        root,
+        "dead_code = \"warn\"\n",
+        "dead_code = \"warn\"\n\n[workspace.lints.clippy]\nall = \"warn\"\n",
+    );
+    case(
+        root,
+        "[workspace.lints.rust]\nunused = \"warn\"\ndead_code = \"warn\"\n\n",
+        "",
+    );
+    case(
+        tiny,
+        "[lints]\nworkspace = true\n",
+        "[lints]\nworkspace = true\n\n[workspace.lints.rust]\nunused = \"allow\"\n",
+    );
+    // `edition` of `[package]`, `[project]` and `[workspace.package]`.
+    case(root, "edition = \"2021\"", "edition = \"2015\"");
+    case(root, "edition = \"2021\"\n", "");
+    case(tiny, "edition = \"2021\"", "edition.workspace = true");
+    case(tiny, "edition = \"2021\"", "edition = \"2018\"");
+    case(old, "edition = \"2015\"", "edition = \"2018\"");
+    case(old, "edition = \"2015\"\n", "");
+    case(
+        bare,
+        "version = \"0.1.0\"\n",
+        "version = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    case(
+        root,
+        "[workspace.package]\nedition = \"2018\"",
+        "[workspace.package]\nedition = \"2015\"",
+    );
+    case(
+        root,
+        "[workspace.package]\nedition = \"2018\"\n",
+        "[workspace.package]\n",
+    );
+    case(
+        tiny,
+        "[features]",
+        "[workspace.package]\nedition = \"2021\"\n\n[features]",
+    );
+    let mut missed = Vec::new();
+    for (path, from, to) in cases {
+        let old = read(dir, path);
+        assert!(old.contains(from), "{path} has no {from:?}");
+        probe(
+            dir,
+            path,
+            &old.replacen(from, to, 1),
+            &format!("{from:?} -> {to:?}"),
+            &mut missed,
+        );
+    }
+    assert!(
+        missed.is_empty(),
+        "no build-input outcome for:\n{}",
+        missed.join("\n")
+    );
+    assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), 0);
+}
+
+#[test]
+fn green_adding_a_dev_dependency_is_unverified() {
+    let (repo, _scripts, dumps) = dep_repo();
+    let dir = repo.path();
+    let m = DEP_MEMBER;
+    let base = read(dir, m);
+    let mut missed = Vec::new();
+    // An entry without a source that a non-RED commit adds to a `dev-dependencies` table.
+    let dev = "devdep = \"1\"\n";
+    for entry in [
+        "newdev = \"1\"\n",
+        "newdev = { version = \"1\" }\n",
+        "newdev = { version = \"1\", features = [\"f\"], default-features = false }\n",
+        "newdev = { workspace = true }\n",
+        "newdev.workspace = true\n",
+        "newdev.version = \"1\"\n",
+    ] {
+        let text = base.replacen(dev, &format!("{dev}{entry}"), 1);
+        probe(dir, m, &text, entry, &mut missed);
+    }
+    for table in [
+        "[dev-dependencies.newdev]\nversion = \"1\"\n",
+        "[dev_dependencies]\nnewdev = \"1\"\n",
+        "[target.'cfg(unix)'.dev-dependencies]\nnewdev = \"1\"\n",
+        "[target.\"cfg(unix)\".dev-dependencies]\nnewdev = \"1\"\n",
+        "[target.x86_64-unknown-linux-gnu.dev-dependencies]\nnewdev = \"1\"\n",
+        "[target.'cfg(unix)'.dev_dependencies]\nnewdev = \"1\"\n",
+        "[target.'cfg(unix)'.dev-dependencies.newdev]\nversion = \"1\"\n",
+    ] {
+        probe(dir, m, &format!("{base}\n{table}"), table, &mut missed);
+    }
+    // A dependency moved from `[dependencies]` to `[dev-dependencies]` is a new dev-dependency.
+    let moved = base
+        .replacen("plain = \"1\"\n", "", 1)
+        .replacen(dev, &format!("{dev}plain = \"1\"\n"), 1);
+    probe(dir, m, &moved, "moved to dev-dependencies", &mut missed);
+    // The root manifest and the manifest of another member.
+    for path in ["Cargo.toml", "libs/a/Cargo.toml"] {
+        let old = read(dir, path);
+        let text = format!("{old}\n[dev-dependencies]\nnewdev = \"1\"\n");
+        probe(dir, path, &text, "added dev-dependencies table", &mut missed);
+    }
+    assert!(
+        missed.is_empty(),
+        "no build-input outcome for:\n{}",
+        missed.join("\n")
+    );
+    assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), 0);
+}
+
 #[test]
 fn build_input_reading_fails_closed() {
     // A manifest that does not parse hides its `build` key: a change to a file next to it counts
