@@ -3067,7 +3067,7 @@ fn unchanged_build_inputs_are_named() {
     write(dir, "docs/note.md", "note\n");
     write(dir, "notes/build.rs.bak", "x\n");
     write(dir, "notes/xrust-toolchain", "x\n");
-    write(dir, "crates/tiny/tests/golden/g.txt", "g\n");
+    write(dir, "notes/golden/g.txt", "g\n");
     commit(dir, "ABC-1: changes that are no build inputs");
     // Real cargo again: the report must show the line and the steps keep their outcomes.
     let real = real_cargo();
@@ -3101,6 +3101,19 @@ fn unchanged_build_inputs_are_named() {
     assert!(
         text.contains(&format!(
             "step 1: unverified: build-input-changed: crates/tiny/build.rs at {sha}"
+        )),
+        "{text}"
+    );
+    // STP-13 AC-5: the same data file under the tests folder is a build input.
+    git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+    write(dir, "crates/tiny/tests/golden/g.txt", "g\n");
+    commit(dir, "ABC-1: a data file under the tests folder");
+    let sha = head7(dir);
+    let (code, text) = check_env(dir, &[]);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        text.contains(&format!(
+            "step 1: unverified: build-input-changed: crates/tiny/tests/golden/g.txt at {sha}"
         )),
         "{text}"
     );
@@ -5026,4 +5039,66 @@ fn no_run_after_a_build_input_hit() {
     );
     let runs = std::fs::read_to_string(&late).unwrap_or_default();
     assert_eq!(runs.lines().count(), 0, "cargo ran after the hit: {runs}");
+}
+
+// STP-13 AC-5: a non-RED commit that adds a data file under `crates/*/tests/`, or changes, deletes or
+// renames one in a crate without step tests, gives the build-input outcome; a change in a crate with
+// a step test stays STP-4's `tests-changed`.
+#[test]
+fn test_data_change_is_unverified() {
+    const BIG: &str = "line one of the data\nline two of the data\nline three of the data\nline four of the data\n";
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        write(dir, "crates/other/tests/data/old.json", BIG);
+        write(dir, "crates/other/tests/data/gone.json", "{\"gone\": 1}\n");
+        write(dir, "crates/other/tests/data/edit.json", "{\"edit\": 1}\n");
+        write(dir, "crates/tiny/tests/data/golden.txt", "golden\n");
+    });
+    let dir = repo.path();
+    // Added files: in the step crate, in another crate, nested, with spaces in the path.
+    for (what, path) in [
+        (
+            "added in the step crate",
+            "crates/tiny/tests/data/expected.json",
+        ),
+        ("added in another crate", "crates/other/tests/expected.json"),
+        ("added in a nested folder", "crates/other/tests/a/b/c/d.txt"),
+        (
+            "added with spaces",
+            "crates/tiny/tests/my data/ex pected.txt",
+        ),
+    ] {
+        write(dir, path, "expected\n");
+        changed_case(dir, &dumps, what, path);
+    }
+    // Change, delete and rename in a crate without step tests.
+    write(dir, "crates/other/tests/data/edit.json", "{\"edit\": 2}\n");
+    changed_case(dir, &dumps, "changed", "crates/other/tests/data/edit.json");
+    std::fs::remove_file(dir.join("crates/other/tests/data/gone.json")).unwrap();
+    changed_case(dir, &dumps, "deleted", "crates/other/tests/data/gone.json");
+    std::fs::rename(
+        dir.join("crates/other/tests/data/old.json"),
+        dir.join("crates/other/tests/data/new.json"),
+    )
+    .unwrap();
+    changed_case(dir, &dumps, "renamed", "crates/other/tests/data/old.json");
+    // A submodule entry is a file.
+    let sub = dir.join("crates/other/tests/sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    let nested = |args: &[&str]| {
+        git(
+            &sub,
+            &[&["-c", "user.name=x", "-c", "user.email=test-user.invalid"], args].concat(),
+        )
+    };
+    nested(&["init", "-q"]);
+    nested(&["commit", "-q", "--allow-empty", "-m", "nested"]);
+    changed_case(dir, &dumps, "a submodule entry", "crates/other/tests/sub");
+    std::fs::remove_dir_all(&sub).unwrap();
+    // A change of a data file in the step crate keeps STP-4's outcome.
+    write(dir, "crates/tiny/tests/data/golden.txt", "rewritten\n");
+    commit(dir, "ABC-1: the golden changes");
+    let (code, text) = check_env(dir, &[]);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "tests-changed", "{text}");
+    assert!(!text.contains("build-input"), "{text}");
 }
