@@ -5740,6 +5740,42 @@ fn delete_rename_or_chmod_in_a_step_crate_is_unverified() {
     changed_case(dir, &dumps, "submodule bump", "crates/tiny/tests/sub");
 }
 
+// STP-13 AC-5 (D7-1, D7-2): in a step crate a link whose target changes, and a regular `.rs` file
+// renamed to a data path, give the build-input outcome naming the path.
+#[test]
+fn link_retarget_and_rs_to_data_rename_in_a_step_crate_are_unverified() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        link(dir, "a.json", "crates/tiny/tests/data/l");
+        write(dir, "crates/tiny/tests/spare.rs", "pub fn spare() -> u32 {\n    7\n}\n");
+    });
+    let dir = repo.path();
+    let l = dir.join("crates/tiny/tests/data/l");
+    std::fs::remove_file(&l).unwrap();
+    std::os::unix::fs::symlink("b.json", &l).unwrap();
+    // The step line stays STP-4's `tests-changed` for a link whose target changed; the suite line
+    // gives the build-input outcome.
+    commit(dir, "ABC-1: link retarget");
+    let (code, text) = check_env(dir, &[]);
+    let want = format!(
+        "suite: unverified: build-input-changed: crates/tiny/tests/data/l at {}",
+        head7(dir)
+    );
+    assert_eq!(code, 1, "{text}");
+    assert!(text.lines().any(|l| l == want), "link retarget: {text}");
+    git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+    std::fs::rename(
+        dir.join("crates/tiny/tests/spare.rs"),
+        dir.join("crates/tiny/tests/data/spare.json"),
+    )
+    .unwrap();
+    changed_case(
+        dir,
+        &dumps,
+        "rs to data rename",
+        "crates/tiny/tests/data/spare.json",
+    );
+}
+
 // STP-13 AC-5 (R-2, DR-3): a crate is a step crate for a commit only after the RED of a step with a
 // test in it; an earlier edit of its data file is a build-input change.
 #[test]
