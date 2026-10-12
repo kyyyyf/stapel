@@ -708,28 +708,83 @@ fn dependency_redirect(
     let old = dependency_entries(before);
     dependency_entries(after).iter().any(|(id, entry)| {
         let old_entry = old.get(id);
-        if old_entry == Some(entry) {
-            return false;
-        }
-        if old_entry.is_none() && id.1 == "dev" {
+        if old_entry != Some(entry) && old_entry.is_none() && id.1 == "dev" {
             return true;
         }
-        let Some(new_src) = dependency_source(entry) else {
-            return true;
-        };
-        let old_src = old_entry.and_then(dependency_source).unwrap_or_default();
-        if new_src == old_src {
-            return false;
-        }
-        if new_src.is_empty() {
-            return old_src.contains_key("path") || old_src.contains_key("git");
-        }
-        let member_path = id.1 != "dev"
-            && new_src.keys().all(|k| matches!(*k, "path" | "package"))
-            && matches!(new_src.get("path"), Some(toml::Value::String(rel))
-                if resolve(manifest, rel).is_some_and(|f| is_member(&f)));
-        !member_path
+        entry_redirect(id, entry, old_entry, manifest, is_member)
     })
+}
+
+/// The pure redirect of an entry (STP-13 AC-1): it changes and its new source is not empty and no
+/// member `path`, or it moves from `path` or `git` to an empty source, or it is neither a string
+/// nor a table. An entry added to `dev-dependencies` with an empty source is no redirect.
+fn entry_redirect(
+    id: &(String, &'static str, String),
+    entry: &toml::Value,
+    old_entry: Option<&toml::Value>,
+    manifest: &str,
+    is_member: &dyn Fn(&str) -> bool,
+) -> bool {
+    if old_entry == Some(entry) {
+        return false;
+    }
+    let Some(new_src) = dependency_source(entry) else {
+        return true;
+    };
+    let old_src = old_entry.and_then(dependency_source).unwrap_or_default();
+    if new_src == old_src {
+        return false;
+    }
+    if new_src.is_empty() {
+        return old_src.contains_key("path") || old_src.contains_key("git");
+    }
+    let member_path = id.1 != "dev"
+        && new_src.keys().all(|k| matches!(*k, "path" | "package"))
+        && matches!(new_src.get("path"), Some(toml::Value::String(rel))
+            if resolve(manifest, rel).is_some_and(|f| is_member(&f)));
+    !member_path
+}
+
+/// Whether a manifest change makes a `dev-dependencies` entry point at other code (STP-13 AC-6):
+/// the pure redirect of a `dev` entry, without the rule that an added entry is a hit. A crates.io
+/// dev-dependency added is no redirect. A text that does not parse gives `false`.
+pub(crate) fn dev_redirect(before: &str, after: &str, manifest: &str) -> bool {
+    let (Ok(b), Ok(a)) = (
+        toml::from_str::<toml::Table>(before),
+        toml::from_str::<toml::Table>(after),
+    ) else {
+        return false;
+    };
+    let old = dependency_entries(&b);
+    dependency_entries(&a)
+        .iter()
+        .filter(|(id, _)| id.1 == "dev")
+        .any(|(id, entry)| entry_redirect(id, entry, old.get(id), manifest, &|_| false))
+}
+
+/// The files a manifest names: `build` of `[package]` or `[project]`, and `path` of `[lib]`,
+/// `[[bin]]`, `[[example]]` and `[[bench]]`, relative to the repository (STP-13 AC-8).
+pub(crate) fn target_files(manifest_path: &str, text: &str) -> Vec<String> {
+    let Ok(t) = toml::from_str::<toml::Table>(text) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for section in ["package", "project"] {
+        if let Some(toml::Value::String(f)) = t.get(section).and_then(|s| s.get("build")) {
+            out.extend(resolve(manifest_path, f));
+        }
+    }
+    let path_of = |v: &toml::Value| match v.get("path") {
+        Some(toml::Value::String(f)) => resolve(manifest_path, f),
+        _ => None,
+    };
+    out.extend(t.get("lib").and_then(path_of));
+    for k in ["bin", "example", "bench"] {
+        if let Some(toml::Value::Array(items)) = t.get(k) {
+            out.extend(items.iter().filter_map(path_of));
+        }
+    }
+    out
 }
 
 /// The folders of the workspace members of a commit: the root package's folder (the empty string)

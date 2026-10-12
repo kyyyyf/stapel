@@ -2,12 +2,13 @@
 //! `unpaired`, `duplicate`, `no-tests`, `red-changes-code`, `tests-changed`; and the notes
 //! `superseded by <label>` and `retired by <label>`.
 
+use crate::build_inputs::{dev_redirect, target_files};
 use crate::includes::Includes;
 use crate::rust_tests::{helper_text, test_functions};
 use crate::steps::{
-    Marker, Step, StepCommit, TestId, changes, git, git_text, parent, show, step_tests,
+    Change, Marker, Step, StepCommit, TestId, changes, git, git_text, parent, show, step_tests,
 };
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 /// At most this many paths or names are named in one reason.
@@ -41,6 +42,8 @@ pub struct Analysis {
 struct Files<'a> {
     root: &'a Path,
     cache: HashMap<(String, String), Option<String>>,
+    /// The files that the manifests of a commit name, per commit (STP-13 AC-8).
+    named: HashMap<String, HashSet<String>>,
 }
 
 impl Files<'_> {
@@ -52,6 +55,25 @@ impl Files<'_> {
         let v = show(self.root, commit, path);
         self.cache.insert(key, v.clone());
         v
+    }
+
+    /// The files named by `build` and target `path` keys of every manifest at a commit.
+    fn named_files(&mut self, commit: &str) -> &HashSet<String> {
+        if !self.named.contains_key(commit) {
+            let mut set = HashSet::new();
+            let listed =
+                git(self.root, &["ls-tree", "-r", "-z", "--name-only", commit]).unwrap_or_default();
+            for path in listed.split(|b| *b == 0) {
+                let path = String::from_utf8_lossy(path).into_owned();
+                if path.rsplit('/').next() == Some("Cargo.toml")
+                    && let Some(text) = self.get(commit, &path)
+                {
+                    set.extend(target_files(&path, &text));
+                }
+            }
+            self.named.insert(commit.to_string(), set);
+        }
+        &self.named[commit]
     }
 }
 
@@ -97,7 +119,13 @@ pub fn under_tests(path: &str) -> bool {
 /// Whether a path a RED commit changes is code: a `.rs` file outside `crates/*/tests/`, a
 /// `build.rs`, a manifest change outside `dev-dependencies`, or any path outside the test, docs,
 /// ticket and markdown paths.
-fn is_code(files: &mut Files, red: &str, base: &str, old: Option<&str>, new: Option<&str>) -> bool {
+fn is_code_stp4(
+    files: &mut Files,
+    red: &str,
+    base: &str,
+    old: Option<&str>,
+    new: Option<&str>,
+) -> bool {
     let path = new.or(old).unwrap_or("");
     let name = path.rsplit('/').next().unwrap_or(path);
     if name == "build.rs" {
@@ -126,17 +154,56 @@ fn is_code(files: &mut Files, red: &str, base: &str, old: Option<&str>, new: Opt
     true
 }
 
+/// `is_code_stp4` and the STP-13 rules (AC-6, AC-7, AC-8): a dev-dependency redirect in a manifest, a
+/// symbolic link, manifest, `.cargo` path or toolchain file under `crates/*/tests/`, and a file that a
+/// manifest at the RED or its parent names by `build` or a target `path`.
+fn is_code(files: &mut Files, red: &str, base: &str, c: &Change) -> bool {
+    let (old, new) = (c.old.as_deref(), c.new.as_deref());
+    if is_code_stp4(files, red, base, old, new) {
+        return true;
+    }
+    let paths: Vec<&str> = [old, new].into_iter().flatten().collect();
+    let link = c.old_mode == "120000" || c.new_mode == "120000";
+    for path in &paths {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        if under_tests(path)
+            && (link
+                || name == "Cargo.toml"
+                || name == "rust-toolchain"
+                || name == "rust-toolchain.toml"
+                || path.split('/').any(|p| p == ".cargo"))
+        {
+            return true;
+        }
+        if files.named_files(red).contains(*path) || files.named_files(base).contains(*path) {
+            return true;
+        }
+    }
+    let manifest = paths
+        .iter()
+        .any(|p| p.rsplit('/').next() == Some("Cargo.toml"));
+    if manifest && let (Some(o), Some(n)) = (old, new) {
+        let before = files.get(base, o);
+        let after = files.get(red, n);
+        if let (Some(b), Some(a)) = (before, after) {
+            return dev_redirect(&b, &a, n);
+        }
+    }
+    false
+}
+
 /// Whether a RED commit changes code (STP-4 AC-2); such a commit is no RED for the build-input
 /// outcome.
 pub fn red_changes_code(root: &Path, red: &str) -> Result<bool, String> {
     let mut files = Files {
         root,
         cache: HashMap::new(),
+        named: HashMap::new(),
     };
     let base = parent(root, red);
     Ok(changes(root, red)?
         .iter()
-        .any(|c| is_code(&mut files, red, &base, c.old.as_deref(), c.new.as_deref())))
+        .any(|c| is_code(&mut files, red, &base, c)))
 }
 
 /// A part of a step's protected content.
@@ -216,6 +283,7 @@ pub fn analyse(
     let mut files = Files {
         root,
         cache: HashMap::new(),
+        named: HashMap::new(),
     };
     let mut includes = Includes::new(root);
     // Every step commit of the ticket by sha: its label and marker.
@@ -283,7 +351,7 @@ pub fn analyse(
         let changed = changes(root, &red)?;
         let code: Vec<String> = changed
             .iter()
-            .filter(|c| is_code(&mut files, &red, &base, c.old.as_deref(), c.new.as_deref()))
+            .filter(|c| is_code(&mut files, &red, &base, c))
             .map(|c| c.new.clone().or(c.old.clone()).unwrap_or_default())
             .collect();
         let mut code = code;

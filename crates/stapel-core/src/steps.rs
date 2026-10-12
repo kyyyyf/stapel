@@ -186,14 +186,17 @@ pub fn show(root: &Path, commit: &str, path: &str) -> Option<String> {
 #[derive(Debug, Clone)]
 pub struct Change {
     pub status: char,
+    /// Git modes before and after (`000000` for an absent side), e.g. `120000` for a symbolic link.
+    pub old_mode: String,
+    pub new_mode: String,
     pub old: Option<String>,
     pub new: Option<String>,
 }
 
-/// The changes of a commit against its first parent, renames detected.
+/// The changes of a commit against its first parent, renames detected, with file modes.
 pub fn changes(root: &Path, sha: &str) -> Result<Vec<Change>, String> {
     let base = parent(root, sha);
-    let raw = git(root, &["diff", "--name-status", "-M", "-z", &base, sha])?;
+    let raw = git(root, &["diff", "--raw", "-M", "-z", &base, sha])?;
     let fields: Vec<String> = raw
         .split(|b| *b == 0)
         .map(|f| String::from_utf8_lossy(f).into_owned())
@@ -201,33 +204,34 @@ pub fn changes(root: &Path, sha: &str) -> Result<Vec<Change>, String> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < fields.len() {
-        let status = fields[i].chars().next();
-        let Some(status) = status else {
+        let Some(meta) = fields[i].strip_prefix(':') else {
             i += 1;
             continue;
         };
-        if status == 'R' || status == 'C' {
-            if i + 2 >= fields.len() {
-                break;
-            }
-            out.push(Change {
-                status,
-                old: Some(fields[i + 1].clone()),
-                new: Some(fields[i + 2].clone()),
-            });
-            i += 3;
-        } else {
-            let Some(path) = fields.get(i + 1) else {
-                break;
-            };
-            let (old, new) = match status {
-                'A' => (None, Some(path.clone())),
-                'D' => (Some(path.clone()), None),
-                _ => (Some(path.clone()), Some(path.clone())),
-            };
-            out.push(Change { status, old, new });
-            i += 2;
+        let parts: Vec<&str> = meta.split(' ').collect();
+        let status = parts.get(4).and_then(|s| s.chars().next()).unwrap_or('M');
+        let mode = |n: usize| parts.get(n).copied().unwrap_or("").to_string();
+        let (old_mode, new_mode) = (mode(0), mode(1));
+        let two = status == 'R' || status == 'C';
+        let n = if two { 2 } else { 1 };
+        if i + n >= fields.len() {
+            break;
         }
+        let first = fields[i + 1].clone();
+        let (old, new) = match status {
+            'A' => (None, Some(first)),
+            'D' => (Some(first), None),
+            _ if two => (Some(first), Some(fields[i + 2].clone())),
+            _ => (Some(first.clone()), Some(first)),
+        };
+        out.push(Change {
+            status,
+            old_mode,
+            new_mode,
+            old,
+            new,
+        });
+        i += 1 + n;
     }
     Ok(out)
 }
