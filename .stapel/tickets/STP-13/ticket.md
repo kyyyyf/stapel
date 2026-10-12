@@ -132,14 +132,14 @@ Terms of STP-6 (Range, non-RED commit, build-input outcome) hold. New terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | IF a non-RED commit makes a redirect in any dependency table of any `Cargo.toml` THEN the check gives the build-input outcome naming the manifest. | `check::dependency_redirect_is_unverified` |
+| AC-1 | IF a non-RED commit makes a redirect in any dependency table of any `Cargo.toml` THEN the check gives the build-input outcome naming the manifest. | `check::dependency_redirect_is_unverified`, `check::redirect_under_both_spellings_is_unverified`, `check::inherited_member_path_in_dev_table_is_unverified`, `check::absolute_path_names_no_member` |
 | AC-2 | WHEN a non-RED commit adds or changes an entry of `dependencies` or `build-dependencies` whose new source is empty or names a member folder, or changes a `dev-dependencies` entry without changing its source, THE steps keep their outcomes. | `check::crates_io_and_member_dependencies_are_allowed` |
 | AC-3 | IF a non-RED commit adds, changes or deletes `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `[workspace.lints]`, or `edition` of `[package]`, `[project]` or `[workspace.package]`, of any `Cargo.toml` THEN the check gives the build-input outcome naming the manifest. | `check::patch_profile_features_lints_and_edition_are_unverified` |
 | AC-4 | IF a non-RED commit adds an entry to a `dev-dependencies` table THEN the check gives the build-input outcome naming the manifest. | `check::green_adding_a_dev_dependency_is_unverified` |
 | AC-5 | IF a non-RED commit adds an entry under `crates/*/tests/` that is not a regular `.rs` file (a symbolic link or submodule entry counts whatever its name, D3-2), or changes, deletes or renames such an entry in a crate's tests folder that holds no step test of the ticket, THEN the check gives the build-input outcome naming it. | `check::test_data_change_is_unverified` |
-| AC-6 | IF a RED makes a redirect in a `dev-dependencies` table THEN the step is `red-changes-code` naming the manifest. | `check::red_redirecting_a_dev_dependency_changes_code` |
+| AC-6 | IF a RED makes a redirect in a `dev-dependencies` table THEN the step is `red-changes-code` naming the manifest. | `check::red_redirecting_a_dev_dependency_changes_code`, `check::red_inheriting_a_path_into_a_dev_table_changes_code` |
 | AC-7 | IF a RED adds, changes or deletes a `Cargo.toml`, a symbolic link, a path with a `.cargo` component, `rust-toolchain` or `rust-toolchain.toml` under `crates/*/tests/` THEN the step is `red-changes-code` naming it. | `check::red_adding_a_test_manifest_or_link_changes_code` |
-| AC-8 | IF a RED adds, changes or deletes a file that, at the RED or its parent, a manifest's `build` key of `[package]` or `[project]` or the `path` key of `[lib]`, `[[bin]]`, `[[example]]` or `[[bench]]` names THEN the step is `red-changes-code` naming the file. | `check::red_changing_a_build_or_target_file_changes_code` |
+| AC-8 | IF a RED adds, changes or deletes a file that, at the RED or its parent, a manifest's `build` key of `[package]` or `[project]` or the `path` key of `[lib]`, `[[bin]]`, `[[example]]` or `[[bench]]` names THEN the step is `red-changes-code` naming the file. | `check::red_changing_a_build_or_target_file_changes_code`, `red_fails_closed::unreadable_tree_counts_as_code` |
 
 ### Guarantees
 
@@ -180,7 +180,8 @@ repository with RED and GREEN steps. Heavy runs: `cargo test -j 4 … -- --test-
 |---|---|---|
 | Main path | crates.io, `workspace = true` and member dependencies added by a GREEN (member by glob, root package) | `check::crates_io_and_member_dependencies_are_allowed` |
 | Main path, RED | a RED adds a crates.io dev-dependency and a data file under `crates/*/tests/` | `check::red_adding_a_crates_io_dev_dependency_stays_valid` |
-| Negative | each source key in each table form and alias; a `path` entry moved to crates.io; `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `edition`; a dev-dependency added by a GREEN; a data file added, changed, deleted, renamed; RED-side items | `check::dependency_redirect_is_unverified`, `check::patch_profile_features_lints_and_edition_are_unverified`, `check::green_adding_a_dev_dependency_is_unverified`, `check::test_data_change_is_unverified`, `check::red_redirecting_a_dev_dependency_changes_code`, `check::red_adding_a_test_manifest_or_link_changes_code`, `check::red_changing_a_build_or_target_file_changes_code` |
+| Negative | each source key in each table form and alias; a `path` entry moved to crates.io; `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `edition`; a dev-dependency added by a GREEN; a data file added, changed, deleted, renamed; RED-side items | `check::dependency_redirect_is_unverified`, `check::patch_profile_features_lints_and_edition_are_unverified`, `check::green_adding_a_dev_dependency_is_unverified`, `check::test_data_change_is_unverified`, `check::red_redirecting_a_dev_dependency_changes_code`, `check::red_adding_a_test_manifest_or_link_changes_code`, `check::red_changing_a_build_or_target_file_changes_code`, `check::redirect_under_both_spellings_is_unverified`, `check::inherited_member_path_in_dev_table_is_unverified`, `check::absolute_path_names_no_member`, `check::red_inheriting_a_path_into_a_dev_table_changes_code`, `red_fails_closed::unreadable_tree_counts_as_code` |
+| Coverage (step 4b) | drift findings D1-L, D2-2, D2-L, D3-2, D3-L, D4-2, D4-L | `check::manifest_with_ac3_tables_added_deleted_renamed_is_unverified`, `check::link_named_rs_under_tests_is_data`, `check::data_moves_and_renames_are_unverified`, `check::version_description_and_dev_spelling_changes_are_allowed`, `check::member_globs_and_exclusions_are_read`, `check::red_changing_a_file_named_through_dots_or_a_subfolder_changes_code`, `check::red_edge_cases_of_named_files_and_dev_entries_change_code` |
 | Abuse | see the Abuse table | the Negative tests |
 
 ### Inputs
@@ -243,14 +244,14 @@ wait for the human.
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `check::dependency_redirect_is_unverified` |
+| AC-1 | `check::dependency_redirect_is_unverified`, `check::redirect_under_both_spellings_is_unverified`, `check::inherited_member_path_in_dev_table_is_unverified`, `check::absolute_path_names_no_member` |
 | AC-2 | `check::crates_io_and_member_dependencies_are_allowed` |
 | AC-3 | `check::patch_profile_features_lints_and_edition_are_unverified` |
 | AC-4 | `check::green_adding_a_dev_dependency_is_unverified` |
 | AC-5 | `check::test_data_change_is_unverified` |
-| AC-6 | `check::red_redirecting_a_dev_dependency_changes_code` |
+| AC-6 | `check::red_redirecting_a_dev_dependency_changes_code`, `check::red_inheriting_a_path_into_a_dev_table_changes_code` |
 | AC-7 | `check::red_adding_a_test_manifest_or_link_changes_code` |
-| AC-8 | `check::red_changing_a_build_or_target_file_changes_code` |
+| AC-8 | `check::red_changing_a_build_or_target_file_changes_code`, `red_fails_closed::unreadable_tree_counts_as_code` |
 
 ## Plan
 
