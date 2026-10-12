@@ -101,6 +101,8 @@ recommendation, waiting for the human's answer, and the build does not start bef
   `.cargo` and toolchain files). SR2-4 (any dependency added after a RED that did not compile) is an option of
   Open question 6: (d) a dependency entry added between such a RED and its GREEN gives the build-input
   outcome; it needs the RED's run result before the build-input rules, so it is not recommended here.
+- 2026-10-12: Decision: the human answered Open questions 1 to 7 "as recommended" (1a, 2a, 3b, 4b, 5a, 6a,
+  7a); every Assumption above is now a Decision. STP-15 takes the include and run part (plan step 5).
 
 ## Spec
 
