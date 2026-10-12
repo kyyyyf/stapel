@@ -3222,6 +3222,227 @@ fn other_workspace_keys_are_not_build_inputs() {
     assert!(!text.contains("build-input"), "{text}");
 }
 
+// ---- STP-13 AC-1, AC-2: dependency sources ----
+
+const DEP_MEMBER: &str = "crates/tiny/Cargo.toml";
+const DEP_BASE: &str = "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+    [dependencies]\nmovedpath = { path = \"../../libs/a\" }\n\
+    movedgit = { git = \"https://example.invalid/g\" }\nplain = \"1\"\n\n\
+    [dev-dependencies]\ndevdep = \"1\"\n\n[build-dependencies]\nbd = \"1\"\n";
+
+/// A repository whose root is a package and a workspace with members `crates/tiny`, `crates/other`
+/// and `libs/*` without `libs/skip`; `tiny` has dependencies of every kind before the ticket.
+fn dep_repo() -> (TempDir, TempDir, std::path::PathBuf) {
+    build_input_repo(|dir| {
+        write(
+            dir,
+            "Cargo.toml",
+            "[package]\nname = \"rootpkg\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+             [workspace]\nmembers = [\"crates/tiny\", \"crates/other\", \"libs/*\"]\n\
+             exclude = [\"libs/skip\"]\nresolver = \"2\"\n",
+        );
+        write(dir, "src/lib.rs", "");
+        for name in ["crates/other", "libs/a", "libs/b", "libs/skip"] {
+            let short = name.rsplit('/').next().unwrap();
+            write(
+                dir,
+                &format!("{name}/Cargo.toml"),
+                &format!(
+                    "[package]\nname = \"{short}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+                ),
+            );
+            write(dir, &format!("{name}/src/lib.rs"), "");
+        }
+        write(dir, DEP_MEMBER, DEP_BASE);
+    })
+}
+
+/// Applies one edit of `path` as a ticket commit and checks that the build-input outcome names it.
+fn dep_redirect(dir: &Path, dumps: &Path, path: &str, from: &str, to: &str) {
+    edit(dir, path, from, to);
+    changed_case(dir, dumps, &format!("{from:?} -> {to:?}"), path);
+}
+
+#[test]
+fn dependency_redirect_is_unverified() {
+    let (repo, _scripts, dumps) = dep_repo();
+    let dir = repo.path();
+    let m = DEP_MEMBER;
+    let plain = "plain = \"1\"\n";
+    // Each source key, in an inline table, dotted, and as a `[dependencies.x]` table.
+    for entry in [
+        "x = { path = \"../../fake\" }\n",
+        "x = { git = \"https://example.invalid/x\" }\n",
+        "x = { git = \"https://example.invalid/x\", branch = \"b\" }\n",
+        "x = { git = \"https://example.invalid/x\", tag = \"t\" }\n",
+        "x = { git = \"https://example.invalid/x\", rev = \"abc\" }\n",
+        "x = { version = \"1\", branch = \"b\" }\n",
+        "x = { version = \"1\", package = \"serde\" }\n",
+        "x = { version = \"1\", registry = \"r\" }\n",
+        "x = { version = \"1\", registry-index = \"https://example.invalid/i\" }\n",
+        "x.path = \"../../fake\"\n",
+        "x.git = \"https://example.invalid/x\"\n",
+        "x.package = \"serde\"\n",
+        "x = { path = \"../../libs/skip\" }\n",
+        "x = { path = \"../../libs\" }\n",
+        "x = { path = \"../tiny/src\" }\n",
+        "x = { path = \"../../../outside\" }\n",
+        // An entry that is not a string or a table.
+        "x = 5\n",
+        "x = true\n",
+        "x = [\"1\"]\n",
+    ] {
+        dep_redirect(dir, &dumps, m, plain, &format!("{plain}{entry}"));
+    }
+    for table in [
+        "[dependencies.x]\npath = \"../../fake\"\n",
+        "[dependencies.x]\nversion = \"1\"\ngit = \"https://example.invalid/x\"\n",
+        "[dev-dependencies.x]\npath = \"../../fake\"\n",
+        "[build-dependencies.x]\npackage = \"serde\"\n",
+        "[target.'cfg(unix)'.dependencies]\nx = { path = \"../../fake\" }\n",
+        "[target.\"cfg(unix)\".dependencies]\nx = { git = \"https://example.invalid/x\" }\n",
+        "[target.x86_64-unknown-linux-gnu.dependencies]\nx = { path = \"../../fake\" }\n",
+        "[target.'cfg(unix)'.dev-dependencies]\nx = { path = \"../../fake\" }\n",
+        "[target.'cfg(unix)'.build-dependencies]\nx = { path = \"../../fake\" }\n",
+        "[target.'cfg(unix)'.dependencies.x]\npath = \"../../fake\"\n",
+        // The underscore aliases.
+        "[dev_dependencies]\nx = { path = \"../../fake\" }\n",
+        "[build_dependencies]\nx = { git = \"https://example.invalid/x\" }\n",
+        "[target.'cfg(unix)'.dev_dependencies]\nx = { path = \"../../fake\" }\n",
+        "[target.'cfg(unix)'.build_dependencies]\nx = { path = \"../../fake\" }\n",
+    ] {
+        let old = read(dir, m);
+        write(dir, m, &format!("{old}\n{table}"));
+        changed_case(dir, &dumps, table.lines().next().unwrap(), m);
+    }
+    // A source change of an entry that exists.
+    dep_redirect(
+        dir,
+        &dumps,
+        m,
+        plain,
+        "plain = { version = \"1\", git = \"https://example.invalid/x\" }\n",
+    );
+    dep_redirect(dir, &dumps, m, plain, "plain = { path = \"../../fake\" }\n");
+    dep_redirect(
+        dir,
+        &dumps,
+        m,
+        plain,
+        "plain = { version = \"1\", package = \"serde\" }\n",
+    );
+    dep_redirect(
+        dir,
+        &dumps,
+        m,
+        "movedgit = { git = \"https://example.invalid/g\" }",
+        "movedgit = { git = \"https://example.invalid/other\" }",
+    );
+    dep_redirect(
+        dir,
+        &dumps,
+        m,
+        "movedpath = { path = \"../../libs/a\" }",
+        "movedpath = { path = \"../../fake\" }",
+    );
+    dep_redirect(
+        dir,
+        &dumps,
+        m,
+        "bd = \"1\"",
+        "bd = { path = \"../../fake\" }",
+    );
+    dep_redirect(
+        dir,
+        &dumps,
+        m,
+        "devdep = \"1\"",
+        "devdep = { git = \"https://example.invalid/x\" }",
+    );
+    // An entry that is a string or a table turned into something else.
+    dep_redirect(dir, &dumps, m, plain, "plain = 5\n");
+    // A `path` or `git` entry moved to crates.io.
+    dep_redirect(
+        dir,
+        &dumps,
+        m,
+        "movedpath = { path = \"../../libs/a\" }",
+        "movedpath = \"1\"",
+    );
+    dep_redirect(
+        dir,
+        &dumps,
+        m,
+        "movedpath = { path = \"../../libs/a\" }",
+        "movedpath = { version = \"1\" }",
+    );
+    dep_redirect(
+        dir,
+        &dumps,
+        m,
+        "movedgit = { git = \"https://example.invalid/g\" }",
+        "movedgit = \"1\"",
+    );
+    dep_redirect(
+        dir,
+        &dumps,
+        m,
+        "movedgit = { git = \"https://example.invalid/g\" }",
+        "movedgit = { workspace = true }",
+    );
+    // A dev-dependency moved to a member path, and one added with a member path.
+    dep_redirect(
+        dir,
+        &dumps,
+        m,
+        "devdep = \"1\"",
+        "devdep = { path = \"../../libs/a\" }",
+    );
+    dep_redirect(
+        dir,
+        &dumps,
+        m,
+        "devdep = \"1\"\n",
+        "devdep = \"1\"\nnewdev = { path = \"../../libs/a\" }\n",
+    );
+    let old = read(dir, m);
+    write(
+        dir,
+        m,
+        &format!("{old}\n[target.'cfg(unix)'.dev-dependencies]\nx = {{ path = \"../other\" }}\n"),
+    );
+    changed_case(dir, &dumps, "target dev-dependency to a member", m);
+    // The workspace table of the root manifest.
+    let root = "Cargo.toml";
+    for table in [
+        "[workspace.dependencies]\nw = { path = \"fake\" }\n",
+        "[workspace.dependencies]\nw = { git = \"https://example.invalid/x\" }\n",
+        "[workspace.dependencies]\nw = { version = \"1\", package = \"serde\" }\n",
+        "[workspace.dependencies]\nw = { path = \"libs/skip\" }\n",
+        "[workspace.dependencies.w]\npath = \"fake\"\n",
+        "[workspace.dependencies]\nw = 1\n",
+    ] {
+        let old = read(dir, root);
+        write(dir, root, &format!("{old}\n{table}"));
+        changed_case(dir, &dumps, table.lines().next().unwrap(), root);
+    }
+    // The root manifest's own tables and a manifest of another member.
+    let old = read(dir, root);
+    write(
+        dir,
+        root,
+        &format!("{old}\n[dependencies]\nx = {{ path = \"fake\" }}\n"),
+    );
+    changed_case(dir, &dumps, "root dependencies", root);
+    let other = "libs/a/Cargo.toml";
+    let old = read(dir, other);
+    write(
+        dir,
+        other,
+        &format!("{old}\n[dependencies]\nx = {{ git = \"https://example.invalid/x\" }}\n"),
+    );
+    changed_case(dir, &dumps, "other member", other);
+}
 #[test]
 fn build_input_reading_fails_closed() {
     // A manifest that does not parse hides its `build` key: a change to a file next to it counts
