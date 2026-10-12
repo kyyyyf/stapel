@@ -3443,6 +3443,105 @@ fn dependency_redirect_is_unverified() {
     );
     changed_case(dir, &dumps, "other member", other);
 }
+
+#[test]
+fn crates_io_and_member_dependencies_are_allowed() {
+    let (repo, _scripts, dumps) = dep_repo();
+    let dir = repo.path();
+    let m = DEP_MEMBER;
+    let plain = "plain = \"1\"\n";
+    // One commit per group: a run of cargo costs a build. The GREEN's dependency may not resolve
+    // offline, so the check only must not name a build input.
+    let allowed = |dir: &Path, what: &str| {
+        commit(dir, &format!("ABC-1: {what}"));
+        let (_, text) = check_env(dir, &[("CARGO_NET_OFFLINE", Path::new("true"))]);
+        assert!(!text.contains("build-input"), "{what}: {text}");
+        assert!(
+            std::fs::read_dir(&dumps).unwrap().count() > 0,
+            "{what}: {text}"
+        );
+        git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+    };
+    // Added entries: crates.io with the keys that are no source, a member by an explicit entry, by a
+    // glob with `exclude`, and the root package.
+    let entries = [
+        "x = \"2\"",
+        "x = { version = \"2\" }",
+        "x = { version = \"2\", features = [\"f\"], optional = true, default-features = false }",
+        "x = { workspace = true }",
+        "x.workspace = true",
+        "x = { path = \"../other\" }",
+        "x = { path = \"../../libs/a\" }",
+        "x = { path = \"../../libs/b\", package = \"b\" }",
+        "x = { path = \"../../libs/./b/\" }",
+        "x = { path = \"../..\" }",
+        "x.path = \"../../libs/a\"",
+    ];
+    let lines: String = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| format!("{}\n", e.replacen('x', &format!("x{i}"), 1)))
+        .collect();
+    edit(dir, m, plain, &format!("{plain}{lines}"));
+    allowed(dir, "added entries");
+    let old = read(dir, m);
+    write(
+        dir,
+        m,
+        &format!(
+            "{old}\n[dependencies.t1]\npath = \"../../libs/a\"\n\n\
+             [build-dependencies.t2]\npath = \"../../libs/a\"\n\n\
+             [build_dependencies]\nt3 = \"1\"\n\n\
+             [target.'cfg(unix)'.dependencies]\nt4 = {{ path = \"../../libs/b\" }}\n\n\
+             [target.'cfg(unix)'.build-dependencies]\nt5 = \"1\"\n"
+        ),
+    );
+    allowed(dir, "added tables");
+    // Existing entries: moved between members, a version bump, a dev-dependency without a source
+    // change.
+    edit(
+        dir,
+        m,
+        "movedpath = { path = \"../../libs/a\" }",
+        "movedpath = { path = \"../other\" }",
+    );
+    edit(
+        dir,
+        m,
+        plain,
+        "plain = { version = \"2\", features = [\"f\"] }\n",
+    );
+    edit(
+        dir,
+        m,
+        "devdep = \"1\"",
+        "devdep = { version = \"2\", features = [\"f\"] }",
+    );
+    allowed(dir, "changed entries");
+    // The workspace table of the root manifest.
+    let root = "Cargo.toml";
+    let old = read(dir, root);
+    write(
+        dir,
+        root,
+        &format!(
+            "{old}\n[workspace.dependencies]\nw1 = \"1\"\nw2 = {{ path = \"libs/a\" }}\n\
+             w3 = {{ path = \"crates/other\", package = \"other\" }}\n"
+        ),
+    );
+    allowed(dir, "workspace dependencies");
+    // Deleted entries, from each kind of table.
+    for gone in [
+        plain,
+        "movedpath = { path = \"../../libs/a\" }\n",
+        "movedgit = { git = \"https://example.invalid/g\" }\n",
+        "devdep = \"1\"\n",
+        "bd = \"1\"\n",
+    ] {
+        edit(dir, m, gone, "");
+    }
+    allowed(dir, "deleted entries");
+}
 #[test]
 fn build_input_reading_fails_closed() {
     // A manifest that does not parse hides its `build` key: a change to a file next to it counts
