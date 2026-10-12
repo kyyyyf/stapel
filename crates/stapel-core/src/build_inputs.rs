@@ -376,12 +376,16 @@ pub fn analyse(
     let mut step_from: HashMap<String, usize> = HashMap::new();
     // The names of the step tests of each path, from every RED of the ticket (AC-17).
     let mut step_names: HashMap<String, BTreeSet<String>> = HashMap::new();
+    // The crate folders that hold a step test of the ticket, from every RED of the range: the
+    // folders whose tests folder STP-4 protects as a whole (AC-5).
+    let mut step_crates: HashSet<String> = HashSet::new();
     for c in steps.iter().flat_map(|s| s.commits.iter()) {
         if c.marker != Marker::Red {
             continue;
         }
         if let Some(at) = commits.iter().position(|s| *s == c.sha) {
             for t in step_tests(root, &c.sha)? {
+                step_crates.insert(t.dir.clone());
                 step_names
                     .entry(t.path())
                     .or_default()
@@ -447,6 +451,9 @@ pub fn analyse(
                 hit = manifest_hit(root, sha, &base, e);
             }
             if hit.is_none() {
+                hit = data_hit(e, &step_crates);
+            }
+            if hit.is_none() {
                 hit = paths
                     .iter()
                     .find(|p| is_helper(p, at) || included.contains(**p))
@@ -492,6 +499,26 @@ pub fn analyse(
         .into_iter()
         .collect();
     Ok(BuildInputs { changed, unchanged })
+}
+
+/// The crate folder of a path under `crates/*/tests/`.
+fn crate_of(path: &str) -> Option<&str> {
+    under_tests(path).then(|| path.split('/').nth(1).unwrap_or(""))
+}
+
+/// The path of a data file under `crates/*/tests/` that an entry adds (a submodule entry included),
+/// or changes, deletes or renames in a crate that holds no step test of the ticket (STP-13 AC-5).
+/// A path is added when the entry has no old path or the old path is in another crate.
+fn data_hit(e: &Entry, step_crates: &HashSet<String>) -> Option<String> {
+    let data = |p: &&String| under_tests(p) && !p.ends_with(".rs");
+    let free = |p: &String| !step_crates.contains(crate_of(p).unwrap_or(""));
+    // A rename names the old path first, as the other build-input rules do.
+    if let Some(old) = e.old.as_ref().filter(data).filter(|o| free(o)) {
+        return Some(old.clone());
+    }
+    let new = e.new.as_ref().filter(data)?;
+    let added = e.old.as_ref().is_none_or(|o| crate_of(o) != crate_of(new));
+    (added || free(new)).then(|| new.clone())
 }
 
 /// The text of a `.rs` file at a commit without its test functions; a missing file has none.
