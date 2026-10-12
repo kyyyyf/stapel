@@ -5430,3 +5430,268 @@ fn absolute_path_names_no_member() {
     );
     assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), 0);
 }
+
+// ---- STP-13 step 4b, coverage: tests for D2-2, D3-2, D1-L to D4-L and D4-2 ----
+
+// STP-13 AC-3 (D2-2): a manifest that holds AC-3 tables, added, deleted or renamed, names the
+// manifest (the old path for a rename).
+#[test]
+fn manifest_with_ac3_tables_added_deleted_renamed_is_unverified() {
+    const TABLES: &str = "[package]\nname = \"c\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+        [features]\nf = []\n\n[lints.rust]\nunused = \"warn\"\n\n[profile.dev]\nopt-level = 1\n\n\
+        [patch.crates-io]\np = { path = \"../p\" }\n";
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        write(dir, "crates/c/Cargo.toml", TABLES);
+        write(dir, "crates/d/Cargo.toml", TABLES);
+    });
+    let dir = repo.path();
+    write(dir, "crates/n/Cargo.toml", TABLES);
+    changed_case(dir, &dumps, "added", "crates/n/Cargo.toml");
+    std::fs::remove_file(dir.join("crates/c/Cargo.toml")).unwrap();
+    changed_case(dir, &dumps, "deleted", "crates/c/Cargo.toml");
+    std::fs::rename(dir.join("crates/d"), dir.join("crates/d2")).unwrap();
+    changed_case(dir, &dumps, "renamed", "crates/d/Cargo.toml");
+}
+
+// STP-13 AC-5 (D3-L): a data file renamed to `.rs` or moved to another crate names the old path.
+#[test]
+fn data_moves_and_renames_are_unverified() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        write(dir, "crates/other/tests/data/d.json", "{\"d\": 1}\n");
+    });
+    let dir = repo.path();
+    let old = "crates/other/tests/data/d.json";
+    std::fs::rename(dir.join(old), dir.join("crates/other/tests/data/d.rs")).unwrap();
+    changed_case(dir, &dumps, "renamed to .rs", old);
+    std::fs::create_dir_all(dir.join("crates/tiny/tests/data")).unwrap();
+    std::fs::rename(dir.join(old), dir.join("crates/tiny/tests/data/d.json")).unwrap();
+    changed_case(dir, &dumps, "moved to another crate", old);
+}
+
+// STP-13 AC-3 (D2-L): a version or description change, and a dev entry moved between the two dev
+// spellings, are no build-input change.
+#[test]
+fn version_description_and_dev_spelling_changes_are_allowed() {
+    let (repo, _scripts, dumps) = dep_repo();
+    let dir = repo.path();
+    edit(
+        dir,
+        DEP_MEMBER,
+        "version = \"0.1.0\"\n",
+        "version = \"0.2.0\"\ndescription = \"d\"\n",
+    );
+    edit(
+        dir,
+        DEP_MEMBER,
+        "[dev-dependencies]\ndevdep = \"1\"\n",
+        "[dev_dependencies]\ndevdep = \"1\"\n",
+    );
+    commit(dir, "ABC-1: version, description, dev spelling");
+    let (_, text) = check_env(dir, &[("CARGO_NET_OFFLINE", Path::new("true"))]);
+    assert!(!text.contains("build-input"), "{text}");
+    assert!(std::fs::read_dir(&dumps).unwrap().count() > 0, "{text}");
+}
+
+// STP-13 AC-1, AC-2 (D1-L): `members` globs with `?` and `[..]`, a folder without a manifest, a
+// nested folder, an excluded explicit member and a `path` that is no string.
+#[test]
+fn member_globs_and_exclusions_are_read() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        write(
+            dir,
+            "Cargo.toml",
+            "[package]\nname = \"rootpkg\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+             [workspace]\nmembers = [\"crates/tiny\", \"m?\", \"n[ab]/*\", \"crates/x\"]\n\
+             exclude = [\"crates/x\"]\nresolver = \"2\"\n",
+        );
+        write(dir, "src/lib.rs", "");
+        for f in ["m1", "na/deep", "nc/deep", "crates/x"] {
+            write(dir, &format!("{f}/Cargo.toml"), "[package]\nname = \"p\"\n");
+        }
+        write(dir, "m2/src/lib.rs", "");
+    });
+    let dir = repo.path();
+    let root = read(dir, "Cargo.toml");
+    let probe_all = |paths: &[&str]| -> Vec<String> {
+        let mut missed = Vec::new();
+        for p in paths {
+            let text = format!("{root}\n[dependencies]\nx = {{ path = {p} }}\n");
+            probe(dir, "Cargo.toml", &text, p, &mut missed);
+        }
+        missed
+    };
+    // Not members: no match for the glob, no manifest, a parent folder, an excluded member.
+    let missed = probe_all(&["\"nc/deep\"", "\"m2\"", "\"na\"", "\"crates/x\"", "5"]);
+    assert!(missed.is_empty(), "no build-input outcome for: {missed:?}");
+    // Members: by `?`, by `[..]` with a nested folder.
+    let text =
+        format!("{root}\n[dependencies]\nx = {{ path = \"m1\" }}\ny = {{ path = \"na/deep\" }}\n");
+    write(dir, "Cargo.toml", &text);
+    commit(dir, "ABC-1: member paths");
+    let (_, out) = check_env(dir, &[("CARGO_NET_OFFLINE", Path::new("true"))]);
+    assert!(!out.contains("build-input"), "{out}");
+    assert!(std::fs::read_dir(&dumps).unwrap().count() > 0, "{out}");
+}
+
+// STP-13 AC-8 (D4-2): a `build` or target `path` through `./` or `..`, or in a manifest of a
+// sub-folder, names the file a RED changes.
+#[test]
+fn red_changing_a_file_named_through_dots_or_a_subfolder_changes_code() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    edit(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "edition = \"2021\"\n",
+        "edition = \"2021\"\nbuild = \"./tests/gen.rs\"\n\n[[bin]]\nname = \"b\"\npath = \"tests/../tests/b.rs\"\n",
+    );
+    write(
+        dir,
+        "crates/other/Cargo.toml",
+        "[package]\nname = \"other\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"../tiny/tests/shared.rs\"\n",
+    );
+    let files = ["gen", "b", "shared"];
+    for f in files {
+        write(dir, &format!("crates/tiny/tests/{f}.rs"), "fn main() {}\n");
+    }
+    commit(dir, "named files");
+    for (i, f) in files.iter().enumerate() {
+        add_test(dir, "basic", &format!("dots{i}"), "assert!(true);");
+        write(
+            dir,
+            &format!("crates/tiny/tests/{f}.rs"),
+            "fn main() {\n    let _ = 1;\n}\n",
+        );
+        commit(dir, &format!("ABC-1 step {} RED: change {f}", i + 1));
+        commit(dir, &format!("ABC-1 step {} GREEN: code", i + 1));
+    }
+    let (_, text) = check(dir);
+    for (i, f) in files.iter().enumerate() {
+        let line = step_line(&text, &format!("step {}", i + 1));
+        assert!(
+            line.contains("red-changes-code")
+                && line.contains(&format!("crates/tiny/tests/{f}.rs")),
+            "{line}\n{text}"
+        );
+    }
+}
+
+// STP-13 AC-6, AC-8 (D4-L): a `[lib] path` and a `[project] build` file, a delete and a rename of a
+// named file, and a dev entry that loses its `path` or `git` or is no table, in a RED, are code.
+#[test]
+fn red_edge_cases_of_named_files_and_dev_entries_change_code() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    write(
+        dir,
+        "crates/other/Cargo.toml",
+        "[project]\nname = \"other\"\nversion = \"0.1.0\"\nbuild = \"tests/pb.rs\"\n\n[lib]\npath = \"tests/l.rs\"\n",
+    );
+    for f in ["pb", "l"] {
+        write(dir, &format!("crates/other/tests/{f}.rs"), "fn main() {}\n");
+    }
+    edit(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "edition = \"2021\"\n",
+        "edition = \"2021\"\n\n[dev-dependencies]\npd = { path = \"../other\" }\ngd = { git = \"https://example.invalid/g\" }\nnum = \"1\"\n",
+    );
+    commit(dir, "setup: named files and dev entries");
+    let t = "crates/tiny/Cargo.toml";
+    let mut want = Vec::new();
+    let mut step = |dir: &Path, what: &str, path: &str, change: &dyn Fn(&Path)| {
+        let n = want.len() + 1;
+        add_test(dir, "basic", &format!("edge{n}"), "assert!(true);");
+        change(dir);
+        want.push(path.to_string());
+        commit(dir, &format!("ABC-1 step {n} RED: {what}"));
+        commit(dir, &format!("ABC-1 step {n} GREEN: code"));
+    };
+    let rewrite = |rel: &'static str, from: &'static str, to: &'static str| {
+        move |d: &Path| edit(d, rel, from, to)
+    };
+    step(
+        dir,
+        "project build file",
+        "crates/other/tests/pb.rs",
+        &|d| write(d, "crates/other/tests/pb.rs", "fn main() { let _ = 1; }\n"),
+    );
+    step(dir, "lib path file", "crates/other/tests/l.rs", &|d| {
+        write(d, "crates/other/tests/l.rs", "fn main() { let _ = 1; }\n")
+    });
+    step(
+        dir,
+        "delete a named file",
+        "crates/other/tests/pb.rs",
+        &|d| std::fs::remove_file(d.join("crates/other/tests/pb.rs")).unwrap(),
+    );
+    step(
+        dir,
+        "rename a named file",
+        "crates/other/tests/l2.rs",
+        &|d| {
+            std::fs::rename(
+                d.join("crates/other/tests/l.rs"),
+                d.join("crates/other/tests/l2.rs"),
+            )
+            .unwrap()
+        },
+    );
+    step(
+        dir,
+        "path to crates.io",
+        t,
+        &rewrite(t, "pd = { path = \"../other\" }", "pd = \"1\""),
+    );
+    step(
+        dir,
+        "git to crates.io",
+        t,
+        &rewrite(
+            t,
+            "gd = { git = \"https://example.invalid/g\" }",
+            "gd = \"1\"",
+        ),
+    );
+    step(dir, "no table", t, &rewrite(t, "num = \"1\"", "num = 5"));
+    let (_, text) = check(dir);
+    for (i, path) in want.iter().enumerate() {
+        let line = step_line(&text, &format!("step {}", i + 1));
+        assert!(
+            line.contains("red-changes-code") && line.contains(path.as_str()),
+            "{line}\n{text}"
+        );
+    }
+}
+
+// STP-13 AC-5 (D3-2): a submodule or a symbolic link under `crates/*/tests/` is data whatever its
+// name, a name ending in `.rs` included.
+#[test]
+fn link_named_rs_under_tests_is_data() {
+    let (repo, _scripts, dumps) = build_input_repo(|_| {});
+    let dir = repo.path();
+    let nested = |sub: &Path, args: &[&str]| {
+        git(
+            sub,
+            &[
+                &["-c", "user.name=x", "-c", "user.email=test-user.invalid"],
+                args,
+            ]
+            .concat(),
+        )
+    };
+    for rel in [
+        "crates/other/tests/sub.rs",
+        "crates/tiny/tests/sub.rs",
+        "crates/other/tests/deep/sub.rs",
+    ] {
+        let sub = dir.join(rel);
+        std::fs::create_dir_all(&sub).unwrap();
+        nested(&sub, &["init", "-q"]);
+        nested(&sub, &["commit", "-q", "--allow-empty", "-m", "nested"]);
+        changed_case(dir, &dumps, &format!("submodule {rel}"), rel);
+        std::fs::remove_dir_all(&sub).unwrap();
+    }
+    link(dir, "../data", "crates/other/tests/link.rs");
+    changed_case(dir, &dumps, "link", "crates/other/tests/link.rs");
+}
