@@ -5695,3 +5695,72 @@ fn link_named_rs_under_tests_is_data() {
     link(dir, "../data", "crates/other/tests/link.rs");
     changed_case(dir, &dumps, "link", "crates/other/tests/link.rs");
 }
+
+// ---- STP-13 step 7: code review round 1 fixes ----
+
+// STP-13 AC-5 (R-1, E-2, DR-1, DR-2): in a crate with a step test of an earlier RED, a non-RED commit
+// that deletes or renames a data file, or changes its mode or a submodule commit, gives the
+// build-input outcome naming it.
+#[test]
+fn delete_rename_or_chmod_in_a_step_crate_is_unverified() {
+    use std::os::unix::fs::PermissionsExt;
+    let nested = |sub: &Path, args: &[&str]| {
+        git(
+            sub,
+            &[
+                &["-c", "user.name=x", "-c", "user.email=test-user.invalid"],
+                args,
+            ]
+            .concat(),
+        )
+    };
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        write(dir, "crates/tiny/tests/data/gone.json", "{\"gone\": 1}\n");
+        write(dir, "crates/tiny/tests/data/old.json", "{\"old\": 1}\n");
+        write(dir, "crates/tiny/tests/data/mode.json", "{\"mode\": 1}\n");
+        let sub = dir.join("crates/tiny/tests/sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        nested(&sub, &["init", "-q"]);
+        nested(&sub, &["commit", "-q", "--allow-empty", "-m", "nested one"]);
+    });
+    let dir = repo.path();
+    std::fs::remove_file(dir.join("crates/tiny/tests/data/gone.json")).unwrap();
+    changed_case(dir, &dumps, "deleted", "crates/tiny/tests/data/gone.json");
+    std::fs::rename(
+        dir.join("crates/tiny/tests/data/old.json"),
+        dir.join("crates/tiny/tests/data/new.json"),
+    )
+    .unwrap();
+    changed_case(dir, &dumps, "renamed", "crates/tiny/tests/data/old.json");
+    let mode = dir.join("crates/tiny/tests/data/mode.json");
+    std::fs::set_permissions(&mode, std::fs::Permissions::from_mode(0o755)).unwrap();
+    changed_case(dir, &dumps, "chmod", "crates/tiny/tests/data/mode.json");
+    let sub = dir.join("crates/tiny/tests/sub");
+    nested(&sub, &["commit", "-q", "--allow-empty", "-m", "nested two"]);
+    changed_case(dir, &dumps, "submodule bump", "crates/tiny/tests/sub");
+}
+
+// STP-13 AC-5 (R-2, DR-3): a crate is a step crate for a commit only after the RED of a step with a
+// test in it; an earlier edit of its data file is a build-input change.
+#[test]
+fn step_crate_counts_only_after_its_red() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    write(dir, "crates/tiny/tests/data/edit.json", "{\"edit\": 1}\n");
+    commit(dir, "setup: a data file that exists before the ticket");
+    write(dir, "crates/tiny/tests/data/edit.json", "{\"edit\": 2}\n");
+    commit(dir, "ABC-1: early data edit");
+    let early = head7(dir);
+    add_step_one(dir);
+    let scripts = tempfile::tempdir().unwrap();
+    let dumps = scripts.path().join("dumps");
+    let fake = recording_cargo(scripts.path(), &dumps);
+    set_cargo_key(dir, &fake);
+    expect_changed(
+        dir,
+        &dumps,
+        "before the RED",
+        "crates/tiny/tests/data/edit.json",
+        &early,
+    );
+}
