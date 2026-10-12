@@ -115,7 +115,8 @@ recommendation, waiting for the human's answer, and the build does not start bef
   confirmation. Inside the promise, fixed in plan step 7 (spec change of promise item 4 and AC-5 to what
   item 4 already claimed): R-1, E-2, DR-1, DR-2 (a delete, rename, mode, link or submodule change in a step
   crate), R-2, DR-3 (a crate is a step crate for a commit only after the RED of a step with a test in it),
-  R-3, DR-5 (fail closed), DR-7, DR-8, E-3 (text). B4b-1 and D4b-2 are covered by the same fix.
+  R-3 (fail closed), DR-7, DR-8, E-3 (text). DR-5 is rejected: cargo cannot build a crate whose manifest
+  does not parse, so its `build` and `path` keys name nothing that is built. B4b-1 and D4b-2 are covered by the same fix.
 - Open question 8 (code review E-1, outside the promise): a non-RED commit changes a dev entry's version or
   `features` without changing its source, and a RED that did not compile then passes. (a) **recommended**:
   widen promise item 3 and AC-4 to "adds or changes an entry of a `dev-dependencies` table" (AC-2 keeps
@@ -150,7 +151,7 @@ Terms of STP-6 (Range, non-RED commit, build-input outcome) hold. New terms:
 | AC-2 | WHEN a non-RED commit adds or changes an entry of `dependencies` or `build-dependencies` whose new source is empty or names a member folder, or changes a `dev-dependencies` entry without changing its source, THE steps keep their outcomes. | `check::crates_io_and_member_dependencies_are_allowed` |
 | AC-3 | IF a non-RED commit adds, changes or deletes `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `[workspace.lints]`, or `edition` of `[package]`, `[project]` or `[workspace.package]`, of any `Cargo.toml` THEN the check gives the build-input outcome naming the manifest. | `check::patch_profile_features_lints_and_edition_are_unverified` |
 | AC-4 | IF a non-RED commit adds an entry to a `dev-dependencies` table THEN the check gives the build-input outcome naming the manifest. | `check::green_adding_a_dev_dependency_is_unverified` |
-| AC-5 | IF a non-RED commit adds an entry under `crates/*/tests/` that is not a regular `.rs` file (a symbolic link or submodule entry counts whatever its name, D3-2), or changes, deletes or renames such an entry in a crate's tests folder that holds no step test of a RED before the commit, or deletes or renames such an entry or changes its mode, link target or submodule commit in a tests folder that does, THEN the check gives the build-input outcome naming it. | `check::test_data_change_is_unverified` |
+| AC-5 | IF a non-RED commit adds an entry under `crates/*/tests/` that is not a regular `.rs` file (a symbolic link or submodule entry counts whatever its name, D3-2), or changes, deletes or renames such an entry in a crate's tests folder that holds no step test of a RED before the commit, or deletes or renames such an entry or changes its mode, link target or submodule commit in a tests folder that does, THEN the check gives the build-input outcome naming it. | `check::test_data_change_is_unverified`, `check::delete_rename_or_chmod_in_a_step_crate_is_unverified`, `check::step_crate_counts_only_after_its_red` |
 | AC-6 | IF a RED makes a redirect in a `dev-dependencies` table THEN the step is `red-changes-code` naming the manifest. | `check::red_redirecting_a_dev_dependency_changes_code`, `check::red_inheriting_a_path_into_a_dev_table_changes_code` |
 | AC-7 | IF a RED adds, changes or deletes a `Cargo.toml`, a symbolic link, a path with a `.cargo` component, `rust-toolchain` or `rust-toolchain.toml` under `crates/*/tests/` THEN the step is `red-changes-code` naming it. | `check::red_adding_a_test_manifest_or_link_changes_code` |
 | AC-8 | IF a RED adds, changes or deletes a file that, at the RED or its parent, a manifest's `build` key of `[package]` or `[project]` or the `path` key of `[lib]`, `[[bin]]`, `[[example]]` or `[[bench]]` names THEN the step is `red-changes-code` naming the file. | `check::red_changing_a_build_or_target_file_changes_code`, `red_fails_closed::unreadable_tree_counts_as_code` |
@@ -160,7 +161,7 @@ Terms of STP-6 (Range, non-RED commit, build-input outcome) hold. New terms:
 - **Promised, against an agent that tries on purpose to make a step look verified** (tag `security`): the
   Frame's promise, by AC-1 to AC-8.
 - **Not promised:** the Frame's list; a manifest that does not parse (STP-6's fail-closed rule keeps it a
-  build input: AC-1 of STP-6); a crate folder renamed by a non-RED commit makes every entry of its manifest
+  build input: AC-1 of STP-6; in a RED it names no files for AC-8, code review DR-5); a crate folder renamed by a non-RED commit makes every entry of its manifest
   new (fails closed, a false positive accepted); fixture projects committed under `crates/*/tests/` (they are
   built at run time, Open question 7).
 
@@ -220,8 +221,8 @@ repository with RED and GREEN steps. Heavy runs: `cargo test -j 4 … -- --test-
 |---|---|---|
 | Main path | crates.io, `workspace = true` and member dependencies added by a GREEN (member by glob, root package) | `check::crates_io_and_member_dependencies_are_allowed` |
 | Main path, RED | a RED adds a crates.io dev-dependency and a data file under `crates/*/tests/` | `check::red_adding_a_crates_io_dev_dependency_stays_valid` |
-| Negative | each source key in each table form and alias; a `path` entry moved to crates.io; `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `edition`; a dev-dependency added by a GREEN; a data file added, changed, deleted, renamed; RED-side items | `check::dependency_redirect_is_unverified`, `check::patch_profile_features_lints_and_edition_are_unverified`, `check::green_adding_a_dev_dependency_is_unverified`, `check::test_data_change_is_unverified`, `check::red_redirecting_a_dev_dependency_changes_code`, `check::red_adding_a_test_manifest_or_link_changes_code`, `check::red_changing_a_build_or_target_file_changes_code`, `check::redirect_under_both_spellings_is_unverified`, `check::inherited_member_path_in_dev_table_is_unverified`, `check::absolute_path_names_no_member`, `check::red_inheriting_a_path_into_a_dev_table_changes_code`, `red_fails_closed::unreadable_tree_counts_as_code` |
-| Coverage (step 4b) | drift findings D1-L, D2-2, D2-L, D3-2, D3-L, D4-2, D4-L | `check::manifest_with_ac3_tables_added_deleted_renamed_is_unverified`, `check::link_named_rs_under_tests_is_data`, `check::data_moves_and_renames_are_unverified`, `check::version_description_and_dev_spelling_changes_are_allowed`, `check::member_globs_and_exclusions_are_read`, `check::red_changing_a_file_named_through_dots_or_a_subfolder_changes_code`, `check::red_edge_cases_of_named_files_and_dev_entries_change_code` |
+| Negative | each source key in each table form and alias; a `path` entry moved to crates.io; `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `edition`; a dev-dependency added by a GREEN; a data file added, changed, deleted, renamed; RED-side items | `check::dependency_redirect_is_unverified`, `check::patch_profile_features_lints_and_edition_are_unverified`, `check::green_adding_a_dev_dependency_is_unverified`, `check::test_data_change_is_unverified`, `check::red_redirecting_a_dev_dependency_changes_code`, `check::red_adding_a_test_manifest_or_link_changes_code`, `check::red_changing_a_build_or_target_file_changes_code`, `check::redirect_under_both_spellings_is_unverified`, `check::inherited_member_path_in_dev_table_is_unverified`, `check::absolute_path_names_no_member`, `check::red_inheriting_a_path_into_a_dev_table_changes_code`, `red_fails_closed::unreadable_tree_counts_as_code`, `check::delete_rename_or_chmod_in_a_step_crate_is_unverified`, `check::step_crate_counts_only_after_its_red`, `steps_changes::malformed_or_short_records_fail_closed` |
+| Coverage (steps 4b, 7) | drift findings D1-L, D2-2, D2-L, D3-2, D3-L, D4-2, D4-L; code review DR-8 | `check::manifest_with_ac3_tables_added_deleted_renamed_is_unverified`, `check::link_named_rs_under_tests_is_data`, `check::data_moves_and_renames_are_unverified`, `check::version_description_and_dev_spelling_changes_are_allowed`, `check::member_globs_and_exclusions_are_read`, `check::red_changing_a_file_named_through_dots_or_a_subfolder_changes_code`, `check::red_edge_cases_of_named_files_and_dev_entries_change_code`, `check::member_package_name_may_differ_from_its_folder`, `check::data_path_with_glob_characters_is_unverified` |
 | Abuse | see the Abuse table | the Negative tests |
 
 ### Inputs
@@ -290,7 +291,7 @@ every promise item still has a criterion and a test; Open question 8 waits for t
 | AC-2 | `check::crates_io_and_member_dependencies_are_allowed` |
 | AC-3 | `check::patch_profile_features_lints_and_edition_are_unverified` |
 | AC-4 | `check::green_adding_a_dev_dependency_is_unverified` |
-| AC-5 | `check::test_data_change_is_unverified` |
+| AC-5 | `check::test_data_change_is_unverified`, `check::delete_rename_or_chmod_in_a_step_crate_is_unverified`, `check::step_crate_counts_only_after_its_red` |
 | AC-6 | `check::red_redirecting_a_dev_dependency_changes_code`, `check::red_inheriting_a_path_into_a_dev_table_changes_code` |
 | AC-7 | `check::red_adding_a_test_manifest_or_link_changes_code` |
 | AC-8 | `check::red_changing_a_build_or_target_file_changes_code`, `red_fails_closed::unreadable_tree_counts_as_code` |
@@ -308,7 +309,7 @@ Route: full (source: `auto`; tags `security`, `guard`).
 | 4b | Drift fixes: D1-1, D1-2, D1-3, D3-2 (spec change, AC-1, AC-2, AC-5), D4-1 (fail closed); tests for D2-2, D4-2 and the LOW gaps | AC-1, AC-2, AC-5, AC-8 | the outcomes of steps 1 to 4 |
 | 5 | `docs/PHASES.md`: STP-15 | — | other tickets |
 | 6 | By hand: `stapel check` on STP-2 to STP-6; new hits recorded as escaped defects | — | closed tickets' text |
-| 7 | Code review round 1 fixes: R-1, R-2, R-3, DR-2, DR-5 in code; tests for DR-8 rows | AC-5, AC-8 | STP-4 `tests-changed`; outcomes of steps 1 to 4b |
+| 7 | Code review round 1 fixes: R-1, R-2, R-3, DR-2 in code; tests for DR-8 rows | AC-5, AC-8 | STP-4 `tests-changed`; outcomes of steps 1 to 4b |
 
 ## Review
 
