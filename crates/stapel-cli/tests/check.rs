@@ -5764,3 +5764,45 @@ fn step_crate_counts_only_after_its_red() {
         &early,
     );
 }
+
+// STP-13 AC-2 (DR-8): a path dependency on a member whose package name differs from its folder name
+// is a member path, not a build-input change.
+#[test]
+fn member_package_name_may_differ_from_its_folder() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        write(
+            dir,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/tiny\", \"libs/*\"]\nresolver = \"2\"\n",
+        );
+        write(
+            dir,
+            "libs/a/Cargo.toml",
+            "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write(dir, "libs/a/src/lib.rs", "");
+    });
+    let dir = repo.path();
+    let manifest = read(dir, "crates/tiny/Cargo.toml");
+    write(
+        dir,
+        "crates/tiny/Cargo.toml",
+        &format!("{manifest}\n[dependencies]\nx = {{ path = \"../../libs/a\", package = \"alpha\" }}\n"),
+    );
+    commit(dir, "ABC-1: a dependency on a renamed member");
+    let (_, text) = check_env(dir, &[("CARGO_NET_OFFLINE", Path::new("true"))]);
+    assert!(!text.contains("build-input"), "{text}");
+    assert!(std::fs::read_dir(&dumps).unwrap().count() > 0, "{text}");
+}
+
+// STP-13 AC-5 (DR-8): a data path with glob characters under `crates/*/tests/` is named as it is.
+#[test]
+fn data_path_with_glob_characters_is_unverified() {
+    let (repo, _scripts, dumps) = build_input_repo(|_| {});
+    let dir = repo.path();
+    for name in ["a[1].json", "a*b.json", "a?.json"] {
+        let path = format!("crates/other/tests/data/{name}");
+        write(dir, &path, "data\n");
+        changed_case(dir, &dumps, name, &path);
+    }
+}
