@@ -197,25 +197,35 @@ pub struct Change {
 pub fn changes(root: &Path, sha: &str) -> Result<Vec<Change>, String> {
     let base = parent(root, sha);
     let raw = git(root, &["diff", "--raw", "-M", "-z", &base, sha])?;
-    let fields: Vec<String> = raw
+    parse_changes(&raw)
+}
+
+/// Parses `git diff --raw -z` output. A record without `:` or one that lacks its paths is an error:
+/// the caller must not skip it.
+pub fn parse_changes(raw: &[u8]) -> Result<Vec<Change>, String> {
+    let mut fields: Vec<String> = raw
         .split(|b| *b == 0)
         .map(|f| String::from_utf8_lossy(f).into_owned())
         .collect();
+    if fields.last().is_some_and(|f| f.is_empty()) {
+        fields.pop();
+    }
     let mut out = Vec::new();
     let mut i = 0;
     while i < fields.len() {
         let Some(meta) = fields[i].strip_prefix(':') else {
-            i += 1;
-            continue;
+            return Err(format!("git diff: malformed record {:?}", fields[i]));
         };
         let parts: Vec<&str> = meta.split(' ').collect();
-        let status = parts.get(4).and_then(|s| s.chars().next()).unwrap_or('M');
-        let mode = |n: usize| parts.get(n).copied().unwrap_or("").to_string();
+        let Some(status) = parts.get(4).and_then(|s| s.chars().next()) else {
+            return Err(format!("git diff: short record {:?}", fields[i]));
+        };
+        let mode = |n: usize| parts[n].to_string();
         let (old_mode, new_mode) = (mode(0), mode(1));
         let two = status == 'R' || status == 'C';
         let n = if two { 2 } else { 1 };
         if i + n >= fields.len() {
-            break;
+            return Err(format!("git diff: truncated record {:?}", fields[i]));
         }
         let first = fields[i + 1].clone();
         let (old, new) = match status {

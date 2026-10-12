@@ -376,16 +376,17 @@ pub fn analyse(
     let mut step_from: HashMap<String, usize> = HashMap::new();
     // The names of the step tests of each path, from every RED of the ticket (AC-17).
     let mut step_names: HashMap<String, BTreeSet<String>> = HashMap::new();
-    // The crate folders that hold a step test of the ticket, from every RED of the range: the
-    // folders whose tests folder STP-4 protects as a whole (AC-5).
-    let mut step_crates: HashSet<String> = HashSet::new();
+    // The crate folders that hold a step test of the ticket, with the index in the range of the
+    // first RED that has one: a folder is a step crate for the commits after that RED (AC-5).
+    let mut step_crates: HashMap<String, usize> = HashMap::new();
     for c in steps.iter().flat_map(|s| s.commits.iter()) {
         if c.marker != Marker::Red {
             continue;
         }
         if let Some(at) = commits.iter().position(|s| *s == c.sha) {
             for t in step_tests(root, &c.sha)? {
-                step_crates.insert(t.dir.clone());
+                let from = step_crates.entry(t.dir.clone()).or_insert(at);
+                *from = (*from).min(at);
                 step_names
                     .entry(t.path())
                     .or_default()
@@ -451,7 +452,7 @@ pub fn analyse(
                 hit = manifest_hit(root, sha, &base, e);
             }
             if hit.is_none() {
-                hit = data_hit(e, &step_crates);
+                hit = data_hit(e, &step_crates, at);
             }
             if hit.is_none() {
                 hit = paths
@@ -507,28 +508,36 @@ fn crate_of(path: &str) -> Option<&str> {
 }
 
 /// The path of a data file under `crates/*/tests/` that an entry adds (a submodule entry included),
-/// or changes, deletes or renames in a crate that holds no step test of the ticket (STP-13 AC-5).
+/// or changes, deletes or renames in a crate that is no step crate for the commit; in a step crate,
+/// that an entry deletes or renames or whose mode, link target or submodule commit it changes
+/// (STP-13 AC-5). A content change there is STP-4's `tests-changed`. A crate is a step crate for the
+/// commit at index `at` of the range when the RED of a step test in it has a lower index.
 /// A path is added when the entry has no old path or the old path is in another crate.
-fn data_hit(e: &Entry, step_crates: &HashSet<String>) -> Option<String> {
+fn data_hit(e: &Entry, step_crates: &HashMap<String, usize>, at: usize) -> Option<String> {
     // A symbolic link or a submodule entry is data whatever its name (D3-2).
     let special = |m: &str| m == "120000" || m == "160000";
     let data = |p: &&String, mode: &str| under_tests(p) && (!p.ends_with(".rs") || special(mode));
-    let free = |p: &String| !step_crates.contains(crate_of(p).unwrap_or(""));
+    let protected = |p: &String| {
+        crate_of(p)
+            .and_then(|c| step_crates.get(c))
+            .is_some_and(|from| *from < at)
+    };
     // A rename names the old path first, as the other build-input rules do.
-    if let Some(old) = e
-        .old
-        .as_ref()
-        .filter(|p| data(p, &e.old_mode))
-        .filter(|o| free(o))
-    {
-        return Some(old.clone());
+    if let Some(old) = e.old.as_ref().filter(|p| data(p, &e.old_mode)) {
+        let moved = e.new.is_none()
+            || e.status == 'R'
+            || e.old_mode != e.new_mode
+            || e.old_mode == "160000";
+        if !protected(old) || moved {
+            return Some(old.clone());
+        }
     }
     let new = e.new.as_ref().filter(|p| data(p, &e.new_mode))?;
     // A path is added when it has no old path, the old path is in another crate, or the entry
     // became a link or a submodule.
     let added = e.old.as_ref().is_none_or(|o| crate_of(o) != crate_of(new))
         || (special(&e.new_mode) && !special(&e.old_mode));
-    (added || free(new)).then(|| new.clone())
+    (added || !protected(new)).then(|| new.clone())
 }
 
 /// The text of a `.rs` file at a commit without its test functions; a missing file has none.
