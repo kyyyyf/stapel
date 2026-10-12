@@ -114,14 +114,18 @@ token record, even if some steps were still performed by the orchestrator by han
   with templates; ticket status outside the confirmed text.
 - STP-12 MR through `gh`/`glab`.
 - STP-13 (split from STP-6, taken right after it) hardening of `stapel check`, part two: dependency
-  redirection (`path`, `git`, `package`, `[patch]`, `[replace]`), `include*!` with a non-literal argument or a path
-  outside the repository, a `Cargo.toml` added by a RED under `crates/*/tests/`, includes followed through another included file, a later
-  RED that rewrites a helper or included file an earlier step relies on, non-`.rs` files added under `tests/`
-  after a RED, a `build` key that points under `tests/`, and `[features]`, `[profile]`, `[lints]`; a config planted inside the check's worktree between runs.
+  redirection (`path`, `git`, `package`, registries, `[patch]`, `[replace]`), `[features]`, `[profile]`,
+  `[lints]`, `edition`, dev-dependencies added after a RED, non-`.rs` files under `crates/*/tests/` after a
+  RED; in a RED: a dev-dependency redirect, a `Cargo.toml`, link, `.cargo` path or `rust-toolchain` file under
+  `crates/*/tests/`, a file named by `build` or a target `path`.
 - STP-14 (after STP-13) `stapel check --history`: the outcomes that need no test run (`unpaired`, `duplicate`,
   `no-tests`, `red-changes-code`, `tests-changed`, `build-input-changed`) from git history alone, in seconds,
   with no record in `runs.jsonl`; run after every builder commit, later from a hook, so a builder's mistake is
   fixed by amending its last commit instead of rewriting a chain (found during STP-6).
+- STP-15 (split from STP-13, after STP-14) hardening of `stapel check`, part three: `include*!` with a
+  non-literal argument or a path outside the repository, includes followed through another included file, a
+  later RED that rewrites a helper or included file an earlier step relies on, a config planted inside the
+  check's worktree between runs, a run-time read of a file outside `crates/*/tests/`.
 
 **To discuss with the human:** a feature or epic level with its own human-facing spec and "Done when", with
 tickets limited in size and written for an agent (`docs/decisions/0003`, open question).
