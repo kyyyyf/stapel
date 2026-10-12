@@ -5278,3 +5278,155 @@ fn red_adding_a_crates_io_dev_dependency_stays_valid() {
         assert_ne!(outcome(&text, label), "red-changes-code", "{text}");
     }
 }
+
+// ---- STP-13 step 4b: drift fixes D1-1, D1-2, D1-3 ----
+
+// STP-13 AC-1 (D1-1): an entry present under both spellings of one table is a redirect; the two
+// spellings may not merge and hide a source change.
+#[test]
+fn redirect_under_both_spellings_is_unverified() {
+    let (repo, _scripts, dumps) = dep_repo();
+    let dir = repo.path();
+    let m = DEP_MEMBER;
+    let base = read(dir, m);
+    let mut missed = Vec::new();
+    for (what, from, to) in [
+        (
+            "dev: hyphen redirects, underscore keeps",
+            "[dev-dependencies]\ndevdep = \"1\"\n",
+            "[dev-dependencies]\ndevdep = { path = \"../../fake\" }\n\n[dev_dependencies]\ndevdep = \"1\"\n",
+        ),
+        (
+            "dev: both crates.io",
+            "[dev-dependencies]\ndevdep = \"1\"\n",
+            "[dev-dependencies]\ndevdep = \"1\"\n\n[dev_dependencies]\ndevdep = \"1\"\n",
+        ),
+        (
+            "build: hyphen redirects, underscore keeps",
+            "[build-dependencies]\nbd = \"1\"\n",
+            "[build-dependencies]\nbd = { git = \"https://example.invalid/bd\" }\n\n[build_dependencies]\nbd = \"1\"\n",
+        ),
+        (
+            "build: underscore redirects, hyphen keeps",
+            "[build-dependencies]\nbd = \"1\"\n",
+            "[build-dependencies]\nbd = \"1\"\n\n[build_dependencies]\nbd = { git = \"https://example.invalid/bd\" }\n",
+        ),
+    ] {
+        probe(dir, m, &base.replacen(from, to, 1), what, &mut missed);
+    }
+    assert!(
+        missed.is_empty(),
+        "no build-input outcome for:\n{}",
+        missed.join("\n")
+    );
+    assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), 0);
+}
+
+const INH_ROOT: &str = "[package]\nname = \"rootpkg\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+    [workspace]\nmembers = [\"crates/tiny\", \"crates/other\"]\nresolver = \"2\"\n\n\
+    [workspace.dependencies]\nwm = { path = \"crates/other\" }\nwc = \"1\"\n";
+const INH_TINY: &str = "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+    [dev-dependencies]\nwm = \"1\"\nwc = { workspace = true }\n";
+
+// STP-13 AC-1 (D1-2): `workspace = true` takes the source of the root's `[workspace.dependencies]`
+// entry; a member path inherited into a dev table is a redirect, and a change of the root entry
+// changes every entry that inherits it.
+#[test]
+fn inherited_member_path_in_dev_table_is_unverified() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        write(dir, "Cargo.toml", INH_ROOT);
+        write(dir, "src/lib.rs", "");
+        write(
+            dir,
+            "crates/other/Cargo.toml",
+            "[package]\nname = \"other\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write(dir, "crates/other/src/lib.rs", "");
+        write(dir, DEP_MEMBER, INH_TINY);
+    });
+    let dir = repo.path();
+    let mut missed = Vec::new();
+    let tiny = read(dir, DEP_MEMBER);
+    for (what, from, to) in [
+        ("inline", "wm = \"1\"\n", "wm = { workspace = true }\n"),
+        ("dotted", "wm = \"1\"\n", "wm.workspace = true\n"),
+        (
+            "with features",
+            "wm = \"1\"\n",
+            "wm = { workspace = true, features = [\"f\"] }\n",
+        ),
+    ] {
+        probe(dir, DEP_MEMBER, &tiny.replacen(from, to, 1), what, &mut missed);
+    }
+    // The member manifest does not change; the root entry that it inherits does.
+    let root = read(dir, "Cargo.toml");
+    probe(
+        dir,
+        "Cargo.toml",
+        &root.replacen("wc = \"1\"", "wc = { path = \"crates/other\" }", 1),
+        "root entry becomes a member path, inherited by a dev entry",
+        &mut missed,
+    );
+    assert!(
+        missed.is_empty(),
+        "no build-input outcome for:\n{}",
+        missed.join("\n")
+    );
+    assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), 0);
+}
+
+// STP-13 AC-6 (D1-2): a RED that makes a dev entry inherit a path from the root's
+// `[workspace.dependencies]` is code.
+#[test]
+fn red_inheriting_a_path_into_a_dev_table_changes_code() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    edit(
+        dir,
+        "Cargo.toml",
+        "resolver = \"2\"\n",
+        "resolver = \"2\"\n\n[workspace.dependencies]\nwm = { path = \"crates/tiny\" }\n",
+    );
+    commit(dir, "setup: a workspace dependency");
+    add_test(dir, "basic", "inherits", "assert!(true);");
+    edit(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "edition = \"2021\"\n",
+        "edition = \"2021\"\n\n[dev-dependencies]\nwm = { workspace = true }\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: an inherited dev-dependency");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    let (code, text) = check(dir);
+    assert_eq!(code, 1, "{text}");
+    let line = step_line(&text, "step 1");
+    assert!(
+        line.starts_with("step 1: red-changes-code: ") && line.contains("crates/tiny/Cargo.toml"),
+        "{line}\n{text}"
+    );
+}
+
+// STP-13 AC-1, AC-2 (D1-3): an absolute `path`, or one that holds a backslash, names no member folder.
+#[test]
+fn absolute_path_names_no_member() {
+    let (repo, _scripts, dumps) = dep_repo();
+    let dir = repo.path();
+    let root = read(dir, "Cargo.toml");
+    let mut missed = Vec::new();
+    for path in [
+        "/libs/a",
+        "/crates/other",
+        "/crates/other/",
+        "libs\\\\a",
+        "..\\\\libs\\\\a",
+    ] {
+        let text = format!("{root}\n[dependencies]\nx = {{ path = \"{path}\" }}\n");
+        probe(dir, "Cargo.toml", &text, path, &mut missed);
+    }
+    assert!(
+        missed.is_empty(),
+        "no build-input outcome for:\n{}",
+        missed.join("\n")
+    );
+    assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), 0);
+}
