@@ -6,7 +6,8 @@ use crate::includes::Includes;
 use crate::outcomes::{red_changes_code, under_tests};
 use crate::rust_tests::{helper_text, test_functions};
 use crate::steps::{Marker, Step, git, parent, show, step_tests};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::cell::OnceCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 /// What the range says about build inputs.
@@ -157,15 +158,12 @@ fn targets(text: &str) -> Option<toml::Table> {
     Some(out)
 }
 
-/// The file a manifest's `[package] build` key names, relative to the repository.
-fn build_file(manifest_path: &str, text: &str) -> Option<String> {
-    let t: toml::Table = toml::from_str(text).ok()?;
-    let toml::Value::String(name) = t.get("package")?.get("build")? else {
-        return None;
-    };
+/// The repository path that `rel` names from the folder of `manifest_path`; `None` when it leaves
+/// the repository.
+fn resolve(manifest_path: &str, rel: &str) -> Option<String> {
     let mut parts: Vec<&str> = manifest_path.split('/').collect();
     parts.pop();
-    for c in name.split('/') {
+    for c in rel.split('/') {
         match c {
             "" | "." => {}
             ".." => {
@@ -175,6 +173,15 @@ fn build_file(manifest_path: &str, text: &str) -> Option<String> {
         }
     }
     Some(parts.join("/"))
+}
+
+/// The file a manifest's `[package] build` key names, relative to the repository.
+fn build_file(manifest_path: &str, text: &str) -> Option<String> {
+    let t: toml::Table = toml::from_str(text).ok()?;
+    let toml::Value::String(name) = t.get("package")?.get("build")? else {
+        return None;
+    };
+    resolve(manifest_path, name)
 }
 
 /// The `build` file of a manifest text, or `None` when the text does not parse.
@@ -534,10 +541,222 @@ fn manifest_hit(root: &Path, sha: &str, base: &str, e: &Entry) -> Option<String>
     if e.status != 'M' && e.status != 'T' {
         return Some(path.clone());
     }
-    let before = show(root, base, e.old.as_deref()?).and_then(|t| targets(&t));
-    let after = show(root, sha, e.new.as_deref()?).and_then(|t| targets(&t));
+    let (before_text, after_text) = (
+        show(root, base, e.old.as_deref()?),
+        show(root, sha, e.new.as_deref()?),
+    );
+    let before = before_text.as_deref().and_then(targets);
+    let after = after_text.as_deref().and_then(targets);
     match (before, after) {
-        (Some(b), Some(a)) if b == a => None,
-        _ => Some(path.clone()),
+        (Some(b), Some(a)) if b == a => {}
+        _ => return Some(path.clone()),
+    }
+    // Both texts parse here: `targets` returned a table for each.
+    let parse = |t: &Option<String>| {
+        t.as_deref()
+            .and_then(|t| toml::from_str::<toml::Table>(t).ok())
+    };
+    let (Some(b), Some(a)) = (parse(&before_text), parse(&after_text)) else {
+        return Some(path.clone());
+    };
+    let manifest = e.new.as_deref()?;
+    let members: OnceCell<Option<BTreeSet<String>>> = OnceCell::new();
+    let is_member = |folder: &str| {
+        members
+            .get_or_init(|| member_folders(root, sha))
+            .as_ref()
+            .is_some_and(|m| m.contains(folder))
+    };
+    dependency_redirect(&b, &a, manifest, &is_member).then(|| path.clone())
+}
+
+/// The kind of a dependency table by its key: `dev-dependencies` and `build-dependencies` have
+/// underscore aliases that cargo still reads.
+fn dependency_kind(key: &str) -> Option<&'static str> {
+    match key {
+        "dependencies" => Some("dependencies"),
+        "dev-dependencies" | "dev_dependencies" => Some("dev"),
+        "build-dependencies" | "build_dependencies" => Some("build"),
+        _ => None,
+    }
+}
+
+/// Every dependency entry of a manifest by scope (top level, `target.<cfg>`, `[workspace]`), kind
+/// and name, whatever its form (STP-13 AC-1).
+fn dependency_entries(t: &toml::Table) -> BTreeMap<(String, &'static str, String), toml::Value> {
+    let mut out = BTreeMap::new();
+    let mut add = |scope: &str, tables: &toml::Table, workspace: bool| {
+        for (key, value) in tables {
+            let kind = if workspace {
+                (key == "dependencies").then_some("dependencies")
+            } else {
+                dependency_kind(key)
+            };
+            if let (Some(kind), toml::Value::Table(entries)) = (kind, value) {
+                for (name, entry) in entries {
+                    out.insert((scope.to_string(), kind, name.clone()), entry.clone());
+                }
+            }
+        }
+    };
+    add("", t, false);
+    if let Some(toml::Value::Table(targets)) = t.get("target") {
+        for (cfg, tables) in targets {
+            if let toml::Value::Table(tables) = tables {
+                add(&format!("target {cfg}"), tables, false);
+            }
+        }
+    }
+    if let Some(toml::Value::Table(ws)) = t.get("workspace") {
+        add("workspace", ws, true);
+    }
+    out
+}
+
+/// The keys of an entry that decide where its code comes from; `None` for an entry that is neither
+/// a string nor a table. An empty map is crates.io or `workspace = true`.
+fn dependency_source(entry: &toml::Value) -> Option<BTreeMap<&'static str, &toml::Value>> {
+    const KEYS: [&str; 8] = [
+        "path",
+        "git",
+        "branch",
+        "tag",
+        "rev",
+        "package",
+        "registry",
+        "registry-index",
+    ];
+    match entry {
+        toml::Value::String(_) => Some(BTreeMap::new()),
+        toml::Value::Table(t) => Some(
+            KEYS.iter()
+                .filter_map(|k| t.get(*k).map(|v| (*k, v)))
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+/// Whether a manifest change makes a dependency entry point at other code (STP-13 AC-1): an entry
+/// that is added or whose source changes, unless the new source is empty or, outside
+/// `dev-dependencies`, a `path` (with or without `package`) to a member folder; an entry moved from
+/// `path` or `git` to an empty source; an entry that changes and is neither a string nor a table.
+/// A deleted entry is no redirect.
+fn dependency_redirect(
+    before: &toml::Table,
+    after: &toml::Table,
+    manifest: &str,
+    is_member: &dyn Fn(&str) -> bool,
+) -> bool {
+    let old = dependency_entries(before);
+    dependency_entries(after).iter().any(|(id, entry)| {
+        let old_entry = old.get(id);
+        if old_entry == Some(entry) {
+            return false;
+        }
+        let Some(new_src) = dependency_source(entry) else {
+            return true;
+        };
+        let old_src = old_entry.and_then(dependency_source).unwrap_or_default();
+        if new_src == old_src {
+            return false;
+        }
+        if new_src.is_empty() {
+            return old_src.contains_key("path") || old_src.contains_key("git");
+        }
+        let member_path = id.1 != "dev"
+            && new_src.keys().all(|k| matches!(*k, "path" | "package"))
+            && matches!(new_src.get("path"), Some(toml::Value::String(rel))
+                if resolve(manifest, rel).is_some_and(|f| is_member(&f)));
+        !member_path
+    })
+}
+
+/// The folders of the workspace members of a commit: the root package's folder (the empty string)
+/// and the `members` of the root manifest, globs expanded over the commit's manifests, minus
+/// `exclude`. `None` when the root manifest cannot be read.
+fn member_folders(root: &Path, commit: &str) -> Option<BTreeSet<String>> {
+    let text = show(root, commit, "Cargo.toml")?;
+    let t: toml::Table = toml::from_str(&text).ok()?;
+    let listed = git(root, &["ls-tree", "-r", "-z", commit]).ok()?;
+    let folders: Vec<String> = listed
+        .split(|b| *b == 0)
+        .map(|r| String::from_utf8_lossy(r).into_owned())
+        .filter_map(|rec| {
+            let (meta, path) = rec.split_once('\t')?;
+            (!meta.starts_with("120000") && is_manifest(path)).then(|| dir_of(path).to_string())
+        })
+        .collect();
+    let list = |key: &str| -> Vec<String> {
+        match t.get("workspace").and_then(|w| w.get(key)) {
+            Some(toml::Value::Array(a)) => a
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| {
+                    s.split('/')
+                        .filter(|c| !c.is_empty() && *c != ".")
+                        .collect::<Vec<_>>()
+                        .join("/")
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    let excluded = list("exclude");
+    let mut out = BTreeSet::new();
+    if t.contains_key("package") || t.contains_key("project") {
+        out.insert(String::new());
+    }
+    for pattern in list("members") {
+        for folder in &folders {
+            let gone = excluded
+                .iter()
+                .any(|x| folder == x || folder.starts_with(&format!("{x}/")));
+            if !gone && !folder.is_empty() && glob_path(&pattern, folder) {
+                out.insert(folder.clone());
+            }
+        }
+    }
+    Some(out)
+}
+
+/// A path glob as cargo reads `members`: `*`, `?` and `[...]` within one path component.
+fn glob_path(pattern: &str, path: &str) -> bool {
+    let (p, q): (Vec<&str>, Vec<&str>) = (pattern.split('/').collect(), path.split('/').collect());
+    p.len() == q.len()
+        && p.iter().zip(&q).all(|(p, q)| {
+            let (p, q): (Vec<char>, Vec<char>) = (p.chars().collect(), q.chars().collect());
+            glob_component(&p, &q)
+        })
+}
+
+fn glob_component(p: &[char], q: &[char]) -> bool {
+    match p.first() {
+        None => q.is_empty(),
+        Some('*') => (0..=q.len()).any(|i| glob_component(&p[1..], &q[i..])),
+        Some('?') => !q.is_empty() && glob_component(&p[1..], &q[1..]),
+        Some('[') => {
+            let Some(end) = p.iter().skip(2).position(|c| *c == ']').map(|i| i + 2) else {
+                return q.first() == Some(&'[') && glob_component(&p[1..], &q[1..]);
+            };
+            let (negated, set) = match p[1] {
+                '!' | '^' => (true, &p[2..end]),
+                _ => (false, &p[1..end]),
+            };
+            let Some(c) = q.first() else { return false };
+            let mut hit = false;
+            let mut i = 0;
+            while i < set.len() {
+                if i + 2 < set.len() && set[i + 1] == '-' {
+                    hit |= set[i] <= *c && *c <= set[i + 2];
+                    i += 3;
+                } else {
+                    hit |= set[i] == *c;
+                    i += 1;
+                }
+            }
+            hit != negated && glob_component(&p[end + 1..], &q[1..])
+        }
+        Some(c) => q.first() == Some(c) && glob_component(&p[1..], &q[1..]),
     }
 }
