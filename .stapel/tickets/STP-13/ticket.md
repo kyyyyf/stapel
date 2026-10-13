@@ -30,7 +30,7 @@ check` gives STP-6's build-input outcome when a non-RED commit of the Range:
    empty one; or adds, changes or deletes a `[patch]` or `[replace]` table;
 2. adds, changes or deletes `[profile]`, `[features]`, `[lints]`, `[workspace.lints]` or the `edition` of
    `[package]`, `[project]` or `[workspace.package]` of any `Cargo.toml`;
-3. adds an entry to a `dev-dependencies` table;
+3. adds an entry to a `dev-dependencies` table, or changes one (Open question 8);
 4. adds a file under `crates/*/tests/` that is not a regular `.rs` file, or changes, deletes or renames one
    in a crate's tests folder that holds no step test of a RED before the commit; in a tests folder that does,
    deletes or renames one or changes its mode, link target or submodule commit (STP-4's `tests-changed`
@@ -44,8 +44,7 @@ It gives `red-changes-code` when a RED of the ticket:
 7. adds, changes or deletes a file that a `build` key or the `path` key of `[lib]`, `[[bin]]`, `[[example]]`
    or `[[bench]]` names.
 
-Not promised: a dependency's `features`, and a dev entry's version or `features` changed by a non-RED commit
-(code review E-1, Open question 8); what a crates.io version or a workspace member contains (code); proc-macro
+Not promised: the `features` of an entry outside `dev-dependencies`; what a crates.io version or a workspace member contains (code); proc-macro
 crates that read files; a RED that does not compile and that a crates.io entry added by a GREEN to
 `[dependencies]` resolves (see Open question 6); STP-6's "Not promised" list.
 
@@ -122,6 +121,7 @@ recommendation, waiting for the human's answer, and the build does not start bef
   widen promise item 3 and AC-4 to "adds or changes an entry of a `dev-dependencies` table" (AC-2 keeps
   `dependencies` and `build-dependencies`); (b) leave it in Not promised. Assumption: (b) until the human
   answers; the build does not start on it.
+- 2026-10-13: Decision: the human answered Open question 8 (a). Plan step 8.
 
 ## Spec
 
@@ -148,9 +148,9 @@ Terms of STP-6 (Range, non-RED commit, build-input outcome) hold. New terms:
 | № | Criterion | Test |
 |---|---|---|
 | AC-1 | IF a non-RED commit makes a redirect in any dependency table of any `Cargo.toml` THEN the check gives the build-input outcome naming the manifest. | `check::dependency_redirect_is_unverified`, `check::redirect_under_both_spellings_is_unverified`, `check::inherited_member_path_in_dev_table_is_unverified`, `check::absolute_path_names_no_member` |
-| AC-2 | WHEN a non-RED commit adds or changes an entry of `dependencies` or `build-dependencies` whose new source is empty or names a member folder, or changes a `dev-dependencies` entry without changing its source, THE steps keep their outcomes. | `check::crates_io_and_member_dependencies_are_allowed` |
+| AC-2 | WHEN a non-RED commit adds or changes an entry of `dependencies` or `build-dependencies` whose new source is empty or names a member folder, THE steps keep their outcomes. | `check::crates_io_and_member_dependencies_are_allowed` |
 | AC-3 | IF a non-RED commit adds, changes or deletes `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `[workspace.lints]`, or `edition` of `[package]`, `[project]` or `[workspace.package]`, of any `Cargo.toml` THEN the check gives the build-input outcome naming the manifest. | `check::patch_profile_features_lints_and_edition_are_unverified` |
-| AC-4 | IF a non-RED commit adds an entry to a `dev-dependencies` table THEN the check gives the build-input outcome naming the manifest. | `check::green_adding_a_dev_dependency_is_unverified` |
+| AC-4 | IF a non-RED commit adds an entry to a `dev-dependencies` table or changes one (version, `features` or any other key; spec change, Open question 8) THEN the check gives the build-input outcome naming the manifest. | `check::green_adding_a_dev_dependency_is_unverified` |
 | AC-5 | IF a non-RED commit adds an entry under `crates/*/tests/` that is not a regular `.rs` file (a symbolic link or submodule entry counts whatever its name, D3-2), or changes, deletes or renames such an entry in a crate's tests folder that holds no step test of a RED before the commit, or deletes or renames such an entry or changes its mode, link target or submodule commit in a tests folder that does, THEN the check gives the build-input outcome naming it. | `check::test_data_change_is_unverified`, `check::delete_rename_or_chmod_in_a_step_crate_is_unverified`, `check::step_crate_counts_only_after_its_red`, `check::link_retarget_and_rs_to_data_rename_in_a_step_crate_are_unverified` |
 | AC-6 | IF a RED makes a redirect in a `dev-dependencies` table THEN the step is `red-changes-code` naming the manifest. | `check::red_redirecting_a_dev_dependency_changes_code`, `check::red_inheriting_a_path_into_a_dev_table_changes_code` |
 | AC-7 | IF a RED adds, changes or deletes a `Cargo.toml`, a symbolic link, a path with a `.cargo` component, `rust-toolchain` or `rust-toolchain.toml` under `crates/*/tests/` THEN the step is `red-changes-code` naming it. | `check::red_adding_a_test_manifest_or_link_changes_code` |
@@ -321,6 +321,7 @@ Route: full (source: `auto`; tags `security`, `guard`).
 | 6 | By hand: `stapel check` on STP-2 to STP-6; new hits recorded as escaped defects | — | closed tickets' text |
 | 7 | Code review round 1 fixes: R-1, R-2, R-3, DR-2 in code; tests for DR-8 rows | AC-5, AC-8 | STP-4 `tests-changed`; outcomes of steps 1 to 4b |
 | 7b | Drift fixes of step 7: D7-1 (link retarget in a step crate), D7-2 (`.rs` renamed to a data name) | AC-5 | STP-4 `tests-changed` |
+| 8 | A non-RED commit that changes a dev entry gives the build-input outcome (Open question 8) | AC-2, AC-4 | AC-2 for `dependencies` and `build-dependencies`; a RED adding a crates.io dev entry stays valid |
 
 ## Review
 
