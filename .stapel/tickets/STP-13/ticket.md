@@ -326,6 +326,7 @@ Route: full (source: `auto`; tags `security`, `guard`).
 | 7 | Code review round 1 fixes: R-1, R-2, R-3, DR-2 in code; tests for DR-8 rows | AC-5, AC-8 | STP-4 `tests-changed`; outcomes of steps 1 to 4b |
 | 7b | Drift fixes of step 7: D7-1 (link retarget in a step crate), D7-2 (`.rs` renamed to a data name) | AC-5 | STP-4 `tests-changed` |
 | 8 | A non-RED commit that changes a dev entry gives the build-input outcome (Open question 8) | AC-2, AC-4 | AC-2 for `dependencies` and `build-dependencies`; a RED adding a crates.io dev entry stays valid |
+| 8b | Drift fix D8-1: a root `[workspace.dependencies]` change of an entry a dev entry inherits | AC-4 | AC-2 |
 
 ## Review
 
