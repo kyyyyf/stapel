@@ -671,7 +671,11 @@ fn inheritors_redirect(
             let old = dependency_entries(&t, deps.0);
             dependency_entries(&t, deps.1)
                 .iter()
-                .any(|(id, dep)| entry_redirect(id, dep, old.get(id), &path, is_member))
+                .any(|(id, dep)| {
+                    // An inherited dev entry changes with its root entry, in any key (AC-4).
+                    (id.1 == "dev" && old.get(id) != Some(dep))
+                        || entry_redirect(id, dep, old.get(id), &path, is_member)
+                })
         })
 }
 
