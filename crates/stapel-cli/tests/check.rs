@@ -5410,6 +5410,44 @@ fn inherited_member_path_in_dev_table_is_unverified() {
     assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), 0);
 }
 
+// STP-13 AC-4 (D8-1): a change of a root `[workspace.dependencies]` entry that a `dev-dependencies`
+// entry inherits is a hit, whatever the key; the member manifest does not change.
+#[test]
+fn root_change_of_an_inherited_dev_entry_is_unverified() {
+    let (repo, _scripts, dumps) = build_input_repo(|dir| {
+        write(dir, "Cargo.toml", INH_ROOT);
+        write(dir, "src/lib.rs", "");
+        write(
+            dir,
+            "crates/other/Cargo.toml",
+            "[package]\nname = \"other\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write(dir, "crates/other/src/lib.rs", "");
+        write(dir, DEP_MEMBER, INH_TINY);
+    });
+    let dir = repo.path();
+    let mut missed = Vec::new();
+    let root = read(dir, "Cargo.toml");
+    for (what, to) in [
+        ("version", "wc = \"2\""),
+        ("features", "wc = { version = \"1\", features = [\"f\"] }"),
+    ] {
+        probe(
+            dir,
+            "Cargo.toml",
+            &root.replacen("wc = \"1\"", to, 1),
+            &format!("root entry {what} changes, inherited by a dev entry"),
+            &mut missed,
+        );
+    }
+    assert!(
+        missed.is_empty(),
+        "no build-input outcome for:\n{}",
+        missed.join("\n")
+    );
+    assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), 0);
+}
+
 // STP-13 AC-6 (D1-2): a RED that makes a dev entry inherit a path from the root's
 // `[workspace.dependencies]` is code.
 #[test]
