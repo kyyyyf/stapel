@@ -3510,8 +3510,8 @@ fn crates_io_and_member_dependencies_are_allowed() {
         ),
     );
     allowed(dir, "added tables");
-    // Existing entries: moved between members, a version bump, a dev-dependency without a source
-    // change.
+    // Existing entries: moved between members, a version bump. A changed dev-dependency is a build
+    // input (Open question 8), asserted below.
     edit(
         dir,
         m,
@@ -3524,13 +3524,15 @@ fn crates_io_and_member_dependencies_are_allowed() {
         plain,
         "plain = { version = \"2\", features = [\"f\"] }\n",
     );
-    edit(
-        dir,
-        m,
+    allowed(dir, "changed entries");
+    let mut missed = Vec::new();
+    let text = read(dir, m).replacen(
         "devdep = \"1\"",
         "devdep = { version = \"2\", features = [\"f\"] }",
+        1,
     );
-    allowed(dir, "changed entries");
+    probe(dir, m, &text, "changed dev entry", &mut missed);
+    assert!(missed.is_empty(), "no build-input outcome: {missed:?}");
     // The workspace table of the root manifest.
     let root = "Cargo.toml";
     let old = read(dir, root);
@@ -3838,6 +3840,39 @@ fn green_adding_a_dev_dependency_is_unverified() {
         .replacen("plain = \"1\"\n", "", 1)
         .replacen(dev, &format!("{dev}plain = \"1\"\n"), 1);
     probe(dir, m, &moved, "moved to dev-dependencies", &mut missed);
+    // An existing dev entry whose source stays: a version bump, `features`, another key, in a
+    // target table, under the other spelling (Open question 8). A move between the spellings with
+    // an equal value is no change.
+    let target = "[target.'cfg(unix)'.dev-dependencies]\ntd = \"1\"\n";
+    for (from, to) in [
+        (dev, "devdep = \"2\"\n"),
+        (dev, "devdep = { version = \"2\", features = [\"f\"] }\n"),
+        (dev, "devdep = { version = \"1\", default-features = false }\n"),
+        (dev, "devdep = { version = \"1\", optional = true }\n"),
+    ] {
+        let text = base.replacen(from, to, 1);
+        probe(dir, m, &text, &format!("changed {to}"), &mut missed);
+    }
+    // A target table that exists before the ticket: its own repository, since the first commit
+    // that adds a dev entry would be the one the check names.
+    let with_target = format!("{DEP_BASE}\n{target}");
+    let (repo2, _scripts2, dumps2) = build_input_repo(|d| {
+        write(
+            d,
+            "Cargo.toml",
+            "[package]\nname = \"rootpkg\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+             [workspace]\nmembers = [\"crates/tiny\"]\n",
+        );
+        write(d, "src/lib.rs", "");
+        write(d, DEP_MEMBER, &with_target);
+        write(d, "crates/tiny/src/lib.rs", "");
+    });
+    let dir2 = repo2.path();
+    for to in ["td = { version = \"1\", features = [\"f\"] }\n", "td = \"2\"\n"] {
+        let text = with_target.replacen("td = \"1\"\n", to, 1);
+        probe(dir2, m, &text, &format!("changed target {to}"), &mut missed);
+    }
+    assert_eq!(std::fs::read_dir(&dumps2).unwrap().count(), 0);
     // The root manifest and the manifest of another member.
     for path in ["Cargo.toml", "libs/a/Cargo.toml"] {
         let old = read(dir, path);
