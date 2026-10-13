@@ -140,5 +140,10 @@
       "text": "Route: full (source: `auto`; tags `security`, `guard`).\n\n| Step | What | Criteria | Must not change |\n|---|---|---|---|\n| 1 | Dependency sources and redirects in `build_inputs.rs` | AC-1, AC-2 | STP-6 outcomes and golden files |\n| 2 | `[patch]`, `[replace]`, `[profile]`, `[features]`, `[lints]`, `[workspace.lints]`, `edition`; dev-dependencies added by a non-RED commit | AC-3, AC-4 | the manifest keys STP-6 AC-1 compares |\n| 3 | Non-`.rs` files under `crates/*/tests/` | AC-5 | `.rs` helper and step-file rules of STP-6; STP-4 `tests-changed` and its test `check::outcome_tests_changed_after_red` |\n| 4 | RED rules in `outcomes::is_code`, with modes for links | AC-6, AC-7, AC-8 | STP-4 RED rule for other paths |\n| 4b | Drift fixes: D1-1, D1-2, D1-3, D3-2 (spec change, AC-1, AC-2, AC-5), D4-1 (fail closed); tests for D2-2, D4-2 and the LOW gaps | AC-1, AC-2, AC-5, AC-8 | the outcomes of steps 1 to 4 |\n| 5 | `docs/PHASES.md`: STP-15 | — | other tickets |\n| 6 | By hand: `stapel check` on STP-2 to STP-6; new hits recorded as escaped defects | — | closed tickets' text |\n| 7 | Code review round 1 fixes: R-1, R-2, R-3, DR-2 in code; tests for DR-8 rows | AC-5, AC-8 | STP-4 `tests-changed`; outcomes of steps 1 to 4b |\n| 7b | Drift fixes of step 7: D7-1 (link retarget in a step crate), D7-2 (`.rs` renamed to a data name) | AC-5 | STP-4 `tests-changed` |\n| 8 | A non-RED commit that changes a dev entry gives the build-input outcome (Open question 8) | AC-2, AC-4 | AC-2 for `dependencies` and `build-dependencies`; a RED adding a crates.io dev entry stays valid |\n| 8b | Drift fix D8-1: a root `[workspace.dependencies]` change of an entry a dev entry inherits | AC-4 | AC-2 |",
       "via": "terminal"
     }
-  ]
+  ],
+  "closed": {
+    "by": "kyyyyf",
+    "at": "2026-10-13T12:27:13Z",
+    "reason": "all steps built, check passes, code\n  review findings triaged"
+  }
 }
