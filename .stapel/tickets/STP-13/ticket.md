@@ -343,29 +343,44 @@ an equal source has no test of its own (AC-2 path, unchanged).
 
 ## Summary
 
-**Measures (2026-10-12), compared with STP-6.** Subagent tokens are estimates from the end notices
-(`subagent_tokens`, not a sum); measured session totals are imported with this session's `cost-state` line in
-the next session.
+**Measures after the close (2026-10-13), compared with STP-6.** Nine RED/GREEN steps (1, 2, 3, 4, 4b, 7, 7b,
+8, 8b) and two steps without code (5, 6); the last `stapel check` passes at `d9ad20c` with 377 tests. Tokens
+are measured: the STP-13 part of the main transcripts `14b5ca6e` (after the STP-6 close) and `e930def0`, and
+all 22 subagent files of `e930def0`, each mapped to its role from its first prompt; no file was left
+unmapped. Subagent output counts are partial in the transcripts (`≥`), so cache reads are compared. STP-6 has
+no measured records by role, only the session totals of `14b5ca6e` by model.
 
 | Measure | STP-6 | STP-13 |
 |---|---|---|
-| Escaped defects found so far | 0 in STP-6; older ones in STP-2, STP-3, STP-4 | 0 in STP-13; plan step 6: no new hits of the STP-13 rules on STP-2 to STP-6; STP-3 and STP-4 now show `build-input-changed` on `ticket_drift.rs` (STP-6 helper rule, GREENs of STP-3 step 1 and STP-4 step 1); B4b-1 (STP-4 ignores a deleted protected file) fixed here |
+| Escaped defects found so far | 0 in STP-6; older ones in STP-2, STP-3, STP-4 | 0 in STP-13; plan step 6: no new hits of the STP-13 rules on STP-2 to STP-6; after the close X-1 (`stapel status … \| head` panics on a closed pipe, from STP-2 step 7, LOW, a later ticket) |
 | Findings before code (spec review, per-step drift) | 23 + 33 | 13 + 22 (HIGH and MEDIUM: 11 + 13) |
 | Code review findings, all / HIGH and MEDIUM inside the promise | 32 over two rounds / 10 (4 HIGH) | 12 rows in one round / 7 (0 HIGH) |
 | Code review HIGH and MEDIUM by `catchable_at` | spec 7, design 5, code 4, test-plan 3 | design 5, spec 2, code 1 |
-| `ticket.md` | 46 KB | 34 KB |
+| `ticket.md` | 46 KB | 39 KB |
 | Changed lines (frame estimate) | about 3 600 (400–500) | about 2 170: 650 source, 1 520 tests (600–900) |
-| Subagent estimates by role | builder 1.40M, external 0.53M, drift 0.39M, reviewer 0.15M | builder 0.69M, drift 0.43M, external 0.27M, reviewer 0.12M |
+| Steps with RED/GREEN, tests at the close | 15, 349 | 9, 377 |
+| Subagent estimates by role (end notices) | builder 1.40M, external 0.53M, drift 0.39M, reviewer 0.15M | builder 0.80M, drift 0.46M, external 0.27M, reviewer 0.12M |
+| Measured cache read (cache write) by role | — | orchestrator 42.5M (0.68M), builder 15.4M (2.32M), external 1.95M (0.42M), drift 1.88M (0.37M), reviewer 0.50M (0.11M) |
+| Measured cache read by model (session totals for STP-6) | Opus 72.3M, Sonnet 33.0M, Fable 4.0M | Opus 42.5M, Sonnet 17.6M, Fable 1.95M, Haiku 0.17M |
+| Orchestrator output | 199k (session total) | 172k |
 | Local history rewrites | 3 | 3 (steps 1, 3, 4b), run by the human |
-| Wall time | 2 days | 3 days (the human away for most of it) |
+| Wall time | 2 days, about 12 active hours | 4 calendar days (2026-10-09 to 2026-10-13), about 14 active hours |
+
+Tokens, measured against estimated: an end notice gives the context size of the last call, not a sum, so it
+understates a subagent by 4 times (reviewer) to 19 times (builder). Builders read 15.4M cached tokens over 9
+steps (about 1.7M a step); the orchestrator read 42.5M, still the largest cost, though 41 % less than STP-6.
 
 What improved: the split held (eight criteria, one round of code review, no HIGH); the spec review and the
 per-step drift reviews caught the dependency and data-file bypasses before code review; the orchestrator only
-coordinated, every code step came from a builder brief. What did not: the frame's line estimate counted too
-few test lines; the promise leaned on an older rule (STP-4 `tests-changed`) without checking what it covers,
-and code review found that gap; builders still caused three history rewrites (a coverage test in a RED, an
-existing test changed in a RED that passed at RED, a coverage test fixed after its commit), each now a rule in
-the builder briefs; STP-14 (`stapel check --history`) would have shown all three at once.
+coordinated, every code step came from a builder brief; measured tokens fell for every model against STP-6
+(Opus 41 %, Sonnet 47 %, Fable 52 % less); no new escaped defect of STP-13. What did not: the frame's line
+estimate counted too few test lines; the promise leaned on an older rule (STP-4 `tests-changed`) without
+checking what it covers, and code review found that gap; the outside finding E-1 became two more steps (8,
+8b) late in the build; builders still caused three history rewrites, each now a rule in the builder
+briefs, and STP-14 (`stapel check --history`) would have shown all three at once; active time grew a little
+(about 14 hours against 12) for a smaller change; subagent output is still not measured (partial lines).
 
 **Process ledger (CLAUDE.md item 9), code review HIGH and MEDIUM by the rule that should have caught them:**
-item 3 (tables and promise against an older rule) 5, item 4 1, item 2 1, item 8 1.
+item 3 (tables and promise against an older rule) 5, item 4 1, item 2 1, item 8 1. Item 9 over STP-5, STP-6
+and STP-13: no item went three tickets in a row without a catch or a miss; items 1 and 5 had none in STP-13
+only, so nothing is removed.
