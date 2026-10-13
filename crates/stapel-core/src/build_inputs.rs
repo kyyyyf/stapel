@@ -816,8 +816,9 @@ fn dependency_source(entry: &toml::Value) -> Option<BTreeMap<&'static str, &toml
 /// that is added or whose source changes, unless the new source is empty or, outside
 /// `dev-dependencies`, a `path` (with or without `package`) to a member folder; an entry moved from
 /// `path` or `git` to an empty source; an entry that changes and is neither a string nor a table.
-/// A deleted entry is no redirect. An entry added to a `dev-dependencies` table is one whatever its
-/// source (STP-13 AC-4): a RED that does not compile may be made to pass by it. `roots` are the
+/// A deleted entry is no redirect. An entry added to a `dev-dependencies` table, or changed in any
+/// key, is one whatever its source (STP-13 AC-4, Open question 8): a RED that does not compile may
+/// be made to pass by it. `roots` are the
 /// `[workspace.dependencies]` tables before and after, that `workspace = true` entries take.
 fn dependency_redirect(
     before: &toml::Table,
@@ -829,7 +830,7 @@ fn dependency_redirect(
     let old = dependency_entries(before, roots.0);
     dependency_entries(after, roots.1).iter().any(|(id, dep)| {
         let old_dep = old.get(id);
-        if old_dep != Some(dep) && old_dep.is_none() && id.1 == "dev" {
+        if old_dep != Some(dep) && id.1 == "dev" {
             return true;
         }
         entry_redirect(id, dep, old_dep, manifest, is_member)
