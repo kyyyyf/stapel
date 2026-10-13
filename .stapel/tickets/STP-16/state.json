@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "key": "STP-16",
+  "title": "A closed output pipe ends a command without a panic",
+  "base": "3c04ebfb9c310092fbaea18e41b36f08dbdbe460",
+  "confirmations": []
+}

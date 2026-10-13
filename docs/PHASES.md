@@ -126,6 +126,9 @@ token record, even if some steps were still performed by the orchestrator by han
   non-literal argument or a path outside the repository, includes followed through another included file, a
   later RED that rewrites a helper or included file an earlier step relies on, a config planted inside the
   check's worktree between runs, a run-time read of a file outside `crates/*/tests/`.
+- STP-16 (found after the close of STP-13, finding X-1; taken before STP-14) a closed output pipe: `stapel
+  status STP-13 | head -4` panics with "failed printing to stdout: Broken pipe" and exits 101 (an escaped
+  defect of STP-2 step 7); every command of the `stapel` binary that prints is checked.
 
 **To discuss with the human:** a feature or epic level with its own human-facing spec and "Done when", with
 tickets limited in size and written for an agent (`docs/decisions/0003`, open question).
