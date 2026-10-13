@@ -221,6 +221,10 @@ Written as notes during the build and moved here before code review (`CLAUDE.md`
 #### Step 7b
 - `data_hit`: a link entry (mode 120000) in a step crate that changes counts as moved, so its path is named (D7-1). The suite line already named it; the step line stays `tests-changed`.
 - `data_hit`: a rename or copy from a regular `.rs` file to a non-`.rs` path counts the new path as added, in any crate (D7-2).
+#### Step 8
+- `dependency_redirect`: a `dev` entry (either spelling, `[target.<cfg>]` included) that differs from its old value is a hit, added or changed in any key; a move between the two spellings with an equal value is equal in `dependency_entries`, so no change.
+- Unchanged: `dependencies` and `build-dependencies` (AC-2), `entry_redirect` and `dev_redirect` (a RED that changes a crates.io dev entry stays valid).
+- Test: the target-table cases run in a second repository, because the check names only the first unverified commit.
 
 ## Test plan
 
