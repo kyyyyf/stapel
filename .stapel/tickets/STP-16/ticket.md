@@ -58,6 +58,11 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   prompt path with `STAPEL_ASSUME_TTY`), SR1-8 (`status` with a stale confirmation). LOW: Rust 1.87 floor for
   `std::io::pipe`, `std::process::Command` in the test, `--version` named as a non-goal, decided questions
   no longer called open.
+- 2026-10-13, spec review round 2 (SR2-1 to SR2-3, one HIGH), fixed in the text; no round 3 (CLAUDE.md item 4
+  allows one more round): SR2-1 (`.json` files compared as parsed values without `id` and `at`: `ok` and
+  `close` write times into `state.json`), SR2-2 (the full `check` runs once open and once closed, in one test,
+  with `CARGO_BUILD_JOBS=2`), SR2-3 (AC-4 also matches `write!`, `writeln!`, `stdout(`, `stderr(`, `Stdout`,
+  `Stderr`; `out.rs` exposes no handle). LOW: the stale fixture named, comment stripping rule named.
 
 ## Spec
 
@@ -71,10 +76,10 @@ Terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN standard output is a closed pipe THE `stapel` binary, for each case of the test's table (every subcommand of `main.rs`), prints no panic message on standard error and exits with the code of the open run. | `closed_pipe::stdout_closed_keeps_exit_code` |
+| AC-1 | WHEN standard output is a closed pipe THE `stapel` binary, for each case of the test's table (every subcommand of `main.rs`; the full `check` is asserted in AC-3's test), prints no panic message on standard error and exits with the code of the open run. | `closed_pipe::stdout_closed_keeps_exit_code` |
 | AC-2 | WHEN standard error is a closed pipe THE `stapel` binary exits with the code of the open run, for a failing command (1), a hook deny (2) and a command that warns and succeeds (0). | `closed_pipe::stderr_closed_keeps_exit_code` |
-| AC-3 | WHEN standard output or standard error is a closed pipe THE commands that write leave the same tree as the open run, `.git/` aside: other files byte for byte, `.jsonl` files line for line with `id` and `at` dropped from each record. | `closed_pipe::closed_output_keeps_every_write` |
-| AC-4 | IF a `.rs` file under `crates/stapel-cli/src/` (any depth) other than `out.rs`, with `//` comments removed, matches `print!`, `println!`, `eprint!`, `eprintln!`, `dbg!`, `io::stdout(` or `io::stderr(` THEN the test fails naming the file and line. | `closed_pipe::no_print_macros_outside_out` |
+| AC-3 | WHEN standard output or standard error is a closed pipe THE commands that write leave the same tree as the open run, `.git/` aside: `.json` files as parsed values and `.jsonl` files line for line as parsed records, with every `id` and `at` key dropped at any depth; other files byte for byte. | `closed_pipe::closed_output_keeps_every_write` |
+| AC-4 | IF a `.rs` file under `crates/stapel-cli/src/` (any depth) other than `out.rs`, with `//` comments removed, matches `print!`, `println!`, `eprint!`, `eprintln!`, `dbg!`, `write!`, `writeln!`, `stdout(`, `stderr(`, `Stdout` or `Stderr` THEN the test fails naming the file and line. | `closed_pipe::no_print_macros_outside_out` |
 
 ### Guarantees
 
@@ -107,7 +112,7 @@ Planned: a module `crates/stapel-cli/src/out.rs` with macros `say!` (a line to s
 (no newline) and `warn!` (a line to standard error). Each writes through a locked handle, drops a
 `BrokenPipe` error and panics on any other error with the text of `println!` (Decision of question 2), as
 today. A function `out::flush()` serves `init`: it drops `BrokenPipe` and returns any other error, as today.
-Every print site in `crates/stapel-cli/src` uses them. No change to exit codes or to the text of any
+`out.rs` exposes no output handle. Every print site in `crates/stapel-cli/src` uses them. No change to exit codes or to the text of any
 message.
 
 ## Test plan
@@ -116,16 +121,19 @@ CLI tests in a new file `crates/stapel-cli/tests/closed_pipe.rs`. A closed pipe 
 (Rust 1.87 or later): the reader is dropped before the child starts, so every write fails, with no race. The
 child runs through `std::process::Command` with `assert_cmd::cargo::cargo_bin("stapel")` and the environment
 of `common::stapel`. Each case runs twice on two copies of one fixture repository (copied after it is built,
-so commit ids agree): the open run and the closed run. Fixtures: `common::repo_with_ticket` with one stale
-confirmation; `tests/fixtures/main.jsonl` (two models) for `tokens import`; `tests/fixtures/session.jsonl` for
+so commit ids agree): the open run and the closed run. Fixtures: `common::repo_with_ticket`, made stale by `ok` on a
+section and then `common::set_section` on it; `tests/fixtures/main.jsonl` (two models) for `tokens import`; `tests/fixtures/session.jsonl` for
 `tokens session`; a small cargo crate with one RED/GREEN step for `check` and `check --list`. Heavy runs:
-`cargo test -j 4 … -- --test-threads=3`.
+`cargo test -j 4 … -- --test-threads=3`. The full `check` runs once open and once closed, in
+`closed_output_keeps_every_write` only, with `CARGO_BUILD_JOBS=2`; that test asserts both the exit code and
+the tree, so AC-1's table holds `check --list` and not `check` (SR2-2). AC-4 strips a comment from `//` to the
+end of the line when `//` is outside a string literal; `/* */` comments are not used in the crate.
 
 | Category | Cases | Tests |
 |---|---|---|
-| Main path | standard output closed: `init --prefix`, `init` prompt (`STAPEL_ASSUME_TTY=1`, input `STP`), `new`, `ok`, `status` with a stale section, `close`, `tokens`, `tokens add`, `tokens import`, `tokens session`, `check`, `check --list`, `hook pre-tool-use` with a payload that gives `ask` | `closed_pipe::stdout_closed_keeps_exit_code` |
+| Main path | standard output closed: `init --prefix`, `init` prompt (`STAPEL_ASSUME_TTY=1`, input `STP`), `new`, `ok`, `status` with a stale section, `close`, `tokens`, `tokens add`, `tokens import`, `tokens session`, `check --list`, `hook pre-tool-use` with a payload that gives `ask` | `closed_pipe::stdout_closed_keeps_exit_code` |
 | Negative | standard error closed: unknown ticket key (1), empty title (1), missing transcript (1), a hook deny (2), `tokens add` with a role missing from `stapel.toml` (warning, 0) | `closed_pipe::stderr_closed_keeps_exit_code` |
-| Data | writing commands with the output they print to closed: `init` both ways, `new`, `ok`, `close`, `tokens add` (standard error), `tokens import` with two models, `tokens session`, `check` | `closed_pipe::closed_output_keeps_every_write` |
+| Data | writing commands with the output they print to closed: `init` both ways, `new`, `ok`, `close`, `tokens add` (standard error), `tokens import` with two models, `tokens session`, `check` (exit code too) | `closed_pipe::closed_output_keeps_every_write` |
 | Regression | a print macro or a direct handle outside `out.rs` | `closed_pipe::no_print_macros_outside_out` |
 
 ### Inputs
@@ -154,6 +162,7 @@ a newline (`status` with a stale section). Each has a case in the named tests.
 **Author self-check:** 2026-10-13, before spec review: every promise item has a criterion and a test; the
 Inputs and External states rows come from the catalogue; no open question is left.
 2026-10-13, after spec review round 1: every SR1 finding applied; AC-3 renamed; round 2 for the two HIGH.
+2026-10-13, after spec review round 2: SR2 findings applied; AC-1 covers `check` by its exit code in AC-3's test.
 
 ## Proof
 
@@ -170,7 +179,7 @@ Route: full (source: `auto`; tags `data`, `interface`).
 
 | Step | What | Criteria | Must not change |
 |---|---|---|---|
-| 1 | `out.rs` macros; every print site of `crates/stapel-cli/src` moved to them; `init` flush | AC-1, AC-2, AC-3, AC-4 | message texts, exit codes and golden files |
+| 1 | `out.rs` macros; every print site of `crates/stapel-cli/src` moved to them; `out::flush()` for `init` | AC-1, AC-2, AC-3, AC-4 | message texts, exit codes and golden files |
 
 ## Review
 
