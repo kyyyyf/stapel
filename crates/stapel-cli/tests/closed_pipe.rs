@@ -690,3 +690,153 @@ fn no_print_macros_outside_out() {
         hits.join("\n")
     );
 }
+
+// STP-16 AC-2
+#[test]
+fn check_with_stderr_closed_keeps_exit_code() {
+    let repo = common::repo_with_ticket();
+    let c = case("check unknown key", &["check", "NOPE-9"]);
+    let (open, shut, _a, _b) = open_and_closed(repo.path(), &c, Mode::StderrClosed);
+    assert_eq!(open.code, 2, "{}{}", open.stdout, open.stderr);
+    assert!(
+        !open.stderr.is_empty(),
+        "the open run wrote nothing to stderr"
+    );
+    assert_eq!(shut.code, 2, "closed run: {}{}", shut.stdout, shut.stderr);
+    assert!(panic_failure(&shut, "check").is_none());
+}
+
+// STP-16 AC-3
+#[test]
+fn open_runs_print_to_the_closed_stream() {
+    let main = fixture_path("main.jsonl");
+    let session = fixture_path("session.jsonl");
+    let add = [
+        "tokens", "add", "--role", "research", "--model", "m-1", "--input", "1", "--output", "1",
+    ];
+    // Pairs are (case, fixture, modes). Dropped from the stderr mode, because they print nothing
+    // to standard error on success: init --prefix, init prompt, new, close, tokens session.
+    let both = [Mode::StdoutClosed, Mode::StderrClosed];
+    let out_only = [Mode::StdoutClosed];
+    let err_only = [Mode::StderrClosed];
+    let mut cases: Vec<(Case, TempDir, &[Mode])> = Vec::new();
+    cases.push((
+        case("init --prefix", &["init", "--prefix", "ABC"]),
+        common::git_repo(),
+        &out_only,
+    ));
+    let mut c = case("init prompt", &["init"]);
+    c.stdin = "STP\n".into();
+    c.env.push(("STAPEL_ASSUME_TTY", "1".into()));
+    cases.push((c, common::git_repo(), &out_only));
+    cases.push((
+        case("new", &["new", "Second"]),
+        common::stapel_repo(),
+        &out_only,
+    ));
+    cases.push((
+        case("close", &["close", "--reason", "done"]),
+        common::repo_with_ticket(),
+        &out_only,
+    ));
+    cases.push((
+        case("tokens session", &["tokens", "session", &session]),
+        common::repo_with_ticket(),
+        &out_only,
+    ));
+    cases.push((
+        case("ok", &["ok", "spec"]),
+        common::repo_with_ticket(),
+        &out_only,
+    ));
+    cases.push((case("tokens add", &add), common::repo_with_ticket(), &both));
+    cases.push((
+        case(
+            "tokens import",
+            &[
+                "tokens",
+                "import",
+                &main,
+                "--role",
+                "orchestrator",
+                "--until",
+                UNTIL,
+            ],
+        ),
+        common::repo_with_ticket(),
+        &both,
+    ));
+    // Warning before the write: a git user name with a space.
+    let r = common::repo_with_ticket();
+    common::git_config(r.path(), "user.name", "Test User");
+    cases.push((case("ok, name with a space", &["ok", "spec"]), r, &err_only));
+    // Warning before the write: a pre-push hook that is not ours.
+    let r = common::git_repo();
+    write(r.path(), ".git/hooks/pre-push", "#!/bin/sh\nexit 0\n");
+    cases.push((
+        case("init, foreign pre-push", &["init", "--prefix", "ABC"]),
+        r,
+        &err_only,
+    ));
+
+    let mut failures = Vec::new();
+    for (c, fixture, modes) in &cases {
+        for &mode in *modes {
+            let what = format!("{} with {mode:?}", c.name);
+            let (open, shut, a, b) = open_and_closed(fixture.path(), c, mode);
+            let stream = if mode == Mode::StdoutClosed {
+                &open.stdout
+            } else {
+                &open.stderr
+            };
+            if stream.is_empty() {
+                failures.push(format!("{what}: the open run printed nothing there"));
+            }
+            if shut.code != open.code {
+                failures.push(format!("{what}: exit code {} vs {}", shut.code, open.code));
+            }
+            if tree(a.path()) != tree(b.path()) {
+                failures.push(format!("{what}: the trees differ"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+// STP-16 AC-4
+#[test]
+fn no_print_macros_in_stapel_core() {
+    // Core's `write!` in Display impls, `writeln!` to a file and `Command::stdout(..)` are not prints.
+    let patterns = [
+        "print!",
+        "println!",
+        "eprint!",
+        "eprintln!",
+        "dbg!",
+        "io::stdout(",
+        "io::stderr(",
+    ];
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stapel-core/src");
+    let mut files = Vec::new();
+    rust_files(&src, &mut files);
+    files.sort();
+    assert!(!files.is_empty());
+    let mut hits = Vec::new();
+    for file in files {
+        let text = std::fs::read_to_string(&file).unwrap();
+        for (n, line) in without_comments(&text).lines().enumerate() {
+            if let Some(p) = patterns.iter().find(|p| line.contains(**p)) {
+                hits.push(format!(
+                    "{}:{}: {p}",
+                    file.strip_prefix(&src).unwrap().display(),
+                    n + 1
+                ));
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "output in stapel-core:\n{}",
+        hits.join("\n")
+    );
+}
