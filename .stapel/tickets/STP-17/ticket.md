@@ -49,8 +49,8 @@ the guard (no `security` tag); a terminal that cannot show a long diff; a file-s
 made as one change, so one round needs one confirmation (`stapel ok KEY`). CLAUDE.md is outside the guard's
 always-writable paths; the text goes to the human as a short command.
 
-**Size.** Medium: five or six criteria; about 150 changed source lines (`crates/stapel-cli/src/main.rs`,
-`ok.rs`, `crates/stapel-core/src/confirm.rs`, `dialog.rs`) and about 600 test lines (CLI tests of both forms,
+**Size.** Medium: eleven criteria (after spec review); about 200 changed source lines (`crates/stapel-cli/src/main.rs`,
+`ok.rs`, `crates/stapel-core/src/confirm.rs`, `dialog.rs`) and about 900 test lines (CLI tests of both forms,
 the guard's dialog and grant, golden output). Route: full (tags `interface`, `guard`).
 
 ### Decisions
@@ -87,6 +87,10 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   the folder key). SR1-3 (outside: stale reasons in the dialog) is decided below.
 - 2026-10-14: Decision (SR1-3, outside the promise, recommended): the human widened promise item 6: a section
   with an empty diff shows its stale reasons in the dialog. Rejected: the line count only.
+- 2026-10-14, spec review round 2 (SR2-1 to SR2-4, all LOW), fixed in the text: SR2-1 (legacy key and a key
+  matching two folders in the Input row; `confirm::target` returns a key target for any matching folder),
+  SR2-2 (plan step 1 calls `confirm::target`), SR2-3 (size: eleven criteria, about 200 source and 900 test
+  lines), SR2-4 (AC-11 in a dialog permission mode). Every SR1 finding confirmed fixed.
 
 ## Spec
 
@@ -110,7 +114,7 @@ Terms:
 | AC-8 | IF after the key-form dialog a waiting section's hash, one of its dependencies, or the set of waiting sections changes THEN `stapel ok KEY --grant <token>` exits 1 with today's "the grant does not match" reason and records nothing. A grant of the section form does not confirm the key form, nor the reverse. | `ok_all::key_form_grant_names_every_section` |
 | AC-9 | IF the key form runs in an agent's shell without a grant THEN it exits 1 with today's "only a person confirms" reason, naming `stapel ok KEY`. | `ok_all::key_form_agent_shell_refused` |
 | AC-10 | WHEN `stapel ok KEY --grant <token>` runs with the token of the key-form dialog and nothing changed THE command confirms every section the dialog listed, as AC-1, with `via` `grant`, and removes the grant; the same token then exits 1 with "the grant does not match". | `ok_all::key_form_grant_confirms_once` |
-| AC-11 | IF an agent runs the key form and no section waits THEN the guard denies with `nothing to confirm: KEY` and writes no grant file. | `ok_all::guard_denies_when_nothing_waits` |
+| AC-11 | IF an agent runs the key form in a dialog permission mode and no section waits THEN the guard denies with `nothing to confirm: KEY` and writes no grant file. | `ok_all::guard_denies_when_nothing_waits` |
 
 ### Guarantees
 
@@ -145,7 +149,8 @@ Terms:
   `Prepared`, or the first refusal; the CLI and the guard share it.
 - One function in `stapel-core` (`confirm::target`) applies AC-5's one-argument rule and returns a section
   target or a key target, or AC-5's refusal; `ok.rs` uses it in step 1 and `dialog::prepare_ask` in step 2, so
-  the rule has one copy (SR1-5).
+  the rule has one copy (SR1-5). A key target is returned whenever any ticket folder matches ignoring case, so
+  `tickets::resolve` gives its own refusal for several matching folders (SR2-1).
 - The change block is built in `stapel-core` (no printing there) and printed by the CLI.
 
 ## Test plan
@@ -161,7 +166,7 @@ fixed; no time is printed. Light tests: `cargo test -j 4 -p stapel-cli --test ok
 | Output | changed (diff), changed and a dependency changed (both in the heading), never confirmed, latest without stored text, dependency only, normal form only, one line | `ok_all::change_block_for_each_kind` |
 | Negative | duplicated `## Design`; missing `## Plan` heading; missing dependency; a section confirmed before and now missing is waiting, so the key form refuses with `section plan (## Plan) is missing` | `ok_all::key_form_refuses_all_when_one_fails` |
 | Empty | every section fresh: message, exit 0, files unchanged | `ok_all::key_form_with_nothing_waiting` |
-| Input | `spec`, `SPEC`, `abc-1`, `ABC-1`, `review` (generated: today's refusal), `nope`, a closed ticket key | `ok_all::one_argument_is_section_then_key` |
+| Input | `spec`, `SPEC`, `abc-1`, `ABC-1`, `review` (generated: today's refusal), `nope`, a closed ticket key, a legacy ticket key, a key matching two folders that differ only in case (Linux) | `ok_all::one_argument_is_section_then_key` |
 | Regression | section form prints the change block; fresh section confirmed again | `ok_all::section_form_prints_change_block` |
 | Guard | dialog reason and replaced command for `stapel ok ABC-1` and the `cargo run … --` form; a section stale only by a dependency shows `+0 -0 lines since last confirmation; depends on spec, which changed`; `bypassPermissions` mode denies; an allow rule `Bash(stapel ok:*)` denies | `ok_all::dialog_lists_every_waiting_section` |
 | Guard | grant voided by an edit of a waiting section, of a dependency, by a new waiting section; section-form grant on the key form and the reverse; an expired key-form grant | `ok_all::key_form_grant_names_every_section` |
@@ -202,6 +207,7 @@ tests or a line in the promise.
 Inputs and External states rows were checked against the code paths of `ok.rs`, `confirm.rs`, `dialog.rs`
 and `tickets::resolve`, not only the catalogue; no open question is left.
 2026-10-14, after spec review round 1: every inside finding applied; round 2 for SR1-1 (HIGH).
+2026-10-14, after spec review round 2: SR2-1 to SR2-4 (all LOW) applied; no round 3.
 
 ## Proof
 
@@ -225,7 +231,7 @@ Route: full (source: `auto`; tags `interface`, `guard`).
 
 | Step | What | Criteria | Must not change |
 |---|---|---|---|
-| 1 | `confirm::target`, `confirm::prepare_waiting` and the change block in `stapel-core`; the key form, the one-argument rule and the change block in `ok.rs` and `main.rs` | AC-1 to AC-6 | `grant.rs`, `dialog.rs`, the section form's records, existing tests |
+| 1 | `confirm::target`, `confirm::prepare_waiting` and the change block in `stapel-core`; the key form and the change block in `ok.rs` and `main.rs`, calling `confirm::target` | AC-1 to AC-6 | `grant.rs`, `dialog.rs`, the section form's records, existing tests |
 | 2 | The key form in the guard's dialog and its grant facts; the agent-shell message | AC-7 to AC-11 | the section form's dialog reason and grant facts, `grant.rs` file naming |
 
 ## Review
