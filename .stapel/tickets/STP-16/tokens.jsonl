@@ -1,2 +1,3 @@
 {"source":"estimate","estimate":70759,"v":1,"id":"t-00c9d75434cc","at":"2026-10-13T15:02:14Z","ticket":"STP-16","role":"external","model":"claude-fable-5-1","note":"spec review round 1; subagent_tokens of the end notice"}
 {"source":"estimate","estimate":21452,"v":1,"id":"t-58e771f35e6b","at":"2026-10-13T15:05:49Z","ticket":"STP-16","role":"external","model":"claude-fable-5-1","note":"spec review round 2; delta of subagent_tokens (92211 - 70759)"}
+{"source":"estimate","estimate":83119,"v":1,"id":"t-e58440060d1a","at":"2026-10-14T06:10:25Z","ticket":"STP-16","role":"builder","model":"claude-sonnet-5-5","step":"1","note":"builder step 1; subagent_tokens of the end notice"}
