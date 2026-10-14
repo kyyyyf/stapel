@@ -54,7 +54,8 @@ Rules that catch nothing are removed (item 9), so this list must not only grow.
 5. **The human confirms a summary.** Before each confirmation the orchestrator shows the decisions, the
    non-goals, the promise and the criteria changed since the last confirmation; the full text stays one
    command away (`stapel status` shows the diff). A spec change during the build is explicit: the GREEN
-   commit says `spec change: AC-x, <reason>` and the confirmation goes stale.
+   commit says `spec change: AC-x, <reason>` and the confirmation goes stale. The spec changes after one
+   review round are made as one change, so one round needs one confirmation (`stapel ok KEY`).
 6. **During the build.** Design "as built" is written as notes and moved into the ticket once, before code
    review, so the build permit is not lost at every step. A cheap drift review runs after a GREEN step only
    when the step touches a criterion of a tagged ticket; it gets the step's diff and its criteria, nothing
