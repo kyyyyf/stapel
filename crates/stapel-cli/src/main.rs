@@ -38,9 +38,10 @@ enum Command {
         #[arg(long)]
         tracker: Option<String>,
     },
-    /// Confirm a section of a ticket: `stapel ok [KEY] <section>`. Only a person confirms.
+    /// Confirm a section, `stapel ok [KEY] <section>`, or every waiting section, `stapel ok KEY`.
+    /// Only a person confirms.
     Ok {
-        /// The ticket key (optional) and the section id.
+        /// One argument: a section id, else a ticket key. Two: the ticket key and the section id.
         #[arg(num_args = 1..=2, required = true, value_names = ["KEY", "SECTION"])]
         args: Vec<String>,
         /// One-time grant from the permission dialog; set by the guard, never by hand.
@@ -186,7 +187,7 @@ fn main() -> ExitCode {
             close::run(key.as_deref(), &reason, grant.as_deref())
         }
         Command::Ok { args, grant } => match args.as_slice() {
-            [section] => ok::run(None, section, grant.as_deref()),
+            [arg] => ok::run_one(arg, grant.as_deref()),
             [key, section] => ok::run(Some(key), section, grant.as_deref()),
             _ => unreachable!("clap limits the arguments"),
         },
