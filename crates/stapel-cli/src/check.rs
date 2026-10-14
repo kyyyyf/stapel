@@ -25,7 +25,7 @@ use std::time::Duration;
 
 /// A refusal: nothing was run, exit 2.
 fn refuse(message: impl std::fmt::Display) -> ExitCode {
-    eprintln!("stapel: {message}");
+    warn!("stapel: {message}");
     ExitCode::from(2)
 }
 
@@ -137,7 +137,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
     let _lock = match Lock::take(&dir) {
         Ok((lock, previous)) => {
             if let Some(pid) = previous {
-                eprintln!(
+                warn!(
                     "notice: took over the check lock of process {pid}, which is not running"
                 );
             }
@@ -217,13 +217,13 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         outside: std::cell::RefCell::new(blocked),
     };
     if end.is_some() {
-        println!("ticket: {} at {} (closed)", ticket.key, short(&at));
+        say!("ticket: {} at {} (closed)", ticket.key, short(&at));
     } else {
-        println!("ticket: {} at {}", ticket.key, short(&head));
+        say!("ticket: {} at {}", ticket.key, short(&head));
     }
-    println!("cargo: {cargo_text}");
+    say!("cargo: {cargo_text}");
     if !inputs.unchanged.is_empty() {
-        println!("build inputs: {}", named(&inputs.unchanged));
+        say!("build inputs: {}", named(&inputs.unchanged));
     }
     let mut ok = true;
     let mut steps_json = Vec::new();
@@ -245,18 +245,18 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
             }));
         }
         if reason.is_empty() {
-            println!("{}: {outcome}", a.label);
+            say!("{}: {outcome}", a.label);
         } else {
-            println!("{}: {outcome}: {reason}", a.label);
+            say!("{}: {outcome}: {reason}", a.label);
         }
         for n in &a.notes {
-            println!("  {} {}: {}", n.kind, n.by, n.what);
+            say!("  {} {}: {}", n.kind, n.by, n.what);
         }
     }
     let suite = runner.suite();
     ok &= suite.outcome == "pass";
-    println!("suite: {}: {}", suite.outcome, suite.detail);
-    println!("result: {}", if ok { "pass" } else { "fail" });
+    say!("suite: {}: {}", suite.outcome, suite.detail);
+    say!("result: {}", if ok { "pass" } else { "fail" });
     let mut record = serde_json::json!({
         "v": 1,
         "kind": "check",
@@ -292,13 +292,13 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         record["steps_truncated"] = serde_json::json!(true);
     }
     if let Err(e) = append(&ticket.dir.join("runs.jsonl"), &record) {
-        eprintln!("stapel: the check record was not written: {e}");
+        warn!("stapel: the check record was not written: {e}");
         return ExitCode::from(1);
     }
     if let Ok(now) = git_text(&root, &["rev-parse", "--verify", "HEAD"])
         && now.trim() != head
     {
-        eprintln!(
+        warn!(
             "notice: HEAD moved to {} while the check ran; this check is of {}",
             short(now.trim()),
             short(&at)
@@ -594,26 +594,26 @@ fn short(sha: &str) -> &str {
 }
 
 fn print_list(root: &std::path::Path, key: &str, steps: &[Step]) -> Result<(), String> {
-    println!("ticket: {key}");
+    say!("ticket: {key}");
     for step in steps {
-        println!("{}", step.label);
+        say!("{}", step.label);
         let reds: Vec<_> = step.reds().collect();
         let greens: Vec<_> = step.greens().collect();
         for (name, commits) in [("red", &reds), ("green", &greens)] {
             if commits.is_empty() {
-                println!("  {name}: —");
+                say!("  {name}: —");
             }
             for c in commits {
-                println!("  {name}: {} {}", short(&c.sha), c.subject);
+                say!("  {name}: {} {}", short(&c.sha), c.subject);
             }
         }
         let tests = match reds.first() {
             Some(red) => step_tests(root, &red.sha)?,
             None => Vec::new(),
         };
-        println!("  tests: {}", tests.len());
+        say!("  tests: {}", tests.len());
         for t in tests {
-            println!("    {t}");
+            say!("    {t}");
         }
     }
     Ok(())

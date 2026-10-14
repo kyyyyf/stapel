@@ -36,7 +36,7 @@ pub fn pre_tool_use() -> ExitCode {
                     "updatedInput": updated,
                 }
             });
-            println!("{answer}");
+            say!("{answer}");
             ExitCode::SUCCESS
         }
         Ok(Decision::Deny(reason)) => deny(&reason),
@@ -45,6 +45,6 @@ pub fn pre_tool_use() -> ExitCode {
 }
 
 fn deny(reason: &str) -> ExitCode {
-    eprintln!("stapel: {reason}");
+    warn!("stapel: {reason}");
     ExitCode::from(DENY)
 }

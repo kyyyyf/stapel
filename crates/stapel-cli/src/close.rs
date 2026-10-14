@@ -61,9 +61,9 @@ pub fn run(key: Option<&str>, reason: &str, grant: Option<&str>) -> Result<(), S
     });
     let dropped_flag = state.extra.remove("build").is_some();
     save(&ticket.dir.join("state.json"), &state)?;
-    println!("closed: {}", ticket.key);
+    say!("closed: {}", ticket.key);
     if dropped_flag {
-        println!("removed: build.allowed (phase 0 hand permit)");
+        say!("removed: build.allowed (phase 0 hand permit)");
     }
     let c = state.closed.as_ref().expect("just set");
     stapel_core::journal::record_decision(

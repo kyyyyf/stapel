@@ -46,7 +46,7 @@ pub fn run(title: &str, tracker: Option<&str>) -> Result<(), String> {
     state.tracker = tracker.map(String::from);
     state.base = base;
     save(&dir.join("state.json"), &state)?;
-    println!("created: {key}");
+    say!("created: {key}");
     Ok(())
 }
 

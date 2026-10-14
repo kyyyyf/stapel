@@ -59,7 +59,7 @@ pub fn short_text(name: &str, value: &str) -> Result<(), String> {
 
 fn warn_unconfigured(config: &stapel_core::config::Config, role: &str) {
     if !config.models.contains_key(role) {
-        eprintln!("warning: role {role} is not in stapel.toml");
+        warn!("warning: role {role} is not in stapel.toml");
     }
 }
 
@@ -133,7 +133,7 @@ pub fn add(a: Add) -> Result<(), String> {
         record.insert("note".into(), json!(note));
     }
     append(&ticket.dir.join("tokens.jsonl"), &Value::Object(record))?;
-    println!("recorded: {id}");
+    say!("recorded: {id}");
     Ok(())
 }
 
@@ -278,10 +278,10 @@ pub fn import(a: Import) -> Result<(), String> {
     sums.retain(|s| s.fields.iter().any(|(_, v)| v.is_some_and(|n| n > 0)));
     sums.sort_by(|a, b| a.model.cmp(&b.model));
 
-    println!("skipped: {} error lines", t.error_lines);
-    println!("skipped: {} unreadable lines", t.unreadable_lines);
+    say!("skipped: {} error lines", t.error_lines);
+    say!("skipped: {} unreadable lines", t.unreadable_lines);
     if sums.is_empty() {
-        println!("nothing to import in the window");
+        say!("nothing to import in the window");
         return Ok(());
     }
 
@@ -321,9 +321,9 @@ pub fn import(a: Import) -> Result<(), String> {
     let next_since = rfc3339_millis(sums.iter().map(|s| s.to_ms).max().unwrap_or(0) + 1);
     if already.len() == sums.len() {
         for id in already {
-            println!("already imported: {id}");
+            say!("already imported: {id}");
         }
-        println!("next --since: {next_since}");
+        say!("next --since: {next_since}");
         return Ok(());
     }
     if !already.is_empty() {
@@ -380,15 +380,15 @@ pub fn import(a: Import) -> Result<(), String> {
         record.insert("importer".into(), json!(2));
         append(&ticket.dir.join("tokens.jsonl"), &Value::Object(record))?;
         if s.partial > 0 {
-            println!(
+            say!(
                 "recorded: {id} {} ({} messages, partial: {})",
                 s.model, s.messages, s.partial
             );
         } else {
-            println!("recorded: {id} {} ({} messages)", s.model, s.messages);
+            say!("recorded: {id} {} ({} messages)", s.model, s.messages);
         }
     }
-    println!("next --since: {next_since}");
+    say!("next --since: {next_since}");
     Ok(())
 }
 
@@ -419,7 +419,7 @@ pub fn session(transcript: &Path) -> Result<(), String> {
         _ => false,
     });
     if known {
-        println!("already imported: {id}");
+        say!("already imported: {id}");
         return Ok(());
     }
     let mut models = Map::new();
@@ -445,7 +445,7 @@ pub fn session(transcript: &Path) -> Result<(), String> {
         "models": models,
     });
     append(&journal, &record)?;
-    println!(
+    say!(
         "recorded: {id} session {} ({} models)",
         c.session,
         c.models.len()
@@ -804,7 +804,7 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
         out.push_str(&problems.join("\n"));
     }
     if !out.is_empty() {
-        println!("{out}");
+        say!("{out}");
     }
     Ok(if problems.is_empty() {
         std::process::ExitCode::SUCCESS

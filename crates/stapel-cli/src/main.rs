@@ -1,3 +1,5 @@
+#[macro_use]
+mod out;
 mod check;
 mod close;
 mod hook;
@@ -198,7 +200,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("stapel: {message}");
+            warn!("stapel: {message}");
             ExitCode::FAILURE
         }
     }

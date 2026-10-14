@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 use stapel_core::config::{Config, starter_toml, validate_prefix};
-use std::io::{BufRead, IsTerminal, Write};
+use std::io::{BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -46,7 +46,7 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
         let config =
             Config::parse_at(&text, &root).map_err(|e| format!("{CONFIG} cannot be read: {e}"))?;
         if prefix.is_some() {
-            println!(
+            say!(
                 "{CONFIG} already exists, the ticket key stays {}; edit the file to change it",
                 config.tickets.key
             );
@@ -78,16 +78,16 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
     }
 
     if !on_path("stapel") {
-        eprintln!(
+        warn!(
             "warning: stapel is not on PATH; until it is, the hook denies every tool call it \
              checks"
         );
     }
     if plan.is_empty() {
-        println!("already set up: nothing changed");
+        say!("already set up: nothing changed");
     }
     for step in plan {
-        println!("{}", step.label);
+        say!("{}", step.label);
     }
     Ok(())
 }
@@ -120,8 +120,8 @@ fn ask_prefix() -> Result<String, String> {
             "ticket key prefix not given: pass --prefix, e.g. stapel init --prefix STP".into(),
         );
     }
-    print!("Ticket key prefix (2-8 uppercase Latin letters, e.g. STP): ");
-    std::io::stdout().flush().map_err(|e| e.to_string())?;
+    say_raw!("Ticket key prefix (2-8 uppercase Latin letters, e.g. STP): ");
+    crate::out::flush().map_err(|e| e.to_string())?;
     let mut line = String::new();
     stdin
         .lock()
@@ -260,7 +260,7 @@ fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     };
     let Ok(rel) = path.strip_prefix(root).map(|p| p.display().to_string()) else {
         // A shared hooks directory would put the hook into every repository that uses it.
-        eprintln!(
+        warn!(
             "warning: the git hooks directory {} is outside the repository (core.hooksPath); \
              pre-push was not installed, so the second layer against agent pushes is off",
             path.parent().unwrap_or(&path).display()
@@ -281,7 +281,7 @@ fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
             Ok(())
         }
         Ok(_) => {
-            eprintln!(
+            warn!(
                 "warning: {rel} exists and is not from stapel; the second layer against agent \
                  pushes was not installed. Add a check of the CLAUDECODE variable to it by hand"
             );

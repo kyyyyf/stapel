@@ -13,24 +13,24 @@ pub fn run(key: Option<&str>) -> Result<ExitCode, String> {
 
     match &ticket.status {
         Status::Open(state) | Status::Closed(state) => {
-            println!("ticket: {} — {}", ticket.key, state.title);
+            say!("ticket: {} — {}", ticket.key, state.title);
             match &state.closed {
-                Some(c) => println!("state: closed by {} at {}: {}", c.by, c.at, c.reason),
-                None => println!("state: open"),
+                Some(c) => say!("state: closed by {} at {}: {}", c.by, c.at, c.reason),
+                None => say!("state: open"),
             }
             match read(&ticket.dir.join("ticket.md")) {
                 Err(reason) => {
-                    println!("problem: {reason}");
+                    say!("problem: {reason}");
                     problem = true;
                 }
                 Ok(text) => {
                     let sections = parse(&text);
                     if state.closed.is_some() {
-                        println!("waiting for: none (closed)");
+                        say!("waiting for: none (closed)");
                     } else {
                         match waiting_for(&config, &sections, state) {
-                            Some(s) => println!("waiting for: {} (owner: {})", s.id, s.owner),
-                            None => println!("waiting for: none"),
+                            Some(s) => say!("waiting for: {} (owner: {})", s.id, s.owner),
+                            None => say!("waiting for: none"),
                         }
                     }
                     for def in &config.sections {
@@ -38,14 +38,14 @@ pub fn run(key: Option<&str>) -> Result<ExitCode, String> {
                             continue;
                         };
                         for reason in freshness(&config, &sections, c) {
-                            println!("stale: {} — {}", def.id, reason.describe(c));
+                            say!("stale: {} — {}", def.id, reason.describe(c));
                             if reason == stapel_core::stage::Reason::Changed
                                 && let (Some(old), Some(current)) = (
                                     c.text.as_deref(),
                                     stapel_core::ticket::find(&sections, &def.title).found(),
                                 )
                             {
-                                print!("{}", diff(old, current));
+                                say_raw!("{}", diff(old, current));
                             }
                         }
                     }
@@ -53,38 +53,38 @@ pub fn run(key: Option<&str>) -> Result<ExitCode, String> {
             }
         }
         Status::Legacy(v) => {
-            println!(
+            say!(
                 "ticket: {} — {}",
                 ticket.key,
                 v["title"].as_str().unwrap_or("(no title)")
             );
-            println!("state: legacy (STP-1 format)");
+            say!("state: legacy (STP-1 format)");
         }
         Status::Unreadable(reason) => {
-            println!("ticket: {}", ticket.key);
-            println!("problem: {reason}");
+            say!("ticket: {}", ticket.key);
+            say!("problem: {reason}");
             problem = true;
         }
     }
 
     for name in ["decisions.jsonl", "tokens.jsonl"] {
         for (line, _) in stapel_core::journal::problems(&ticket.dir.join(name)) {
-            println!(
+            say!(
                 "warning: journal line .stapel/tickets/{}/{name}:{line} cannot be read",
                 ticket.key
             );
         }
     }
     if matches!(ticket.status, Status::Open(_) | Status::Closed(_)) {
-        println!(
+        say!(
             "{}",
             stapel_core::checkstate::current(&root, &config, &ticket.dir)
         );
     }
     match build_permit(&root, Some(&config)) {
-        Some(Permit::Computed(k)) => println!("build: allowed (by {k})"),
-        Some(Permit::ByHand(k)) => println!("build: allowed by hand (phase 0, {k})"),
-        None => println!("build: not allowed"),
+        Some(Permit::Computed(k)) => say!("build: allowed (by {k})"),
+        Some(Permit::ByHand(k)) => say!("build: allowed by hand (phase 0, {k})"),
+        None => say!("build: not allowed"),
     }
     Ok(if problem {
         ExitCode::FAILURE
