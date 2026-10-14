@@ -168,8 +168,8 @@ a newline (`status` with a stale section). Each has a case in the named tests.
 **Author self-check:** 2026-10-13, before spec review: every promise item has a criterion and a test; the
 Inputs and External states rows come from the catalogue; no open question is left.
 2026-10-13, after spec review round 1: every SR1 finding applied; AC-3 renamed; round 2 for the two HIGH.
-2026-10-14, after step 1: design as built moved into the ticket; drift findings D1-1 to D1-7 have no defect to fix.
 2026-10-13, after spec review round 2: SR2 findings applied; AC-1 covers `check` by its exit code in AC-3's test.
+2026-10-14, after step 1: design as built moved into the ticket; drift findings D1-1 to D1-7 have no defect to fix.
 
 ## Proof
 
