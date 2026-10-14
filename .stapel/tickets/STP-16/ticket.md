@@ -23,7 +23,8 @@ writes it itself and ignores a write error).
 error is a pipe whose reader has closed it:
 
 1. the command does not panic and prints no panic message;
-2. the command does all its writes to files and to git that it does with an open pipe;
+2. the command does all its writes to files outside `.git/` that it does with an open pipe (spec change,
+   code review DR-1);
 3. the exit code is the one the command gives with an open pipe (Decision of 2026-10-13, question 1).
 
 Not promised: a reader that stops reading without closing the pipe (the command blocks, as any program does);
@@ -58,6 +59,9 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   prompt path with `STAPEL_ASSUME_TTY`), SR1-8 (`status` with a stale confirmation). LOW: Rust 1.87 floor for
   `std::io::pipe`, `std::process::Command` in the test, `--version` named as a non-goal, decided questions
   no longer called open.
+- 2026-10-14, code review round 1 (R, E, DR; no HIGH), spec change, needs a new confirmation: promise item 2
+  names files outside `.git/` (DR-1); AC-4 also scans `crates/stapel-core/src` (E-1); AC-2, AC-3 and AC-4
+  gain coverage tests (R-1, DR-2, R-2, E-1). Plan step 2.
 - 2026-10-13, spec review round 2 (SR2-1 to SR2-3, one HIGH), fixed in the text; no round 3 (CLAUDE.md item 4
   allows one more round): SR2-1 (`.json` files compared as parsed values without `id` and `at`: `ok` and
   `close` write times into `state.json`), SR2-2 (the full `check` runs once open and once closed, in one test,
@@ -77,9 +81,9 @@ Terms:
 | № | Criterion | Test |
 |---|---|---|
 | AC-1 | WHEN standard output is a closed pipe THE `stapel` binary, for each case of the test's table (every subcommand of `main.rs`; the full `check` is asserted in AC-3's test), prints no panic message on standard error and exits with the code of the open run. | `closed_pipe::stdout_closed_keeps_exit_code` |
-| AC-2 | WHEN standard error is a closed pipe THE `stapel` binary exits with the code of the open run, for a failing command (1), a hook deny (2) and a command that warns and succeeds (0). | `closed_pipe::stderr_closed_keeps_exit_code` |
-| AC-3 | WHEN standard output or standard error is a closed pipe THE commands that write leave the same tree as the open run, `.git/` aside: `.json` files as parsed values and `.jsonl` files line for line as parsed records, with every `id` and `at` key dropped at any depth; other files byte for byte. | `closed_pipe::closed_output_keeps_every_write` |
-| AC-4 | IF a `.rs` file under `crates/stapel-cli/src/` (any depth) other than `out.rs`, with `//` comments removed, matches `print!`, `println!`, `eprint!`, `eprintln!`, `dbg!`, `write!`, `writeln!`, `stdout(`, `stderr(`, `Stdout` or `Stderr` THEN the test fails naming the file and line. | `closed_pipe::no_print_macros_outside_out` |
+| AC-2 | WHEN standard error is a closed pipe THE `stapel` binary exits with the code of the open run, for a failing command (1), a hook deny (2) and a command that warns and succeeds (0). | `closed_pipe::stderr_closed_keeps_exit_code`, `closed_pipe::check_with_stderr_closed_keeps_exit_code` |
+| AC-3 | WHEN standard output or standard error is a closed pipe THE commands that write leave the same tree as the open run, `.git/` aside: `.json` files as parsed values and `.jsonl` files line for line as parsed records, with every `id` and `at` key dropped at any depth; other files byte for byte. The open run prints to the stream the closed run closes. | `closed_pipe::closed_output_keeps_every_write`, `closed_pipe::open_runs_print_to_the_closed_stream` |
+| AC-4 | IF a `.rs` file, with `//` comments removed, under `crates/stapel-cli/src/` (any depth) other than `out.rs` or under `crates/stapel-core/src/` (spec change, code review E-1), matches `print!`, `println!`, `eprint!`, `eprintln!`, `dbg!`, `write!`, `writeln!`, `stdout(`, `stderr(`, `Stdout` or `Stderr` THEN the test fails naming the file and line. | `closed_pipe::no_print_macros_outside_out`, `closed_pipe::no_print_macros_in_stapel_core` |
 
 ### Guarantees
 
@@ -139,6 +143,7 @@ end of the line when `//` is outside a string literal; `/* */` comments are not 
 |---|---|---|
 | Main path | standard output closed: `init --prefix`, `init` prompt (`STAPEL_ASSUME_TTY=1`, input `STP`), `new`, `ok`, `status` with a stale section, `close`, `tokens`, `tokens add`, `tokens import`, `tokens session`, `check --list`, `hook pre-tool-use` with a payload that gives `ask` | `closed_pipe::stdout_closed_keeps_exit_code` |
 | Negative | standard error closed: unknown ticket key (1), empty title (1), missing transcript (1), a hook deny (2), `tokens add` with a role missing from `stapel.toml` (warning, 0) | `closed_pipe::stderr_closed_keeps_exit_code` |
+| Coverage (step 2) | `check` with an unknown key and standard error closed (refusal, 2; R-1, DR-2); each writing case of AC-3 prints to the stream it closes in the open run (R-2); no print site in `crates/stapel-core/src` (E-1) | `closed_pipe::check_with_stderr_closed_keeps_exit_code`, `closed_pipe::open_runs_print_to_the_closed_stream`, `closed_pipe::no_print_macros_in_stapel_core` |
 | Data | writing commands with the output they print to closed: `init` both ways, `new`, `ok`, `close`, `tokens add` (standard error), `tokens import` with two models, `tokens session`, `check` (exit code too) | `closed_pipe::closed_output_keeps_every_write` |
 | Regression | a print macro or a direct handle outside `out.rs` | `closed_pipe::no_print_macros_outside_out` |
 
@@ -146,7 +151,7 @@ end of the line when `//` is outside a string literal; `/* */` comments are not 
 
 | Input | Type | Smallest / largest | Empty | Invalid | Precision | Test |
 |---|---|---|---|---|---|---|
-| Standard output | file descriptor 1 | open pipe, closed pipe, file, terminal | closed descriptor: not promised | write error other than `EPIPE`: not promised (Decision of 2026-10-13, question 2) | per write call | `closed_pipe::stdout_closed_keeps_exit_code` |
+| Standard output | file descriptor 1 | open pipe, closed pipe; a file or a terminal is unchanged and not tested (DR-3) | closed descriptor: not promised | write error other than `EPIPE`: not promised (Decision of 2026-10-13, question 2) | per write call | `closed_pipe::stdout_closed_keeps_exit_code` |
 | Standard error | file descriptor 2 | open pipe, closed pipe | closed descriptor: not promised | as standard output | per write call | `closed_pipe::stderr_closed_keeps_exit_code` |
 | Subcommand | CLI | every variant of `Command`, `TokensAction` and `HookCommand` in `main.rs`, and `check --list` | no subcommand: clap usage (non-goal) | unknown: clap error (non-goal) | — | `closed_pipe::stdout_closed_keeps_exit_code` |
 
@@ -176,9 +181,9 @@ Inputs and External states rows come from the catalogue; no open question is lef
 | Criterion | Test |
 |---|---|
 | AC-1 | `closed_pipe::stdout_closed_keeps_exit_code` |
-| AC-2 | `closed_pipe::stderr_closed_keeps_exit_code` |
-| AC-3 | `closed_pipe::closed_output_keeps_every_write` |
-| AC-4 | `closed_pipe::no_print_macros_outside_out` |
+| AC-2 | `closed_pipe::stderr_closed_keeps_exit_code`, `closed_pipe::check_with_stderr_closed_keeps_exit_code` |
+| AC-3 | `closed_pipe::closed_output_keeps_every_write`, `closed_pipe::open_runs_print_to_the_closed_stream` |
+| AC-4 | `closed_pipe::no_print_macros_outside_out`, `closed_pipe::no_print_macros_in_stapel_core` |
 
 ## Plan
 
@@ -187,10 +192,16 @@ Route: full (source: `auto`; tags `data`, `interface`).
 | Step | What | Criteria | Must not change |
 |---|---|---|---|
 | 1 | `out.rs` macros; every print site of `crates/stapel-cli/src` moved to them; `out::flush()` for `init` | AC-1, AC-2, AC-3, AC-4 | message texts, exit codes and golden files |
+| 2 | Coverage after code review round 1: R-1/DR-2, R-2, E-1 (tests only, no code) | AC-2, AC-3, AC-4 | `crates/stapel-cli/src`, the four tests of step 1 |
 
 ## Review
 
-TODO
+Round 1 (2026-10-14), on a read-only copy at `c0f1a1e` with the as-built notes: fresh reviewer (Sonnet, R-1 to
+R-8), external reviewer (Fable, E-1 to E-7), drift reviewer (Sonnet, DR-1 to DR-6). No HIGH, so no round 2.
+Six MEDIUM, five inside the promise, none in the code: R-1 and DR-2 (`check` with standard error closed), R-2
+(AC-3 cases that may not print to the stream they close) and E-1 (AC-4 blind to `stapel-core`) get coverage
+tests in plan step 2; DR-1 narrows promise item 2 to files outside `.git/`; E-2 (no test of a non-pipe write
+error) is rejected as outside the promise (question 2). D1-2's fate changed from a note to the fix of R-1.
 
 ## Summary
 
