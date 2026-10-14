@@ -108,12 +108,18 @@ Terms:
 
 ### Decisions (as built)
 
-Planned: a module `crates/stapel-cli/src/out.rs` with macros `say!` (a line to standard output), `say_raw!`
-(no newline) and `warn!` (a line to standard error). Each writes through a locked handle, drops a
-`BrokenPipe` error and panics on any other error with the text of `println!` (Decision of question 2), as
-today. A function `out::flush()` serves `init`: it drops `BrokenPipe` and returns any other error, as today.
-`out.rs` exposes no output handle. Every print site in `crates/stapel-cli/src` uses them. No change to exit codes or to the text of any
-message.
+#### Step 1
+
+- `crates/stapel-cli/src/out.rs` holds the macros `say!`, `say_raw!` and `warn!`; they call two hidden
+  functions `out::stdout(args, newline)` and `out::stderr(args)` that take `fmt::Arguments`, write through a
+  locked handle, drop `BrokenPipe` and panic on any other error with the text of `println!`. No handle leaves
+  the module. `#[macro_use] mod out;` is the first module of `main.rs`.
+- `out::flush()` drops `BrokenPipe` and returns any other error; `init` calls it after its prompt.
+- Every print site of `crates/stapel-cli/src` moved to the macros; no message text or exit code changed.
+- The test `closed_output_keeps_every_write` runs each writing case with standard output closed and with
+  standard error closed, asserts that the open run succeeds and writes, and runs the full `check` once open and
+  once closed. `tokens import` cases pass `--until`, because a fresh checkout gives the fixture a new
+  modification time (B1-1).
 
 ## Test plan
 
@@ -162,6 +168,7 @@ a newline (`status` with a stale section). Each has a case in the named tests.
 **Author self-check:** 2026-10-13, before spec review: every promise item has a criterion and a test; the
 Inputs and External states rows come from the catalogue; no open question is left.
 2026-10-13, after spec review round 1: every SR1 finding applied; AC-3 renamed; round 2 for the two HIGH.
+2026-10-14, after step 1: design as built moved into the ticket; drift findings D1-1 to D1-7 have no defect to fix.
 2026-10-13, after spec review round 2: SR2 findings applied; AC-1 covers `check` by its exit code in AC-3's test.
 
 ## Proof
