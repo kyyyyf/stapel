@@ -10,7 +10,6 @@
       "hash": "sha256:1b28bcb8ad570494a7b1f096214e00f9fc053c0564ae46e9b860583507634ff8",
       "normal_form": 1,
       "depends_on": {},
-      "text": "Terms:\n\n- **Closed pipe**: standard output or standard error of the `stapel` process is the write end of a pipe whose\n  read end no process holds; every write to it fails with `EPIPE` (Rust ignores `SIGPIPE`, so no signal ends\n  the process).\n- **Open run** and **closed run** of a command: the same command line, in the same starting repository and\n  with the same standard input, once with both outputs open and once with the named output a closed pipe.\n\n| № | Criterion | Test |\n|---|---|---|\n| AC-1 | WHEN standard output is a closed pipe THE `stapel` binary, for each case of the test's table (every subcommand of `main.rs`; the full `check` is asserted in AC-3's test), prints no panic message on standard error and exits with the code of the open run. | `closed_pipe::stdout_closed_keeps_exit_code` |\n| AC-2 | WHEN standard error is a closed pipe THE `stapel` binary exits with the code of the open run, for a failing command (1), a hook deny (2) and a command that warns and succeeds (0). | `closed_pipe::stderr_closed_keeps_exit_code` |\n| AC-3 | WHEN standard output or standard error is a closed pipe THE commands that write leave the same tree as the open run, `.git/` aside: `.json` files as parsed values and `.jsonl` files line for line as parsed records, with every `id` and `at` key dropped at any depth; other files byte for byte. | `closed_pipe::closed_output_keeps_every_write` |\n| AC-4 | IF a `.rs` file under `crates/stapel-cli/src/` (any depth) other than `out.rs`, with `//` comments removed, matches `print!`, `println!`, `eprint!`, `eprintln!`, `dbg!`, `write!`, `writeln!`, `stdout(`, `stderr(`, `Stdout` or `Stderr` THEN the test fails naming the file and line. | `closed_pipe::no_print_macros_outside_out` |\n\n### Guarantees\n\n- **Promised:** the Frame's promise, by AC-1 to AC-4. AC-4 keeps it for commands added later.\n- **Not promised:** the Frame's list; the exact set of subcommands in the test's table beyond those that exist\n  at the close of this ticket (AC-4 covers new ones by construction).",
       "via": "terminal"
     },
     {
@@ -22,7 +21,6 @@
       "depends_on": {
         "spec": "sha256:1b28bcb8ad570494a7b1f096214e00f9fc053c0564ae46e9b860583507634ff8"
       },
-      "text": "### Facts (external contract and states)\n\n- F-1: the Rust runtime sets `SIGPIPE` to ignored before `main`, so a write to a closed pipe returns\n  `ErrorKind::BrokenPipe`; `println!` and `eprintln!` panic on any write error (\"failed printing to stdout\").\n- F-2: child processes do not inherit the outputs: `git` runs through `.output()`, `cargo` in `stapel check`\n  through piped outputs (`stapel-core/src/runner.rs`); only `kill` inherits standard output and prints nothing.\n- F-3: `init` flushes standard output after its prompt (reached without `--prefix`, with a terminal or\n  `STAPEL_ASSUME_TTY`) and returns the flush error as a command error.\n- F-6: `stapel_core::journal::new_id` takes random bits, so `tokens add`, `ok` and `close` write different ids\n  in two runs; `tokens import` and `tokens session` derive their ids from the input.\n- F-7: writes that follow a print today: `tokens import` (one record per model), `tokens add` after a warning\n  on standard error, `check` (report first, then `runs.jsonl`), `init` after its prompt.\n- F-4: clap prints `--help` and usage errors itself and ignores the write result (non-goal).\n- F-5: prior art: ripgrep and fd treat `BrokenPipe` on standard output as a quiet end with code 0; git and\n  coreutils die by `SIGPIPE` (141). Neither keeps work running after the pipe closes; this ticket does, for\n  promise item 2.\n\n### Decisions (as built)\n\nPlanned: a module `crates/stapel-cli/src/out.rs` with macros `say!` (a line to standard output), `say_raw!`\n(no newline) and `warn!` (a line to standard error). Each writes through a locked handle, drops a\n`BrokenPipe` error and panics on any other error with the text of `println!` (Decision of question 2), as\ntoday. A function `out::flush()` serves `init`: it drops `BrokenPipe` and returns any other error, as today.\n`out.rs` exposes no output handle. Every print site in `crates/stapel-cli/src` uses them. No change to exit codes or to the text of any\nmessage.",
       "via": "terminal"
     },
     {
@@ -35,7 +33,6 @@
         "design": "sha256:003c34acd4b4c036a142ae97522139eab4bc1b6fec7c56aff132b663980681a6",
         "spec": "sha256:1b28bcb8ad570494a7b1f096214e00f9fc053c0564ae46e9b860583507634ff8"
       },
-      "text": "| Criterion | Test |\n|---|---|\n| AC-1 | `closed_pipe::stdout_closed_keeps_exit_code` |\n| AC-2 | `closed_pipe::stderr_closed_keeps_exit_code` |\n| AC-3 | `closed_pipe::closed_output_keeps_every_write` |\n| AC-4 | `closed_pipe::no_print_macros_outside_out` |",
       "via": "terminal"
     },
     {
@@ -48,7 +45,54 @@
         "design": "sha256:003c34acd4b4c036a142ae97522139eab4bc1b6fec7c56aff132b663980681a6",
         "spec": "sha256:1b28bcb8ad570494a7b1f096214e00f9fc053c0564ae46e9b860583507634ff8"
       },
-      "text": "Route: full (source: `auto`; tags `data`, `interface`).\n\n| Step | What | Criteria | Must not change |\n|---|---|---|---|\n| 1 | `out.rs` macros; every print site of `crates/stapel-cli/src` moved to them; `out::flush()` for `init` | AC-1, AC-2, AC-3, AC-4 | message texts, exit codes and golden files |",
+      "via": "terminal"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-10-14T11:20:41Z",
+      "hash": "sha256:b58dabff0ee2c9dd1d25ba8742d37b85f578bb25469ca617f79039351d359f60",
+      "normal_form": 1,
+      "depends_on": {},
+      "text": "Terms:\n\n- **Closed pipe**: standard output or standard error of the `stapel` process is the write end of a pipe whose\n  read end no process holds; every write to it fails with `EPIPE` (Rust ignores `SIGPIPE`, so no signal ends\n  the process).\n- **Open run** and **closed run** of a command: the same command line, in the same starting repository and\n  with the same standard input, once with both outputs open and once with the named output a closed pipe.\n\n| № | Criterion | Test |\n|---|---|---|\n| AC-1 | WHEN standard output is a closed pipe THE `stapel` binary, for each case of the test's table (every subcommand of `main.rs`; the full `check` is asserted in AC-3's test), prints no panic message on standard error and exits with the code of the open run. | `closed_pipe::stdout_closed_keeps_exit_code` |\n| AC-2 | WHEN standard error is a closed pipe THE `stapel` binary exits with the code of the open run, for a failing command (1), a hook deny (2) and a command that warns and succeeds (0). | `closed_pipe::stderr_closed_keeps_exit_code`, `closed_pipe::check_with_stderr_closed_keeps_exit_code` |\n| AC-3 | WHEN standard output or standard error is a closed pipe THE commands that write leave the same tree as the open run, `.git/` aside: `.json` files as parsed values and `.jsonl` files line for line as parsed records, with every `id` and `at` key dropped at any depth; other files byte for byte. For each pair the open run prints to the stream the closed run closes; on standard error the pairs are `tokens add` with a role missing from `stapel.toml`, `ok` with a spaced `user.name` and `init` with a foreign `pre-push` hook (warnings before a write); `new`, `close` and `tokens session` print nothing there. | `closed_pipe::closed_output_keeps_every_write`, `closed_pipe::open_runs_print_to_the_closed_stream` |\n| AC-4 | IF a `.rs` file, with `//` comments removed, under `crates/stapel-cli/src/` (any depth) other than `out.rs` matches `print!`, `println!`, `eprint!`, `eprintln!`, `dbg!`, `write!`, `writeln!`, `stdout(`, `stderr(`, `Stdout` or `Stderr`, or under `crates/stapel-core/src/` matches `print!`, `println!`, `eprint!`, `eprintln!`, `dbg!`, `io::stdout(` or `io::stderr(` (spec change, code review E-1; core writes to files and formatters and sets child outputs) THEN the test fails naming the file and line. | `closed_pipe::no_print_macros_outside_out`, `closed_pipe::no_print_macros_in_stapel_core` |\n\n### Guarantees\n\n- **Promised:** the Frame's promise, by AC-1 to AC-4. AC-4 keeps it for commands added later.\n- **Not promised:** the Frame's list; the exact set of subcommands in the test's table beyond those that exist\n  at the close of this ticket (AC-4 covers new ones by construction).",
+      "via": "terminal"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-10-14T11:20:47Z",
+      "hash": "sha256:002ad6b6501eff91ca06ab46ee12540024e20d74387c0431873b03a21d293191",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:b58dabff0ee2c9dd1d25ba8742d37b85f578bb25469ca617f79039351d359f60"
+      },
+      "text": "### Facts (external contract and states)\n\n- F-1: the Rust runtime sets `SIGPIPE` to ignored before `main`, so a write to a closed pipe returns\n  `ErrorKind::BrokenPipe`; `println!` and `eprintln!` panic on any write error (\"failed printing to stdout\").\n- F-2: child processes do not inherit the outputs: `git` runs through `.output()`, `cargo` in `stapel check`\n  through piped outputs (`stapel-core/src/runner.rs`); only `kill` inherits standard output and prints nothing.\n- F-3: `init` flushes standard output after its prompt (reached without `--prefix`, with a terminal or\n  `STAPEL_ASSUME_TTY`) and returns the flush error as a command error.\n- F-6: `stapel_core::journal::new_id` takes random bits, so `tokens add`, `ok` and `close` write different ids\n  in two runs; `tokens import` and `tokens session` derive their ids from the input.\n- F-7: writes that follow a print today: `tokens import` (one record per model), `tokens add` after a warning\n  on standard error, `check` (report first, then `runs.jsonl`), `init` after its prompt.\n- F-4: clap prints `--help` and usage errors itself and ignores the write result (non-goal).\n- F-5: prior art: ripgrep and fd treat `BrokenPipe` on standard output as a quiet end with code 0; git and\n  coreutils die by `SIGPIPE` (141). Neither keeps work running after the pipe closes; this ticket does, for\n  promise item 2.\n\n### Decisions (as built)\n\n#### Step 1\n\n- `crates/stapel-cli/src/out.rs` holds the macros `say!`, `say_raw!` and `warn!`; they call two hidden\n  functions `out::stdout(args, newline)` and `out::stderr(args)` that take `fmt::Arguments`, write through a\n  locked handle, drop `BrokenPipe` and panic on any other error with the text of `println!`. No handle leaves\n  the module. `#[macro_use] mod out;` is the first module of `main.rs`.\n- `out::flush()` drops `BrokenPipe` and returns any other error; `init` calls it after its prompt.\n- Every print site of `crates/stapel-cli/src` moved to the macros; no message text or exit code changed.\n- The test `closed_output_keeps_every_write` runs each writing case with standard output closed and with\n  standard error closed, asserts that the open run succeeds and writes, and runs the full `check` once open and\n  once closed. `tokens import` cases pass `--until`, because a fresh checkout gives the fixture a new\n  modification time (B1-1).",
+      "via": "terminal"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-10-14T11:20:54Z",
+      "hash": "sha256:dfe9db96e9370afe12cd0813a81a2fb90c7243e5e45cef01eb10c342d3bcb35f",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:002ad6b6501eff91ca06ab46ee12540024e20d74387c0431873b03a21d293191",
+        "spec": "sha256:b58dabff0ee2c9dd1d25ba8742d37b85f578bb25469ca617f79039351d359f60"
+      },
+      "text": "| Criterion | Test |\n|---|---|\n| AC-1 | `closed_pipe::stdout_closed_keeps_exit_code` |\n| AC-2 | `closed_pipe::stderr_closed_keeps_exit_code`, `closed_pipe::check_with_stderr_closed_keeps_exit_code` |\n| AC-3 | `closed_pipe::closed_output_keeps_every_write`, `closed_pipe::open_runs_print_to_the_closed_stream` |\n| AC-4 | `closed_pipe::no_print_macros_outside_out`, `closed_pipe::no_print_macros_in_stapel_core` |",
+      "via": "terminal"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-10-14T11:21:01Z",
+      "hash": "sha256:5af8f5ad34a03bd69813cb80ceb3cc906c208411d6b89e10a6bd14b6311f34c1",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:002ad6b6501eff91ca06ab46ee12540024e20d74387c0431873b03a21d293191",
+        "spec": "sha256:b58dabff0ee2c9dd1d25ba8742d37b85f578bb25469ca617f79039351d359f60"
+      },
+      "text": "Route: full (source: `auto`; tags `data`, `interface`).\n\n| Step | What | Criteria | Must not change |\n|---|---|---|---|\n| 1 | `out.rs` macros; every print site of `crates/stapel-cli/src` moved to them; `out::flush()` for `init` | AC-1, AC-2, AC-3, AC-4 | message texts, exit codes and golden files |\n| 2 | Coverage after code review round 1: R-1/DR-2, R-2, E-1 (tests only, no code) | AC-2, AC-3, AC-4 | `crates/stapel-cli/src`, the four tests of step 1 |",
       "via": "terminal"
     }
   ],
