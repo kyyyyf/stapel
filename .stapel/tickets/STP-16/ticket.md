@@ -215,4 +215,38 @@ error) is rejected as outside the promise (question 2). D1-2's fate changed from
 
 ## Summary
 
-TODO
+**Measures after the close (2026-10-14), compared with STP-13.** Two steps: one RED/GREEN pair (step 1) and
+one coverage commit (step 2); `stapel check` passes at `2842535` with 384 tests. Tokens are measured: the
+STP-16 part of the main transcript `d7cf7c47` (from 2026-10-13T12:28:42Z, after the STP-13 measures, to
+2026-10-14T11:57:27Z; the last minutes of the close are not counted) and all seven subagent files, each mapped
+to its role from its description: builder 2, drift 2, external 2 (spec review, both rounds in one file; code
+review), reviewer 1. Subagent output counts are partial in the transcripts, so cache reads are compared.
+
+| Measure | STP-13 | STP-16 |
+|---|---|---|
+| Escaped defects found so far | 0 (X-1 of STP-2 found after the close) | 0. Note: the installed `stapel` in `~/.cargo/bin` is from 2026-10-05 and still panics on `\| head`; it needs `cargo install --path crates/stapel-cli`, not a code fix |
+| Findings before code (spec review, per-step drift) | 13 + 22 (HIGH and MEDIUM: 11 + 13) | 13 + 7 (HIGH and MEDIUM: 10 + 2); spec review needed round 2 for 3 HIGH |
+| Code review findings, all / HIGH and MEDIUM inside the promise | 12 / 7 (0 HIGH) | 9 / 5 (0 HIGH); one MEDIUM outside, rejected (E-2) |
+| Code review HIGH and MEDIUM by `catchable_at` | design 5, spec 2, code 1 | test-plan 5, spec 1; none in the code |
+| `ticket.md` | 39 KB | 18 KB |
+| Changed lines (frame estimate) | about 2 170 (600–900) | about 1 050: 204 source, 842 tests (about 100) |
+| Steps with RED/GREEN, tests at the close | 9, 377 | 1 and one coverage commit, 384 |
+| Subagent estimates by role (end notices) | builder 0.80M, drift 0.46M, external 0.27M, reviewer 0.12M | builder 0.26M, external 0.19M, drift 0.13M, reviewer 0.07M |
+| Measured cache read (cache write) by role | orchestrator 42.5M (0.68M), builder 15.4M (2.32M), external 1.95M (0.42M), drift 1.88M (0.37M), reviewer 0.50M (0.11M) | orchestrator 17.6M (0.49M), external 2.33M (0.18M), builder 2.05M (0.29M), drift 0.45M (0.10M), reviewer 0.28M (0.05M) |
+| Orchestrator output | 172k | 91k |
+| Local history rewrites | 3 | 1 (step 1, B1-1), run by the human |
+| Wall time | 4 calendar days, about 14 active hours | 2026-10-13 12:51Z to 2026-10-14 12:02Z; active hours not measured |
+
+What improved: a small ticket stayed small in the build (one pair, one coverage commit, no code change after
+review); code review found no HIGH and nothing in the code; tokens fell for every role but external, the
+orchestrator reading 17.6M against 42.5M; the guard's stale confirmation stopped a builder from writing tests
+for an unconfirmed spec change. What did not: the frame's size estimate missed the test lines again (842
+against about 100); all five inside-promise MEDIUM findings of code review were test-plan gaps (rule item 3),
+so the tables still miss cases a reviewer finds by reading the code; a builder wrote a file with Bash `cp`
+past the guard before the Edit tool was denied (ledger finding of 2026-10-14); the human ran `stapel ok`
+eleven times for three confirmations, which STP-17 addresses; the external reviewer cost more than the builder.
+
+**Process ledger (CLAUDE.md item 9), code review HIGH and MEDIUM by the rule that should have caught them:**
+item 3: 4, item 1: 1, item 7: 1 (outside, rejected). Item 9 over STP-6, STP-13 and STP-16: no item went three
+tickets in a row without a catch or a miss; item 5 had none in STP-13 and STP-16, so it is removed or
+simplified if STP-17 also has none. Nothing removed.

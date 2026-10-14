@@ -6,3 +6,8 @@
 {"v":1,"id":"d-464821c7fcd4","at":"2026-10-14T11:20:47Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:002ad6b6501eff91ca06ab46ee12540024e20d74387c0431873b03a21d293191","via":"terminal"}
 {"v":1,"id":"d-4c6095cccf1e","at":"2026-10-14T11:20:54Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:dfe9db96e9370afe12cd0813a81a2fb90c7243e5e45cef01eb10c342d3bcb35f","via":"terminal"}
 {"v":1,"id":"d-451d42969025","at":"2026-10-14T11:21:01Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:5af8f5ad34a03bd69813cb80ceb3cc906c208411d6b89e10a6bd14b6311f34c1","via":"terminal"}
+{"v":1,"id":"d-c9dffe46f9f8","at":"2026-10-14T12:02:14Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:e1a4ec8060bc2260c3e07fad776913f26e5a9e2c6d0a4593ad9d95afecb4ac2e","via":"terminal"}
+{"v":1,"id":"d-e18d598bd500","at":"2026-10-14T12:02:16Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:dfe9db96e9370afe12cd0813a81a2fb90c7243e5e45cef01eb10c342d3bcb35f","via":"terminal"}
+{"v":1,"id":"d-0100710152d4","at":"2026-10-14T12:02:18Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:5af8f5ad34a03bd69813cb80ceb3cc906c208411d6b89e10a6bd14b6311f34c1","via":"terminal"}
+{"v":1,"id":"d-671f899ae0b7","at":"2026-10-14T12:02:26Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:b58dabff0ee2c9dd1d25ba8742d37b85f578bb25469ca617f79039351d359f60","via":"terminal"}
+{"v":1,"id":"d-0baa6e3679a1","at":"2026-10-14T12:02:44Z","by":"kyyyyf","action":"close","reason":"closed output pipe ends every command without a panic; check passes at 2842535"}
