@@ -1,0 +1,29 @@
+to confirm: ABC-1 spec, design, proof, plan
+== spec: changed since the last confirmation
+--- confirmed
++++ current
+@@ -1 +1 @@
+-The spec.
++The spec, revised.
+== design: unchanged; depends on spec, which changed
+== proof: changed since the last confirmation; depends on spec, which changed
+--- confirmed
++++ current
+@@ -1 +1 @@
+-The proof.
++The proof, revised.
+== plan: new, 3 lines
+confirmed: ABC-1 spec (sha256:HASH)
+confirmed: ABC-1 design (sha256:HASH)
+confirmed: ABC-1 proof (sha256:HASH)
+confirmed: ABC-1 plan (sha256:HASH)
+--
+to confirm: ABC-1 spec, design, proof, plan
+== spec: new, 1 line
+== design: unchanged; confirmed under normal form 0
+== proof: new, 1 line
+== plan: new, 1 line
+confirmed: ABC-1 spec (sha256:HASH)
+confirmed: ABC-1 design (sha256:HASH)
+confirmed: ABC-1 proof (sha256:HASH)
+confirmed: ABC-1 plan (sha256:HASH)

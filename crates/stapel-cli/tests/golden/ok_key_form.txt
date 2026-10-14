@@ -1,0 +1,12 @@
+to confirm: ABC-1 design, proof, plan
+== design: changed since the last confirmation
+--- confirmed
++++ current
+@@ -1 +1 @@
+-The design.
++The design, revised.
+== proof: new, 1 line
+== plan: new, 1 line
+confirmed: ABC-1 design (sha256:HASH)
+confirmed: ABC-1 proof (sha256:HASH)
+confirmed: ABC-1 plan (sha256:HASH)
