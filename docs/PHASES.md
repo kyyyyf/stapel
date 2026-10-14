@@ -129,6 +129,10 @@ token record, even if some steps were still performed by the orchestrator by han
 - STP-16 (found after the close of STP-13, finding X-1; taken before STP-14) a closed output pipe: `stapel
   status STP-13 | head -4` panics with "failed printing to stdout: Broken pipe" and exits 101 (an escaped
   defect of STP-2 step 7); every command of the `stapel` binary that prints is checked.
+- STP-17 (asked by the human during STP-16; after STP-16) fewer confirmation commands: `stapel ok KEY` with no
+  section confirms every stale section and prints their list first; `stapel ok` shows the diff of a section
+  since its last confirmation, not the whole text. A spec change after a review round is made as one change, so
+  one round needs one confirmation.
 
 **To discuss with the human:** a feature or epic level with its own human-facing spec and "Done when", with
 tickets limited in size and written for an agent (`docs/decisions/0003`, open question).

@@ -125,6 +125,15 @@ Terms:
   once closed. `tokens import` cases pass `--until`, because a fresh checkout gives the fixture a new
   modification time (B1-1).
 
+#### Step 2
+
+- Coverage only, no code: three tests added at the end of `closed_pipe.rs`. In
+  `open_runs_print_to_the_closed_stream` the pairs of `new`, `close`, `tokens session` and the plain `init` cases
+  with standard error closed are left out, because these commands print nothing to standard error; `ok` with a
+  user name that has a space and `init` with a foreign pre-push hook cover warnings before a write instead.
+- `no_print_macros_in_stapel_core` uses narrower patterns than the CLI scan (print macros, `dbg!`,
+  `io::stdout(`, `io::stderr(`), because the core writes to files with `write!` and sets `Command::stdout`.
+
 ## Test plan
 
 CLI tests in a new file `crates/stapel-cli/tests/closed_pipe.rs`. A closed pipe is made with `std::io::pipe()`
@@ -175,6 +184,7 @@ Inputs and External states rows come from the catalogue; no open question is lef
 2026-10-13, after spec review round 1: every SR1 finding applied; AC-3 renamed; round 2 for the two HIGH.
 2026-10-13, after spec review round 2: SR2 findings applied; AC-1 covers `check` by its exit code in AC-3's test.
 2026-10-14, after step 1: design as built moved into the ticket; drift findings D1-1 to D1-7 have no defect to fix.
+2026-10-14, after step 2: as built of step 2 added; `stapel check` passes at `e7f70c8` (384 tests).
 
 ## Proof
 
