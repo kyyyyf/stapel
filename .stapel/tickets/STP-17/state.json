@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "key": "STP-17",
+  "title": "Fewer confirmation commands",
+  "base": "fddd9fa984327f190435946a52cff259b718ae2f",
+  "confirmations": []
+}
