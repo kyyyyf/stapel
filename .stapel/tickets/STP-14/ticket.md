@@ -480,8 +480,48 @@ Route: full (source: `auto`; tags `interface`, `guard`).
 
 ## Review
 
-TODO
+Spec review: four rounds by one external model (27 findings, 6 HIGH; rounds 2 to 4 for HIGH). Drift review
+after every GREEN of a step (15 findings, two MEDIUM without a defect). Code review round 1 by three
+reviewers (fresh, external, drift; 28 findings, no HIGH, eight MEDIUM), round 2 narrow, of step 4 (4
+findings, one MEDIUM). Every finding with its fate is in `findings.jsonl`.
 
 ## Summary
 
-TODO
+**Measures after the close (2026-10-15), compared with STP-17.** Steps: RED/GREEN pairs 1, 2, 2b, 3, 4, 4c
+and 5, coverage commits 1c, 2c and 4b; `stapel check` passes at `2b53252` with 441 tests after two failed
+runs. Tokens are measured: the main transcript `759f4a4b` up to 14:43Z and all 23 subagent files, mapped by
+their brief: builder 10, drift 6, external 4 (three spec-review rounds and the external code reviewer),
+reviewer 2, one documentation lookup (orchestrator, Haiku).
+
+| Measure | STP-17 | STP-14 |
+|---|---|---|
+| Escaped defects found so far | 0 | 0; one defect of step 2 (an `@example.invalid` address in a test) reached the full check, which found it before the close |
+| Findings before code (spec review, per-step drift) | 13 + 22 (HIGH and MEDIUM: 5 + 5) | 27 + 15 (HIGH and MEDIUM: 16 + 2, the two drift MEDIUM no defect); spec review needed four rounds |
+| Code review findings, all / HIGH and MEDIUM inside the promise | 23 / 4 (0 HIGH) | 32 / 5 (0 HIGH); four MEDIUM outside (E-1 to E-4), three accepted by the human, one not promised |
+| Code review HIGH and MEDIUM inside by `catchable_at` | test-plan 3, spec 1, code 1 | spec 2, test-plan 2, design 1 |
+| HIGH and MEDIUM inside per 100 changed lines | 0.32 | 0.15 |
+| `ticket.md` | 35 KB | 53 KB |
+| Changed lines (frame estimate) | about 1 330: 463 source, 864 tests | about 3 240: 804 source, 2 439 tests (first 250 and 600; re-stated 350 and 800, then 420 and 1 300) |
+| Steps with RED/GREEN, tests at the close | 4 and two coverage commits, 406 | 7 and three coverage commits, 441 |
+| Measured cache read (cache write) by role | orchestrator 23.4M (0.40M), builder 6.39M (0.37M), external 0.77M (0.20M), reviewer 0.50M (0.08M), drift 0.34M (0.14M) | orchestrator 63.7M (0.41M), builder 13.0M (0.98M), external 3.12M (0.33M), reviewer 0.81M (0.15M), drift 0.70M (0.32M) |
+| Orchestrator output | 106k | 208k |
+| `stapel ok` commands per confirmation | 8 for 5 | 14 for 9: one in auto mode without a dialog, one before the installed binary knew the key form, three behind a pipe or a redirection, which the guard does not read as `stapel ok` |
+| Local history rewrites | 0 | 1 (a commit that changed the test helper `fixtures.rs` outside a RED) |
+| Full checks to the close | 2 | 3 |
+| Wall time | 2026-10-14 12:25Z to 2026-10-15 08:40Z | 2026-10-15 08:49Z to 14:54Z |
+
+What improved: no HIGH in code review and fewer inside HIGH and MEDIUM per changed line; per-step drift
+review after every GREEN found coverage gaps before code review (steps 1c, 2b, 2c); each confirmation was one
+`stapel ok KEY`; the size estimate was re-stated at each widening, as STP-17 asked. What did not: the
+promise grew in three spec-review rounds and two code-review rounds, all around the hook's advice; the
+frame's estimate was low by a factor of three for source and four for tests, so the ticket should have been
+split (the hook as its own ticket, rejected at the frame); the orchestrator read 63.7M, almost three times
+STP-17; two of five inside MEDIUM of code review were spec gaps about Claude Code (PostToolUse does not fire
+after a failing call), which the external-states catalogue did not list; a builder wrote a file with `sed -i`
+again; the orchestrator broke its own rules three times (an uncommitted ticket edit that made the guard stop a
+builder, a plain commit to a test helper that needed a history rewrite, `stapel ok` behind a pipe).
+
+**Process ledger (CLAUDE.md item 9), code review HIGH and MEDIUM inside by the rule that should have caught
+them:** item 2: 2 (R-1, R2-1), item 3: 2 (R-2, DR-1), item 6: 1 (DR-2); accepted outside: item 2: 2 (E-2, E-4),
+item 3: 1 (E-1). No item went three tickets in a row without a catch or a miss; nothing removed. Candidate for
+`external-states.yml`: claude-code "tool call succeeded or failed (PostToolUse versus PostToolUseFailure)".
