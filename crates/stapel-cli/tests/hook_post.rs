@@ -661,6 +661,31 @@ fn tests_changed_names_the_earliest_commit() {
     assert_eq!(advice(&err), vec![ask(&first, "step 1"), at_head], "{err}");
 }
 
+#[test]
+fn blocked_and_interleaved_names_the_build_input_commit() {
+    let repo = fixture();
+    let dir = repo.path();
+    interleaved_pairs(dir, "step 1", "step 2");
+    // A target table of a manifest is a build input.
+    edit(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "edition = \"2021\"\n",
+        "edition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+    );
+    commit(dir, "ABC-1: a lib table");
+    let head = sha(dir, "HEAD");
+    let err = assert_fault(hook(dir), "interleaved pairs blocked by a build input");
+    let want = format!("unverified: build-input-changed: crates/tiny/Cargo.toml at {head}");
+    for label in ["step 1", "step 2"] {
+        assert!(
+            err.lines().any(|l| l == format!("{label}: {want}")),
+            "{label}:\n{err}"
+        );
+    }
+    assert_eq!(advice(&err), vec![amend(&head, "step 1, step 2")], "{err}");
+}
+
 // ---- AC-12 ----
 
 #[test]
