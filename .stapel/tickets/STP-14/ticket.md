@@ -118,6 +118,10 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
 - 2026-10-15: Decision (SR2-1, recommended): an open RED is checked for `no-tests` and `red-changes-code` by
   the full check's own RED code (AC-18); `--history` still prints `unpaired` for it. Size re-stated: about 350
   source and 800 test lines.
+- 2026-10-15, spec review round 3 (SR3-1 to SR3-8, one HIGH), fixed in the text: SR3-1 (a fault commit for
+  a RED that is not open and has no GREEN), SR3-2 (impossible fixtures named), SR3-3 (amend only when every
+  fault of the commit allows it), SR3-4 (the `tests-changed` fault commit is where `analyse` stops), SR3-5 to
+  SR3-8. A narrow round 4 checks SR3-1.
 
 ## Spec
 
@@ -142,11 +146,15 @@ Terms:
   |---|---|---|
   | `unpaired: no RED commit` | the step's first GREEN | no |
   | `unpaired: the GREEN commit comes before the RED commit` | the step's first RED | no |
+  | `unpaired: no GREEN commit`, not an open RED | the first step commit of the ticket after the step's first RED | no |
   | `duplicate` | the step's second RED or GREEN, whichever comes first | no |
-  | `no-tests`, `red-changes-code` | the step's RED | yes |
-  | `tests-changed` | the first commit that changed a protected unit | yes |
-  | `unverified: interleaved: <label>` | the other step's RED inside the pair | no |
+  | `no-tests`, `red-changes-code` | the step's RED (`HEAD` only as an open RED) | yes |
+  | `tests-changed` | the commit where `analyse` stops its walk: the earliest commit after the RED, other than a RED of the ticket, whose change of a protected unit is kept at `HEAD` | yes |
+  | `unverified: interleaved: <label>` | the other step's RED inside the pair (never `HEAD`) | no |
   | `unverified: build-input-changed` | the commit that changed the build input (one fault for all steps it blocks) | yes |
+
+  The fault commit follows the outcome the step prints; a commit that carries several faults gets the amend
+  advice only when every one of them allows an amend.
 
 - **Hook repository**: the repository of the first present source among the payload's `cwd`,
   `CLAUDE_PROJECT_DIR` and the hook's working directory; when that source has no stapel root above it, the
@@ -164,7 +172,7 @@ Terms:
 | AC-8 | IF `--history` and `--list` are given together THEN `stapel check` exits 2 with clap's usage error and prints no step. | `check_history::history_with_list_is_a_usage_error` |
 | AC-9 | WHEN only the history check ran on a ticket THE `stapel close` command still refuses with "close needs a current passing check". | `check_history::does_not_count_for_close` |
 | AC-10 | WHEN the history check runs on a ticket of 20 steps THE command ends in less than 5 s. | `check_history::twenty_steps_within_five_seconds` |
-| AC-11 | WHEN `stapel hook post-tool-use` reads a payload with `tool_name` `Bash` and a commit command, the subject of `HEAD` in the hook repository starts with the key of an open ticket (`<KEY> ` or `<KEY>:`), and that ticket has a hook fault, THE hook exits 2 and prints to stderr each hook fault's line in the full check's form with its notes, then one line per fault commit in history order: `stapel: <short sha> is HEAD; fix it with git commit --amend (<labels>)` when it is `HEAD` and the Fault commit table says an amend removes it, else `stapel: <short sha> is below HEAD or an amend cannot fix it; stop and ask the human (<labels>)`, where `<labels>` are the steps of that fault commit joined by `, `; then `details: stapel check <KEY> --history`. Output: `golden/hook_post_fail.txt`. | `hook_post::failing_history_exits_2_with_advice`, `hook_post::advice_follows_the_fault_commit` |
+| AC-11 | WHEN `stapel hook post-tool-use` reads a payload with `tool_name` `Bash` and a commit command, the subject of `HEAD` in the hook repository starts with the key of an open ticket (`<KEY> ` or `<KEY>:`), and that ticket has a hook fault, THE hook exits 2 and prints to stderr each hook fault's line in the full check's form with its notes, then one line per fault commit in history order: `stapel: <short sha> is HEAD; fix it with git commit --amend (<labels>)` when it is `HEAD` and the Fault commit table allows an amend for every fault of that commit, else `stapel: <short sha> is below HEAD or an amend cannot fix it; stop and ask the human (<labels>)`, where `<labels>` are the steps of that fault commit joined by `, `; then `details: stapel check <KEY> --history`. Output: `golden/hook_post_fail.txt`. | `hook_post::failing_history_exits_2_with_advice`, `hook_post::advice_follows_the_fault_commit` |
 | AC-12 | WHEN the open ticket has no hook fault THE hook prints nothing and exits 0; this holds for an open RED that adds a test and changes no code, at `HEAD` or under a commit without a step marker. | `hook_post::silent_without_faults`, `hook_post::silent_after_an_open_red` |
 | AC-18 | IF an open RED adds or changes no test, or changes code, THEN the hook prints `<label>: no-tests: the RED commit adds or changes no test` or `<label>: red-changes-code: <paths>` (the reason text of the full check) and the amend advice when that RED is `HEAD`; the history check still prints `<label>: unpaired: no GREEN commit` for it, as the full check does. | `hook_post::open_red_is_checked` |
 | AC-13 | IF the tool is not Bash, the command is no commit command, the payload is not valid JSON, the subject of `HEAD` names no ticket folder, the ticket is closed, the ticket has no step commits, the history check refuses, or `HEAD` is unborn THEN the hook prints nothing and exits 0. | `hook_post::silent_cases` |
@@ -216,7 +224,8 @@ Terms:
   present source (Terms); `None` is silent.
 - `Analysis` gains `fault: Option<String>`, the fault commit of its fixed outcome or of `interleaved`, set where
   `analyse` decides the outcome (`touching` already yields the changing sha); the full check ignores it. The
-  `build-input-changed` fault commit is `BuildInputs.changed.sha`.
+  `build-input-changed` fault commit is `BuildInputs.changed.sha`. The hook takes the fault commit of the
+  outcome it prints: a step blocked by a build input uses `changed.sha`, not its `interleaved` RED (SR3-8).
 - The RED part of `analyse` (`step_tests`, the code and include checks) moves into one function that `analyse`
   calls for a paired step and the hook calls for an open RED (AC-18), so both judge a RED by one copy.
 - `init::plan_hooks` reads the settings once, adds or upgrades both entries in one value and plans one `Step`
@@ -247,12 +256,12 @@ builds with cargo. Light runs: `cargo test -j 4 -p stapel-cli --test check_histo
 | Close | `[check]` set and no earlier check record; `--history` with no faults, then `stapel close` refuses with "close needs a current passing check" | `check_history::does_not_count_for_close` |
 | Time | 20 RED/GREEN pairs, one test each | `check_history::twenty_steps_within_five_seconds` |
 | Hook | a ticket with a clean pair, an older `duplicate` step and an open RED at `HEAD` that adds no test: exit 2, golden stderr with both advice forms and without the clean step, nothing on stdout | `hook_post::failing_history_exits_2_with_advice` |
-| Hook | one fixture per row of the Fault commit table, the fault commit at `HEAD` and below it: the advice form and the short sha; `build-input-changed` blocking two steps gives one advice line naming both; `tests-changed` by another step's commit at `HEAD` gives amend; `red-changes-code` seen after the GREEN at `HEAD` names the RED, not `HEAD` | `hook_post::advice_follows_the_fault_commit` |
-| Hook | an open RED at `HEAD` with no test, and one that changes a source file: the outcome lines of AC-18 and amend advice; the same with a notes commit on top: the "ask the human" form | `hook_post::open_red_is_checked` |
+| Hook | one fixture per row of the Fault commit table, the fault commit at `HEAD` and below it where both can exist (`interleaved` below only; `no-tests` and `red-changes-code` at `HEAD` only as an open RED), with a later step commit after each fault commit below `HEAD`: the advice form and the short sha; `unpaired: no GREEN commit` closed by another step's RED; `build-input-changed` blocking two steps gives one advice line naming both; `tests-changed` by another step's GREEN at `HEAD` gives amend, and another step's RED changing the test gives no fault; `red-changes-code` seen after the GREEN at `HEAD` names the RED, not `HEAD`; a second GREEN at `HEAD` that also changes another step's test (`duplicate` and `tests-changed` on one commit) gives the "ask the human" form | `hook_post::advice_follows_the_fault_commit` |
+| Hook | an open RED at `HEAD` with no test, one that changes a source file, and one that changes a file a source file includes: the outcome lines of AC-18 and amend advice; the same with a notes commit on top: the "ask the human" form | `hook_post::open_red_is_checked` |
 | Hook | a clean ticket: exit 0, empty output | `hook_post::silent_without_faults` |
 | Hook | clean pairs, then a correct RED at `HEAD`: exit 0, empty output; the same with a notes commit (no step marker) on top: exit 0; must exit 2: a correct RED followed by another step's RED, a step with two REDs (second at `HEAD`), a step with a GREEN then a RED at `HEAD` | `hook_post::silent_after_an_open_red` |
 | Hook | tool `Edit` whose `tool_input.command` is `git commit -m x`, against a failing ticket; `git status`; payload `not json`; subject without a key; key of no folder; a closed failing ticket; ticket without steps; shallow clone; unborn `HEAD` | `hook_post::silent_cases` |
-| Hook | a failing ticket with `rebase-merge`, `rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` present in turn | `hook_post::silent_during_a_rebase` |
+| Hook | a failing ticket with `rebase-merge`, `rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` present in turn; `rebase-merge` in a linked worktree's git directory with `cwd` there | `hook_post::silent_during_a_rebase` |
 | Hook | the twelve command forms of AC-15 against a failing ticket: exit 2 or 0 | `hook_post::commit_command_forms` |
 | Hook | three places, one failing and two clean: `cwd` failing with the other two clean; `cwd` absent and `CLAUDE_PROJECT_DIR` failing; both absent and the working directory failing; `cwd` in a linked worktree whose `HEAD` fails while the main checkout is clean; `cwd` outside any stapel repository with `CLAUDE_PROJECT_DIR` failing: silent (no fallback) | `hook_post::reads_the_hook_repository` |
 | Install | fresh `init`; second `init` changes nothing; settings with a foreign PostToolUse hook kept | `hooks_install::installs_the_post_tool_use_hook` |
@@ -323,6 +332,7 @@ criterion has a negative case in Review Focus or in its test's cases; no open qu
 SR1-10 decided by the human; round 2 for SR1-1 and SR1-2 (HIGH).
 2026-10-15, after spec review round 2: every finding applied as one change; SR2-1 and SR2-3 decided by the
 human; round 3 for SR2-1 to SR2-3 (HIGH).
+2026-10-15, after spec review round 3: every finding applied as one change; a narrow round 4 for SR3-1.
 
 ## Proof
 
