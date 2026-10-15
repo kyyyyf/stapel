@@ -770,6 +770,8 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
     let mut lines = Vec::new();
     // Fault commits: id, labels, and whether an amend removes every fault of the commit.
     let mut faults: Vec<(String, Vec<String>, bool)> = Vec::new();
+    // Whether `HEAD` is a commit of a step with a hook fault (R2-1).
+    let mut seen = false;
     for (step, s) in steps.iter().zip(&report.steps) {
         let a = &s.analysis;
         let open = match step.commits.as_slice() {
@@ -801,6 +803,7 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
             }
         };
         lines.extend(step_lines(a, &outcome, &reason));
+        seen |= step.commits.iter().any(|c| c.sha == head);
         let Some(sha) = fault else { continue };
         match faults.iter_mut().find(|f| f.0 == sha) {
             Some(f) => {
@@ -810,8 +813,8 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
             None => faults.push((sha, vec![a.label.clone()], amend)),
         }
     }
-    // Faults below `HEAD` alone were reported after their own commit (AC-20).
-    if lines.is_empty() || !faults.iter().any(|f| f.0 == head) {
+    // Faults below `HEAD` of steps without a commit at `HEAD` were reported before (AC-20).
+    if lines.is_empty() || !(seen || faults.iter().any(|f| f.0 == head)) {
         return None;
     }
     let order = git_text(root, &["rev-list", "--first-parent", "--reverse", &head]).ok()?;
