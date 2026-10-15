@@ -18,3 +18,4 @@
 {"v":1,"id":"d-1b87527721e8","at":"2026-10-15T07:00:14Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:d90e0699fb8b2b054ad8b9cd9656c6e4de0a854af4cbc3c29e59be74ee08b63b","via":"terminal"}
 {"v":1,"id":"d-a6dd558b302b","at":"2026-10-15T07:00:14Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:0bbe83d9cce61f47386187ee16526c6e69e1edb5b1b8aa2b1089745c9654022e","via":"terminal"}
 {"v":1,"id":"d-2263e7f58a4e","at":"2026-10-15T07:00:14Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:c34eb356010d3e78fd0da54f633f6418eea40a1435f87a399dcf2ec3991423a2","via":"terminal"}
+{"v":1,"id":"d-30bcf9a3b498","at":"2026-10-15T08:40:03Z","by":"kyyyyf","action":"close","reason":"key form of stapel ok, change blocks and the dialog shipped; check passes at c829e9e"}

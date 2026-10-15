@@ -228,5 +228,10 @@
       "text": "Route: full (source: `auto`; tags `interface`, `guard`).\n\n| Step | What | Criteria | Must not change |\n|---|---|---|---|\n| 1 | `confirm::target`, `confirm::prepare_waiting` and the change block in `stapel-core`; the key form and the change block in `ok.rs` and `main.rs`, calling `confirm::target` | AC-1 to AC-6 | `grant.rs`, `dialog.rs`, the section form's records, existing tests |\n| 1c | Coverage after the drift review of step 1: D1-1, D1-2, D1-7 (tests only, no code) | AC-2, AC-5 | `crates/*/src`, the six tests of step 1 |\n| 2 | The key form in the guard's dialog and its grant facts; the agent-shell message | AC-7 to AC-11 | the section form's dialog reason and grant facts, `grant.rs` file naming |\n| 3 | Every stale reason in the dialog (D2-2), RED and GREEN; then a coverage test for a generated dependency in the grant (D2-1) | AC-7, AC-8 | the terminal output, grant facts, the tests of steps 1 to 2 |\n| 4 | Code review round 1: E-1 RED and GREEN (stale reasons after `new`), doc comments of `grant.rs` and `confirm.rs` (E-6) in the GREEN; then coverage for DR-2, R-2, E-2, E-3 | AC-1, AC-2, AC-7, AC-8, AC-9 | grant facts, the section form's dialog, test functions of steps 1 to 3 except `change_block_for_each_kind` through its golden file |\n| 4b | Coverage after the drift review of step 4: D4-1 (tests only, no code) | AC-2, AC-7 | `crates/*/src`, test functions of steps 1 to 4 |",
       "via": "terminal"
     }
-  ]
+  ],
+  "closed": {
+    "by": "kyyyyf",
+    "at": "2026-10-15T08:40:03Z",
+    "reason": "key form of stapel ok, change blocks and the dialog shipped; check passes at c829e9e"
+  }
 }

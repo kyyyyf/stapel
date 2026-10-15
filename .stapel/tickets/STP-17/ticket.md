@@ -362,4 +362,43 @@ R-6 and DR-4 a missing generated dependency, R-7, R-9, DR-3, DR-5, DR-7 size, DR
 
 ## Summary
 
-TODO
+**Measures after the close (2026-10-15), compared with STP-16.** Five steps: RED/GREEN pairs 1, 2, 3 and 4,
+and the coverage commits 1c and 4b; `stapel check` passes at `c829e9e` with 406 tests. Tokens are measured:
+the main transcript `1633ed59` from 2026-10-14T12:25Z to 2026-10-15T07:35Z (the last minutes of the close
+are not counted) and all twelve subagent files, each mapped to its role from its description: builder 5,
+drift 4 (three per-step, one code review), external 2 (spec review, code review), reviewer 1. Subagent output
+counts are partial in the transcripts, so cache reads are compared.
+
+| Measure | STP-16 | STP-17 |
+|---|---|---|
+| Escaped defects found so far | 0 | 0 |
+| Findings before code (spec review, per-step drift) | 13 + 7 (HIGH and MEDIUM: 10 + 2) | 13 + 22 (HIGH and MEDIUM: 5 + 5); spec review needed round 2 for one HIGH (SR1-1) |
+| Code review findings, all / HIGH and MEDIUM inside the promise | 9 / 5 (0 HIGH) | 23 / 4 (0 HIGH); one MEDIUM outside (E-1), the human widened the promise; step 4 |
+| Code review HIGH and MEDIUM by `catchable_at` | test-plan 5, spec 1 | test-plan 3, spec 1, code 1 |
+| HIGH and MEDIUM inside per 100 changed lines | 0.48 | 0.32 |
+| `ticket.md` | 18 KB | 35 KB |
+| Changed lines (frame estimate) | about 1 050: 204 source, 842 tests (about 100) | about 1 330: 463 source, 864 tests (about 200 source, 900 tests) |
+| Steps with RED/GREEN, tests at the close | 1 and one coverage commit, 384 | 4 and two coverage commits, 406 |
+| Measured cache read (cache write) by role | orchestrator 18.8M (0.51M), external 2.33M (0.18M), builder 2.05M (0.29M), drift 0.45M (0.10M), reviewer 0.28M (0.05M) | orchestrator 23.4M (0.40M), builder 6.39M (0.37M), external 0.77M (0.20M), reviewer 0.50M (0.08M), drift 0.34M (0.14M) |
+| Orchestrator output | 103k | 106k |
+| `stapel ok` commands per confirmation | 11 for 3 | 8 for 5: four section-form commands for the first confirmation, then one key-form command for each of four rounds |
+| Local history rewrites | 1 | 0 |
+| Wall time | 2026-10-13 12:51Z to 2026-10-14 12:02Z | 2026-10-14 12:25Z to 2026-10-15 08:40Z; active hours not measured |
+
+The STP-16 orchestrator row includes the tail imported at the start of STP-17 (17.6M before).
+
+What improved: the human confirmed each round with one command, and the command printed what changed; the
+frame's size estimate counted test lines and held for tests (864 against about 900), though source lines
+doubled (463 against about 200) when the human widened the promise three times (SR1-3, D2-2, E-1); code review
+found no HIGH, and HIGH and MEDIUM inside the promise fell per changed line; no history rewrite was needed.
+What did not: three of four inside-promise MEDIUM findings of code review were again test-plan gaps (item 3),
+although every Inputs and External states row was checked against the code paths; two of three builders
+wrote files with shell heredocs although the brief named Edit and Write only (ledger findings of 2026-10-14
+and 2026-10-15); a builder put quoted output lines into a doc comment to satisfy `ticket_drift`; the builder
+read 6.4M against 2.1M for four pairs against one; `ticket.md` doubled; the close needed a second check
+because a CLAUDE.md change made the first stale.
+
+**Process ledger (CLAUDE.md item 9), code review HIGH and MEDIUM by the rule that should have caught them:**
+item 3: 3, item 6: 1, item 2: 1 (outside, accepted). Item 5 had no catch in STP-13, STP-16 and STP-17, so it
+was simplified (ledger decision of 2026-10-15, `c829e9e`): one confirmation per round, each change described
+in one plain sentence. No other item went three tickets in a row without a catch or a miss.
