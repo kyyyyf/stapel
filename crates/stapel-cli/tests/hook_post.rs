@@ -546,6 +546,16 @@ fn advice_follows_the_fault_commit() {
     });
 }
 
+#[test]
+fn key_followed_by_colon_without_space() {
+    let repo = failing();
+    let dir = repo.path();
+    let fault = sha(dir, "HEAD~1");
+    commit(dir, "ABC-1:fix");
+    let err = assert_fault(hook(dir), "subject ABC-1:fix");
+    assert_eq!(advice(&err), vec![ask(&fault, "step 2")], "{err}");
+}
+
 // ---- AC-12 ----
 
 #[test]
@@ -902,5 +912,25 @@ fn reads_the_hook_repository() {
     assert_silent(
         run_hook(bad, Some(bad), &payload(Some(outside.path()), commit_cmd)),
         "cwd outside",
+    );
+}
+
+#[test]
+fn empty_sources_count_as_absent() {
+    let bad = failing();
+    let good = clean();
+    let (bad, good) = (bad.path(), good.path());
+    let commit_cmd = "git commit -m x";
+    let empty = Path::new("");
+
+    // An empty `cwd`: `CLAUDE_PROJECT_DIR` is read.
+    assert_fault(
+        run_hook(good, Some(bad), &payload(Some(empty), commit_cmd)),
+        "cwd empty, CLAUDE_PROJECT_DIR failing",
+    );
+    // Both empty: the working directory is read.
+    assert_fault(
+        run_hook(bad, Some(empty), &payload(Some(empty), commit_cmd)),
+        "cwd and CLAUDE_PROJECT_DIR empty, the working directory failing",
     );
 }
