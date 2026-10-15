@@ -122,6 +122,9 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   a RED that is not open and has no GREEN), SR3-2 (impossible fixtures named), SR3-3 (amend only when every
   fault of the commit allows it), SR3-4 (the `tests-changed` fault commit is where `analyse` stops), SR3-5 to
   SR3-8. A narrow round 4 checks SR3-1.
+- 2026-10-15, after step 1 (drift review D1-1 to D1-4, all LOW), one spec change: coverage step 1c for D1-1
+  (the `build inputs:` line in both modes) and D1-2 (`retired` alone exits 0). D1-3 (a worktree made and
+  removed within the run, cargo from `CARGO`) is outside the careless-agent threat model; D1-4 is a note.
 
 ## Spec
 
@@ -162,9 +165,9 @@ Terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN the history check runs on a ticket with step commits THE `stapel check` command prints `ticket: <KEY> at <sha>` (`… (closed)` for a closed ticket), the `build inputs:` line when the full check prints it, then for each step in order its history outcome line and notes in the full check's form, or `<label>: needs-run`, and last `result: fail` or `result: no history faults`; it prints no `cargo:` and no `suite:` line. Output: `golden/check_history.txt`. | `check_history::prints_the_full_check_form` |
+| AC-1 | WHEN the history check runs on a ticket with step commits THE `stapel check` command prints `ticket: <KEY> at <sha>` (`… (closed)` for a closed ticket), the `build inputs:` line when the full check prints it, then for each step in order its history outcome line and notes in the full check's form, or `<label>: needs-run`, and last `result: fail` or `result: no history faults`; it prints no `cargo:` and no `suite:` line. Output: `golden/check_history.txt`. | `check_history::prints_the_full_check_form`, `check_history::build_inputs_line_in_both_modes` |
 | AC-2 | WHEN the full check and the history check read the same history THE line and notes of each step with a history outcome are equal byte for byte, for each of `unpaired`, `duplicate`, `no-tests`, `red-changes-code`, `tests-changed`, `retired`, `interleaved` and `build-input-changed`, and with the notes `superseded by` and `retired by`. | `check_history::same_lines_as_the_full_check`, `check_history::same_lines_when_a_build_input_changed` |
-| AC-3 | WHEN the history check ends THE command exits 1 when any step has a failing outcome, else 0; `needs-run` steps alone give 0. | `check_history::exit_code_follows_the_outcomes` |
+| AC-3 | WHEN the history check ends THE command exits 1 when any step has a failing outcome, else 0; `needs-run` steps alone give 0. | `check_history::exit_code_follows_the_outcomes`, `check_history::retired_alone_exits_0` |
 | AC-4 | IF the ticket is legacy or unreadable, the clone is shallow, the base is not an ancestor of `HEAD`, the ticket is closed and has no commit of its key, or the ticket has no step commits THEN the history check exits 2 with the full check's refusal text. | `check_history::refuses_as_the_full_check` |
 | AC-5 | WHEN the working tree has uncommitted changes, `[check]` is missing from `stapel.toml`, or another check holds the lock THE history check still runs and exits as AC-3. | `check_history::runs_without_the_run_preconditions` |
 | AC-6 | WHEN the history check runs THE command starts no cargo (a `cargo` on `PATH` that records its start is never started), creates no worktree and changes no file under the repository, `runs.jsonl` included. | `check_history::writes_nothing_and_starts_no_cargo` |
@@ -249,6 +252,7 @@ builds with cargo. Light runs: `cargo test -j 4 -p stapel-cli --test check_histo
 | Equality | the same history through the full check (cargo fixture) and `--history`: every history-outcome line, a fully retired step (`retired`) and the two notes equal; the clean pair is `pass` in the full check and `needs-run` here | `check_history::same_lines_as_the_full_check` |
 | Equality | a step's RED changes `Cargo.toml`: every non-fixed step reads the same `unverified: build-input-changed` line in both modes; a fixed step keeps its fixed outcome | `check_history::same_lines_when_a_build_input_changed` |
 | Exit | only `needs-run` (0); one `unpaired` (1); one `interleaved` (1) | `check_history::exit_code_follows_the_outcomes` |
+| Coverage (step 1c) | a build input at `HEAD` that no commit changes: the same `build inputs:` line in both modes (D1-1); a fully retired step and a clean pair: exit 0 (D1-2) | `check_history::build_inputs_line_in_both_modes`, `check_history::retired_alone_exits_0` |
 | Negative | legacy ticket, shallow clone, base not an ancestor, a closed ticket without commits of its key, no step commits; each text equal to the full check's (with a clean tree and `[check]` set, so the full check reaches the same refusal) | `check_history::refuses_as_the_full_check` |
 | Preconditions | dirty tree, no `[check]`, a lock file of a running process | `check_history::runs_without_the_run_preconditions` |
 | No side effect | a fake `cargo` first on `PATH` writes a marker; tree snapshot, `git worktree list` and `runs.jsonl` before and after | `check_history::writes_nothing_and_starts_no_cargo` |
@@ -340,9 +344,9 @@ human; round 3 for SR2-1 to SR2-3 (HIGH).
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `check_history::prints_the_full_check_form` |
+| AC-1 | `check_history::prints_the_full_check_form`, `check_history::build_inputs_line_in_both_modes` |
 | AC-2 | `check_history::same_lines_as_the_full_check`, `check_history::same_lines_when_a_build_input_changed` |
-| AC-3 | `check_history::exit_code_follows_the_outcomes` |
+| AC-3 | `check_history::exit_code_follows_the_outcomes`, `check_history::retired_alone_exits_0` |
 | AC-4 | `check_history::refuses_as_the_full_check` |
 | AC-5 | `check_history::runs_without_the_run_preconditions` |
 | AC-6 | `check_history::writes_nothing_and_starts_no_cargo` |
@@ -366,6 +370,7 @@ Route: full (source: `auto`; tags `interface`, `guard`).
 | Step | What | Criteria | Must not change |
 |---|---|---|---|
 | 1 | `outcomes::history_outcome`; `check::history` and the `--history` flag in `check.rs` and `main.rs`; the full check calls both | AC-1 to AC-10 | the full check's output and records, `check.rs` tests, golden files of the full check |
+| 1c | Coverage after the drift review of step 1: D1-1, D1-2 (tests only, no code) | AC-1, AC-3 | `crates/*/src`, the eleven tests of step 1 |
 | 2 | `guard::holds_git_commit`; `stapel hook post-tool-use` in `hook.rs` and `main.rs`; the fault commit in `Analysis` and the open-RED check in `outcomes.rs` | AC-11 to AC-16, AC-18 | the PreToolUse decisions and their tests, the check output |
 | 3 | The PostToolUse entry in `init::plan_hooks` | AC-17 | the PreToolUse entry, its upgrade path and its tests |
 
