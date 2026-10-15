@@ -1021,6 +1021,53 @@ fn old_faults_alone_are_silent() {
     );
 }
 
+#[test]
+fn fault_seen_first_at_a_step_commit() {
+    // (a) A notes commit edits the test of an open RED; the step's GREEN at HEAD shows the fault.
+    let repo = fixture();
+    let dir = repo.path();
+    red(dir, "step 1", "one");
+    edit(
+        dir,
+        "crates/tiny/tests/one.rs",
+        "assert_eq!(tiny::one(), 1);",
+        "assert_eq!(tiny::one(), 1 + 0);",
+    );
+    commit(dir, "ABC-1: edits the test of step 1");
+    let notes = sha(dir, "HEAD");
+    green(dir, "step 1", "one");
+    let text = assert_fault(hook(dir), "a test changed before the GREEN at HEAD");
+    assert!(
+        text.lines()
+            .any(|l| l == "step 1: tests-changed: tiny/one::one"),
+        "{text}"
+    );
+    assert_eq!(advice(&text), vec![ask(&notes, "step 1")], "{text}");
+
+    // (c) A clean pair of another step at HEAD above it: silent.
+    clean_pair(dir, "step 2", "two");
+    assert_silent(hook(dir), "a clean pair above a step with a fault");
+
+    // (b) A notes commit changes a build input; the step's GREEN at HEAD shows the fault.
+    let repo = fixture();
+    let dir = repo.path();
+    red(dir, "step 1", "one");
+    edit(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "edition = \"2021\"\n",
+        "edition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+    );
+    commit(dir, "ABC-1: a lib table");
+    let notes = sha(dir, "HEAD");
+    green(dir, "step 1", "one");
+    let text = assert_fault(hook(dir), "a build input changed before the GREEN at HEAD");
+    let want =
+        format!("step 1: unverified: build-input-changed: crates/tiny/Cargo.toml at {notes}");
+    assert!(text.lines().any(|l| l == want), "{text}");
+    assert_eq!(advice(&text), vec![ask(&notes, "step 1")], "{text}");
+}
+
 // ---- AC-14 ----
 
 #[test]
