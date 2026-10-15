@@ -618,3 +618,19 @@ fn guard_denies_when_nothing_waits() {
         !grants_dir(dir).exists() || std::fs::read_dir(grants_dir(dir)).unwrap().count() == 0
     );
 }
+
+#[test]
+fn dialog_shows_every_stale_reason() {
+    use common::ask;
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    confirm(dir, "spec");
+    confirm(dir, "design");
+    set_section(dir, "ABC-1", "Spec", "The spec, revised.");
+    set_section(dir, "ABC-1", "Design", "The design, revised.");
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains("+1 -1 lines since last confirmation; depends on spec, which changed"),
+        "{reason}"
+    );
+}
