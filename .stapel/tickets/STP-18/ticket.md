@@ -74,6 +74,17 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   the promise grew to about 580 source and 1 400 test lines. Rejected: one ticket.
 - 2026-10-15: Decision (ledger file, recommended): `.stapel/process-ledger.jsonl` becomes a machine file.
   Rejected: only the new command.
+- 2026-10-15: Decision (frame): the human confirmed the frame in the chat; `stapel ok` has no section for it.
+- 2026-10-15: Decision (closed ticket, recommended): both commands accept a closed ticket only by an explicit
+  `KEY`; without `KEY` they take the only open ticket; the dialog says that the ticket is closed. Rejected:
+  open tickets only.
+- 2026-10-15: Decision (target file, recommended): a line of the target file that is not a JSON object is a
+  refusal with its line number; a missing final newline is added before the append; a missing file is
+  created. Rejected: a refusal for every defect.
+- 2026-10-15: Decision (limits, recommended): at most 100 records and 256 KB in `FILE`; more is a refusal that
+  advises to split the file. Rejected: no limit.
+- 2026-10-15: Decision (input file, recommended): `FILE` is a regular UTF-8 file anywhere; a machine file, a
+  directory, `-` (stdin) and a file that is not UTF-8 are refused. Rejected: stdin, which the guard cannot show.
 - 2026-10-15: Assumption: `claim` is required, because all 669 records in the history have it.
 - 2026-10-15: Assumption: the `stage` list for new records is `spec-review`, `step-drift`, `code-review`,
   `after-close`; the round goes in `round`, not in the stage name (the history has `spec-review-2`).
