@@ -264,6 +264,8 @@ Terms:
   `plan_pre_hook`, adds the PostToolUse entry when no hook command holds `stapel hook post-tool-use`, and
   plans one `Step`. Labels in order: upgraded, created, both added (`stapel hooks`), only PostToolUse added
   (`stapel commit hook`), only PreToolUse added (`stapel hook`, today's label; no criterion names this case).
+  A `hooks.PostToolUse` that is not an array is refused before any change, as `hooks.PreToolUse` already
+  was (D3-3).
 
 ## Test plan
 
