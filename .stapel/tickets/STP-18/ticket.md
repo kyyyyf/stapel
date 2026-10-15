@@ -44,6 +44,8 @@ editing or removing a record.
 5. The command run with the grant appends only when the records still hash to the granted value; in an agent's
    shell without a grant it refuses, as `stapel ok` does. A person in a terminal runs it without a dialog.
 6. `.stapel/process-ledger.jsonl` becomes a machine file: the guard denies an agent's Edit and Write to it.
+7. A change of `.stapel/process-ledger.jsonl` does not make the tree dirty or a check stale, as for the
+   machine files of a ticket (`worktree::is_machine_file`; SR1-16, widened by the human).
 
 Not promised: deliberate circumvention (no `security` tag); a `FILE` that changes between the dialog and the
 run other than by refusal; two imports at the same moment; records with a `ticket` field in another case
@@ -86,6 +88,8 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   advises to split the file. Rejected: no limit.
 - 2026-10-15: Decision (input file, recommended): `FILE` is a regular UTF-8 file anywhere; a machine file, a
   directory, `-` (stdin) and a file that is not UTF-8 are refused. Rejected: stdin, which the guard cannot show.
+- 2026-10-15: Decision (SR1-16, recommended): the ledger also counts as a machine file for `stapel check`, so
+  `ledger add` during a build leaves the tree clean (promise item 7). Rejected: not promised.
 - 2026-10-15: Assumption: `claim` is required, because all 669 records in the history have it.
 - 2026-10-15: Assumption: the `stage` list for new records is `spec-review`, `step-drift`, `code-review`,
   `after-close`; the round goes in `round`, not in the stage name (the history has `spec-review-2`).
@@ -129,10 +133,11 @@ Terms:
 | AC-13 | WHEN an agent runs `ledger add` as one plain command in a dialog permission mode and its checks pass THE guard answers `ask`, writes one grant file, replaces the command by `<program> ledger add --kind <KIND> --note <TEXT> <KEY> --grant <token>`, and gives the reason `stapel: add a ledger record for <KEY>[ (closed)]: <KIND>: <note, 200 characters, then …>; runs: <program>. Answer Yes or No; do not choose "don't ask again".` Output: `golden/records_dialog.txt`. | `records::dialog_for_ledger_add` |
 | AC-14 | IF the records hash, the key or the action differs from the dialog's (`FILE`, the note, the kind or the key changed), or the grant was used, THEN the record command exits 1 with `the grant does not match: the records, the ticket or the stapel build changed since the dialog, or the grant was used already; ask the agent to run the command again` and writes nothing; an expired grant gives today's "the grant expired". A grant of one record command does not open the other, nor `stapel ok` (SR1-5). | `records::grant_names_the_records` |
 | AC-15 | IF an agent adds its own `--grant` to a record command, or a word with `$` after the action, THEN the guard denies with `a --grant comes only from the permission dialog; stapel ok, stapel close, stapel findings import and stapel ledger add may not carry one of their own or words filled in at run time` (SR1-5). | `records::guard_denies_own_grant` |
+| AC-16 | WHEN `.stapel/process-ledger.jsonl` is the only changed path THE `stapel check` command reads the tree as clean and keeps its check fresh, as for the machine files of a ticket. | `records::ledger_change_keeps_tree_clean` |
 
 ### Guarantees
 
-- **Promised:** the Frame's promise, by AC-1 to AC-15; the existing tests of `ok`, `close` and `hook` keep
+- **Promised:** the Frame's promise, by AC-1 to AC-16; the existing tests of `ok`, `close` and `hook` keep
   their behaviour.
 - **Not promised:** the Frame's list; a record command inside a compound command, a pipe or a redirection
   (the guard allows it as today and the command refuses in an agent's shell by AC-12); a `--note` longer than
@@ -198,6 +203,7 @@ CLI tests in a new file `crates/stapel-cli/tests/records.rs`, with `common::repo
 | Ledger negative | kind `Finding`, `other`; note `"  "`; a broken ledger line | `records::ledger_add_refusals` |
 | Closed ticket | closed by explicit key in upper and lower case; without key and one open ticket; without key and no open ticket; a legacy ticket by key for both commands | `records::closed_ticket_by_key_only` |
 | Guard | Write, Edit, MultiEdit, NotebookEdit on `.stapel/process-ledger.jsonl` and `.STAPEL/Process-Ledger.jsonl` | `records::guard_denies_ledger_writes` |
+| Check | only the ledger changed: `stapel check` reads the tree clean; the ledger and a source file changed: dirty | `records::ledger_change_keeps_tree_clean` |
 | Dialog | reason, replaced command and one grant file for both commands, `stapel` and `cargo run … --` forms; a claim of 81 characters, in Cyrillic; a claim with a newline; a note of 201 characters; a closed ticket | `records::dialog_for_findings_import`, `records::dialog_for_ledger_add` |
 | Dialog negative | a bad record; `bypassPermissions`; an allow rule `Bash(stapel findings:*)`; no grant file in each case | `records::guard_denies_what_the_command_refuses` |
 | Grant | used once, then "does not match"; an id added to the target after the dialog refuses by AC-3 and the grant stays; `FILE` edited, another note, another kind, another key; expired; a `findings-import` grant on `ledger add`, and an `ok` grant on `findings import` | `records::grant_writes_once`, `records::grant_names_the_records` |
@@ -258,7 +264,7 @@ Inputs and External states rows were checked against `guard.rs`, `dialog.rs`, `g
 the Claude Code behaviour the dialog relies on was checked in the hooks docs (F-1); no open question is left.
 2026-10-15, after spec review round 1: 0 HIGH, 7 MEDIUM, 9 LOW; every inside finding applied as one change
 (SR1-1 to SR1-15); AC-9, AC-11 and AC-12 split into AC-9 and AC-13, AC-11 and AC-14, AC-12 and AC-15 (SR1-13);
-SR1-16 (outside) waits for the human; no round 2.
+SR1-16 (outside) accepted by the human as promise item 7 and AC-16; no round 2.
 
 ## Proof
 
@@ -279,6 +285,7 @@ SR1-16 (outside) waits for the human; no round 2.
 | AC-13 | `records::dialog_for_ledger_add` |
 | AC-14 | `records::grant_names_the_records` |
 | AC-15 | `records::guard_denies_own_grant` |
+| AC-16 | `records::ledger_change_keeps_tree_clean` |
 
 ## Plan
 
@@ -286,7 +293,8 @@ Route: full (tags `guard`, `data`, `interface`), pinned at the frame.
 
 1. `findings import` in a terminal: `stapel_core::records`, the CLI command, the multi-record append (AC-1 to
    AC-4, AC-7 for findings). Must not change: `journal::append`, `ok`, `close`.
-2. `ledger add` in a terminal and the ledger as a machine file (AC-5, AC-6, AC-7 for the ledger, AC-8). Must
+2. `ledger add` in a terminal and the ledger as a machine file (AC-5, AC-6, AC-7 for the ledger, AC-8,
+   AC-16). Must
    not change: the guard's other machine files.
 3. The dialog and the grant for both commands, and the agent-shell refusal (AC-9 to AC-15). Must not change:
    the `ok` and `close` dialogs and their grant facts.
