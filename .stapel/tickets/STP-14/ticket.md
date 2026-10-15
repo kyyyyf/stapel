@@ -40,8 +40,8 @@ cannot read.
    exits non-zero fires the second; E-2). When the tool is Bash and the command
    holds a `git … commit` by the guard's shell parser, it reads the repository of the payload's `cwd` (else of
    `CLAUDE_PROJECT_DIR`, else of its own working directory), takes the key from the subject of `HEAD`, and runs
-   the history check of that open ticket. It answers when a hook fault (Terms) has `HEAD` as its fault commit,
-   so a fault the last commit made (E-4): a hook fault is a failing step, where an open RED (a step's only
+   the history check of that open ticket. It answers when a hook fault (Terms) has `HEAD` as its fault commit or
+   `HEAD` is a commit of that fault's step, so a fault the last commit made or made visible (E-4, R2-1): a hook fault is a failing step, where an open RED (a step's only
    commit, with no later step commit) is checked for `no-tests` and `red-changes-code` instead of reading
    `unpaired`. The answer lists every hook fault, then one advice line per fault commit (the commit that made
    the fault, by outcome): `git commit --amend` when that commit is `HEAD` and the outcome is one an amend
@@ -149,6 +149,11 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   a walk of `base..HEAD` for both modes is a candidate ticket. Fixed in the text: DR-1 (AC-21), DR-2 and R-8
   (Design claims), R-2 (coverage step 4b); the other LOW findings are not promised or notes. Size re-stated:
   about 420 source and 1 300 test lines.
+- 2026-10-15, code review round 2 (narrow, of step 4; R2-1 MEDIUM, R2-2 to R2-4 LOW): R-1, E-1, E-2, E-4,
+  DR-1 fixed. Decision (R2-1, recommended): the hook also answers when `HEAD` is a commit of a faulty step,
+  so a fault made visible by a later step commit is reported (step 4c). Rejected: a comparison with `HEAD^`;
+  not promised. R2-2 (step 3's line not upgraded), R2-3 (a test name says exit 2) and R2-4 (a stdout write
+  error, a PostToolUseFailure-only settings file) are notes.
 - 2026-10-15, after step 2 (drift review D2-1 to D2-6, one MEDIUM), one spec change: AC-11 accepts `<KEY>:…`
   without a space (D2-4) and AC-16 counts an empty source as absent (D2-6), step 2b; coverage step 2c for D2-2
   and D2-3. D2-1 is no defect: `history_outcome` puts `blocked` before `interleaved`, so with a changed build
@@ -204,9 +209,9 @@ Terms:
 | AC-8 | IF `--history` and `--list` are given together THEN `stapel check` exits 2 with clap's usage error and prints no step. | `check_history::history_with_list_is_a_usage_error` |
 | AC-9 | WHEN only the history check ran on a ticket THE `stapel close` command still refuses with "close needs a current passing check". | `check_history::does_not_count_for_close` |
 | AC-10 | WHEN the history check runs on a ticket of 20 steps THE command ends in less than 5 s. | `check_history::twenty_steps_within_five_seconds` |
-| AC-11 | WHEN `stapel hook post-tool-use` reads a payload with `tool_name` `Bash` and a commit command, the subject of `HEAD` in the hook repository starts with the key of an open ticket followed by a space or a colon (`<KEY> …`, `<KEY>: …` or `<KEY>:…`; D2-4), and a hook fault of that ticket has `HEAD` as its fault commit, THE hook exits 0 and prints on stdout one JSON object `{"hookSpecificOutput": {"hookEventName": <the payload's event>, "additionalContext": <text>}}` and nothing on stderr (spec change, E-1, E-4); the text holds each hook fault's line in the full check's form with its notes, then one line per fault commit in history order: `stapel: <short sha> is HEAD; fix it with git commit --amend (<labels>)` when it is `HEAD` and the Fault commit table allows an amend for every fault of that commit, else `stapel: <short sha> is below HEAD or an amend cannot fix it; stop and ask the human (<labels>)`, where `<labels>` are the steps of that fault commit joined by `, `; then `details: stapel check <KEY> --history`, joined by newlines. Output (the text): `golden/hook_post_fail.txt`. | `hook_post::failing_history_exits_2_with_advice`, `hook_post::advice_follows_the_fault_commit`, `hook_post::key_followed_by_colon_without_space`, `hook_post::advice_in_history_order`, `hook_post::tests_changed_names_the_earliest_commit`, `hook_post::blocked_and_interleaved_names_the_build_input_commit` |
+| AC-11 | WHEN `stapel hook post-tool-use` reads a payload with `tool_name` `Bash` and a commit command, the subject of `HEAD` in the hook repository starts with the key of an open ticket followed by a space or a colon (`<KEY> …`, `<KEY>: …` or `<KEY>:…`; D2-4), and a hook fault of that ticket has `HEAD` as its fault commit or `HEAD` is a commit of that fault's step (spec change, R2-1), THE hook exits 0 and prints on stdout one JSON object `{"hookSpecificOutput": {"hookEventName": <the payload's event>, "additionalContext": <text>}}` and nothing on stderr (spec change, E-1, E-4); the text holds each hook fault's line in the full check's form with its notes, then one line per fault commit in history order: `stapel: <short sha> is HEAD; fix it with git commit --amend (<labels>)` when it is `HEAD` and the Fault commit table allows an amend for every fault of that commit, else `stapel: <short sha> is below HEAD or an amend cannot fix it; stop and ask the human (<labels>)`, where `<labels>` are the steps of that fault commit joined by `, `; then `details: stapel check <KEY> --history`, joined by newlines. Output (the text): `golden/hook_post_fail.txt`. | `hook_post::failing_history_exits_2_with_advice`, `hook_post::advice_follows_the_fault_commit`, `hook_post::key_followed_by_colon_without_space`, `hook_post::advice_in_history_order`, `hook_post::tests_changed_names_the_earliest_commit`, `hook_post::blocked_and_interleaved_names_the_build_input_commit` |
 | AC-19 | WHEN the payload's `hook_event_name` is `PostToolUseFailure` (a Bash call that committed and then exited non-zero) THE hook answers as AC-11, with that event name in `hookEventName`; it ignores the payload's `error` field. | `hook_post::failure_event_is_handled` |
-| AC-20 | IF every hook fault of the ticket has a fault commit below `HEAD` THEN the hook prints nothing and exits 0, though `--history` still reports them (spec change, E-4). | `hook_post::old_faults_alone_are_silent` |
+| AC-20 | IF every hook fault of the ticket has a fault commit below `HEAD` and `HEAD` is a commit of none of their steps THEN the hook prints nothing and exits 0, though `--history` still reports them (spec change, E-4, R2-1). | `hook_post::old_faults_alone_are_silent`, `hook_post::fault_seen_first_at_a_step_commit` |
 | AC-12 | WHEN the open ticket has no hook fault THE hook prints nothing and exits 0; this holds for an open RED that adds a test and changes no code, at `HEAD` or under a commit without a step marker. | `hook_post::silent_without_faults`, `hook_post::silent_after_an_open_red` |
 | AC-18 | IF an open RED adds or changes no test, or changes code, THEN the hook prints `<label>: no-tests: the RED commit adds or changes no test` or `<label>: red-changes-code: <paths>` (the reason text of the full check) and the amend advice when that RED is `HEAD`; the history check still prints `<label>: unpaired: no GREEN commit` for it, as the full check does. | `hook_post::open_red_is_checked` |
 | AC-13 | IF the payload's `hook_event_name` is neither `PostToolUse` nor `PostToolUseFailure`, the tool is not Bash, the command is no commit command, the payload is not valid JSON, the subject of `HEAD` names no ticket folder, the ticket is closed, the ticket has no step commits, the history check refuses, or `HEAD` is unborn THEN the hook prints nothing and exits 0. | `hook_post::silent_cases` |
@@ -298,6 +303,14 @@ Terms:
   (`stapel commit hook`), only PreToolUse added (`stapel hook`, today's label; no criterion names this case).
   A `hooks.PostToolUse` that is not an array is refused before any change, as `hooks.PreToolUse` already
   was (D3-3).
+- Step 4: `hook_repository` returns the event and the root; it reads `hook_event_name` first and accepts
+  only `PostToolUse` and `PostToolUseFailure`, ignoring `error`. `post_tool_use` always exits 0 and prints one
+  JSON line on stdout; `additionalContext` is the lines joined by `\n`. `hook_faults` returns `None` when no
+  fault commit equals `HEAD`, checked after the fault loop. `plan_hooks` checks the three event arrays first
+  and adds each missing commit-hook entry; one flag drives the label. A PostToolUse entry with step 3's line
+  (never installed) is not upgraded (R2-2). Older hook tests got a fault at `HEAD` where all their faults lay
+  below it; `failing_history_exits_2_with_advice` keeps its name though it now asserts exit 0 (R2-3).
+- Step 4b: coverage only, `blocked_and_interleaved_names_the_build_input_commit`, passed against `86c5966`.
 
 ## Test plan
 
@@ -335,6 +348,7 @@ builds with cargo. Light runs: `cargo test -j 4 -p stapel-cli --test check_histo
 | Install | settings with neither stapel entry; with only today's PreToolUse entry; with the bare `stapel hook pre-tool-use` entry: labels of AC-17, both entries present, other hooks kept | `hooks_install::adds_the_post_hook_to_an_existing_install` |
 | Step 4 | RED, existing hook tests move to the JSON answer and exit 0 (superseding their exit-2 asserts); a PostToolUseFailure payload with `error` answers with that event name (AC-19); a `duplicate` and an `interleaved` fault below `HEAD` and a clean commit at `HEAD`: silent, and with a new `no-tests` open RED at `HEAD` the answer lists all three (AC-20); payload event `Stop`: silent (AC-13); `init` writes both commit-hook entries and the new line, and a file with only PreToolUse and PostToolUse gets PostToolUseFailure (AC-17); the line run by `sh` with a fake `stapel` that prints a usage error and exits 2: no output, exit 0 (AC-17); each of the three events as an object: exit 1, file unchanged (AC-21) | `hook_post::failure_event_is_handled`, `hook_post::old_faults_alone_are_silent`, `hook_post::silent_cases`, `hooks_install::installs_the_post_tool_use_hook`, `hooks_install::adds_the_post_hook_to_an_existing_install`, `hooks_install::hook_line_is_silent_with_an_old_binary`, `hooks_install::refuses_a_non_array_hook_event` |
 | Step 4b | coverage: interleaved pairs, then a `[lib]` table added at `HEAD`: one amend line on `HEAD` naming both steps, not the interleaving RED (R-2) | `hook_post::blocked_and_interleaved_names_the_build_input_commit` |
+| Step 4c | RED: a RED, a notes commit that edits the step's test, then the step's GREEN at `HEAD`: the answer lists `tests-changed` with "ask the human" for the notes commit; the same with the notes commit changing a build input: `build-input-changed`; a clean commit of another step at `HEAD` above both: silent (R2-1) | `hook_post::fault_seen_first_at_a_step_commit` |
 
 ### Inputs
 
@@ -429,7 +443,7 @@ human; round 3 for SR2-1 to SR2-3 (HIGH).
 | AC-17 | `hooks_install::installs_the_post_tool_use_hook`, `hooks_install::adds_the_post_hook_to_an_existing_install`, `hooks_install::hook_line_is_silent_with_an_old_binary` |
 | AC-18 | `hook_post::open_red_is_checked` |
 | AC-19 | `hook_post::failure_event_is_handled` |
-| AC-20 | `hook_post::old_faults_alone_are_silent` |
+| AC-20 | `hook_post::old_faults_alone_are_silent`, `hook_post::fault_seen_first_at_a_step_commit` |
 | AC-21 | `hooks_install::refuses_a_non_array_hook_event` |
 
 ## Plan
@@ -446,6 +460,7 @@ Route: full (source: `auto`; tags `interface`, `guard`).
 | 3 | The PostToolUse entry in `plan_hooks` of `init.rs` | AC-17 | the PreToolUse entry, its upgrade path and its tests |
 | 4 | Code review round 1: the JSON answer with exit 0, the PostToolUseFailure event, silence for faults below `HEAD` in `hook.rs` and `check.rs`; both commit-hook entries and the new line in `init.rs`; RED and GREEN | AC-11, AC-13, AC-17, AC-19, AC-20, AC-21 | the fault commit table, the history check, the PreToolUse entry and its tests, test functions of steps 1 to 3 except their exit-code and output asserts |
 | 4b | Coverage after code review: R-2 (tests only, no code) | AC-11 | `crates/*/src`, test functions of steps 1 to 4 |
+| 4c | Code review round 2: R2-1, the hook also answers when `HEAD` is a commit of a faulty step; RED and GREEN | AC-11, AC-20 | the fault commit table, the advice lines, test functions of steps 1 to 4b |
 
 ## Review
 
