@@ -209,6 +209,14 @@ Terms:
 - `key_form_agent_shell_refused` passed before step 2's code (step 1 refuses already), so it is a coverage
   commit after the GREEN. The RED adds a file-level helper `ok_key_grant` used by two tests.
 
+#### Step 3
+
+- `dialog::waiting_line` appends `; <reasons>` for every stale reason but `Reason::Changed`, joined by `, `,
+  through `Reason::describe` (no time in these reasons). A section with only `Changed` shows the counts alone;
+  its counts are never both 0, because the hash is of the normal form and the stored text is that form.
+- The coverage test rewrites `.stapel/stapel.toml` so that `plan` depends on `spec`, `design` and the generated
+  `review`; the grant binds the hash of `## Review` although `review` never waits.
+
 ## Test plan
 
 CLI tests in a new file `crates/stapel-cli/tests/ok_all.rs`, with `common::repo_with_ticket` (Spec, Design,
@@ -290,6 +298,7 @@ spec change (quoted lines use `<KEY>`, AC-1, AC-2 and AC-5 wording) and plan ste
 one; `ticket_drift` found it once every named test existed) and is added from the spec reviewer's list.
 2026-10-15, after the drift review of step 2: D2-1 to D2-7 applied as one spec change (promise item 6, AC-7,
 AC-8) and plan step 3.
+2026-10-15, after step 3: as built of step 3 added; Design is complete before code review.
 
 ## Proof
 
