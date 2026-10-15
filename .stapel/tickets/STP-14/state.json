@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "key": "STP-14",
+  "title": "stapel check --history and its commit hook",
+  "base": "8dc7597c324085f84e41ae152421d8ef36a58306",
+  "confirmations": []
+}
