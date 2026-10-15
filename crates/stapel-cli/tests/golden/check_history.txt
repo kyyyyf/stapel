@@ -1,0 +1,16 @@
+ticket: ABC-1 at <sha>
+step 1: needs-run
+step 2: unpaired: no GREEN commit
+step 3: duplicate: 2 RED and 1 GREEN commits
+step 4: no-tests: the RED commit adds or changes no test
+step 5: red-changes-code: crates/tiny/src/lib.rs
+step 6: tests-changed: tiny/changed::six
+step 7: needs-run
+  superseded by step 9: tiny/rules::evolves
+  retired by step 9: tiny/rules::wrong_rule
+step 8: retired: every step test was retired by a spec change
+  retired by step 9: tiny/rules::only_one
+step 9: needs-run
+step 10: unverified: interleaved: step 11
+step 11: needs-run
+result: fail
