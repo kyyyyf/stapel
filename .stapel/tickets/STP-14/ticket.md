@@ -366,7 +366,7 @@ human; round 3 for SR2-1 to SR2-3 (HIGH).
 | AC-13 | `hook_post::silent_cases` |
 | AC-14 | `hook_post::silent_during_a_rebase` |
 | AC-15 | `hook_post::commit_command_forms` |
-| AC-16 | `hook_post::reads_the_hook_repository` |
+| AC-16 | `hook_post::reads_the_hook_repository`, `hook_post::empty_sources_count_as_absent` |
 | AC-17 | `hooks_install::installs_the_post_tool_use_hook`, `hooks_install::adds_the_post_hook_to_an_existing_install` |
 | AC-18 | `hook_post::open_red_is_checked` |
 
