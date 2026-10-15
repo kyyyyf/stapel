@@ -1,5 +1,5 @@
-//! STP-14 AC-11 to AC-16 and AC-18: `stapel hook post-tool-use`, the history check after an
-//! agent's commit.
+//! STP-14 AC-11 to AC-16 and AC-18 to AC-20: `stapel hook post-tool-use`, the history check
+//! after an agent's commit.
 
 mod common;
 
@@ -180,8 +180,13 @@ fn without_ids(text: &str) -> String {
 
 /// A PostToolUse payload of a Bash call; `cwd` only when given.
 fn payload(cwd: Option<&Path>, command: &str) -> String {
+    event_payload("PostToolUse", cwd, command)
+}
+
+/// A payload of hook event `event` for a Bash call; `cwd` only when given.
+fn event_payload(event: &str, cwd: Option<&Path>, command: &str) -> String {
     let mut v = serde_json::json!({
-        "hook_event_name": "PostToolUse",
+        "hook_event_name": event,
         "tool_name": "Bash",
         "tool_input": { "command": command, "description": "test" },
         "tool_response": { "stdout": "", "stderr": "" },
@@ -222,17 +227,44 @@ fn assert_silent(result: (i32, String, String), what: &str) {
     assert_eq!(err, "", "{what}");
 }
 
-/// The hook exits 2 with nothing on stdout; returns stderr.
+/// The hook answers a PostToolUse payload; returns the answer's text.
 fn assert_fault(result: (i32, String, String), what: &str) -> String {
+    assert_answer(result, "PostToolUse", what)
+}
+
+/// The hook exits 0, prints nothing on stderr and prints on stdout one JSON object
+/// `{"hookSpecificOutput": {"hookEventName": <event>, "additionalContext": <text>}}` whose text
+/// ends with the details line; returns the text.
+fn assert_answer(result: (i32, String, String), event: &str, what: &str) -> String {
     let (code, out, err) = result;
-    assert_eq!(code, 2, "{what}: {out}{err}");
-    assert_eq!(out, "", "{what}");
+    assert_eq!(code, 0, "{what}: {out}{err}");
+    assert_eq!(err, "", "{what}");
+    let answer: serde_json::Value = serde_json::from_str(&out)
+        .unwrap_or_else(|e| panic!("{what}: stdout is not one JSON object ({e}):\n{out}"));
+    let text = answer["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{what}: no additionalContext text:\n{out}"))
+        .to_string();
     assert_eq!(
-        err.lines().last(),
-        Some("details: stapel check ABC-1 --history"),
-        "{what}:\n{err}"
+        answer,
+        serde_json::json!({
+            "hookSpecificOutput": { "hookEventName": event, "additionalContext": text }
+        }),
+        "{what}"
     );
-    err
+    assert_eq!(
+        text.lines().last(),
+        Some("details: stapel check ABC-1 --history"),
+        "{what}:\n{text}"
+    );
+    text
+}
+
+/// Commits an open RED of step 9 without a test: a hook fault at `HEAD` that an amend fixes.
+/// Returns its advice line.
+fn fault_at_head(dir: &Path) -> String {
+    commit(dir, "ABC-1 step 9 RED: no test");
+    amend(&sha(dir, "HEAD"), "step 9")
 }
 
 /// The advice lines of the hook's output.
@@ -253,13 +285,15 @@ fn ask(sha: &str, labels: &str) -> String {
     )
 }
 
-/// A ticket whose step 2 has a RED without a test, below a GREEN at `HEAD`: a hook fault.
+/// A ticket whose step 2 has a RED without a test, below its GREEN, and whose step 3 has an open
+/// RED without a test at `HEAD`: hook faults, one of them at `HEAD`.
 fn failing() -> TempDir {
     let repo = fixture();
     let dir = repo.path();
     clean_pair(dir, "step 1", "one");
     commit(dir, "ABC-1 step 2 RED: no test");
     commit(dir, "ABC-1 step 2 GREEN: code");
+    commit(dir, "ABC-1 step 3 RED: no test");
     repo
 }
 
@@ -336,7 +370,7 @@ fn advice_follows_the_fault_commit() {
         green(dir, "step 1", "one");
         let fault = sha(dir, "HEAD");
         clean_pair(dir, "step 2", "two");
-        vec![ask(&fault, "step 1")]
+        vec![ask(&fault, "step 1"), fault_at_head(dir)]
     });
 
     // `unpaired: the GREEN commit comes before the RED commit`: the step's first RED.
@@ -355,7 +389,7 @@ fn advice_follows_the_fault_commit() {
         red(dir, "step 1", "one");
         let fault = sha(dir, "HEAD");
         clean_pair(dir, "step 2", "two");
-        vec![ask(&fault, "step 1")]
+        vec![ask(&fault, "step 1"), fault_at_head(dir)]
     });
 
     // `unpaired: no GREEN commit`, closed by another step's RED: that RED.
@@ -371,7 +405,7 @@ fn advice_follows_the_fault_commit() {
         red(dir, "step 2", "two");
         let fault = sha(dir, "HEAD");
         green(dir, "step 2", "two");
-        vec![ask(&fault, "step 1")]
+        vec![ask(&fault, "step 1"), fault_at_head(dir)]
     });
 
     // `duplicate`: the step's second RED or GREEN, whichever comes first.
@@ -392,7 +426,7 @@ fn advice_follows_the_fault_commit() {
         commit(dir, "ABC-1 step 1 RED: one again");
         let fault = sha(dir, "HEAD");
         green(dir, "step 1", "one");
-        vec![ask(&fault, "step 1")]
+        vec![ask(&fault, "step 1"), fault_at_head(dir)]
     });
 
     // `no-tests`: the RED; at HEAD only as an open RED.
@@ -409,7 +443,7 @@ fn advice_follows_the_fault_commit() {
         commit(dir, "ABC-1 step 1 RED: no test");
         let fault = sha(dir, "HEAD");
         commit(dir, "ABC-1 step 1 GREEN: code");
-        vec![ask(&fault, "step 1")]
+        vec![ask(&fault, "step 1"), fault_at_head(dir)]
     });
 
     // `red-changes-code`: the RED; seen after the GREEN at HEAD it names the RED, not HEAD.
@@ -425,7 +459,7 @@ fn advice_follows_the_fault_commit() {
         commit(dir, "ABC-1 step 1 RED: test and code");
         let fault = sha(dir, "HEAD");
         commit(dir, "ABC-1 step 1 GREEN: green");
-        vec![ask(&fault, "step 1")]
+        vec![ask(&fault, "step 1"), fault_at_head(dir)]
     });
     has(
         &err,
@@ -463,7 +497,7 @@ fn advice_follows_the_fault_commit() {
         commit(dir, "ABC-1: edits the test of step 1");
         let fault = sha(dir, "HEAD");
         clean_pair(dir, "step 2", "two");
-        vec![ask(&fault, "step 1")]
+        vec![ask(&fault, "step 1"), fault_at_head(dir)]
     });
     {
         // Another step's RED that changes the test is no fault.
@@ -487,7 +521,8 @@ fn advice_follows_the_fault_commit() {
     // `unverified: interleaved`: the other step's RED inside the pair, never HEAD.
     let err = case("interleaved", |dir| {
         interleaved_pairs(dir, "step 1", "step 2");
-        vec![ask(&sha(dir, "HEAD~2"), "step 1")]
+        let fault = sha(dir, "HEAD~2");
+        vec![ask(&fault, "step 1"), fault_at_head(dir)]
     });
     has(
         &err,
@@ -525,7 +560,7 @@ fn advice_follows_the_fault_commit() {
         lib_table(dir);
         let fault = sha(dir, "HEAD");
         clean_pair(dir, "step 3", "three");
-        vec![ask(&fault, "step 1, step 2, step 3")]
+        vec![ask(&fault, "step 1, step 2, step 3"), fault_at_head(dir)]
     });
 
     // `duplicate` and `tests-changed` on one commit at HEAD: one of them allows no amend.
@@ -550,10 +585,26 @@ fn advice_follows_the_fault_commit() {
 fn key_followed_by_colon_without_space() {
     let repo = failing();
     let dir = repo.path();
-    let fault = sha(dir, "HEAD~1");
+    let step2 = sha(dir, "HEAD~2");
+    let step3 = sha(dir, "HEAD");
+    // The commit edits the test of step 1: a fault at `HEAD`.
+    edit(
+        dir,
+        "crates/tiny/tests/one.rs",
+        "assert_eq!(tiny::one(), 1);",
+        "assert_eq!(tiny::one(), 1 + 0);",
+    );
     commit(dir, "ABC-1:fix");
     let err = assert_fault(hook(dir), "subject ABC-1:fix");
-    assert_eq!(advice(&err), vec![ask(&fault, "step 2")], "{err}");
+    assert_eq!(
+        advice(&err),
+        vec![
+            ask(&step2, "step 2"),
+            ask(&step3, "step 3"),
+            amend(&sha(dir, "HEAD"), "step 1")
+        ],
+        "{err}"
+    );
 }
 
 #[test]
@@ -600,13 +651,14 @@ fn tests_changed_names_the_earliest_commit() {
         "assert_eq!(tiny::one(), 0 + 1 + 0);",
     );
     commit(dir, "ABC-1: edits the test of step 1 again");
+    let at_head = fault_at_head(dir);
     let err = assert_fault(hook(dir), "two kept changes of one test");
     assert!(
         err.lines()
             .any(|l| l == "step 1: tests-changed: tiny/one::one"),
         "{err}"
     );
-    assert_eq!(advice(&err), vec![ask(&first, "step 1")], "{err}");
+    assert_eq!(advice(&err), vec![ask(&first, "step 1"), at_head], "{err}");
 }
 
 // ---- AC-12 ----
@@ -691,14 +743,25 @@ fn open_red_is_checked() {
                 .any(|l| l == "step 2: unpaired: no GREEN commit"),
             "{what}:\n{text}"
         );
-        // Under a notes commit the RED is no longer HEAD.
+        // Under a notes commit the RED is no longer HEAD; the notes commit edits the test of
+        // step 1, a fault at `HEAD`.
+        edit(
+            dir,
+            "crates/tiny/tests/one.rs",
+            "assert_eq!(tiny::one(), 1);",
+            "assert_eq!(tiny::one(), 1 + 0);",
+        );
         commit(dir, "ABC-1: notes");
         let err = assert_fault(hook(dir), what);
         assert!(
             err.lines().any(|l| l == line),
             "{what}: no {line:?}:\n{err}"
         );
-        assert_eq!(advice(&err), vec![ask(&red_sha, "step 2")], "{what}");
+        assert_eq!(
+            advice(&err),
+            vec![ask(&red_sha, "step 2"), amend(&sha(dir, "HEAD"), "step 1")],
+            "{what}"
+        );
     }
 
     case(
@@ -751,7 +814,25 @@ fn silent_cases() {
         "{err}"
     );
 
+    // A payload of another hook event, or of none.
+    assert_silent(
+        run_hook(
+            dir,
+            None,
+            &event_payload("Stop", Some(dir), "git commit -m x"),
+        ),
+        "event Stop",
+    );
+    let no_event = serde_json::json!({
+        "tool_name": "Bash",
+        "cwd": dir,
+        "tool_input": { "command": "git commit -m x" },
+    })
+    .to_string();
+    assert_silent(run_hook(dir, None, &no_event), "no hook_event_name");
+
     let edit_tool = serde_json::json!({
+        "hook_event_name": "PostToolUse",
         "tool_name": "Edit",
         "cwd": dir,
         "tool_input": { "command": "git commit -m x", "file_path": "x" },
@@ -765,12 +846,14 @@ fn silent_cases() {
     assert_silent(run_hook(dir, None, "not json"), "not json");
     assert_silent(run_hook(dir, None, ""), "empty stdin");
     let no_tool = serde_json::json!({
+        "hook_event_name": "PostToolUse",
         "cwd": dir,
         "tool_input": { "command": "git commit -m x" },
     })
     .to_string();
     assert_silent(run_hook(dir, None, &no_tool), "no tool_name");
     let no_command = serde_json::json!({
+        "hook_event_name": "PostToolUse",
         "tool_name": "Bash",
         "cwd": dir,
         "tool_input": { "description": "x" },
@@ -829,6 +912,88 @@ fn silent_cases() {
         .assert()
         .success();
     assert_silent(hook(dir), "unborn HEAD");
+}
+
+// ---- AC-19 ----
+
+#[test]
+fn failure_event_is_handled() {
+    let repo = failing();
+    let dir = repo.path();
+    let mut failed: serde_json::Value = serde_json::from_str(&event_payload(
+        "PostToolUseFailure",
+        Some(dir),
+        "git commit -m x && false",
+    ))
+    .unwrap();
+    failed["error"] = serde_json::json!("Command failed with exit code 1");
+    let text = assert_answer(
+        run_hook(dir, None, &failed.to_string()),
+        "PostToolUseFailure",
+        "a failed Bash call",
+    );
+    assert_eq!(
+        text,
+        assert_fault(hook(dir), "the same commit, PostToolUse")
+    );
+    assert!(
+        text.lines()
+            .any(|l| l == "step 3: no-tests: the RED commit adds or changes no test"),
+        "{text}"
+    );
+}
+
+// ---- AC-20 ----
+
+#[test]
+fn old_faults_alone_are_silent() {
+    let repo = fixture();
+    let dir = repo.path();
+    interleaved_pairs(dir, "step 1", "step 2");
+    let interleaving = sha(dir, "HEAD~2");
+    red(dir, "step 3", "three");
+    add_test(dir, "three", "three_again", "assert!(true);");
+    commit(dir, "ABC-1 step 3 RED: three again");
+    let duplicate = sha(dir, "HEAD");
+    green(dir, "step 3", "three");
+    clean_pair(dir, "step 4", "four");
+    assert_silent(hook(dir), "faults below a clean HEAD");
+
+    // The history check still reports them.
+    let out = stapel(dir)
+        .args(["check", "ABC-1", "--history"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&out.stdout);
+    for line in [
+        "step 1: unverified: interleaved: step 2",
+        "step 3: duplicate: 2 RED and 1 GREEN commits",
+    ] {
+        assert!(report.lines().any(|l| l == line), "no {line:?}:\n{report}");
+    }
+
+    // A new fault at HEAD: the answer lists every hook fault.
+    commit(dir, "ABC-1 step 5 RED: no test");
+    let text = assert_fault(hook(dir), "a fault at HEAD");
+    let faults: Vec<&str> = text.lines().filter(|l| l.starts_with("step ")).collect();
+    assert_eq!(
+        faults,
+        vec![
+            "step 1: unverified: interleaved: step 2",
+            "step 3: duplicate: 2 RED and 1 GREEN commits",
+            "step 5: no-tests: the RED commit adds or changes no test",
+        ],
+        "{text}"
+    );
+    assert_eq!(
+        advice(&text),
+        vec![
+            ask(&interleaving, "step 1"),
+            ask(&duplicate, "step 3"),
+            amend(&sha(dir, "HEAD"), "step 5"),
+        ],
+        "{text}"
+    );
 }
 
 // ---- AC-14 ----
@@ -954,6 +1119,7 @@ fn reads_the_hook_repository() {
     );
     commit(&wt, "ABC-1 step 2 RED: no test");
     commit(&wt, "ABC-1 step 2 GREEN: code");
+    commit(&wt, "ABC-1 step 3 RED: no test");
     assert_silent(hook(good), "main checkout clean");
     assert_fault(
         run_hook(good, Some(good), &payload(Some(&wt), commit_cmd)),
