@@ -300,6 +300,20 @@ pub fn check_command(command: &str) -> Option<&'static str> {
     }
 }
 
+/// True when the guard's shell parser finds a `git` call whose subcommand is `commit` (STP-14);
+/// false for text it cannot read.
+pub fn holds_git_commit(command: &str) -> bool {
+    if command.len() > MAX_COMMAND_LEN {
+        return false;
+    }
+    let mut found = Found {
+        budget: WORK_BUDGET,
+        ..Found::default()
+    };
+    scan(command, command, 0, &mut found);
+    found.commit && !found.too_deep
+}
+
 /// True when the shell text pushes with git or cannot be checked.
 pub fn is_git_push(command: &str) -> bool {
     check_command(command).is_some()
@@ -316,6 +330,8 @@ struct Found {
     grant: bool,
     /// The agent runs the hook entry point itself.
     hook: bool,
+    /// A `git … commit` call (STP-14); it decides nothing for PreToolUse.
+    commit: bool,
     /// Units of work left; nested scripts can multiply the work, so it is capped.
     budget: usize,
 }
@@ -704,6 +720,9 @@ fn check_git_config(config: &str, full: &str, depth: usize, found: &mut Found) {
 }
 
 fn check_subcommand(sub: &str, rest: &[String], full: &str, depth: usize, found: &mut Found) {
+    if sub == "commit" {
+        found.commit = true;
+    }
     // A `$` or `{}` in the subcommand is only filled in at run time.
     if PUSH_SUBCOMMANDS.contains(&sub) || sub.contains('$') || sub.contains("{}") {
         found.push = true;

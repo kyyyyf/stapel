@@ -36,6 +36,79 @@ pub struct Analysis {
     pub notes: Vec<Note>,
     /// Step tests that still run: not retired.
     pub to_run: Vec<TestId>,
+    /// The full id of the commit that made the fixed outcome, or of the `interleaved` RED
+    /// (STP-14). `None` for a passing outcome and for a RED with no step commit after it.
+    pub fault: Option<String>,
+}
+
+/// What a RED commit's own changes say: its step tests, its parent and its changes, and
+/// `no-tests` or `red-changes-code` when they fail it.
+struct RedVerdict {
+    tests: Vec<TestId>,
+    base: String,
+    changed: Vec<Change>,
+    fixed: Option<(String, String)>,
+}
+
+/// Judges a RED by its changes (STP-4 AC-2, STP-6 AC-5). `later_greens` are the GREEN commits of
+/// the ticket after the RED; a file that a source file includes at the RED, its parent, one of
+/// them or `head` counts as code.
+fn judge_red(
+    files: &mut Files,
+    includes: &mut Includes,
+    red: &str,
+    head: &str,
+    later_greens: Vec<String>,
+) -> Result<RedVerdict, String> {
+    let root = files.root;
+    let tests = step_tests(root, red)?;
+    if tests.is_empty() {
+        return Ok(RedVerdict {
+            tests,
+            base: String::new(),
+            changed: Vec::new(),
+            fixed: Some((
+                "no-tests".into(),
+                "the RED commit adds or changes no test".into(),
+            )),
+        });
+    }
+    let base = parent(root, red);
+    let changed = changes(root, red)?;
+    let mut code: Vec<String> = changed
+        .iter()
+        .filter(|c| is_code(files, red, &base, c))
+        .map(|c| c.new.clone().or(c.old.clone()).unwrap_or_default())
+        .collect();
+    let mut seen: Vec<String> = vec![red.to_string(), base.clone(), head.to_string()];
+    seen.extend(later_greens);
+    let included = includes.included(&seen, |f| !under_tests(f))?;
+    for c in &changed {
+        for p in [c.old.as_ref(), c.new.as_ref()].into_iter().flatten() {
+            if included.contains(p) && !code.contains(p) {
+                code.push(p.clone());
+            }
+        }
+    }
+    let fixed = (!code.is_empty()).then(|| ("red-changes-code".to_string(), named(&code)));
+    Ok(RedVerdict {
+        tests,
+        base,
+        changed,
+        fixed,
+    })
+}
+
+/// `no-tests` or `red-changes-code` for a RED with no step commit after it (STP-14 AC-18), by the
+/// same code as a paired step's RED; `None` when the RED is correct.
+pub fn open_red(root: &Path, red: &str, head: &str) -> Result<Option<(String, String)>, String> {
+    let mut files = Files {
+        root,
+        cache: HashMap::new(),
+        named: HashMap::new(),
+    };
+    let mut includes = Includes::new(root);
+    Ok(judge_red(&mut files, &mut includes, red, head, Vec::new())?.fixed)
 }
 
 /// Contents of files at commits, read once.
@@ -305,7 +378,8 @@ pub fn analyse(
     for (i, sha) in order.lines().enumerate() {
         position.insert(sha.to_string(), i);
     }
-    let pos = |c: &StepCommit| position.get(&c.sha).copied().unwrap_or(usize::MAX);
+    let pos_of = |sha: &str| position.get(sha).copied().unwrap_or(usize::MAX);
+    let pos = |c: &StepCommit| pos_of(&c.sha);
 
     let mut out = Vec::new();
     for step in steps {
@@ -320,17 +394,28 @@ pub fn analyse(
             interleaved: None,
             notes: Vec::new(),
             to_run: Vec::new(),
+            fault: None,
         };
         let fix = |a: &mut Analysis, o: &str, r: String| a.fixed = Some((o.to_string(), r));
         if reds.is_empty() || greens.is_empty() || pos(greens[0]) < pos(reds[0]) {
-            let reason = if reds.is_empty() {
-                "no RED commit"
+            let (reason, fault) = if reds.is_empty() {
+                ("no RED commit", Some(greens[0].sha.clone()))
             } else if greens.is_empty() {
-                "no GREEN commit"
+                // The first step commit of the ticket after the RED; none for an open RED.
+                let after = all
+                    .iter()
+                    .filter(|c| pos(c) > pos(reds[0]))
+                    .min_by_key(|c| pos(c))
+                    .map(|c| c.sha.clone());
+                ("no GREEN commit", after)
             } else {
-                "the GREEN commit comes before the RED commit"
+                (
+                    "the GREEN commit comes before the RED commit",
+                    Some(reds[0].sha.clone()),
+                )
             };
             fix(&mut a, "unpaired", reason.into());
+            a.fault = fault;
             out.push(a);
             continue;
         }
@@ -340,49 +425,29 @@ pub fn analyse(
                 "duplicate",
                 format!("{} RED and {} GREEN commits", reds.len(), greens.len()),
             );
+            a.fault = [reds.get(1), greens.get(1)]
+                .into_iter()
+                .flatten()
+                .min_by_key(|c| pos(c))
+                .map(|c| c.sha.clone());
             out.push(a);
             continue;
         }
         let red = reds[0].sha.clone();
-        a.tests = step_tests(root, &red)?;
-        if a.tests.is_empty() {
-            fix(
-                &mut a,
-                "no-tests",
-                "the RED commit adds or changes no test".into(),
-            );
-            out.push(a);
-            continue;
-        }
-        let base = parent(root, &red);
-        let changed = changes(root, &red)?;
-        let code: Vec<String> = changed
+        let later_greens = all
             .iter()
-            .filter(|c| is_code(&mut files, &red, &base, c))
-            .map(|c| c.new.clone().or(c.old.clone()).unwrap_or_default())
+            .filter(|c| c.marker == Marker::Green && pos(c) > pos(reds[0]))
+            .map(|c| c.sha.clone())
             .collect();
-        let mut code = code;
-        // A file that a source file includes counts as code (STP-6 AC-5), at the RED, its parent,
-        // a later GREEN or HEAD.
-        let mut seen: Vec<String> = vec![red.clone(), base.clone(), head.to_string()];
-        seen.extend(
-            all.iter()
-                .filter(|c| c.marker == Marker::Green && pos(c) > pos(reds[0]))
-                .map(|c| c.sha.clone()),
-        );
-        let included = includes.included(&seen, |f| !under_tests(f))?;
-        for c in &changed {
-            for p in [c.old.as_ref(), c.new.as_ref()].into_iter().flatten() {
-                if included.contains(p) && !code.contains(p) {
-                    code.push(p.clone());
-                }
-            }
-        }
-        if !code.is_empty() {
-            fix(&mut a, "red-changes-code", named(&code));
+        let verdict = judge_red(&mut files, &mut includes, &red, head, later_greens)?;
+        a.tests = verdict.tests;
+        if let Some(fixed) = verdict.fixed {
+            a.fixed = Some(fixed);
+            a.fault = Some(red);
             out.push(a);
             continue;
         }
+        let (base, changed) = (verdict.base, verdict.changed);
 
         // Protected content: the step tests and the other test files the RED changed.
         let mut units: Vec<Unit> = a.tests.iter().cloned().map(Unit::Test).collect();
@@ -439,6 +504,8 @@ pub fn analyse(
             }
         }
         let mut changed_units = Vec::new();
+        // The commits where the walk of a changed unit stopped.
+        let mut stops: Vec<String> = Vec::new();
         let mut retired = Vec::new();
         for unit in &units {
             let mut current = unit.value(&mut files, &red);
@@ -488,6 +555,7 @@ pub fn analyse(
                     _ => {
                         if at_head.is_some() {
                             changed_units.push(unit.name());
+                            stops.push(sha.clone());
                         }
                         break;
                     }
@@ -498,15 +566,17 @@ pub fn analyse(
             changed_units.sort();
             changed_units.dedup();
             fix(&mut a, "tests-changed", named(&changed_units));
+            a.fault = stops.into_iter().min_by_key(|s| pos_of(s));
             out.push(a);
             continue;
         }
         let own = pos(greens[0]);
-        a.interleaved = all
+        let inside = all
             .iter()
             .filter(|c| c.marker == Marker::Red && pos(c) > pos(reds[0]) && pos(c) < own)
-            .min_by_key(|c| pos(c))
-            .map(|c| c.label.clone());
+            .min_by_key(|c| pos(c));
+        a.interleaved = inside.map(|c| c.label.clone());
+        a.fault = inside.map(|c| c.sha.clone());
         a.to_run = a
             .tests
             .iter()
@@ -519,6 +589,7 @@ pub fn analyse(
                 "retired",
                 "every step test was retired by a spec change".into(),
             );
+            a.fault = None;
         }
         out.push(a);
     }

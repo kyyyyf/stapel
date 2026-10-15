@@ -6,13 +6,15 @@ use stapel_core::build_inputs;
 use stapel_core::build_inputs::{Bounds, BuildInputs, Change};
 use stapel_core::config::{validate_cargo, validate_path_cargo};
 use stapel_core::journal::{append, new_id};
-use stapel_core::outcomes::{Analysis, MAX_NAMED, analyse, history_outcome, named, passing};
+use stapel_core::outcomes::{
+    Analysis, MAX_NAMED, analyse, history_outcome, named, open_red, passing,
+};
 use stapel_core::runner::{
     Parsed, TestState, cargo_version, parse_run, resolve_cargo, run_cargo, summary_counts,
 };
 use stapel_core::rust_tests::test_functions;
 use stapel_core::steps::{
-    Step, TestId, git_text, package_name, show, step_commits, step_tests, steps,
+    Marker, Step, TestId, git_text, package_name, show, step_commits, step_tests, steps,
 };
 use stapel_core::tickets::{Status, Ticket, resolve};
 use stapel_core::time::now_rfc3339;
@@ -627,15 +629,22 @@ fn changed_reason(c: &Change) -> String {
     format!("build-input-changed: {} at {}", c.path, short(&c.sha))
 }
 
-/// A step's outcome line and its notes, as both modes print them.
-fn say_step(a: &Analysis, outcome: &str, reason: &str) {
-    if reason.is_empty() {
-        say!("{}: {outcome}", a.label);
+/// A step's outcome line and its notes, as both modes and the commit hook print them.
+fn step_lines(a: &Analysis, outcome: &str, reason: &str) -> Vec<String> {
+    let mut lines = vec![if reason.is_empty() {
+        format!("{}: {outcome}", a.label)
     } else {
-        say!("{}: {outcome}: {reason}", a.label);
-    }
+        format!("{}: {outcome}: {reason}", a.label)
+    }];
     for n in &a.notes {
-        say!("  {} {}: {}", n.kind, n.by, n.what);
+        lines.push(format!("  {} {}: {}", n.kind, n.by, n.what));
+    }
+    lines
+}
+
+fn say_step(a: &Analysis, outcome: &str, reason: &str) {
+    for line in step_lines(a, outcome, reason) {
+        say!("{line}");
     }
 }
 
@@ -711,6 +720,114 @@ fn print_history(
         say!("result: fail");
         ExitCode::from(1)
     }
+}
+
+/// States under the git directory while a rebase, merge, cherry-pick or revert is in progress.
+const IN_PROGRESS: [&str; 5] = [
+    "rebase-merge",
+    "rebase-apply",
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+];
+
+/// The commit hook's lines for the repository at `root` (STP-14 AC-11 to AC-14, AC-18): the line
+/// of each hook fault, one advice line per fault commit in history order, and the pointer to the
+/// history check. `None` when there is no hook fault, and for every case where the hook stays
+/// silent: an operation in progress, no ticket key in the subject of `HEAD`, a ticket that is not
+/// open, no step commits, a refusal of the history check, or any error.
+pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
+    for name in IN_PROGRESS {
+        let path = git_text(root, &["rev-parse", "--git-path", name]).ok()?;
+        if root.join(path.trim()).exists() {
+            return None;
+        }
+    }
+    let head = read_head(root).ok()?;
+    let subject = git_text(root, &["log", "-1", "--format=%s", &head]).ok()?;
+    let word = subject.split_whitespace().next()?;
+    let ticket = resolve(root, Some(word.strip_suffix(':').unwrap_or(word))).ok()?;
+    if !matches!(ticket.status, Status::Open(_)) {
+        return None;
+    }
+    let key = ticket.key.clone();
+    shallow_refusal(root).ok()?;
+    let base = base_of(root, &ticket, &head).ok()?;
+    let commits = step_commits(root, &key, &head).ok()?;
+    let last = commits.last().map(|c| c.sha.clone())?;
+    let steps = steps(commits);
+    let bounds = Bounds {
+        base: base.as_deref(),
+        closed: false,
+    };
+    let report = history_report(root, &key, &head, &steps, bounds).ok()?;
+
+    let mut lines = Vec::new();
+    // Fault commits: id, labels, and whether an amend removes every fault of the commit.
+    let mut faults: Vec<(String, Vec<String>, bool)> = Vec::new();
+    for (step, s) in steps.iter().zip(&report.steps) {
+        let a = &s.analysis;
+        let open = match step.commits.as_slice() {
+            [only] if only.marker == Marker::Red && only.sha == last => Some(only.sha.clone()),
+            _ => None,
+        };
+        let (outcome, reason, fault, amend) = if let Some(red) = open {
+            match open_red(root, &red, &head).ok()? {
+                Some((o, r)) => (o, r, Some(red), true),
+                None => continue,
+            }
+        } else {
+            match &s.outcome {
+                Some((o, r)) if !passing(o) => {
+                    let (fault, amend) = match (&a.fixed, &report.inputs.changed) {
+                        (Some((fixed, _)), _) => (
+                            a.fault.clone(),
+                            matches!(
+                                fixed.as_str(),
+                                "no-tests" | "red-changes-code" | "tests-changed"
+                            ),
+                        ),
+                        (None, Some(changed)) => (Some(changed.sha.clone()), true),
+                        (None, None) => (a.fault.clone(), false),
+                    };
+                    (o.clone(), r.clone(), fault, amend)
+                }
+                _ => continue,
+            }
+        };
+        lines.extend(step_lines(a, &outcome, &reason));
+        let Some(sha) = fault else { continue };
+        match faults.iter_mut().find(|f| f.0 == sha) {
+            Some(f) => {
+                f.1.push(a.label.clone());
+                f.2 &= amend;
+            }
+            None => faults.push((sha, vec![a.label.clone()], amend)),
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let order = git_text(root, &["rev-list", "--first-parent", "--reverse", &head]).ok()?;
+    let position: BTreeMap<&str, usize> = order.lines().enumerate().map(|(i, s)| (s, i)).collect();
+    faults.sort_by_key(|f| position.get(f.0.as_str()).copied().unwrap_or(usize::MAX));
+    for (sha, labels, amend) in faults {
+        let labels = labels.join(", ");
+        if sha == head && amend {
+            lines.push(format!(
+                "stapel: {} is HEAD; fix it with git commit --amend ({labels})",
+                short(&sha)
+            ));
+        } else {
+            lines.push(format!(
+                "stapel: {} is below HEAD or an amend cannot fix it; stop and ask the human \
+                 ({labels})",
+                short(&sha)
+            ));
+        }
+    }
+    lines.push(format!("details: stapel check {key} --history"));
+    Some(lines)
 }
 
 fn print_list(root: &std::path::Path, key: &str, steps: &[Step]) -> Result<(), String> {

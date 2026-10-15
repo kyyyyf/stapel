@@ -136,6 +136,8 @@ enum TokensAction {
 enum HookCommand {
     /// Decide on a tool call: exit 0 allows it, exit 2 blocks it with the reason on stderr.
     PreToolUse,
+    /// After a commit in a Bash call: exit 2 with the history faults on stderr, else silent.
+    PostToolUse,
 }
 
 fn main() -> ExitCode {
@@ -195,6 +197,7 @@ fn main() -> ExitCode {
             _ => unreachable!("clap limits the arguments"),
         },
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),
+        Command::Hook(HookCommand::PostToolUse) => return hook::post_tool_use(),
         Command::Check { key, list, history } => {
             return check::run(key.as_deref(), list, history);
         }
