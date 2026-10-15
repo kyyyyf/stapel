@@ -78,20 +78,16 @@ fn waiting_line(config: &Config, p: &Prepared) -> String {
         }
     }
     let mut change = format!("+{added} -{removed} lines since last confirmation");
-    if added == 0 && removed == 0 {
-        let sections = read(&p.dir.join("ticket.md"))
-            .map(|t| parse(&t))
-            .unwrap_or_default();
-        let reasons: Vec<String> = freshness(config, &sections, old)
-            .iter()
-            .map(|r| match r {
-                Reason::Changed => "changed since the last confirmation".to_string(),
-                other => other.describe(old),
-            })
-            .collect();
-        if !reasons.is_empty() {
-            change.push_str(&format!("; {}", reasons.join(", ")));
-        }
+    let sections = read(&p.dir.join("ticket.md"))
+        .map(|t| parse(&t))
+        .unwrap_or_default();
+    let others: Vec<String> = freshness(config, &sections, old)
+        .iter()
+        .filter(|r| **r != Reason::Changed)
+        .map(|r| r.describe(old))
+        .collect();
+    if !others.is_empty() {
+        change.push_str(&format!("; {}", others.join(", ")));
     }
     format!("{} ({short}…): {change}", p.section)
 }
