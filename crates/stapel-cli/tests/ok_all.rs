@@ -548,6 +548,26 @@ fn key_form_grant_names_every_section() {
 }
 
 #[test]
+fn key_form_agent_shell_refused() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let before = snapshot(dir);
+    for (var, key) in [
+        ("CLAUDECODE", "ABC-1"),
+        ("CLAUDE_CODE_ENTRYPOINT", "abc-1"),
+    ] {
+        stapel(dir)
+            .args(["ok", key])
+            .env(var, "1")
+            .assert()
+            .code(1)
+            .stderr(predicates::str::contains("only a person confirms"))
+            .stderr(predicates::str::contains("stapel ok KEY"));
+    }
+    assert_eq!(snapshot(dir), before);
+}
+
+#[test]
 fn key_form_grant_confirms_once() {
     use common::{ask, grants_dir, token_of};
     let repo = repo_with_ticket();
