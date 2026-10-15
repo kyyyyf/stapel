@@ -17,6 +17,11 @@ const HOOK_LINE: &str = "command -v stapel >/dev/null 2>&1 || { echo 'stapel: th
 const HOOK_MATCHER: &str = "Bash|Write|Edit|MultiEdit|NotebookEdit";
 /// Seconds Claude Code waits for the hook; the guard answers in milliseconds.
 const HOOK_TIMEOUT: u64 = 10;
+const POST_HOOK_COMMAND: &str = "stapel hook post-tool-use";
+/// The installed PostToolUse line: advice, not a guard, so a missing binary lets the call stand.
+const POST_HOOK_LINE: &str =
+    "command -v stapel >/dev/null 2>&1 || exit 0; stapel hook post-tool-use";
+const POST_HOOK_MATCHER: &str = "Bash";
 /// Marks the pre-push hook as ours.
 const PRE_PUSH_MARKER: &str = "# stapel: pre-push guard";
 /// Second layer against agent pushes: Claude Code sets CLAUDECODE in the shell it gives the
@@ -166,7 +171,8 @@ fn plan_ignore_index(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     Ok(())
 }
 
-/// Plans the stapel PreToolUse hook in `.claude/settings.json`, keeping every other key and hook.
+/// Plans the stapel PreToolUse and PostToolUse hooks in `.claude/settings.json` as one write,
+/// keeping every other key and hook.
 fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     let path = root.join(SETTINGS);
     let existed = path.exists();
@@ -178,20 +184,80 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         json!({})
     };
 
-    let pre = settings
+    let hooks = settings
         .as_object_mut()
         .ok_or(format!("{SETTINGS}: expected a JSON object"))?
         .entry("hooks")
         .or_insert_with(|| json!({}))
         .as_object_mut()
-        .ok_or(format!("{SETTINGS}: the hooks field must be an object"))?
-        .entry("PreToolUse")
+        .ok_or(format!("{SETTINGS}: the hooks field must be an object"))?;
+    // Check both arrays before changing anything, so a refusal leaves the value as read.
+    for event in ["PreToolUse", "PostToolUse"] {
+        if hooks.get(event).is_some_and(|v| !v.is_array()) {
+            return Err(format!(
+                "{SETTINGS}: the hooks.{event} field must be an array"
+            ));
+        }
+    }
+    let (pre_upgraded, pre_added) = plan_pre_hook(hook_array(hooks, "PreToolUse"));
+    let post_added = !has_command(hook_array(hooks, "PostToolUse"), POST_HOOK_COMMAND);
+    if post_added {
+        hook_array(hooks, "PostToolUse").push(json!({
+            "matcher": POST_HOOK_MATCHER,
+            "hooks": [{ "type": "command", "command": POST_HOOK_LINE, "timeout": HOOK_TIMEOUT }]
+        }));
+    }
+    if !pre_upgraded && !pre_added && !post_added {
+        return Ok(());
+    }
+
+    let mut content = serde_json::to_string_pretty(&settings).expect("JSON value serializes");
+    content.push('\n');
+    let label = if pre_upgraded {
+        format!("updated: {SETTINGS} (stapel hook line)")
+    } else if !existed {
+        format!("created: {SETTINGS}")
+    } else if pre_added && post_added {
+        format!("appended: {SETTINGS} (stapel hooks)")
+    } else if post_added {
+        format!("appended: {SETTINGS} (stapel commit hook)")
+    } else {
+        format!("appended: {SETTINGS} (stapel hook)")
+    };
+    plan.push(Step {
+        rel: SETTINGS.into(),
+        content,
+        label,
+        executable: false,
+    });
+    Ok(())
+}
+
+/// The `hooks.<event>` array, created empty when missing; `plan_hooks` has checked its type.
+fn hook_array<'a>(
+    hooks: &'a mut serde_json::Map<String, Value>,
+    event: &str,
+) -> &'a mut Vec<Value> {
+    hooks
+        .entry(event)
         .or_insert_with(|| json!([]))
         .as_array_mut()
-        .ok_or(format!(
-            "{SETTINGS}: the hooks.PreToolUse field must be an array"
-        ))?;
+        .expect("checked to be an array")
+}
 
+/// Whether any hook of `entries` runs a command that contains `command`.
+fn has_command(entries: &[Value], command: &str) -> bool {
+    entries.iter().any(|entry| {
+        entry["hooks"].as_array().is_some_and(|hooks| {
+            hooks
+                .iter()
+                .any(|h| h["command"].as_str().is_some_and(|c| c.contains(command)))
+        })
+    })
+}
+
+/// Upgrades a bare PreToolUse entry or adds a new one; returns (upgraded, added).
+fn plan_pre_hook(pre: &mut Vec<Value>) -> (bool, bool) {
     // An entry with the bare command was written by an earlier, fail-open version: upgrade it.
     let mut upgraded = false;
     for hook in pre
@@ -205,40 +271,14 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
             upgraded = true;
         }
     }
-    let installed = pre.iter().any(|entry| {
-        entry["hooks"].as_array().is_some_and(|hooks| {
-            hooks.iter().any(|h| {
-                h["command"]
-                    .as_str()
-                    .is_some_and(|c| c.contains(HOOK_COMMAND))
-            })
-        })
-    });
-    if installed && !upgraded {
-        return Ok(());
-    }
+    let installed = has_command(pre, HOOK_COMMAND);
     if !installed {
         pre.push(json!({
             "matcher": HOOK_MATCHER,
             "hooks": [{ "type": "command", "command": HOOK_LINE, "timeout": HOOK_TIMEOUT }]
         }));
     }
-
-    let mut content = serde_json::to_string_pretty(&settings).expect("JSON value serializes");
-    content.push('\n');
-    plan.push(Step {
-        rel: SETTINGS.into(),
-        content,
-        label: if upgraded {
-            format!("updated: {SETTINGS} (stapel hook line)")
-        } else if existed {
-            format!("appended: {SETTINGS} (stapel hook)")
-        } else {
-            format!("created: {SETTINGS}")
-        },
-        executable: false,
-    });
-    Ok(())
+    (upgraded, !installed)
 }
 
 /// Plans the git pre-push hook in the hooks directory git uses (`core.hooksPath` included).
