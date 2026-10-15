@@ -137,9 +137,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
     let _lock = match Lock::take(&dir) {
         Ok((lock, previous)) => {
             if let Some(pid) = previous {
-                warn!(
-                    "notice: took over the check lock of process {pid}, which is not running"
-                );
+                warn!("notice: took over the check lock of process {pid}, which is not running");
             }
             lock
         }

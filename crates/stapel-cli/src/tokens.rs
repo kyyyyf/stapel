@@ -382,7 +382,9 @@ pub fn import(a: Import) -> Result<(), String> {
         if s.partial > 0 {
             say!(
                 "recorded: {id} {} ({} messages, partial: {})",
-                s.model, s.messages, s.partial
+                s.model,
+                s.messages,
+                s.partial
             );
         } else {
             say!("recorded: {id} {} ({} messages)", s.model, s.messages);

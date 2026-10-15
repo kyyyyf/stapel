@@ -3836,9 +3836,9 @@ fn green_adding_a_dev_dependency_is_unverified() {
         probe(dir, m, &format!("{base}\n{table}"), table, &mut missed);
     }
     // A dependency moved from `[dependencies]` to `[dev-dependencies]` is a new dev-dependency.
-    let moved = base
-        .replacen("plain = \"1\"\n", "", 1)
-        .replacen(dev, &format!("{dev}plain = \"1\"\n"), 1);
+    let moved =
+        base.replacen("plain = \"1\"\n", "", 1)
+            .replacen(dev, &format!("{dev}plain = \"1\"\n"), 1);
     probe(dir, m, &moved, "moved to dev-dependencies", &mut missed);
     // An existing dev entry whose source stays: a version bump, `features`, another key, in a
     // target table, under the other spelling (Open question 8). A move between the spellings with
@@ -3847,7 +3847,10 @@ fn green_adding_a_dev_dependency_is_unverified() {
     for (from, to) in [
         (dev, "devdep = \"2\"\n"),
         (dev, "devdep = { version = \"2\", features = [\"f\"] }\n"),
-        (dev, "devdep = { version = \"1\", default-features = false }\n"),
+        (
+            dev,
+            "devdep = { version = \"1\", default-features = false }\n",
+        ),
         (dev, "devdep = { version = \"1\", optional = true }\n"),
     ] {
         let text = base.replacen(from, to, 1);
@@ -3868,7 +3871,10 @@ fn green_adding_a_dev_dependency_is_unverified() {
         write(d, "crates/tiny/src/lib.rs", "");
     });
     let dir2 = repo2.path();
-    for to in ["td = { version = \"1\", features = [\"f\"] }\n", "td = \"2\"\n"] {
+    for to in [
+        "td = { version = \"1\", features = [\"f\"] }\n",
+        "td = \"2\"\n",
+    ] {
         let text = with_target.replacen("td = \"1\"\n", to, 1);
         probe(dir2, m, &text, &format!("changed target {to}"), &mut missed);
     }
@@ -3877,7 +3883,13 @@ fn green_adding_a_dev_dependency_is_unverified() {
     for path in ["Cargo.toml", "libs/a/Cargo.toml"] {
         let old = read(dir, path);
         let text = format!("{old}\n[dev-dependencies]\nnewdev = \"1\"\n");
-        probe(dir, path, &text, "added dev-dependencies table", &mut missed);
+        probe(
+            dir,
+            path,
+            &text,
+            "added dev-dependencies table",
+            &mut missed,
+        );
     }
     assert!(
         missed.is_empty(),
@@ -4655,7 +4667,11 @@ fn closed_ticket_is_checked_at_its_last_commit() {
     assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
     let record = &run_records(dir)[0];
     assert_eq!(record["end"], end.as_str(), "{record}");
-    assert_eq!(record["head"], git(dir, &["rev-parse", "HEAD"]).trim(), "{record}");
+    assert_eq!(
+        record["head"],
+        git(dir, &["rev-parse", "HEAD"]).trim(),
+        "{record}"
+    );
 
     let (repo, _) = history(false);
     let dir = repo.path();
@@ -4754,7 +4770,10 @@ fn closed_ticket_build_inputs_are_read_at_its_end() {
         "crates/tiny/tests/later.rs",
         "const _F: &str = include_str!(\"../data/f.txt\");\n\n#[test]\nfn later() {}\n",
     );
-    commit(dir, "XYZ-2: a configuration and a test that includes the data file");
+    commit(
+        dir,
+        "XYZ-2: a configuration and a test that includes the data file",
+    );
     let (code, text) = check_env(dir, &[]);
     assert_eq!(code, 0, "{text}");
     assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
@@ -4841,7 +4860,11 @@ fn include_comments_and_path_attributes_are_seen() {
     }
     // A `#[path]` in a source file makes the included helper code for a RED.
     add_test(dir, "basic", "second", "assert!(true);");
-    write(dir, "crates/tiny/tests/common/impl.rs", "pub fn f() {}\n// changed\n");
+    write(
+        dir,
+        "crates/tiny/tests/common/impl.rs",
+        "pub fn f() {}\n// changed\n",
+    );
     commit(dir, "ABC-1 step 2 RED: a changed helper");
     commit(dir, "ABC-1 step 2 GREEN: code");
     let (_, text) = check_env(dir, &[]);
@@ -4870,7 +4893,12 @@ fn config_planted_during_a_run_is_seen() {
     commit(dir, "ABC-1 step 1 RED: plants a configuration");
     fix_triple(dir);
     commit(dir, "ABC-1 step 1 GREEN: triple fixed");
-    add_test(dir, "basic", "quad_is_four", "assert_eq!(tiny::quad(1), 4);");
+    add_test(
+        dir,
+        "basic",
+        "quad_is_four",
+        "assert_eq!(tiny::quad(1), 4);",
+    );
     commit(dir, "ABC-1 step 2 RED: quad is missing");
     let lib = read(dir, "crates/tiny/src/lib.rs");
     write(
@@ -4880,7 +4908,11 @@ fn config_planted_during_a_run_is_seen() {
     );
     commit(dir, "ABC-1 step 2 GREEN: quad");
     let tmp = tempfile::tempdir().unwrap();
-    let held = tmp.path().canonicalize().unwrap().join(".cargo/config.toml");
+    let held = tmp
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join(".cargo/config.toml");
     let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
     assert_eq!(code, 1, "{text}");
     let want = format!("unverified: build-input-outside: {}", held.display());
@@ -4968,19 +5000,17 @@ fn test_functions_in_step_files_are_protected() {
     // A non-RED commit changes or deletes a test function that is no step test.
     for (what, from, to) in [
         ("changed", "tiny::add(1, 1), 2", "tiny::add(1, 1), 1 + 1"),
-        ("deleted", "#[test]\nfn starts() {\n    assert_eq!(tiny::add(1, 1), 2);\n}\n", ""),
+        (
+            "deleted",
+            "#[test]\nfn starts() {\n    assert_eq!(tiny::add(1, 1), 2);\n}\n",
+            "",
+        ),
     ] {
         let (repo, _scripts, dumps) = build_input_repo(|_| {});
         let dir = repo.path();
         edit(dir, "crates/tiny/tests/basic.rs", from, to);
         commit(dir, &format!("ABC-1: {what} an old test"));
-        expect_changed(
-            dir,
-            &dumps,
-            what,
-            "crates/tiny/tests/basic.rs",
-            &head7(dir),
-        );
+        expect_changed(dir, &dumps, what, "crates/tiny/tests/basic.rs", &head7(dir));
     }
 
     // A new `#[test]` function that no step test names stays allowed.
@@ -4998,7 +5028,11 @@ fn test_functions_in_step_files_are_protected() {
 fn cfg_attr_path_is_an_include() {
     let (repo, _scripts, dumps) = build_input_repo(|dir| {
         for name in ["a1", "a2", "a3"] {
-            write(dir, &format!("crates/tiny/data/{name}.txt"), "// a module\n");
+            write(
+                dir,
+                &format!("crates/tiny/data/{name}.txt"),
+                "// a module\n",
+            );
         }
         let old = read(dir, "crates/tiny/tests/basic.rs");
         write(
@@ -5014,8 +5048,14 @@ fn cfg_attr_path_is_an_include() {
     let dir = repo.path();
     for (what, path) in [
         ("cfg_attr with a name", "crates/tiny/data/a1.txt"),
-        ("cfg_attr with a nested predicate", "crates/tiny/data/a2.txt"),
-        ("cfg_attr with a literal and a raw path", "crates/tiny/data/a3.txt"),
+        (
+            "cfg_attr with a nested predicate",
+            "crates/tiny/data/a2.txt",
+        ),
+        (
+            "cfg_attr with a literal and a raw path",
+            "crates/tiny/data/a3.txt",
+        ),
     ] {
         write(dir, path, "changed\n");
         changed_case(dir, &dumps, what, path);
@@ -5040,7 +5080,12 @@ fn no_run_after_a_build_input_hit() {
     commit(dir, "ABC-1 step 1 RED: plants a configuration");
     fix_triple(dir);
     commit(dir, "ABC-1 step 1 GREEN: triple fixed");
-    add_test(dir, "basic", "quad_is_four", "assert_eq!(tiny::quad(1), 4);");
+    add_test(
+        dir,
+        "basic",
+        "quad_is_four",
+        "assert_eq!(tiny::quad(1), 4);",
+    );
     commit(dir, "ABC-1 step 2 RED: quad is missing");
     let lib = read(dir, "crates/tiny/src/lib.rs");
     write(
@@ -5050,7 +5095,11 @@ fn no_run_after_a_build_input_hit() {
     );
     commit(dir, "ABC-1 step 2 GREEN: quad");
     let tmp = tempfile::tempdir().unwrap();
-    let held = tmp.path().canonicalize().unwrap().join(".cargo/config.toml");
+    let held = tmp
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join(".cargo/config.toml");
     // A fake cargo that notes every run that starts after the configuration exists.
     let scripts = tempfile::tempdir().unwrap();
     let late = scripts.path().join("late");
@@ -5122,7 +5171,11 @@ fn test_data_change_is_unverified() {
     let nested = |args: &[&str]| {
         git(
             &sub,
-            &[&["-c", "user.name=x", "-c", "user.email=test-user.invalid"], args].concat(),
+            &[
+                &["-c", "user.name=x", "-c", "user.email=test-user.invalid"],
+                args,
+            ]
+            .concat(),
         )
     };
     nested(&["init", "-q"]);
@@ -5391,7 +5444,13 @@ fn inherited_member_path_in_dev_table_is_unverified() {
             "wm = { workspace = true, features = [\"f\"] }\n",
         ),
     ] {
-        probe(dir, DEP_MEMBER, &tiny.replacen(from, to, 1), what, &mut missed);
+        probe(
+            dir,
+            DEP_MEMBER,
+            &tiny.replacen(from, to, 1),
+            what,
+            &mut missed,
+        );
     }
     // The member manifest does not change; the root entry that it inherits does.
     let root = read(dir, "Cargo.toml");
@@ -5819,7 +5878,11 @@ fn delete_rename_or_chmod_in_a_step_crate_is_unverified() {
 fn link_retarget_and_rs_to_data_rename_in_a_step_crate_are_unverified() {
     let (repo, _scripts, dumps) = build_input_repo(|dir| {
         link(dir, "a.json", "crates/tiny/tests/data/l");
-        write(dir, "crates/tiny/tests/spare.rs", "pub fn spare() -> u32 {\n    7\n}\n");
+        write(
+            dir,
+            "crates/tiny/tests/spare.rs",
+            "pub fn spare() -> u32 {\n    7\n}\n",
+        );
     });
     let dir = repo.path();
     let l = dir.join("crates/tiny/tests/data/l");
@@ -5896,7 +5959,9 @@ fn member_package_name_may_differ_from_its_folder() {
     write(
         dir,
         "crates/tiny/Cargo.toml",
-        &format!("{manifest}\n[dependencies]\nx = {{ path = \"../../libs/a\", package = \"alpha\" }}\n"),
+        &format!(
+            "{manifest}\n[dependencies]\nx = {{ path = \"../../libs/a\", package = \"alpha\" }}\n"
+        ),
     );
     commit(dir, "ABC-1: a dependency on a renamed member");
     let (_, text) = check_env(dir, &[("CARGO_NET_OFFLINE", Path::new("true"))]);

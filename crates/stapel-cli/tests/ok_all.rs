@@ -98,7 +98,10 @@ fn key_form_confirms_every_waiting_section() {
         assert!(new["text"].is_string(), "{new}");
         assert!(new["at"].as_str().unwrap().ends_with('Z'));
     }
-    assert_eq!(c[2]["depends_on"], serde_json::json!({"spec": c[0]["hash"]}));
+    assert_eq!(
+        c[2]["depends_on"],
+        serde_json::json!({"spec": c[0]["hash"]})
+    );
     assert_eq!(c[2]["text"], "The design, revised.");
     assert!(c[1].get("text").is_none(), "older text kept: {}", c[1]);
     assert_eq!(c[0]["text"], "The spec.", "the fresh spec is untouched");
@@ -134,14 +137,18 @@ fn change_block_for_each_kind() {
             .unwrap();
         plan.as_object_mut().unwrap().remove("text");
     });
-    let a = normalize(&stdout_of(stapel(dir).args(["ok", "ABC-1"]).assert().success()));
+    let a = normalize(&stdout_of(
+        stapel(dir).args(["ok", "ABC-1"]).assert().success(),
+    ));
 
     // Scenario B: never confirmed (one line), normal form only.
     let repo = repo_with_ticket();
     let dir = repo.path();
     confirm(dir, "design");
     edit_state(dir, |s| s["confirmations"][0]["normal_form"] = 0.into());
-    let b = normalize(&stdout_of(stapel(dir).args(["ok", "ABC-1"]).assert().success()));
+    let b = normalize(&stdout_of(
+        stapel(dir).args(["ok", "ABC-1"]).assert().success(),
+    ));
 
     assert_eq!(format!("{a}--\n{b}"), golden("ok_change_blocks.txt"));
 }
@@ -199,7 +206,9 @@ fn key_form_refuses_all_when_one_fails() {
         .args(["ok", "ABC-1"])
         .assert()
         .code(1)
-        .stderr(predicates::str::contains("section spec (## Spec) is missing"));
+        .stderr(predicates::str::contains(
+            "section spec (## Spec) is missing",
+        ));
     assert_eq!(snapshot(dir), before);
 }
 
@@ -248,18 +257,21 @@ fn one_argument_is_section_then_key() {
         .stderr(predicates::str::contains("neither").not());
 
     // Neither a section nor a ticket.
-    stapel(dir).args(["ok", "nope"]).assert().code(1).stderr(
-        predicates::str::contains(
+    stapel(dir)
+        .args(["ok", "nope"])
+        .assert()
+        .code(1)
+        .stderr(predicates::str::contains(
             "\"nope\" is neither a section nor a ticket; sections: spec, design, proof, plan; \
              open tickets: ABC-1",
-        ),
-    );
+        ));
 
     // A closed ticket key: the refusal of `prepare`.
     let repo = repo_with_ticket();
     let dir = repo.path();
     edit_state(dir, |s| {
-        s["closed"] = serde_json::json!({"by": "x", "at": "2026-10-02T00:00:00Z", "reason": "done"});
+        s["closed"] =
+            serde_json::json!({"by": "x", "at": "2026-10-02T00:00:00Z", "reason": "done"});
     });
     stapel(dir)
         .args(["ok", "ABC-1"])
@@ -302,13 +314,17 @@ fn one_argument_is_section_then_key() {
 fn section_form_prints_change_block() {
     let repo = repo_with_ticket();
     let dir = repo.path();
-    let out = normalize(&stdout_of(stapel(dir).args(["ok", "spec"]).assert().success()));
+    let out = normalize(&stdout_of(
+        stapel(dir).args(["ok", "spec"]).assert().success(),
+    ));
     assert_eq!(
         out,
         "== spec: new, 1 line\nconfirmed: ABC-1 spec (sha256:HASH)\n"
     );
     // A fresh section is confirmed again.
-    let out = normalize(&stdout_of(stapel(dir).args(["ok", "spec"]).assert().success()));
+    let out = normalize(&stdout_of(
+        stapel(dir).args(["ok", "spec"]).assert().success(),
+    ));
     assert_eq!(
         out,
         "== spec: unchanged\nconfirmed: ABC-1 spec (sha256:HASH)\n"
@@ -372,7 +388,8 @@ fn refusal_lists_only_open_tickets() {
         .stderr(predicates::str::contains("open tickets: ABC-1\n"));
     // A closed ticket is not listed either: `none`.
     edit_state(dir, |s| {
-        s["closed"] = serde_json::json!({"by": "x", "at": "2026-10-02T00:00:00Z", "reason": "done"});
+        s["closed"] =
+            serde_json::json!({"by": "x", "at": "2026-10-02T00:00:00Z", "reason": "done"});
     });
     stapel(dir)
         .args(["ok", "nope"])
@@ -398,7 +415,10 @@ fn change_block_with_two_reasons() {
         design["normal_form"] = 0.into();
     });
     let out = normalize(&stdout_of(
-        stapel(dir).args(["ok", "ABC-1", "design"]).assert().success(),
+        stapel(dir)
+            .args(["ok", "ABC-1", "design"])
+            .assert()
+            .success(),
     ));
     assert_eq!(
         out,
@@ -414,9 +434,7 @@ fn dialog_lists_every_waiting_section() {
     fn short(dir: &Path, title: &str) -> String {
         let text = read(dir, ".stapel/tickets/ABC-1/ticket.md");
         let sections = stapel_core::ticket::parse(&text);
-        let body = stapel_core::ticket::find(&sections, title)
-            .found()
-            .unwrap();
+        let body = stapel_core::ticket::find(&sections, title).found().unwrap();
         stapel_core::hash::section_hash(body)[.."sha256:".len() + 12].to_string()
     }
     let repo = repo_with_ticket();
@@ -488,7 +506,11 @@ fn dialog_lists_every_waiting_section() {
 }
 
 fn ok_key_grant(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
-    stapel(dir).arg("ok").args(args).env("CLAUDECODE", "1").assert()
+    stapel(dir)
+        .arg("ok")
+        .args(args)
+        .env("CLAUDECODE", "1")
+        .assert()
 }
 
 #[test]
@@ -552,10 +574,7 @@ fn key_form_agent_shell_refused() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     let before = snapshot(dir);
-    for (var, key) in [
-        ("CLAUDECODE", "ABC-1"),
-        ("CLAUDE_CODE_ENTRYPOINT", "abc-1"),
-    ] {
+    for (var, key) in [("CLAUDECODE", "ABC-1"), ("CLAUDE_CODE_ENTRYPOINT", "abc-1")] {
         stapel(dir)
             .args(["ok", key])
             .env(var, "1")
@@ -614,9 +633,7 @@ fn guard_denies_when_nothing_waits() {
             .code(DENY)
             .stderr(predicates::str::contains("nothing to confirm: ABC-1"));
     }
-    assert!(
-        !grants_dir(dir).exists() || std::fs::read_dir(grants_dir(dir)).unwrap().count() == 0
-    );
+    assert!(!grants_dir(dir).exists() || std::fs::read_dir(grants_dir(dir)).unwrap().count() == 0);
 }
 
 #[test]
@@ -796,7 +813,10 @@ fn section_form_grant_differs_by_action_only() {
     });
     let (_, section_grant) = ask(dir, "stapel ok spec");
     let (reason, key_grant) = ask(dir, "stapel ok ABC-1");
-    assert!(reason.contains("confirm 1 waiting section of ABC-1"), "{reason}");
+    assert!(
+        reason.contains("confirm 1 waiting section of ABC-1"),
+        "{reason}"
+    );
     let before = (confirmations(dir).len(), decisions(dir).len());
     ok_key_grant(dir, &["ABC-1", "--grant", &token_of(&section_grant)])
         .code(1)
