@@ -1,0 +1,5 @@
+step 2: duplicate: 2 RED and 1 GREEN commits
+step 3: no-tests: the RED commit adds or changes no test
+stapel: <sha> is below HEAD or an amend cannot fix it; stop and ask the human (step 2)
+stapel: <sha> is HEAD; fix it with git commit --amend (step 3)
+details: stapel check ABC-1 --history
