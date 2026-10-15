@@ -179,6 +179,29 @@ Terms:
   lines, then appends the `decisions.jsonl` records.
 - Until step 2 the key form refuses a grant with "a grant for `stapel ok KEY` is not supported yet" (D1-3).
 
+#### Step 1c
+
+- Coverage only, no code: three tests added to `ok_all.rs`; all passed against step 1's code.
+
+#### Step 2
+
+- `dialog::prepare_ask` calls `confirm::target` for one argument; a key target goes through `prepare_waiting`;
+  a section target and the two-argument form behave as before. A shared `finish()` checks allow rules and
+  issues the grant.
+- With no waiting section the guard denies with `nothing to confirm: <folder>` before the allow-rule check and
+  writes no grant.
+- The reason: `stapel: confirm N waiting section(s) of KEY: <line> | <line>; runs: <program> ok KEY. Answer Yes
+  or No; …`. Each line is `id (sha256:<12 hex>…): +a -b lines since last confirmation`, or `new, N line(s)`
+  (also when the latest confirmation has no stored text); when both counts are 0 the line gets `; <reasons>`
+  joined by `, `, with `Changed` written without the time.
+- `dialog::ok_key_facts(key, waiting)` builds the grant facts (action `ok-key`; detail the ids joined by `,`;
+  hash the hashes joined by `,`; dependencies `section:dep=hash` of every waiting section).
+- `ok::run_key` computes the folder key, then the waiting set, then consumes the grant with those facts, so a
+  grant with an empty set gives "the grant does not match"; `via` is `grant` or `terminal`.
+- The agent-shell refusal of the key form names the literal `stapel ok KEY`, as AC-9 says.
+- `key_form_agent_shell_refused` passed before step 2's code (step 1 refuses already), so it is a coverage
+  commit after the GREEN. The RED adds a file-level helper `ok_key_grant` used by two tests.
+
 ## Test plan
 
 CLI tests in a new file `crates/stapel-cli/tests/ok_all.rs`, with `common::repo_with_ticket` (Spec, Design,
@@ -225,6 +248,24 @@ fixed; no time is printed. Light tests: `cargo test -j 4 -p stapel-cli --test ok
 | os | symlinks, permissions, processes, time, WSL | not touched | — |
 | cargo | every dimension | not touched | — |
 
+### Abuse table
+
+Attempts of a careless agent against "only a person confirms" and "a grant names what it confirms"; from the
+spec reviewer's own list (round 1) and the code paths of `dialog.rs` and `guard.rs`.
+
+| Attempt | Outcome |
+|---|---|
+| The agent runs the key form in its own shell without a grant | refused, AC-9 |
+| The agent adds its own `--grant` to the key form, or builds the words at run time | the guard denies before the dialog, as for the section form (`hook::denies_command_with_own_grant`, `hook::denies_stapel_ok_with_run_time_words`); not retested for the key form |
+| A grant of the section form used on the key form, or the reverse | "the grant does not match", AC-8 |
+| A grant of ticket A used on ticket B | "the grant does not match": the facts name the key (F-5); not retested |
+| The same grant used twice | refused the second time, AC-10 |
+| A waiting section or one of its dependencies edited after the dialog | "the grant does not match", AC-8 |
+| Another section becomes waiting after the dialog, or the person confirms one in the terminal meanwhile | the set changes, "the grant does not match", AC-8 |
+| The key form in `bypassPermissions` mode, or with an allow rule `Bash(stapel ok:*)` | the guard denies, AC-7 |
+| `env -u CLAUDECODE stapel ok KEY` from the agent's shell | the guard denies as today; not promised beyond today's tests |
+| The key form when nothing waits, to obtain a grant for later | the guard denies and writes no grant, AC-11 |
+
 **Review Focus:** a section stale only by a dependency (diff empty); a latest confirmation without stored
 text; the set of waiting sections changing between the dialog and the run; a key equal to a section id (not
 promised: the section wins); a spaced `user.name` warned once, not per section. Each has a case in the named
@@ -237,6 +278,8 @@ and `tickets::resolve`, not only the catalogue; no open question is left.
 2026-10-14, after spec review round 2: SR2-1 to SR2-4 (all LOW) applied; no round 3.
 2026-10-14, after step 1: design as built moved into the ticket; drift findings D1-1 to D1-9 applied as one
 spec change (quoted lines use `<KEY>`, AC-1, AC-2 and AC-5 wording) and plan step 1c.
+2026-10-15, after step 2: as built of steps 1c and 2 added; the abuse table was missing (a `guard` ticket needs
+one; `ticket_drift` found it once every named test existed) and is added from the spec reviewer's list.
 
 ## Proof
 
