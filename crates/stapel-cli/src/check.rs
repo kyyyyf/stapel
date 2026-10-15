@@ -745,8 +745,12 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
     }
     let head = read_head(root).ok()?;
     let subject = git_text(root, &["log", "-1", "--format=%s", &head]).ok()?;
-    let word = subject.split_whitespace().next()?;
-    let ticket = resolve(root, Some(word.strip_suffix(':').unwrap_or(word))).ok()?;
+    // The key: the subject's prefix up to the first space or colon.
+    let word = subject
+        .split(|c: char| c.is_whitespace() || c == ':')
+        .next()
+        .filter(|w| !w.is_empty())?;
+    let ticket = resolve(root, Some(word)).ok()?;
     if !matches!(ticket.status, Status::Open(_)) {
         return None;
     }

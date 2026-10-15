@@ -70,7 +70,7 @@ pub fn post_tool_use() -> ExitCode {
 
 /// The stapel root of the hook repository when the payload is a Bash call with a commit command:
 /// the first present source among the payload's `cwd`, `CLAUDE_PROJECT_DIR` and the working
-/// directory, with no fallback to the next.
+/// directory, with no fallback to the next. An empty `cwd` or `CLAUDE_PROJECT_DIR` is absent.
 fn hook_repository(text: &str) -> Option<PathBuf> {
     let payload: serde_json::Value = serde_json::from_str(text).ok()?;
     if payload.get("tool_name")?.as_str()? != "Bash" {
@@ -81,9 +81,13 @@ fn hook_repository(text: &str) -> Option<PathBuf> {
         return None;
     }
     let here = std::env::current_dir().ok()?;
-    let source = match payload.get("cwd").and_then(|c| c.as_str()) {
+    let source = match payload
+        .get("cwd")
+        .and_then(|c| c.as_str())
+        .filter(|c| !c.is_empty())
+    {
         Some(cwd) => here.join(cwd),
-        None => match std::env::var_os("CLAUDE_PROJECT_DIR") {
+        None => match std::env::var_os("CLAUDE_PROJECT_DIR").filter(|d| !d.is_empty()) {
             Some(dir) => here.join(dir),
             None => here,
         },
