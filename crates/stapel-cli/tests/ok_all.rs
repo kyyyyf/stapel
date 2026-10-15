@@ -634,3 +634,34 @@ fn dialog_shows_every_stale_reason() {
         "{reason}"
     );
 }
+
+#[test]
+fn key_form_grant_binds_a_generated_dependency() {
+    use common::{ask, token_of};
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let path = dir.join(".stapel/stapel.toml");
+    let toml = std::fs::read_to_string(&path).unwrap();
+    let plan = "id = \"plan\"\ntitle = \"Plan\"\nowner = \"engineer\"\ndepends_on = [\"spec\", \"design\"]";
+    assert!(toml.contains(plan));
+    std::fs::write(
+        &path,
+        toml.replace(
+            plan,
+            &plan.replace("\"design\"]", "\"design\", \"review\"]"),
+        ),
+    )
+    .unwrap();
+    let (reason, replaced) = ask(dir, "stapel ok ABC-1");
+    assert!(reason.contains("plan ("), "{reason}");
+    set_section(dir, "ABC-1", "Review", "A review, edited after the dialog.");
+    let before = (confirmations(dir).len(), decisions(dir).len());
+    ok_key_grant(dir, &["ABC-1", "--grant", &token_of(&replaced)])
+        .code(1)
+        .stderr(predicates::str::contains("the grant does not match"));
+    assert_eq!(
+        (confirmations(dir).len(), decisions(dir).len()),
+        before,
+        "nothing is recorded"
+    );
+}
