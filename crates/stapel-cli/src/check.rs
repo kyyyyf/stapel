@@ -1,11 +1,12 @@
-//! `stapel check [KEY] [--list]`: the RED to GREEN check of a ticket's steps (STP-4).
+//! `stapel check [KEY] [--list | --history]`: the RED to GREEN check of a ticket's steps (STP-4);
+//! `--history` prints the outcomes that history alone gives, without cargo (STP-14).
 
 use crate::repo;
 use stapel_core::build_inputs;
-use stapel_core::build_inputs::Bounds;
+use stapel_core::build_inputs::{Bounds, BuildInputs, Change};
 use stapel_core::config::{validate_cargo, validate_path_cargo};
 use stapel_core::journal::{append, new_id};
-use stapel_core::outcomes::{Analysis, MAX_NAMED, analyse, named, passing};
+use stapel_core::outcomes::{Analysis, MAX_NAMED, analyse, history_outcome, named, passing};
 use stapel_core::runner::{
     Parsed, TestState, cargo_version, parse_run, resolve_cargo, run_cargo, summary_counts,
 };
@@ -13,7 +14,7 @@ use stapel_core::rust_tests::test_functions;
 use stapel_core::steps::{
     Step, TestId, git_text, package_name, show, step_commits, step_tests, steps,
 };
-use stapel_core::tickets::{Status, resolve};
+use stapel_core::tickets::{Status, Ticket, resolve};
 use stapel_core::time::now_rfc3339;
 use stapel_core::worktree::{
     Lock, LockError, Worktree, build_input_outside, dirty_paths, resolve_tmpdir, stapel_dir,
@@ -29,7 +30,78 @@ fn refuse(message: impl std::fmt::Display) -> ExitCode {
     ExitCode::from(2)
 }
 
-pub fn run(key: Option<&str>, list: bool) -> ExitCode {
+// The refusals both modes share (STP-14); each mode calls them in its own order.
+
+/// A legacy or unreadable ticket cannot be checked.
+fn status_refusal(ticket: &Ticket) -> Result<(), String> {
+    match &ticket.status {
+        Status::Open(_) | Status::Closed(_) => Ok(()),
+        Status::Legacy(_) => Err(format!(
+            "ticket {} has a legacy (STP-1) state.json; it cannot be checked",
+            ticket.key
+        )),
+        Status::Unreadable(r) => Err(r.clone()),
+    }
+}
+
+/// The full id of `HEAD`.
+fn read_head(root: &Path) -> Result<String, String> {
+    git_text(root, &["rev-parse", "--verify", "HEAD"]).map(|h| h.trim().to_string())
+}
+
+/// A shallow clone hides history the check reads.
+fn shallow_refusal(root: &Path) -> Result<(), String> {
+    if git_text(root, &["rev-parse", "--is-shallow-repository"])
+        .map(|s| s.trim() == "true")
+        .unwrap_or(false)
+    {
+        return Err(
+            "this is a shallow clone; the check reads the whole history (git fetch --unshallow)"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// The `base` of the ticket's `state.json`, which must lie on the first-parent history of `HEAD`.
+fn base_of(root: &Path, ticket: &Ticket, head: &str) -> Result<Option<String>, String> {
+    let base = match &ticket.status {
+        Status::Open(s) | Status::Closed(s) => s.base.clone(),
+        _ => None,
+    };
+    if let Some(base) = &base {
+        build_inputs::check_base(root, base, head)?;
+    }
+    Ok(base)
+}
+
+/// The steps of the ticket on the first-parent history of `head`.
+fn read_steps(root: &Path, key: &str, head: &str) -> Result<Vec<Step>, String> {
+    step_commits(root, key, head).map(steps)
+}
+
+fn no_steps(key: &str) -> String {
+    format!(
+        "ticket {key} has no step commits (subjects `{key} <label> RED: …` and \
+         `{key} <label> GREEN: …` on the first-parent history of HEAD)"
+    )
+}
+
+/// The end of a closed ticket's range: a closed ticket is checked there, not at HEAD
+/// (STP-6 AC-16). `None` for an open ticket.
+fn range_end(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Option<String>, String> {
+    if !bounds.closed {
+        return Ok(None);
+    }
+    match build_inputs::range(root, key, head, bounds)?.last() {
+        Some(e) => Ok(Some(e.clone())),
+        None => Err(format!(
+            "ticket {key} is closed and has no commit whose subject starts with `{key} ` or `{key}:`"
+        )),
+    }
+}
+
+pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
     let (root, config) = match repo::open() {
         Ok(v) => v,
         Err(e) => return refuse(e),
@@ -38,51 +110,27 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         Ok(t) => t,
         Err(e) => return refuse(e),
     };
-    match &ticket.status {
-        Status::Open(_) | Status::Closed(_) => {}
-        Status::Legacy(_) => {
-            return refuse(format!(
-                "ticket {} has a legacy (STP-1) state.json; it cannot be checked",
-                ticket.key
-            ));
-        }
-        Status::Unreadable(r) => return refuse(r),
-    }
-    let head = match git_text(&root, &["rev-parse", "--verify", "HEAD"]) {
-        Ok(h) => h.trim().to_string(),
-        Err(e) => return refuse(e),
-    };
-    if git_text(&root, &["rev-parse", "--is-shallow-repository"])
-        .map(|s| s.trim() == "true")
-        .unwrap_or(false)
-    {
-        return refuse(
-            "this is a shallow clone; the check reads the whole history (git fetch --unshallow)",
-        );
-    }
-    let base = match &ticket.status {
-        Status::Open(s) | Status::Closed(s) => s.base.clone(),
-        _ => None,
-    };
-    if let Some(base) = &base
-        && let Err(e) = build_inputs::check_base(&root, base, &head)
-    {
+    if let Err(e) = status_refusal(&ticket) {
         return refuse(e);
     }
-    let steps = match step_commits(&root, &ticket.key, &head) {
-        Ok(c) => steps(c),
+    let head = match read_head(&root) {
+        Ok(h) => h,
         Err(e) => return refuse(e),
     };
-    let no_steps = || {
-        refuse(format!(
-            "ticket {key} has no step commits (subjects `{key} <label> RED: …` and \
-             `{key} <label> GREEN: …` on the first-parent history of HEAD)",
-            key = ticket.key
-        ))
+    if let Err(e) = shallow_refusal(&root) {
+        return refuse(e);
+    }
+    let base = match base_of(&root, &ticket, &head) {
+        Ok(b) => b,
+        Err(e) => return refuse(e),
+    };
+    let steps = match read_steps(&root, &ticket.key, &head) {
+        Ok(s) => s,
+        Err(e) => return refuse(e),
     };
     if list {
         if steps.is_empty() {
-            return no_steps();
+            return refuse(no_steps(&ticket.key));
         }
         return match print_list(&root, &ticket.key, &steps) {
             Ok(()) => ExitCode::SUCCESS,
@@ -93,24 +141,17 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         base: base.as_deref(),
         closed: matches!(ticket.status, Status::Closed(_)),
     };
-    // A closed ticket is checked at the end of its range, not at HEAD (STP-6 AC-16).
-    let end = if bounds.closed {
-        match build_inputs::range(&root, &ticket.key, &head, bounds) {
-            Ok(r) => match r.last() {
-                Some(e) => Some(e.clone()),
-                None => {
-                    return refuse(format!(
-                        "ticket {} is closed and has no commit whose subject starts with `{key} ` or `{key}:`",
-                        ticket.key,
-                        key = ticket.key
-                    ));
-                }
-            },
-            Err(e) => return refuse(e),
-        }
-    } else {
-        None
+    let end = match range_end(&root, &ticket.key, &head, bounds) {
+        Ok(e) => e,
+        Err(e) => return refuse(e),
     };
+    // The history check needs no `[check]`, no clean tree and no lock (STP-14 AC-5).
+    if history {
+        if steps.is_empty() {
+            return refuse(no_steps(&ticket.key));
+        }
+        return print_history(&root, &ticket.key, &head, end.as_deref(), &steps, bounds);
+    }
     let Some(check) = config.check.clone() else {
         return refuse(
             "check is not configured: add `[check]` with `runner = \"cargo\"` to .stapel/stapel.toml",
@@ -128,7 +169,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
         Err(e) => return refuse(e),
     }
     if steps.is_empty() {
-        return no_steps();
+        return refuse(no_steps(&ticket.key));
     }
     let dir = match stapel_dir(&root) {
         Ok(d) => d,
@@ -190,7 +231,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
     let mut blocked = inputs
         .changed
         .as_ref()
-        .map(|c| format!("build-input-changed: {} at {}", c.path, short(&c.sha)))
+        .map(changed_reason)
         .or(outside.map(|p| format!("build-input-outside: {}", p.display())));
     let cargo_text = if blocked.is_some() {
         cargo.display().to_string()
@@ -226,8 +267,10 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
     let mut ok = true;
     let mut steps_json = Vec::new();
     for a in &analyses {
-        let (outcome, reason) = match &a.fixed {
-            Some((o, r)) => (o.clone(), r.clone()),
+        // A build input found above the worktree after a cargo run blocks every later step (AC-7).
+        let blocked = runner.outside.borrow().clone();
+        let (outcome, reason) = match history_outcome(a, blocked.as_deref()) {
+            Some(o) => o,
             None => runner.step(a),
         };
         ok &= passing(&outcome);
@@ -242,14 +285,7 @@ pub fn run(key: Option<&str>, list: bool) -> ExitCode {
                 "names": names_of(&outcome, &reason),
             }));
         }
-        if reason.is_empty() {
-            say!("{}: {outcome}", a.label);
-        } else {
-            say!("{}: {outcome}: {reason}", a.label);
-        }
-        for n in &a.notes {
-            say!("  {} {}: {}", n.kind, n.by, n.what);
-        }
+        say_step(a, &outcome, &reason);
     }
     let suite = runner.suite();
     ok &= suite.outcome == "pass";
@@ -425,13 +461,8 @@ impl Runner<'_> {
         Ok(out)
     }
 
+    /// The outcome of a step without a history outcome (`history_outcome` comes first).
     fn step(&self, a: &Analysis) -> (String, String) {
-        if let Some(why) = self.outside.borrow().clone() {
-            return ("unverified".into(), why);
-        }
-        if let Some(label) = &a.interleaved {
-            return ("unverified".into(), format!("interleaved: {label}"));
-        }
         let (Some(red), Some(green)) = (&a.red, &a.green) else {
             return ("unpaired".into(), String::new());
         };
@@ -589,6 +620,97 @@ impl Runner<'_> {
 
 fn short(sha: &str) -> &str {
     &sha[..sha.len().min(7)]
+}
+
+/// The reason of `unverified` when a commit of the ticket changed a build input.
+fn changed_reason(c: &Change) -> String {
+    format!("build-input-changed: {} at {}", c.path, short(&c.sha))
+}
+
+/// A step's outcome line and its notes, as both modes print them.
+fn say_step(a: &Analysis, outcome: &str, reason: &str) {
+    if reason.is_empty() {
+        say!("{}: {outcome}", a.label);
+    } else {
+        say!("{}: {outcome}: {reason}", a.label);
+    }
+    for n in &a.notes {
+        say!("  {} {}: {}", n.kind, n.by, n.what);
+    }
+}
+
+/// One step of the history check: its analysis and its history outcome, `None` for `needs-run`.
+pub(crate) struct HistoryStep {
+    pub analysis: Analysis,
+    pub outcome: Option<(String, String)>,
+}
+
+/// What the history alone says about a ticket at `at` (STP-14): no cargo, no worktree.
+pub(crate) struct HistoryReport {
+    pub inputs: BuildInputs,
+    pub steps: Vec<HistoryStep>,
+}
+
+pub(crate) fn history_report(
+    root: &Path,
+    key: &str,
+    at: &str,
+    steps: &[Step],
+    bounds: Bounds,
+) -> Result<HistoryReport, String> {
+    let analyses = analyse(root, key, at, steps)?;
+    let inputs = build_inputs::analyse(root, key, at, steps, bounds)?;
+    let blocked = inputs.changed.as_ref().map(changed_reason);
+    let steps = analyses
+        .into_iter()
+        .map(|analysis| HistoryStep {
+            outcome: history_outcome(&analysis, blocked.as_deref()),
+            analysis,
+        })
+        .collect();
+    Ok(HistoryReport { inputs, steps })
+}
+
+/// `stapel check --history`: the full check's lines for the history outcomes, `needs-run` for the
+/// rest; exit 1 when an outcome fails. Nothing is written.
+fn print_history(
+    root: &Path,
+    key: &str,
+    head: &str,
+    end: Option<&str>,
+    steps: &[Step],
+    bounds: Bounds,
+) -> ExitCode {
+    let at = end.unwrap_or(head);
+    let report = match history_report(root, key, at, steps, bounds) {
+        Ok(r) => r,
+        Err(e) => return refuse(e),
+    };
+    if end.is_some() {
+        say!("ticket: {key} at {} (closed)", short(at));
+    } else {
+        say!("ticket: {key} at {}", short(head));
+    }
+    if !report.inputs.unchanged.is_empty() {
+        say!("build inputs: {}", named(&report.inputs.unchanged));
+    }
+    let mut ok = true;
+    for s in &report.steps {
+        match &s.outcome {
+            Some((outcome, reason)) => {
+                ok &= passing(outcome);
+                say_step(&s.analysis, outcome, reason);
+            }
+            None => say_step(&s.analysis, "needs-run", ""),
+        }
+    }
+    if ok {
+        say!("result: no history faults");
+        ExitCode::SUCCESS
+    } else {
+        say!("result: fail");
+        ExitCode::from(1)
+    }
 }
 
 fn print_list(root: &std::path::Path, key: &str, steps: &[Step]) -> Result<(), String> {

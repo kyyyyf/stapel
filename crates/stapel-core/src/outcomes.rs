@@ -525,6 +525,21 @@ pub fn analyse(
     Ok(out)
 }
 
+/// The outcome of a step that needs no cargo run (STP-14), in the full check's order: the fixed
+/// outcome; else `unverified: <blocked>` when a build input blocks the run; else
+/// `unverified: interleaved: <label>`. `None` when the step's tests must run.
+pub fn history_outcome(a: &Analysis, blocked: Option<&str>) -> Option<(String, String)> {
+    if let Some(fixed) = &a.fixed {
+        return Some(fixed.clone());
+    }
+    if let Some(why) = blocked {
+        return Some(("unverified".into(), why.to_string()));
+    }
+    a.interleaved
+        .as_ref()
+        .map(|label| ("unverified".into(), format!("interleaved: {label}")))
+}
+
 /// Whether an outcome counts as passing.
 pub fn passing(outcome: &str) -> bool {
     outcome == "pass" || outcome == "retired"

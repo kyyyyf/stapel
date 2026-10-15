@@ -79,6 +79,9 @@ enum Command {
         /// Print the steps, their commits and their tests without running anything.
         #[arg(long)]
         list: bool,
+        /// Print the outcomes history alone gives, without cargo; other steps read `needs-run`.
+        #[arg(long, conflicts_with = "list")]
+        history: bool,
     },
     /// Hook entry points called by Claude Code; not meant to be run by hand.
     #[command(subcommand)]
@@ -192,7 +195,9 @@ fn main() -> ExitCode {
             _ => unreachable!("clap limits the arguments"),
         },
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),
-        Command::Check { key, list } => return check::run(key.as_deref(), list),
+        Command::Check { key, list, history } => {
+            return check::run(key.as_deref(), list, history);
+        }
         Command::Status { key } => match status::run(key.as_deref()) {
             Ok(code) => return code,
             Err(message) => Err(message),
