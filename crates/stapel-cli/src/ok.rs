@@ -3,7 +3,7 @@
 
 use crate::repo;
 use stapel_core::confirm::{Prepared, Target, change_block, prepare, prepare_waiting, target};
-use stapel_core::dialog::ok_facts;
+use stapel_core::dialog::{ok_facts, ok_key_facts};
 use stapel_core::grant::consume;
 use stapel_core::identity::{in_agent_shell, user_name};
 use stapel_core::state::{Confirmation, State, save};
@@ -117,17 +117,21 @@ fn run_key(key: &str, grant: Option<&str>) -> Result<(), String> {
     if in_agent_shell() && grant.is_none() {
         return Err(refuse_agent_shell("stapel ok KEY"));
     }
-    if grant.is_some() {
-        return Err("a grant for `stapel ok KEY` is not supported yet".into());
-    }
     let (root, config) = repo::open()?;
     let by = identity(&root)?;
     let waiting = prepare_waiting(&root, &config, key)?;
+    let folder = match waiting.first() {
+        Some(p) => p.key.clone(),
+        None => stapel_core::tickets::resolve(&root, Some(key))?.key,
+    };
+    if let Some(token) = grant {
+        consume(&root, token, &ok_key_facts(&folder, &waiting))?;
+    }
     let Some(first) = waiting.first() else {
-        let folder = stapel_core::tickets::resolve(&root, Some(key))?.key;
         say!("nothing to confirm: {folder}");
         return Ok(());
     };
+    let via = if grant.is_some() { "grant" } else { "terminal" };
     say!(
         "to confirm: {} {}",
         first.key,
@@ -144,7 +148,7 @@ fn run_key(key: &str, grant: Option<&str>) -> Result<(), String> {
     let mut state = first.state.clone();
     let new: Vec<Confirmation> = waiting
         .iter()
-        .map(|p| confirmation(p, &by, &at, "terminal"))
+        .map(|p| confirmation(p, &by, &at, via))
         .collect();
     for c in &new {
         add(&mut state, c.clone());

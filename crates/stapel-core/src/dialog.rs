@@ -4,12 +4,13 @@
 //! issues a one-time grant, and asks Claude Code to show the person what they approve.
 
 use crate::config::Config;
-use crate::confirm::{Prepared, prepare};
+use crate::confirm::{Prepared, Target, prepare, prepare_waiting, target};
 use crate::grant::{Facts, issue};
 use crate::guard::{Decision, Invocation, stapel_root};
 use crate::hash::normal_form;
 use crate::identity::user_name;
-use crate::ticket::{find, parse};
+use crate::stage::{Reason, freshness, latest};
+use crate::ticket::{find, parse, read};
 use crate::tickets::{Status, resolve};
 use std::path::Path;
 
@@ -28,6 +29,71 @@ pub fn ok_facts(p: &Prepared) -> Facts {
             .map(|(id, hash)| format!("{id}={hash}"))
             .collect(),
     }
+}
+
+/// The grant facts of the key form: action `ok-key`, the waiting ids, their hashes and the
+/// dependencies of every one (`id:dep=hash`), all in `stapel.toml` order (STP-17 AC-8).
+pub fn ok_key_facts(key: &str, waiting: &[Prepared]) -> Facts {
+    Facts {
+        key: key.into(),
+        action: "ok-key".into(),
+        detail: waiting
+            .iter()
+            .map(|p| p.section.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
+        hash: waiting
+            .iter()
+            .map(|p| p.hash.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
+        dependencies: waiting
+            .iter()
+            .flat_map(|p| {
+                p.depends_on
+                    .iter()
+                    .map(|(dep, hash)| format!("{}:{dep}={hash}", p.section))
+            })
+            .collect(),
+    }
+}
+
+/// One waiting section in the dialog: id, short hash, and what changed since the last
+/// confirmation (STP-17 AC-7).
+fn waiting_line(config: &Config, p: &Prepared) -> String {
+    let short = &p.hash[..p.hash.len().min("sha256:".len() + 12)];
+    let new = || format!("new, {}", lines(&p.text));
+    let Some(old) = latest(&p.state, &p.section) else {
+        return format!("{} ({short}…): {}", p.section, new());
+    };
+    let Some(old_text) = old.text.as_deref() else {
+        return format!("{} ({short}…): {}", p.section, new());
+    };
+    let (mut added, mut removed) = (0, 0);
+    for change in similar::TextDiff::from_lines(old_text, &p.text).iter_all_changes() {
+        match change.tag() {
+            similar::ChangeTag::Insert => added += 1,
+            similar::ChangeTag::Delete => removed += 1,
+            similar::ChangeTag::Equal => {}
+        }
+    }
+    let mut change = format!("+{added} -{removed} lines since last confirmation");
+    if added == 0 && removed == 0 {
+        let sections = read(&p.dir.join("ticket.md"))
+            .map(|t| parse(&t))
+            .unwrap_or_default();
+        let reasons: Vec<String> = freshness(config, &sections, old)
+            .iter()
+            .map(|r| match r {
+                Reason::Changed => "changed since the last confirmation".to_string(),
+                other => other.describe(old),
+            })
+            .collect();
+        if !reasons.is_empty() {
+            change.push_str(&format!("; {}", reasons.join(", ")));
+        }
+    }
+    format!("{} ({short}…): {change}", p.section)
 }
 
 pub fn close_facts(key: &str, reason: &str) -> Facts {
@@ -73,10 +139,37 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
     let (facts, reason, tail) = if inv.action == "ok" {
         let positional = only_positional(inv)?;
         let (key, section) = match positional.as_slice() {
-            [section] => (None, section.as_str()),
-            [key, section] => (Some(key.as_str()), section.as_str()),
+            [arg] => match target(&root, &config, arg)? {
+                Target::Key(key) => {
+                    let waiting = prepare_waiting(&root, &config, &key)?;
+                    let folder = match waiting.first() {
+                        Some(p) => p.key.clone(),
+                        None => resolve(&root, Some(&key))?.key,
+                    };
+                    if waiting.is_empty() {
+                        return Err(format!("nothing to confirm: {folder}"));
+                    }
+                    let reason = format!(
+                        "stapel: confirm {} waiting section{} of {folder}: {}; runs: {}. Answer \
+                         Yes or No; do not choose \"don't ask again\".",
+                        waiting.len(),
+                        if waiting.len() == 1 { "" } else { "s" },
+                        waiting
+                            .iter()
+                            .map(|p| waiting_line(&config, p))
+                            .collect::<Vec<_>>()
+                            .join(" | "),
+                        program(inv).join(" ")
+                    );
+                    let tail = format!("ok {}", quote(&folder));
+                    return finish(inv, &root, ok_key_facts(&folder, &waiting), reason, tail);
+                }
+                Target::Section(section) => (None, section),
+            },
+            [key, section] => (Some(key.as_str()), section.clone()),
             _ => return Err("usage: stapel ok [KEY] <section>".into()),
         };
+        let section = section.as_str();
         let p = prepare(&root, &config, key, section)?;
         let reason = format!(
             "stapel: confirm section `{}` of {} — {}…, {}, {}; runs: {}. Answer Yes or No; do \
@@ -111,10 +204,21 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
         );
         (close_facts(&ticket.key, &reason_text), reason, tail)
     };
+    finish(inv, &root, facts, reason, tail)
+}
+
+/// Refuses when an allow rule would skip the dialog; else issues the grant and asks.
+fn finish(
+    inv: &Invocation,
+    root: &Path,
+    facts: Facts,
+    reason: String,
+    tail: String,
+) -> Result<Decision, String> {
     let command_without_grant = format!("{} {tail}", program(inv).join(" "));
     let with_placeholder = format!("{command_without_grant} --grant {}", "0".repeat(32));
     let rule =
-        allow_rule(&root, &command_without_grant).or_else(|| allow_rule(&root, &with_placeholder));
+        allow_rule(root, &command_without_grant).or_else(|| allow_rule(root, &with_placeholder));
     if let Some(rule) = rule {
         return Err(format!(
             "the permission allow rule \"{rule}\" would let stapel {} run without the dialog; \
@@ -122,7 +226,7 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
             inv.action
         ));
     }
-    let token = issue(&root, &facts)?;
+    let token = issue(root, &facts)?;
     Ok(Decision::Ask {
         reason,
         command: format!("{command_without_grant} --grant {token}"),
