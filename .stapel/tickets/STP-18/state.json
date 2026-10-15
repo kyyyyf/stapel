@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "key": "STP-18",
+  "title": "Machine records through stapel: findings import and ledger add",
+  "base": "5edba94c5879dc4339978a7a7520a2953276a09d",
+  "confirmations": []
+}

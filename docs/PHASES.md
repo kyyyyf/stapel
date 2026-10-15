@@ -138,6 +138,10 @@ token record, even if some steps were still performed by the orchestrator by han
   repeated id refused) and `stapel ledger add` appends a record to `.stapel/process-ledger.jsonl`; an agent
   runs them and the guard shows the permission dialog with the records, as for `stapel ok`. In STP-14 the
   human typed nine `cat … >> findings.jsonl` commands and one for the ledger.
+- STP-19 (split from STP-18 at its frame; after STP-18) token journal records imported from a file: `stapel
+  tokens import-records FILE [KEY]` appends checked records to a ticket's `tokens.jsonl` through the same
+  permission dialog; a `measured` record gets the field `imported_from`, and the token report shows such
+  records apart.
 
 **To discuss with the human:** a feature or epic level with its own human-facing spec and "Done when", with
 tickets limited in size and written for an agent (`docs/decisions/0003`, open question).
