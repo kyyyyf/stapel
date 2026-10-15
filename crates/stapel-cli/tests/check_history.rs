@@ -470,6 +470,42 @@ fn same_lines_when_a_build_input_changed() {
     assert_eq!(outcome(&hist, "step 2"), "red-changes-code", "{hist}");
 }
 
+#[test]
+fn build_inputs_line_in_both_modes() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    // Build inputs that exist before the ticket and that no commit of the range changes.
+    write(dir, ".cargo/config.toml", "");
+    write(dir, "crates/tiny/build.rs", "fn main() {}\n");
+    commit(dir, "setup: build inputs before the ticket");
+    clean_pair(dir, "step 1", "one");
+    let want = "build inputs: .cargo/config.toml, crates/tiny/build.rs";
+    let (code, full) = check(dir);
+    assert_eq!(code, 0, "{full}");
+    let (code, hist, err) = history(dir);
+    assert_eq!(code, 0, "{hist}{err}");
+    assert_eq!(err, "", "{hist}");
+    for text in [&full, &hist] {
+        assert_eq!(
+            text.lines()
+                .filter(|l| l.starts_with("build inputs: "))
+                .count(),
+            1,
+            "{text}"
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        let at = lines.iter().position(|l| *l == want).expect(text);
+        let step = lines
+            .iter()
+            .position(|l| l.starts_with("step 1: "))
+            .unwrap();
+        assert!(at < step, "{text}");
+    }
+    assert_eq!(header(&full), header(&hist), "{full}\n{hist}");
+    assert_eq!(outcome(&full, "step 1"), "pass", "{full}");
+    assert!(hist.lines().any(|l| l == "step 1: needs-run"), "{hist}");
+}
+
 // ---- AC-3 ----
 
 #[test]
@@ -510,6 +546,42 @@ fn exit_code_follows_the_outcomes() {
     );
     assert!(out.lines().any(|l| l == "step 2: needs-run"), "{out}");
     assert_eq!(out.lines().last(), Some("result: fail"), "{out}");
+}
+
+#[test]
+fn retired_alone_exits_0() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(dir, "rules", "only_one", "assert!(true);");
+    commit(dir, "ABC-1 step 1 RED: one rule");
+    commit(dir, "ABC-1 step 1 GREEN: green");
+    add_test(dir, "two", "two", "assert_eq!(tiny::two(), 1);");
+    commit(dir, "ABC-1 step 2 RED: two is missing");
+    add_fn(dir, "two");
+    edit(
+        dir,
+        "crates/tiny/tests/rules.rs",
+        "#[test]\nfn only_one() {\n    assert!(true);\n}\n",
+        "",
+    );
+    commit(
+        dir,
+        "ABC-1 step 2 GREEN: two\n\nspec change: AC-1, the old rule was wrong",
+    );
+    let (code, out, err) = history(dir);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(err, "", "{out}");
+    assert!(
+        out.lines()
+            .any(|l| l == "step 1: retired: every step test was retired by a spec change"),
+        "{out}"
+    );
+    assert!(out.lines().any(|l| l == "step 2: needs-run"), "{out}");
+    assert_eq!(
+        out.lines().last(),
+        Some("result: no history faults"),
+        "{out}"
+    );
 }
 
 // ---- AC-4 ----
