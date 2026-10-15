@@ -46,33 +46,42 @@ pub fn pre_tool_use() -> ExitCode {
     }
 }
 
+/// The hook events `stapel hook post-tool-use` answers (STP-14 AC-11, AC-19).
+const POST_EVENTS: [&str; 2] = ["PostToolUse", "PostToolUseFailure"];
+
 /// `stapel hook post-tool-use` (STP-14): after a commit command in a Bash call, the hook faults
-/// of the ticket that `HEAD` names. Claude Code shows the agent stderr on exit 2 only, so every
+/// of the ticket that `HEAD` names, as `additionalContext` in JSON on stdout with exit 0. Every
 /// other case, an error or a panic included, prints nothing and exits 0: advice, not a guard.
 pub fn post_tool_use() -> ExitCode {
     std::panic::set_hook(Box::new(|_| {}));
-    let lines = std::panic::catch_unwind(|| {
+    let answer = std::panic::catch_unwind(|| {
         let mut text = String::new();
         std::io::stdin().read_to_string(&mut text).ok()?;
-        let root = hook_repository(&text)?;
-        crate::check::hook_faults(&root)
-    });
-    match lines {
-        Ok(Some(lines)) => {
-            for line in lines {
-                warn!("{line}");
+        let (event, root) = hook_repository(&text)?;
+        let lines = crate::check::hook_faults(&root)?;
+        Some(serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": event,
+                "additionalContext": lines.join("\n"),
             }
-            ExitCode::from(DENY)
-        }
-        _ => ExitCode::SUCCESS,
+        }))
+    });
+    if let Ok(Some(answer)) = answer {
+        say!("{answer}");
     }
+    ExitCode::SUCCESS
 }
 
-/// The stapel root of the hook repository when the payload is a Bash call with a commit command:
-/// the first present source among the payload's `cwd`, `CLAUDE_PROJECT_DIR` and the working
+/// The payload's hook event and the stapel root of the hook repository when the payload is a
+/// PostToolUse or PostToolUseFailure payload of a Bash call with a commit command: the root of the
+/// first present source among the payload's `cwd`, `CLAUDE_PROJECT_DIR` and the working
 /// directory, with no fallback to the next. An empty `cwd` or `CLAUDE_PROJECT_DIR` is absent.
-fn hook_repository(text: &str) -> Option<PathBuf> {
+fn hook_repository(text: &str) -> Option<(String, PathBuf)> {
     let payload: serde_json::Value = serde_json::from_str(text).ok()?;
+    let event = payload.get("hook_event_name")?.as_str()?;
+    if !POST_EVENTS.contains(&event) {
+        return None;
+    }
     if payload.get("tool_name")?.as_str()? != "Bash" {
         return None;
     }
@@ -92,7 +101,7 @@ fn hook_repository(text: &str) -> Option<PathBuf> {
             None => here,
         },
     };
-    stapel_root(&source)
+    Some((event.to_string(), stapel_root(&source)?))
 }
 
 fn deny(reason: &str) -> ExitCode {

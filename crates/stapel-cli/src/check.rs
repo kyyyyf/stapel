@@ -731,11 +731,12 @@ const IN_PROGRESS: [&str; 5] = [
     "REVERT_HEAD",
 ];
 
-/// The commit hook's lines for the repository at `root` (STP-14 AC-11 to AC-14, AC-18): the line
-/// of each hook fault, one advice line per fault commit in history order, and the pointer to the
-/// history check. `None` when there is no hook fault, and for every case where the hook stays
-/// silent: an operation in progress, no ticket key in the subject of `HEAD`, a ticket that is not
-/// open, no step commits, a refusal of the history check, or any error.
+/// The commit hook's lines for the repository at `root` (STP-14 AC-11 to AC-14, AC-18, AC-20):
+/// the line of each hook fault, one advice line per fault commit in history order, and the
+/// pointer to the history check. `None` when no hook fault has `HEAD` as its fault commit, and
+/// for every case where the hook stays silent: an operation in progress, no ticket key in the
+/// subject of `HEAD`, a ticket that is not open, no step commits, a refusal of the history check,
+/// or any error.
 pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
     for name in IN_PROGRESS {
         let path = git_text(root, &["rev-parse", "--git-path", name]).ok()?;
@@ -809,7 +810,8 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
             None => faults.push((sha, vec![a.label.clone()], amend)),
         }
     }
-    if lines.is_empty() {
+    // Faults below `HEAD` alone were reported after their own commit (AC-20).
+    if lines.is_empty() || !faults.iter().any(|f| f.0 == head) {
         return None;
     }
     let order = git_text(root, &["rev-list", "--first-parent", "--reverse", &head]).ok()?;

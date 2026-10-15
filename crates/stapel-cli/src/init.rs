@@ -18,9 +18,12 @@ const HOOK_MATCHER: &str = "Bash|Write|Edit|MultiEdit|NotebookEdit";
 /// Seconds Claude Code waits for the hook; the guard answers in milliseconds.
 const HOOK_TIMEOUT: u64 = 10;
 const POST_HOOK_COMMAND: &str = "stapel hook post-tool-use";
-/// The installed PostToolUse line: advice, not a guard, so a missing binary lets the call stand.
+/// The installed PostToolUse and PostToolUseFailure line: advice, not a guard, so a missing,
+/// older or failing binary lets the call stand and reaches no agent.
 const POST_HOOK_LINE: &str =
-    "command -v stapel >/dev/null 2>&1 || exit 0; stapel hook post-tool-use";
+    "command -v stapel >/dev/null 2>&1 || exit 0; stapel hook post-tool-use 2>/dev/null || exit 0";
+/// The hook events of the commit hook.
+const POST_HOOK_EVENTS: [&str; 2] = ["PostToolUse", "PostToolUseFailure"];
 const POST_HOOK_MATCHER: &str = "Bash";
 /// Marks the pre-push hook as ours.
 const PRE_PUSH_MARKER: &str = "# stapel: pre-push guard";
@@ -171,8 +174,8 @@ fn plan_ignore_index(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     Ok(())
 }
 
-/// Plans the stapel PreToolUse and PostToolUse hooks in `.claude/settings.json` as one write,
-/// keeping every other key and hook.
+/// Plans the stapel PreToolUse, PostToolUse and PostToolUseFailure hooks in
+/// `.claude/settings.json` as one write, keeping every other key and hook.
 fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     let path = root.join(SETTINGS);
     let existed = path.exists();
@@ -191,8 +194,8 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         .or_insert_with(|| json!({}))
         .as_object_mut()
         .ok_or(format!("{SETTINGS}: the hooks field must be an object"))?;
-    // Check both arrays before changing anything, so a refusal leaves the value as read.
-    for event in ["PreToolUse", "PostToolUse"] {
+    // Check all three arrays before changing anything, so a refusal leaves the value as read.
+    for event in ["PreToolUse", "PostToolUse", "PostToolUseFailure"] {
         if hooks.get(event).is_some_and(|v| !v.is_array()) {
             return Err(format!(
                 "{SETTINGS}: the hooks.{event} field must be an array"
@@ -200,12 +203,16 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         }
     }
     let (pre_upgraded, pre_added) = plan_pre_hook(hook_array(hooks, "PreToolUse"));
-    let post_added = !has_command(hook_array(hooks, "PostToolUse"), POST_HOOK_COMMAND);
-    if post_added {
-        hook_array(hooks, "PostToolUse").push(json!({
-            "matcher": POST_HOOK_MATCHER,
-            "hooks": [{ "type": "command", "command": POST_HOOK_LINE, "timeout": HOOK_TIMEOUT }]
-        }));
+    let mut post_added = false;
+    for event in POST_HOOK_EVENTS {
+        let entries = hook_array(hooks, event);
+        if !has_command(entries, POST_HOOK_COMMAND) {
+            entries.push(json!({
+                "matcher": POST_HOOK_MATCHER,
+                "hooks": [{ "type": "command", "command": POST_HOOK_LINE, "timeout": HOOK_TIMEOUT }]
+            }));
+            post_added = true;
+        }
     }
     if !pre_upgraded && !pre_added && !post_added {
         return Ok(());
@@ -220,7 +227,7 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     } else if pre_added && post_added {
         format!("appended: {SETTINGS} (stapel hooks)")
     } else if post_added {
-        format!("appended: {SETTINGS} (stapel commit hook)")
+        format!("appended: {SETTINGS} (stapel commit hooks)")
     } else {
         format!("appended: {SETTINGS} (stapel hook)")
     };
