@@ -1,5 +1,6 @@
 //! STP-3 AC-7: fixtures, golden files and test sources carry no private data.
 
+use stapel_core::privacy::has_email;
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
@@ -28,23 +29,6 @@ fn files() -> Vec<PathBuf> {
     }
     out.sort();
     out
-}
-
-/// An e-mail address: `@`, a name, a dot and letters.
-fn has_email(text: &str) -> bool {
-    text.match_indices('@').any(|(i, _)| {
-        let after = &text[i + 1..];
-        let host: String = after
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '.')
-            .collect();
-        let parts: Vec<&str> = host.split('.').collect();
-        parts.len() >= 2
-            && !parts[0].is_empty()
-            && parts
-                .last()
-                .is_some_and(|tld| tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic()))
-    })
 }
 
 /// Terms from the untracked `.stapel/config/private.toml`: `terms = ["...", ...]`.
@@ -115,6 +99,17 @@ fn checker_finds_private_data() {
     assert!(!has_email("version@2 and @sign"));
     assert!(has_word("the user ek ran it", "ek"));
     assert!(!has_word("check the code", "ek"));
+}
+
+/// STP-14 AC-22: addresses in the reserved top-level domains (RFC 2606, RFC 6761) are not private.
+#[test]
+fn reserved_domains_are_not_private() {
+    assert!(!has_email("someone <someone@example.invalid>"));
+    assert!(!has_email("a@b.test"));
+    assert!(!has_email("c@d.example"));
+    assert!(!has_email("e@f.localhost"));
+    assert!(has_email("someone <someone@example.org>"));
+    assert!(has_email("x@mail.co.uk"));
 }
 
 /// F-6, E-7: the scan walks every crate's tests folder, subfolders included.
