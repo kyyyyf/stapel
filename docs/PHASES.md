@@ -133,6 +133,11 @@ token record, even if some steps were still performed by the orchestrator by han
   section confirms every stale section and prints their list first; `stapel ok` shows the diff of a section
   since its last confirmation, not the whole text. A spec change after a review round is made as one change, so
   one round needs one confirmation.
+- STP-18 (asked by the human at the close of STP-14; next, before STP-15) machine records through `stapel`:
+  `stapel findings import FILE` appends review findings to a ticket's `findings.jsonl` (fields checked, a
+  repeated id refused) and `stapel ledger add` appends a record to `.stapel/process-ledger.jsonl`; an agent
+  runs them and the guard shows the permission dialog with the records, as for `stapel ok`. In STP-14 the
+  human typed nine `cat … >> findings.jsonl` commands and one for the ledger.
 
 **To discuss with the human:** a feature or epic level with its own human-facing spec and "Done when", with
 tickets limited in size and written for an agent (`docs/decisions/0003`, open question).
