@@ -311,6 +311,10 @@ Terms:
   (never installed) is not upgraded (R2-2). Older hook tests got a fault at `HEAD` where all their faults lay
   below it; `failing_history_exits_2_with_advice` keeps its name though it now asserts exit 0 (R2-3).
 - Step 4b: coverage only, `blocked_and_interleaved_names_the_build_input_commit`, passed against `86c5966`.
+- Step 4c: `hook_faults` sets `seen` when a step with a hook fault has `HEAD` among any of its commits; it
+  answers when `seen` or a fault commit is `HEAD`. Each blocked step adds its own line, so the build-input case
+  needs no separate list. A fault commit below `HEAD` that this rule brings to light gets the "ask the human"
+  line. The test puts `HEAD` at a GREEN only (D4c-1, a note: the code matches any commit of the step).
 
 ## Test plan
 
