@@ -402,3 +402,141 @@ fn repairs_pre_push_exec_bit() {
         .mode();
     assert_eq!(mode & 0o111, 0o111);
 }
+
+// STP-14 AC-17: init installs the PostToolUse hook next to the PreToolUse hook, once.
+#[test]
+fn installs_the_post_tool_use_hook() {
+    const POST_LINE: &str =
+        "command -v stapel >/dev/null 2>&1 || exit 0; stapel hook post-tool-use";
+    fn post_entries(s: &Value) -> Vec<Value> {
+        s["hooks"]["PostToolUse"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|e| {
+                e["hooks"].as_array().is_some_and(|hs| {
+                    hs.iter().any(|h| {
+                        h["command"]
+                            .as_str()
+                            .is_some_and(|c| c.contains("stapel hook post-tool-use"))
+                    })
+                })
+            })
+            .collect()
+    }
+
+    // Fresh init: one PostToolUse entry next to the PreToolUse entry.
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let s = settings(dir);
+    assert_eq!(stapel_entries(&s).len(), 1, "{s:#}");
+    let post = post_entries(&s);
+    assert_eq!(post.len(), 1, "{s:#}");
+    assert_eq!(post[0]["matcher"], "Bash");
+    assert_eq!(post[0]["hooks"].as_array().unwrap().len(), 1);
+    assert_eq!(post[0]["hooks"][0]["type"], "command");
+    assert_eq!(post[0]["hooks"][0]["command"], POST_LINE);
+    assert_eq!(post[0]["hooks"][0]["timeout"], 10);
+
+    // A second init changes nothing in the settings.
+    let before = read(dir, SETTINGS);
+    std::fs::remove_file(dir.join(".stapel/allowlist.toml")).unwrap();
+    let out = stapel(dir).arg("init").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(!stdout.contains(SETTINGS), "{stdout}");
+    assert_eq!(read(dir, SETTINGS), before);
+
+    // A foreign PostToolUse hook is kept.
+    let repo = git_repo();
+    let dir = repo.path();
+    let foreign = json!({
+        "hooks": { "PostToolUse": [
+            { "matcher": "Write", "hooks": [{ "type": "command", "command": "formatter" }] }
+        ] }
+    });
+    std::fs::create_dir_all(dir.join(".claude")).unwrap();
+    std::fs::write(
+        dir.join(SETTINGS),
+        serde_json::to_string_pretty(&foreign).unwrap(),
+    )
+    .unwrap();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let s = settings(dir);
+    let all = s["hooks"]["PostToolUse"].as_array().unwrap();
+    assert!(all.contains(&foreign["hooks"]["PostToolUse"][0]), "{s:#}");
+    assert_eq!(all.len(), 2, "{s:#}");
+    assert_eq!(post_entries(&s).len(), 1, "{s:#}");
+    assert_eq!(stapel_entries(&s).len(), 1, "{s:#}");
+}
+
+// STP-14 AC-17: an existing install gets the PostToolUse entry, with a label per case.
+#[test]
+fn adds_the_post_hook_to_an_existing_install() {
+    const PRE_LINE: &str = "command -v stapel >/dev/null 2>&1 || { echo 'stapel: the stapel binary is not on PATH; the call is denied' >&2; exit 2; }; stapel hook pre-tool-use";
+    const POST_LINE: &str =
+        "command -v stapel >/dev/null 2>&1 || exit 0; stapel hook post-tool-use";
+    let foreign_pre =
+        json!({ "matcher": "Bash", "hooks": [{ "type": "command", "command": "other-guard" }] });
+    let foreign_stop = json!([{ "hooks": [{ "type": "command", "command": "notify" }] }]);
+    let cases = [
+        (None, "appended: .claude/settings.json (stapel hooks)"),
+        (
+            Some(PRE_LINE),
+            "appended: .claude/settings.json (stapel commit hook)",
+        ),
+        (
+            Some(HOOK_COMMAND),
+            "updated: .claude/settings.json (stapel hook line)",
+        ),
+    ];
+    for (pre, label) in cases {
+        let repo = git_repo();
+        let dir = repo.path();
+        let mut pre_list = vec![foreign_pre.clone()];
+        if let Some(command) = pre {
+            pre_list.push(json!({
+                "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
+                "hooks": [{ "type": "command", "command": command, "timeout": 10 }]
+            }));
+        }
+        let start = json!({
+            "model": "opus",
+            "hooks": { "PreToolUse": pre_list, "Stop": foreign_stop }
+        });
+        std::fs::create_dir_all(dir.join(".claude")).unwrap();
+        std::fs::write(
+            dir.join(SETTINGS),
+            serde_json::to_string_pretty(&start).unwrap(),
+        )
+        .unwrap();
+
+        let out = stapel(dir)
+            .args(["init", "--prefix", "ABC"])
+            .assert()
+            .success();
+        let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+        assert!(stdout.lines().any(|l| l == label), "{label}\n{stdout}");
+
+        let s = settings(dir);
+        assert_eq!(s["model"], "opus", "{s:#}");
+        assert_eq!(s["hooks"]["Stop"], foreign_stop, "{s:#}");
+        let pre_all = s["hooks"]["PreToolUse"].as_array().unwrap();
+        assert!(pre_all.contains(&foreign_pre), "{s:#}");
+        assert_eq!(pre_all.len(), 2, "{s:#}");
+        assert_eq!(stapel_entries(&s).len(), 1, "{s:#}");
+        assert_eq!(installed_command(dir), PRE_LINE);
+        let post = s["hooks"]["PostToolUse"].as_array().unwrap();
+        assert_eq!(post.len(), 1, "{label}\n{s:#}");
+        assert_eq!(post[0]["matcher"], "Bash");
+        assert_eq!(post[0]["hooks"][0]["command"], POST_LINE);
+        assert_eq!(post[0]["hooks"][0]["timeout"], 10);
+    }
+}
