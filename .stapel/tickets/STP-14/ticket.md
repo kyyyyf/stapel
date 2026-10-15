@@ -237,12 +237,33 @@ Terms:
   For an open RED, `analyse` still gives `unpaired`; the hook takes that RED as the fault commit itself (SR4).
 - The RED part of `analyse` (`step_tests`, the code and include checks) moves into one function that `analyse`
   calls for a paired step and the hook calls for an open RED (AC-18), so both judge a RED by one copy.
-- `init::plan_hooks` reads the settings once, adds or upgrades both entries in one value and plans one `Step`
+- `plan_hooks` in `init.rs` reads the settings once, adds or upgrades both entries in one value and plans one `Step`
   (SR1-7); the PostToolUse line exits 0 when the binary is missing.
 
 ### Decisions (as built)
 
-Notes are kept in `.stapel/scratch/stp14/as-built.md` during the build and moved here before code review.
+- Step 1: `outcomes::history_outcome(&Analysis, blocked)` gives the order fixed, blocked, interleaved; the
+  full check calls `Runner::step` only on `None`. Shared refusals in `check.rs`: `status_refusal`,
+  `read_head`, `shallow_refusal`, `base_of`, `read_steps`, `no_steps`, `range_end`; the full check keeps
+  today's order, `--history` stops after the closed end and then refuses on no steps. `history_report`
+  builds `HistoryReport { inputs, steps }`; both modes print a step through `say_step` and `step_lines`.
+- Step 1: a `Cargo.toml` change outside target tables and keys is no build input; the AC-2 fixture adds a
+  `[lib]` table. `--history` on this ticket takes about 1 s.
+- Step 2: `Analysis.fault` is set inside `analyse` by the Fault commit table (`None` for an open RED and for
+  `retired`). The RED check is the private `judge_red`; `analyse` calls it for a paired step and
+  `outcomes::open_red` for an open RED. `guard::holds_git_commit` reads a new `Found::commit`, which
+  `check_command` never reads.
+- Step 2: `hook::post_tool_use` runs inside `catch_unwind` and prints only on exit 2. `hook_faults` is silent,
+  in this order, for an operation in progress, an unreadable `HEAD`, no ticket for the subject's key, a
+  ticket not open, a shallow clone or bad base, no step commits, a report error. Fault commits are grouped
+  by sha in first-parent order, labels in step order; an error on one open RED silences the hook (D2-5).
+- Step 2b: the key is the subject's prefix up to the first whitespace or `:`; an empty `cwd` or
+  `CLAUDE_PROJECT_DIR` is absent (an empty `CLAUDE_PROJECT_DIR` already joined to the working directory,
+  D2b-1).
+- Step 3: `plan_hooks` checks both hook arrays first, upgrades or adds the PreToolUse entry through
+  `plan_pre_hook`, adds the PostToolUse entry when no hook command holds `stapel hook post-tool-use`, and
+  plans one `Step`. Labels in order: upgraded, created, both added (`stapel hooks`), only PostToolUse added
+  (`stapel commit hook`), only PreToolUse added (`stapel hook`, today's label; no criterion names this case).
 
 ## Test plan
 
@@ -376,12 +397,12 @@ Route: full (source: `auto`; tags `interface`, `guard`).
 
 | Step | What | Criteria | Must not change |
 |---|---|---|---|
-| 1 | `outcomes::history_outcome`; `check::history` and the `--history` flag in `check.rs` and `main.rs`; the full check calls both | AC-1 to AC-10 | the full check's output and records, `check.rs` tests, golden files of the full check |
+| 1 | `outcomes::history_outcome`; `history_report` and the `--history` flag in `check.rs` and `main.rs`; the full check calls both | AC-1 to AC-10 | the full check's output and records, `check.rs` tests, golden files of the full check |
 | 1c | Coverage after the drift review of step 1: D1-1, D1-2 (tests only, no code) | AC-1, AC-3 | `crates/*/src`, the eleven tests of step 1 |
 | 2 | `guard::holds_git_commit`; `stapel hook post-tool-use` in `hook.rs` and `main.rs`; the fault commit in `Analysis` and the open-RED check in `outcomes.rs` | AC-11 to AC-16, AC-18 | the PreToolUse decisions and their tests, the check output |
 | 2b | Drift review of step 2: D2-4 (`<KEY>:…` without a space) and D2-6 (an empty source is absent), RED and GREEN | AC-11, AC-16 | the other hook rules, tests of steps 1 to 2 |
 | 2c | Coverage after the drift review of step 2: D2-2, D2-3 (tests only, no code) | AC-11 | `crates/*/src`, tests of steps 1 to 2b |
-| 3 | The PostToolUse entry in `init::plan_hooks` | AC-17 | the PreToolUse entry, its upgrade path and its tests |
+| 3 | The PostToolUse entry in `plan_hooks` of `init.rs` | AC-17 | the PreToolUse entry, its upgrade path and its tests |
 
 ## Review
 
