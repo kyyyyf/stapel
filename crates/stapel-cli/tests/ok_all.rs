@@ -696,3 +696,82 @@ fn new_with_reasons_in_terminal_and_dialog() {
         "{out}"
     );
 }
+
+#[test]
+fn key_form_blank_user_name_refused() {
+    for waiting in [true, false] {
+        let repo = repo_with_ticket();
+        let dir = repo.path();
+        if !waiting {
+            for id in ["spec", "design", "proof", "plan"] {
+                confirm(dir, id);
+            }
+        }
+        git_config(dir, "user.name", "   ");
+        let before = snapshot(dir);
+        stapel(dir)
+            .args(["ok", "ABC-1"])
+            .assert()
+            .code(1)
+            .stderr(predicates::str::contains("user.name"));
+        assert_eq!(snapshot(dir), before, "waiting: {waiting}");
+    }
+}
+
+#[test]
+fn unresolved_argument_in_agent_shell_refused() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let before = snapshot(dir);
+    stapel(dir)
+        .args(["ok", "nope"])
+        .env("CLAUDECODE", "1")
+        .assert()
+        .code(1)
+        .stderr(predicates::str::contains("only a person confirms"))
+        .stderr(predicates::str::contains("neither a section nor a ticket").not());
+    assert_eq!(snapshot(dir), before);
+}
+
+#[test]
+fn section_form_grant_differs_by_action_only() {
+    use common::{ask, token_of};
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for id in ["spec", "design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    // Only spec waits: its confirmation is gone, no hash changed.
+    edit_state(dir, |s| {
+        s["confirmations"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|c| c["section"] != "spec");
+    });
+    let (_, section_grant) = ask(dir, "stapel ok spec");
+    let (reason, key_grant) = ask(dir, "stapel ok ABC-1");
+    assert!(reason.contains("confirm 1 waiting section of ABC-1"), "{reason}");
+    let before = (confirmations(dir).len(), decisions(dir).len());
+    ok_key_grant(dir, &["ABC-1", "--grant", &token_of(&section_grant)])
+        .code(1)
+        .stderr(predicates::str::contains("the grant does not match"));
+    ok_key_grant(dir, &["ABC-1", "spec", "--grant", &token_of(&key_grant)])
+        .code(1)
+        .stderr(predicates::str::contains("the grant does not match"));
+    assert_eq!((confirmations(dir).len(), decisions(dir).len()), before);
+}
+
+#[test]
+fn dialog_counts_added_and_removed_apart() {
+    use common::ask;
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Spec", "keep\nold");
+    confirm(dir, "spec");
+    set_section(dir, "ABC-1", "Spec", "keep\nnew one\nnew two");
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains("+2 -1 lines since last confirmation"),
+        "{reason}"
+    );
+}
