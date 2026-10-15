@@ -406,3 +406,195 @@ fn change_block_with_two_reasons() {
          confirmed: ABC-1 design (sha256:HASH)\n"
     );
 }
+
+#[test]
+fn dialog_lists_every_waiting_section() {
+    use common::{ask, grants_dir, hook_bash, read};
+    const DENY: i32 = 2;
+    fn short(dir: &Path, title: &str) -> String {
+        let text = read(dir, ".stapel/tickets/ABC-1/ticket.md");
+        let sections = stapel_core::ticket::parse(&text);
+        let body = stapel_core::ticket::find(&sections, title)
+            .found()
+            .unwrap();
+        stapel_core::hash::section_hash(body)[.."sha256:".len() + 12].to_string()
+    }
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    confirm(dir, "spec");
+    confirm(dir, "design");
+    set_section(dir, "ABC-1", "Spec", "The spec, revised.");
+
+    // Spec changed (+1 -1); design stale only by its dependency; proof and plan never confirmed.
+    let (spec, design) = (short(dir, "Spec"), short(dir, "Design"));
+    let (proof, plan) = (short(dir, "Proof"), short(dir, "Plan"));
+    let expected = [
+        format!("spec ({spec}…): +1 -1 lines since last confirmation"),
+        format!(
+            "design ({design}…): +0 -0 lines since last confirmation; depends on spec, which changed"
+        ),
+        format!("proof ({proof}…): new, 1 line"),
+        format!("plan ({plan}…): new, 1 line"),
+    ];
+    for (command, program) in [
+        ("stapel ok ABC-1", "stapel"),
+        ("stapel ok abc-1", "stapel"),
+        (
+            "cargo run -q -p stapel-cli -- ok ABC-1",
+            "cargo run -q -p stapel-cli --",
+        ),
+    ] {
+        let (reason, replaced) = ask(dir, command);
+        assert!(reason.contains("ABC-1"), "{reason}");
+        let mut at = 0;
+        for line in &expected {
+            let i = reason[at..]
+                .find(line.as_str())
+                .unwrap_or_else(|| panic!("{line:?} not in order in {reason}"));
+            at += i + line.len();
+        }
+        assert!(
+            replaced.starts_with(&format!("{program} ok ABC-1 --grant ")),
+            "{replaced}"
+        );
+        assert_eq!(common::token_of(&replaced).len(), 32);
+    }
+    assert_eq!(
+        std::fs::read_dir(grants_dir(dir)).unwrap().count(),
+        3,
+        "one grant file per dialog"
+    );
+
+    // Modes without a dialog deny, and write no grant.
+    let before = std::fs::read_dir(grants_dir(dir)).unwrap().count();
+    for mode in ["bypassPermissions", "dontAsk", ""] {
+        hook_bash(dir, "stapel ok ABC-1", mode)
+            .code(DENY)
+            .stderr(predicates::str::contains("dialog"));
+    }
+    assert_eq!(std::fs::read_dir(grants_dir(dir)).unwrap().count(), before);
+
+    // An allow rule that would skip the dialog denies.
+    std::fs::create_dir_all(dir.join(".claude")).unwrap();
+    std::fs::write(
+        dir.join(".claude/settings.local.json"),
+        r#"{"permissions":{"allow":["Bash(stapel ok:*)"]}}"#,
+    )
+    .unwrap();
+    hook_bash(dir, "stapel ok ABC-1", "auto")
+        .code(DENY)
+        .stderr(predicates::str::contains("allow rule"));
+    assert_eq!(std::fs::read_dir(grants_dir(dir)).unwrap().count(), before);
+}
+
+fn ok_key_grant(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    stapel(dir).arg("ok").args(args).env("CLAUDECODE", "1").assert()
+}
+
+#[test]
+fn key_form_grant_names_every_section() {
+    use common::{ask, grants_dir, token_of};
+    // Each case: the dialog for the key form, a change after it, then the grant is refused.
+    type Change = fn(&Path);
+    let changes: [(&str, Change); 3] = [
+        ("a waiting section is edited", |d| {
+            set_section(d, "ABC-1", "Design", "Rewritten while the dialog was open.");
+        }),
+        ("a dependency is edited, so it waits too", |d| {
+            set_section(d, "ABC-1", "Spec", "Rewritten while the dialog was open.");
+        }),
+        ("a waiting section is confirmed", |d| confirm(d, "design")),
+    ];
+    for (what, change) in changes {
+        let repo = repo_with_ticket();
+        let dir = repo.path();
+        confirm(dir, "spec");
+        let (_, replaced) = ask(dir, "stapel ok ABC-1");
+        change(dir);
+        let before = (confirmations(dir).len(), decisions(dir).len());
+        ok_key_grant(dir, &["ABC-1", "--grant", &token_of(&replaced)])
+            .code(1)
+            .stderr(predicates::str::contains("the grant does not match"));
+        assert_eq!(
+            (confirmations(dir).len(), decisions(dir).len()),
+            before,
+            "{what}"
+        );
+    }
+
+    // A grant of the section form does not confirm the key form, nor the reverse.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let (_, section_grant) = ask(dir, "stapel ok spec");
+    ok_key_grant(dir, &["ABC-1", "--grant", &token_of(&section_grant)])
+        .code(1)
+        .stderr(predicates::str::contains("the grant does not match"));
+    let (_, key_grant) = ask(dir, "stapel ok ABC-1");
+    ok_key_grant(dir, &["ABC-1", "spec", "--grant", &token_of(&key_grant)])
+        .code(1)
+        .stderr(predicates::str::contains("the grant does not match"));
+    assert!(confirmations(dir).is_empty());
+
+    // An expired grant.
+    let (_, replaced) = ask(dir, "stapel ok ABC-1");
+    for entry in std::fs::read_dir(grants_dir(dir)).unwrap() {
+        std::fs::write(entry.unwrap().path(), r#"{"expires_at":1}"#).unwrap();
+    }
+    ok_key_grant(dir, &["ABC-1", "--grant", &token_of(&replaced)])
+        .code(1)
+        .stderr(predicates::str::contains("expired"));
+    assert!(confirmations(dir).is_empty());
+    assert!(decisions(dir).is_empty());
+}
+
+#[test]
+fn key_form_grant_confirms_once() {
+    use common::{ask, grants_dir, token_of};
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    confirm(dir, "spec");
+    confirm(dir, "design");
+    set_section(dir, "ABC-1", "Design", "The design, revised.");
+    let (_, replaced) = ask(dir, "stapel ok ABC-1");
+    let token = token_of(&replaced);
+
+    let out = ok_key_grant(dir, &["ABC-1", "--grant", &token]).success();
+    assert_eq!(normalize(&stdout_of(out)), golden("ok_key_form.txt"));
+    let c = confirmations(dir);
+    assert_eq!(c.len(), 5);
+    for new in &c[2..] {
+        assert_eq!(new["via"], "grant");
+    }
+    let d = decisions(dir);
+    assert_eq!(d.len(), 5);
+    for record in &d[2..] {
+        assert_eq!(record["via"], "grant");
+    }
+    assert_eq!(std::fs::read_dir(grants_dir(dir)).unwrap().count(), 0);
+
+    // The same token again: nothing waits, and the grant is gone.
+    ok_key_grant(dir, &["ABC-1", "--grant", &token])
+        .code(1)
+        .stderr(predicates::str::contains("the grant does not match"));
+    assert_eq!(confirmations(dir).len(), 5);
+    assert_eq!(decisions(dir).len(), 5);
+}
+
+#[test]
+fn guard_denies_when_nothing_waits() {
+    use common::{grants_dir, hook_bash};
+    const DENY: i32 = 2;
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for id in ["spec", "design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    for command in ["stapel ok ABC-1", "stapel ok abc-1"] {
+        hook_bash(dir, command, "auto")
+            .code(DENY)
+            .stderr(predicates::str::contains("nothing to confirm: ABC-1"));
+    }
+    assert!(
+        !grants_dir(dir).exists() || std::fs::read_dir(grants_dir(dir)).unwrap().count() == 0
+    );
+}
