@@ -698,6 +698,52 @@ fn new_with_reasons_in_terminal_and_dialog() {
 }
 
 #[test]
+fn new_never_shows_the_text_change() {
+    use common::ask;
+    for with_dependency in [false, true] {
+        let repo = repo_with_ticket();
+        let dir = repo.path();
+        set_section(dir, "ABC-1", "Plan", "only line");
+        for id in ["spec", "design", "proof", "plan"] {
+            confirm(dir, id);
+        }
+        edit_state(dir, |s| {
+            let plan = s["confirmations"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|c| c["section"] == "plan")
+                .unwrap();
+            plan.as_object_mut().unwrap().remove("text");
+        });
+        set_section(dir, "ABC-1", "Plan", "changed line");
+        if with_dependency {
+            set_section(dir, "ABC-1", "Spec", "The spec, revised.");
+        }
+        let (reason, _) = ask(dir, "stapel ok ABC-1");
+        let out = stdout_of(stapel(dir).args(["ok", "ABC-1"]).assert().success());
+        let plan_line = out.lines().find(|l| l.starts_with("== plan:")).unwrap();
+        assert!(!plan_line.contains("changed since"), "{out}");
+        let plan_part = &reason[reason.find("plan (").unwrap()..];
+        assert!(!plan_part.contains("changed since"), "{reason}");
+        if with_dependency {
+            assert!(
+                reason.contains("new, 1 line; depends on spec, which changed"),
+                "{reason}"
+            );
+            assert!(
+                out.contains("== plan: new, 1 line; depends on spec, which changed\n"),
+                "{out}"
+            );
+        } else {
+            assert!(reason.contains("new, 1 line; runs:"), "{reason}");
+            assert!(!reason.contains("depends on"), "{reason}");
+            assert!(out.contains("== plan: new, 1 line\n"), "{out}");
+        }
+    }
+}
+
+#[test]
 fn key_form_blank_user_name_refused() {
     for waiting in [true, false] {
         let repo = repo_with_ticket();
