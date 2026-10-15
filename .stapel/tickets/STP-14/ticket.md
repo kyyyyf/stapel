@@ -226,6 +226,7 @@ Terms:
   `analyse` decides the outcome (`touching` already yields the changing sha); the full check ignores it. The
   `build-input-changed` fault commit is `BuildInputs.changed.sha`. The hook takes the fault commit of the
   outcome it prints: a step blocked by a build input uses `changed.sha`, not its `interleaved` RED (SR3-8).
+  For an open RED, `analyse` still gives `unpaired`; the hook takes that RED as the fault commit itself (SR4).
 - The RED part of `analyse` (`step_tests`, the code and include checks) moves into one function that `analyse`
   calls for a paired step and the hook calls for an open RED (AC-18), so both judge a RED by one copy.
 - `init::plan_hooks` reads the settings once, adds or upgrades both entries in one value and plans one `Step`
@@ -333,6 +334,7 @@ SR1-10 decided by the human; round 2 for SR1-1 and SR1-2 (HIGH).
 2026-10-15, after spec review round 2: every finding applied as one change; SR2-1 and SR2-3 decided by the
 human; round 3 for SR2-1 to SR2-3 (HIGH).
 2026-10-15, after spec review round 3: every finding applied as one change; a narrow round 4 for SR3-1.
+2026-10-15, after spec review round 4: SR3-1 to SR3-8 fixed; no HIGH or MEDIUM; one LOW applied in Design.
 
 ## Proof
 
