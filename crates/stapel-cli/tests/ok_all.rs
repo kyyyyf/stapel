@@ -665,3 +665,34 @@ fn key_form_grant_binds_a_generated_dependency() {
         "nothing is recorded"
     );
 }
+
+#[test]
+fn new_with_reasons_in_terminal_and_dialog() {
+    use common::ask;
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Plan", "line one\nline two\nline three");
+    for id in ["spec", "design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    set_section(dir, "ABC-1", "Spec", "The spec, revised.");
+    edit_state(dir, |s| {
+        let plan = s["confirmations"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|c| c["section"] == "plan")
+            .unwrap();
+        plan.as_object_mut().unwrap().remove("text");
+    });
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains("new, 3 lines; depends on spec, which changed"),
+        "{reason}"
+    );
+    let out = stdout_of(stapel(dir).args(["ok", "ABC-1"]).assert().success());
+    assert!(
+        out.contains("== plan: new, 3 lines; depends on spec, which changed\n"),
+        "{out}"
+    );
+}
