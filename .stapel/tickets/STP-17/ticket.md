@@ -37,7 +37,7 @@ status`; reopening a closed ticket; concurrent writers of `state.json`.
    or the normal form changed.
 6. From an agent's shell, without a grant, both forms are refused as today. Through the guard, the permission
    dialog lists each section with its short hash and `+a -b lines since last confirmation`, followed by its
-   stale reasons without the time when the diff is empty (Decision SR1-3); one grant names
+   stale reasons other than the text change itself, without the time (Decisions SR1-3 and D2-2); one grant names
    every section, its hash and its dependencies. If any of them changed after the dialog, the grant does not
    match and nothing is recorded. When no section waits, the guard denies and shows no dialog.
 
@@ -96,6 +96,13 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   `ticket_drift`); AC-1 says the records follow the `state.json` write (D1-5); AC-2 names the bare
   `unchanged` and the `, ` separator (D1-6, D1-7); AC-5 names `none` (D1-2); coverage step 1c for D1-1, D1-2
   and D1-7. D1-3 goes to step 2; D1-4, D1-8 and D1-9 are notes.
+- 2026-10-15: Decision (D2-2, recommended): the human chose that the dialog shows every stale reason but the
+  text change itself, as the terminal does (AC-2). Rejected: reasons only when both counts are 0.
+- 2026-10-15, after step 2 (drift review D2-1 to D2-7, two MEDIUM), one spec change: promise item 6 and AC-7
+  (D2-2, and `1 line` for one, D2-5); AC-8 names the expired grant (D2-4); a coverage test for a dependency
+  that never waits (D2-1). Notes: D2-3 (grant removal is proved by the empty grants folder), D2-6 (the dialog
+  re-reads `ticket.md`), D2-7 (the section form's facts do not bind the normal form either; the hash is taken
+  of the normal form).
 
 ## Spec
 
@@ -115,8 +122,8 @@ Terms:
 | AC-4 | WHEN the key form runs and no section waits THE `stapel ok` command prints `nothing to confirm: <KEY>` (the folder key), exits 0 and changes no file. | `ok_all::key_form_with_nothing_waiting` |
 | AC-5 | WHEN `stapel ok` gets one argument THE command takes it as a section when it is a section id of `stapel.toml` (any case, as today), else as a key when a ticket folder matches (any case), else exits 1 with `"X" is neither a section nor a ticket; sections: <ids>; open tickets: <keys>` (`none` when no ticket is open; spec change, D1-2). A closed or legacy ticket gives today's refusal of `prepare`. | `ok_all::one_argument_is_section_then_key`, `ok_all::section_id_wins_over_a_ticket_folder`, `ok_all::refusal_lists_only_open_tickets` |
 | AC-6 | WHEN the section form confirms a section THE `stapel ok` command prints its change block before the `confirmed:` line; a fresh section is confirmed again, as today. | `ok_all::section_form_prints_change_block` |
-| AC-7 | WHEN an agent runs the key form in a dialog permission mode THE guard answers `ask`: the reason names the ticket and, per waiting section, its id, short hash and `+a -b lines since last confirmation` (with `; <stale reasons>` when both counts are 0) or `new, N lines`; the replaced command is `<program> ok <folder key> --grant <token>`; one grant file is written. | `ok_all::dialog_lists_every_waiting_section` |
-| AC-8 | IF after the key-form dialog a waiting section's hash, one of its dependencies, or the set of waiting sections changes THEN `stapel ok KEY --grant <token>` exits 1 with today's "the grant does not match" reason and records nothing. A grant of the section form does not confirm the key form, nor the reverse. | `ok_all::key_form_grant_names_every_section` |
+| AC-7 | WHEN an agent runs the key form in a dialog permission mode THE guard answers `ask`: the reason names the ticket and, per waiting section, its id, short hash and `+a -b lines since last confirmation` (followed by `; <stale reasons>` whenever the section has stale reasons other than its own text change; spec change, D2-2) or `new, N lines` (`1 line` for one); the replaced command is `<program> ok <folder key> --grant <token>`; one grant file is written. | `ok_all::dialog_lists_every_waiting_section`, `ok_all::dialog_shows_every_stale_reason` |
+| AC-8 | IF after the key-form dialog a waiting section's hash, one of its dependencies, or the set of waiting sections changes, or the grant expired (spec change, D2-4), THEN `stapel ok KEY --grant <token>` exits 1 with today's "the grant does not match" (or "the grant expired") reason and records nothing. A grant of the section form does not confirm the key form, nor the reverse. | `ok_all::key_form_grant_names_every_section`, `ok_all::key_form_grant_binds_a_generated_dependency` |
 | AC-9 | IF the key form runs in an agent's shell without a grant THEN it exits 1 with today's "only a person confirms" reason, naming `stapel ok KEY`. | `ok_all::key_form_agent_shell_refused` |
 | AC-10 | WHEN `stapel ok KEY --grant <token>` runs with the token of the key-form dialog and nothing changed THE command confirms every section the dialog listed, as AC-1, with `via` `grant`, and removes the grant; the same token then exits 1 with "the grant does not match". | `ok_all::key_form_grant_confirms_once` |
 | AC-11 | IF an agent runs the key form in a dialog permission mode and no section waits THEN the guard denies with `nothing to confirm: <KEY>` and writes no grant file. | `ok_all::guard_denies_when_nothing_waits` |
@@ -218,6 +225,7 @@ fixed; no time is printed. Light tests: `cargo test -j 4 -p stapel-cli --test ok
 | Input | `spec`, `SPEC`, `abc-1`, `ABC-1`, `review` (generated: today's refusal), `nope`, a closed ticket key, a legacy ticket key, a key matching two folders that differ only in case (Linux) | `ok_all::one_argument_is_section_then_key` |
 | Regression | section form prints the change block; fresh section confirmed again | `ok_all::section_form_prints_change_block` |
 | Coverage (step 1) | a ticket folder named `spec`: `stapel ok spec` and `stapel ok SPEC` take the section form (D1-1); the refusal lists open tickets only, and `none` (D1-2); a section with a changed dependency and an old normal form shows both reasons joined by `, ` (D1-7) | `ok_all::section_id_wins_over_a_ticket_folder`, `ok_all::refusal_lists_only_open_tickets`, `ok_all::change_block_with_two_reasons` |
+| Step 3 | a section whose text and a dependency both changed shows `+a -b lines since last confirmation; depends on spec, which changed` in the dialog (D2-2); coverage: with `stapel.toml` where `plan` depends on the generated `review`, editing `## Review` after the dialog voids the key-form grant although `review` never waits (D2-1) | `ok_all::dialog_shows_every_stale_reason`, `ok_all::key_form_grant_binds_a_generated_dependency` |
 | Guard | dialog reason and replaced command for `stapel ok ABC-1` and the `cargo run … --` form; a section stale only by a dependency shows `+0 -0 lines since last confirmation; depends on spec, which changed`; `bypassPermissions` mode denies; an allow rule `Bash(stapel ok:*)` denies | `ok_all::dialog_lists_every_waiting_section` |
 | Guard | grant voided by an edit of a waiting section, of a dependency, by a new waiting section; section-form grant on the key form and the reverse; an expired key-form grant | `ok_all::key_form_grant_names_every_section` |
 | Guard | agent shell without grant | `ok_all::key_form_agent_shell_refused` |
@@ -280,6 +288,8 @@ and `tickets::resolve`, not only the catalogue; no open question is left.
 spec change (quoted lines use `<KEY>`, AC-1, AC-2 and AC-5 wording) and plan step 1c.
 2026-10-15, after step 2: as built of steps 1c and 2 added; the abuse table was missing (a `guard` ticket needs
 one; `ticket_drift` found it once every named test existed) and is added from the spec reviewer's list.
+2026-10-15, after the drift review of step 2: D2-1 to D2-7 applied as one spec change (promise item 6, AC-7,
+AC-8) and plan step 3.
 
 ## Proof
 
@@ -291,8 +301,8 @@ one; `ticket_drift` found it once every named test existed) and is added from th
 | AC-4 | `ok_all::key_form_with_nothing_waiting` |
 | AC-5 | `ok_all::one_argument_is_section_then_key`, `ok_all::section_id_wins_over_a_ticket_folder`, `ok_all::refusal_lists_only_open_tickets` |
 | AC-6 | `ok_all::section_form_prints_change_block` |
-| AC-7 | `ok_all::dialog_lists_every_waiting_section` |
-| AC-8 | `ok_all::key_form_grant_names_every_section` |
+| AC-7 | `ok_all::dialog_lists_every_waiting_section`, `ok_all::dialog_shows_every_stale_reason` |
+| AC-8 | `ok_all::key_form_grant_names_every_section`, `ok_all::key_form_grant_binds_a_generated_dependency` |
 | AC-9 | `ok_all::key_form_agent_shell_refused` |
 | AC-10 | `ok_all::key_form_grant_confirms_once` |
 | AC-11 | `ok_all::guard_denies_when_nothing_waits` |
@@ -306,6 +316,7 @@ Route: full (source: `auto`; tags `interface`, `guard`).
 | 1 | `confirm::target`, `confirm::prepare_waiting` and the change block in `stapel-core`; the key form and the change block in `ok.rs` and `main.rs`, calling `confirm::target` | AC-1 to AC-6 | `grant.rs`, `dialog.rs`, the section form's records, existing tests |
 | 1c | Coverage after the drift review of step 1: D1-1, D1-2, D1-7 (tests only, no code) | AC-2, AC-5 | `crates/*/src`, the six tests of step 1 |
 | 2 | The key form in the guard's dialog and its grant facts; the agent-shell message | AC-7 to AC-11 | the section form's dialog reason and grant facts, `grant.rs` file naming |
+| 3 | Every stale reason in the dialog (D2-2), RED and GREEN; then a coverage test for a generated dependency in the grant (D2-1) | AC-7, AC-8 | the terminal output, grant facts, the tests of steps 1 to 2 |
 
 ## Review
 
