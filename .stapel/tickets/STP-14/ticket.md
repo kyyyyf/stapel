@@ -158,7 +158,10 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   the private-data check of `fixtures.rs`: the step 2 test `commit_command_forms` holds `someone@example.invalid`
   (an escaped defect of step 2; builders ran only their own test files). Decision (recommended): `has_email`
   skips the reserved top-level domains of RFC 2606 and RFC 6761 (AC-22). Rejected: a new step that edits the
-  protected step 2 test.
+  protected step 2 test. A first fix changed `fixtures.rs` in a plain commit; the second full check read it as
+  `build-input-changed` (a test helper is a build input, STP-6 AC-3). The human dropped that commit
+  (`rewrite-ac22.sh`). Decision (recommended): step 5 moves `has_email` into `stapel_core::privacy`, so the
+  RED changes the helper and the GREEN only source. Rejected: rewriting the step 2 RED.
 - 2026-10-15, after step 2 (drift review D2-1 to D2-6, one MEDIUM), one spec change: AC-11 accepts `<KEY>:…`
   without a space (D2-4) and AC-16 counts an empty source as absent (D2-6), step 2b; coverage step 2c for D2-2
   and D2-3. D2-1 is no defect: `history_outcome` puts `blocked` before `interleaved`, so with a changed build
@@ -358,7 +361,7 @@ builds with cargo. Light runs: `cargo test -j 4 -p stapel-cli --test check_histo
 | Install | settings with neither stapel entry; with only today's PreToolUse entry; with the bare `stapel hook pre-tool-use` entry: labels of AC-17, both entries present, other hooks kept | `hooks_install::adds_the_post_hook_to_an_existing_install` |
 | Step 4 | RED, existing hook tests move to the JSON answer and exit 0 (superseding their exit-2 asserts); a PostToolUseFailure payload with `error` answers with that event name (AC-19); a `duplicate` and an `interleaved` fault below `HEAD` and a clean commit at `HEAD`: silent, and with a new `no-tests` open RED at `HEAD` the answer lists all three (AC-20); payload event `Stop`: silent (AC-13); `init` writes both commit-hook entries and the new line, and a file with only PreToolUse and PostToolUse gets PostToolUseFailure (AC-17); the line run by `sh` with a fake `stapel` that prints a usage error and exits 2: no output, exit 0 (AC-17); each of the three events as an object: exit 1, file unchanged (AC-21) | `hook_post::failure_event_is_handled`, `hook_post::old_faults_alone_are_silent`, `hook_post::silent_cases`, `hooks_install::installs_the_post_tool_use_hook`, `hooks_install::adds_the_post_hook_to_an_existing_install`, `hooks_install::hook_line_is_silent_with_an_old_binary`, `hooks_install::refuses_a_non_array_hook_event` |
 | Step 4b | coverage: interleaved pairs, then a `[lib]` table added at `HEAD`: one amend line on `HEAD` naming both steps, not the interleaving RED (R-2) | `hook_post::blocked_and_interleaved_names_the_build_input_commit` |
-| Close | `has_email` with addresses in `.invalid`, `.test`, `.example`, `.localhost` (not reported) and `.org`, `.co.uk` (reported); one commit with the test, no step pair: the check helper is test code | `fixtures::reserved_domains_are_not_private` |
+| Step 5 | RED: `fixtures.rs` takes `has_email` from `stapel_core::privacy` (absent: a compile RED) and tests it with addresses in `.invalid`, `.test`, `.example`, `.localhost` (not reported) and `.org`, `.co.uk` (reported) | `fixtures::reserved_domains_are_not_private` |
 | Step 4c | RED: a RED, a notes commit that edits the step's test, then the step's GREEN at `HEAD`: the answer lists `tests-changed` with "ask the human" for the notes commit; the same with the notes commit changing a build input: `build-input-changed`; a clean commit of another step at `HEAD` above both: silent (R2-1) | `hook_post::fault_seen_first_at_a_step_commit` |
 
 ### Inputs
@@ -473,6 +476,7 @@ Route: full (source: `auto`; tags `interface`, `guard`).
 | 4 | Code review round 1: the JSON answer with exit 0, the PostToolUseFailure event, silence for faults below `HEAD` in `hook.rs` and `check.rs`; both commit-hook entries and the new line in `init.rs`; RED and GREEN | AC-11, AC-13, AC-17, AC-19, AC-20, AC-21 | the fault commit table, the history check, the PreToolUse entry and its tests, test functions of steps 1 to 3 except their exit-code and output asserts |
 | 4b | Coverage after code review: R-2 (tests only, no code) | AC-11 | `crates/*/src`, test functions of steps 1 to 4 |
 | 4c | Code review round 2: R2-1, the hook also answers when `HEAD` is a commit of a faulty step; RED and GREEN | AC-11, AC-20 | the fault commit table, the advice lines, test functions of steps 1 to 4b |
+| 5 | The full check: `has_email` moves into `stapel_core::privacy` and skips the reserved top-level domains; RED changes `fixtures.rs` to use it, GREEN adds the module | AC-22 | the other checks of `fixtures.rs`, every step test of steps 1 to 4c |
 
 ## Review
 
