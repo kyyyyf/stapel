@@ -154,6 +154,11 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   so a fault made visible by a later step commit is reported (step 4c). Rejected: a comparison with `HEAD^`;
   not promised. R2-2 (step 3's line not upgraded), R2-3 (a test name says exit 2) and R2-4 (a stdout write
   error, a PostToolUseFailure-only settings file) are notes.
+- 2026-10-15, the full check at `54e3639`: every step `pass`, the suite failed on
+  the private-data check of `fixtures.rs`: the step 2 test `commit_command_forms` holds `someone@example.invalid`
+  (an escaped defect of step 2; builders ran only their own test files). Decision (recommended): `has_email`
+  skips the reserved top-level domains of RFC 2606 and RFC 6761 (AC-22). Rejected: a new step that edits the
+  protected step 2 test.
 - 2026-10-15, after step 2 (drift review D2-1 to D2-6, one MEDIUM), one spec change: AC-11 accepts `<KEY>:…`
   without a space (D2-4) and AC-16 counts an empty source as absent (D2-6), step 2b; coverage step 2c for D2-2
   and D2-3. D2-1 is no defect: `history_outcome` puts `blocked` before `interleaved`, so with a changed build
@@ -219,11 +224,12 @@ Terms:
 | AC-15 | WHEN the command is `git commit -m x`, `git commit -a -m x -m y`, `git commit -m "$(cat <<'EOF' … EOF)"` (Claude Code's usual form), `git commit --amend --no-edit`, `git -C . commit -m x`, `cd . && git commit -m x`, `bash -c 'git commit -m x'` or `git -c user.name=a commit -m x` THE hook runs the history check; WHEN it is `git log --grep commit`, `echo git commit`, `git commit-tree …` or `git status` THE hook does not. | `hook_post::commit_command_forms` |
 | AC-16 | WHEN the payload has `cwd` THE hook reads the repository of that directory, whatever `CLAUDE_PROJECT_DIR` and its own working directory are; without `cwd`, the repository of `CLAUDE_PROJECT_DIR`; without both, of its working directory. An empty `cwd` or `CLAUDE_PROJECT_DIR` counts as absent (spec change, D2-6). A `cwd` in a linked worktree reads that worktree's `HEAD`. | `hook_post::reads_the_hook_repository`, `hook_post::empty_sources_count_as_absent` |
 | AC-17 | WHEN `stapel init` runs THE `.claude/settings.json` gets one PostToolUse entry and one PostToolUseFailure entry, each with matcher `Bash`, command `command -v stapel >/dev/null 2>&1 \|\| exit 0; stapel hook post-tool-use 2>/dev/null \|\| exit 0` and timeout 10, next to the PreToolUse entry, in one write; other keys and hooks stay; a second run adds nothing. A file with no stapel entry prints `appended: .claude/settings.json (stapel hooks)`; a file with today's PreToolUse entry and without one of the two commit-hook entries gets the missing ones and prints `appended: .claude/settings.json (stapel commit hooks)`; a file with the bare `stapel hook pre-tool-use` entry prints `updated: .claude/settings.json (stapel hook line)` and gets both commit-hook entries too. Run by `sh` with a `stapel` on `PATH` that exits 2 with a usage error, the line prints nothing and exits 0 (spec change, E-1, E-2). | `hooks_install::installs_the_post_tool_use_hook`, `hooks_install::adds_the_post_hook_to_an_existing_install`, `hooks_install::hook_line_is_silent_with_an_old_binary` |
+| AC-22 | IF a test file holds an address whose domain ends in a reserved top-level domain (`invalid`, `example`, `test`, `localhost`) THEN the private-data check of `fixtures.rs` does not report it as an e-mail address; other addresses are still reported (spec change: the full check at `54e3639` failed on `someone@example.invalid` in a step 2 test). | `fixtures::reserved_domains_are_not_private` |
 | AC-21 | IF `hooks.PreToolUse`, `hooks.PostToolUse` or `hooks.PostToolUseFailure` in `.claude/settings.json` is not an array THEN `stapel init` exits 1 with `.claude/settings.json: the hooks.<event> field must be an array` and changes no file (spec change, DR-1). | `hooks_install::refuses_a_non_array_hook_event` |
 
 ### Guarantees
 
-- **Promised:** the Frame's promise, by AC-1 to AC-21; the existing tests of `check.rs`, `hook.rs` and
+- **Promised:** the Frame's promise, by AC-1 to AC-22; the existing tests of `check.rs`, `hook.rs` and
   `hooks_install.rs` keep the full check, the guard and the PreToolUse install as they are.
 - **Not promised:** the Frame's list.
 
@@ -352,6 +358,7 @@ builds with cargo. Light runs: `cargo test -j 4 -p stapel-cli --test check_histo
 | Install | settings with neither stapel entry; with only today's PreToolUse entry; with the bare `stapel hook pre-tool-use` entry: labels of AC-17, both entries present, other hooks kept | `hooks_install::adds_the_post_hook_to_an_existing_install` |
 | Step 4 | RED, existing hook tests move to the JSON answer and exit 0 (superseding their exit-2 asserts); a PostToolUseFailure payload with `error` answers with that event name (AC-19); a `duplicate` and an `interleaved` fault below `HEAD` and a clean commit at `HEAD`: silent, and with a new `no-tests` open RED at `HEAD` the answer lists all three (AC-20); payload event `Stop`: silent (AC-13); `init` writes both commit-hook entries and the new line, and a file with only PreToolUse and PostToolUse gets PostToolUseFailure (AC-17); the line run by `sh` with a fake `stapel` that prints a usage error and exits 2: no output, exit 0 (AC-17); each of the three events as an object: exit 1, file unchanged (AC-21) | `hook_post::failure_event_is_handled`, `hook_post::old_faults_alone_are_silent`, `hook_post::silent_cases`, `hooks_install::installs_the_post_tool_use_hook`, `hooks_install::adds_the_post_hook_to_an_existing_install`, `hooks_install::hook_line_is_silent_with_an_old_binary`, `hooks_install::refuses_a_non_array_hook_event` |
 | Step 4b | coverage: interleaved pairs, then a `[lib]` table added at `HEAD`: one amend line on `HEAD` naming both steps, not the interleaving RED (R-2) | `hook_post::blocked_and_interleaved_names_the_build_input_commit` |
+| Close | `has_email` with addresses in `.invalid`, `.test`, `.example`, `.localhost` (not reported) and `.org`, `.co.uk` (reported); one commit with the test, no step pair: the check helper is test code | `fixtures::reserved_domains_are_not_private` |
 | Step 4c | RED: a RED, a notes commit that edits the step's test, then the step's GREEN at `HEAD`: the answer lists `tests-changed` with "ask the human" for the notes commit; the same with the notes commit changing a build input: `build-input-changed`; a clean commit of another step at `HEAD` above both: silent (R2-1) | `hook_post::fault_seen_first_at_a_step_commit` |
 
 ### Inputs
@@ -449,6 +456,7 @@ human; round 3 for SR2-1 to SR2-3 (HIGH).
 | AC-19 | `hook_post::failure_event_is_handled` |
 | AC-20 | `hook_post::old_faults_alone_are_silent`, `hook_post::fault_seen_first_at_a_step_commit` |
 | AC-21 | `hooks_install::refuses_a_non_array_hook_event` |
+| AC-22 | `fixtures::reserved_domains_are_not_private` |
 
 ## Plan
 
