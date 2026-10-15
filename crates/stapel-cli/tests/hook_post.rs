@@ -556,6 +556,59 @@ fn key_followed_by_colon_without_space() {
     assert_eq!(advice(&err), vec![ask(&fault, "step 2")], "{err}");
 }
 
+#[test]
+fn advice_in_history_order() {
+    let repo = fixture();
+    let dir = repo.path();
+    clean_pair(dir, "step 1", "one");
+    commit(dir, "ABC-1 step 2 RED: no test");
+    let step2 = sha(dir, "HEAD");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    edit(
+        dir,
+        "crates/tiny/tests/one.rs",
+        "assert_eq!(tiny::one(), 1);",
+        "assert_eq!(tiny::one(), 1 + 0);",
+    );
+    commit(dir, "ABC-1: edits the test of step 1");
+    let step1 = sha(dir, "HEAD");
+    let err = assert_fault(hook(dir), "step 1 faults after step 2");
+    assert_eq!(
+        advice(&err),
+        vec![ask(&step2, "step 2"), amend(&step1, "step 1")],
+        "{err}"
+    );
+}
+
+#[test]
+fn tests_changed_names_the_earliest_commit() {
+    let repo = fixture();
+    let dir = repo.path();
+    clean_pair(dir, "step 1", "one");
+    edit(
+        dir,
+        "crates/tiny/tests/one.rs",
+        "assert_eq!(tiny::one(), 1);",
+        "assert_eq!(tiny::one(), 1 + 0);",
+    );
+    commit(dir, "ABC-1: edits the test of step 1");
+    let first = sha(dir, "HEAD");
+    edit(
+        dir,
+        "crates/tiny/tests/one.rs",
+        "assert_eq!(tiny::one(), 1 + 0);",
+        "assert_eq!(tiny::one(), 0 + 1 + 0);",
+    );
+    commit(dir, "ABC-1: edits the test of step 1 again");
+    let err = assert_fault(hook(dir), "two kept changes of one test");
+    assert!(
+        err.lines()
+            .any(|l| l == "step 1: tests-changed: tiny/one::one"),
+        "{err}"
+    );
+    assert_eq!(advice(&err), vec![ask(&first, "step 1")], "{err}");
+}
+
 // ---- AC-12 ----
 
 #[test]
