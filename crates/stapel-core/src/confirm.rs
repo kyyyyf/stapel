@@ -1,5 +1,5 @@
-//! What a confirmation of one section would record, checked the same way for `ok` and for the
-//! guard that asks the person about it.
+//! What a confirmation of one section, or of every waiting section of a ticket, would record,
+//! checked the same way for `ok` and for the guard that asks the person about it.
 
 use crate::config::Config;
 use crate::hash::{normal_form, section_hash};
@@ -142,19 +142,17 @@ pub fn prepare_waiting(root: &Path, config: &Config, key: &str) -> Result<Vec<Pr
     Ok(waiting)
 }
 
+fn new_line(p: &Prepared) -> String {
+    let n = p.text.lines().count();
+    format!("new, {n} line{}", if n == 1 { "" } else { "s" })
+}
+
 /// What the person sees about a section before its `confirmed:` line (STP-17 AC-2); call it
 /// before the confirmation is added to `p.state`.
 pub fn change_block(config: &Config, p: &Prepared) -> String {
     let heading = |rest: String| format!("== {}: {rest}\n", p.section);
-    let new = || {
-        let n = p.text.lines().count();
-        heading(format!("new, {n} line{}", if n == 1 { "" } else { "s" }))
-    };
     let Some(old) = latest(&p.state, &p.section) else {
-        return new();
-    };
-    let Some(old_text) = old.text.as_deref() else {
-        return new();
+        return heading(new_line(p));
     };
     let sections = read(&p.dir.join("ticket.md"))
         .map(|t| parse(&t))
@@ -165,6 +163,13 @@ pub fn change_block(config: &Config, p: &Prepared) -> String {
         .map(|r| r.describe(old))
         .collect();
     let others = others.join(", ");
+    let Some(old_text) = old.text.as_deref() else {
+        return heading(if others.is_empty() {
+            new_line(p)
+        } else {
+            format!("{}; {others}", new_line(p))
+        });
+    };
     if old.hash == p.hash {
         return if others.is_empty() {
             heading("unchanged".into())

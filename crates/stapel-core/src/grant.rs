@@ -16,13 +16,14 @@ pub const LIFETIME: u64 = 30 * 60;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Facts {
     pub key: String,
-    /// `ok` or `close`.
+    /// `ok`, `ok-key` or `close`.
     pub action: String,
-    /// The section id for `ok`, the reason for `close`.
+    /// The section id for `ok`, the waiting section ids joined by `,` for `ok-key`, the reason
+    /// for `close`.
     pub detail: String,
-    /// The section hash for `ok`, empty for `close`.
+    /// The section hash for `ok`, the waiting hashes joined by `,` for `ok-key`, empty for `close`.
     pub hash: String,
-    /// `id=hash` of each dependency, sorted.
+    /// `id=hash` of each dependency for `ok`, `section:dep=hash` for `ok-key`.
     pub dependencies: Vec<String>,
 }
 

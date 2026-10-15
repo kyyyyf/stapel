@@ -66,18 +66,6 @@ fn waiting_line(config: &Config, p: &Prepared) -> String {
     let Some(old) = latest(&p.state, &p.section) else {
         return format!("{} ({short}…): {}", p.section, new());
     };
-    let Some(old_text) = old.text.as_deref() else {
-        return format!("{} ({short}…): {}", p.section, new());
-    };
-    let (mut added, mut removed) = (0, 0);
-    for change in similar::TextDiff::from_lines(old_text, &p.text).iter_all_changes() {
-        match change.tag() {
-            similar::ChangeTag::Insert => added += 1,
-            similar::ChangeTag::Delete => removed += 1,
-            similar::ChangeTag::Equal => {}
-        }
-    }
-    let mut change = format!("+{added} -{removed} lines since last confirmation");
     let sections = read(&p.dir.join("ticket.md"))
         .map(|t| parse(&t))
         .unwrap_or_default();
@@ -86,6 +74,20 @@ fn waiting_line(config: &Config, p: &Prepared) -> String {
         .filter(|r| **r != Reason::Changed)
         .map(|r| r.describe(old))
         .collect();
+    let mut change = match old.text.as_deref() {
+        None => new(),
+        Some(old_text) => {
+            let (mut added, mut removed) = (0, 0);
+            for change in similar::TextDiff::from_lines(old_text, &p.text).iter_all_changes() {
+                match change.tag() {
+                    similar::ChangeTag::Insert => added += 1,
+                    similar::ChangeTag::Delete => removed += 1,
+                    similar::ChangeTag::Equal => {}
+                }
+            }
+            format!("+{added} -{removed} lines since last confirmation")
+        }
+    };
     if !others.is_empty() {
         change.push_str(&format!("; {}", others.join(", ")));
     }
