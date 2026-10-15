@@ -325,3 +325,84 @@ fn section_form_prints_change_block() {
          -The spec.\n+The spec, revised.\nconfirmed: ABC-1 spec (sha256:HASH)\n"
     );
 }
+
+#[test]
+fn section_id_wins_over_a_ticket_folder() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    // A legacy ticket folder named like a section id is not an open ticket.
+    std::fs::create_dir_all(dir.join(".stapel/tickets/spec")).unwrap();
+    std::fs::write(
+        dir.join(".stapel/tickets/spec/state.json"),
+        r#"{"key":"spec","build":{"allowed":false}}"#,
+    )
+    .unwrap();
+    for arg in ["spec", "SPEC"] {
+        let out = normalize(&stdout_of(stapel(dir).args(["ok", arg]).assert().success()));
+        assert_eq!(
+            out,
+            "== spec: ".to_string()
+                + if arg == "spec" {
+                    "new, 1 line"
+                } else {
+                    "unchanged"
+                }
+                + "\nconfirmed: ABC-1 spec (sha256:HASH)\n",
+            "{arg}"
+        );
+    }
+    assert_eq!(confirmations(dir).len(), 2);
+}
+
+#[test]
+fn refusal_lists_only_open_tickets() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    // A legacy ticket is not listed as open.
+    std::fs::create_dir_all(dir.join(".stapel/tickets/ABC-9")).unwrap();
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-9/state.json"),
+        r#"{"key":"ABC-9","build":{"allowed":false}}"#,
+    )
+    .unwrap();
+    stapel(dir)
+        .args(["ok", "nope"])
+        .assert()
+        .code(1)
+        .stderr(predicates::str::contains("open tickets: ABC-1\n"));
+    // A closed ticket is not listed either: `none`.
+    edit_state(dir, |s| {
+        s["closed"] = serde_json::json!({"by": "x", "at": "2026-10-02T00:00:00Z", "reason": "done"});
+    });
+    stapel(dir)
+        .args(["ok", "nope"])
+        .assert()
+        .code(1)
+        .stderr(predicates::str::contains("open tickets: none\n"));
+}
+
+#[test]
+fn change_block_with_two_reasons() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    confirm(dir, "spec");
+    confirm(dir, "design");
+    set_section(dir, "ABC-1", "Spec", "The spec, revised.");
+    edit_state(dir, |s| {
+        let design = s["confirmations"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|c| c["section"] == "design")
+            .unwrap();
+        design["normal_form"] = 0.into();
+    });
+    let out = normalize(&stdout_of(
+        stapel(dir).args(["ok", "ABC-1", "design"]).assert().success(),
+    ));
+    assert_eq!(
+        out,
+        "== design: unchanged; confirmed under normal form 0, depends on spec, which changed\n\
+         confirmed: ABC-1 design (sha256:HASH)\n"
+    );
+}
