@@ -1,0 +1,29 @@
+stapel: in.jsonl:1: id: missing
+stapel: in.jsonl:1: ticket: missing
+stapel: in.jsonl:1: stage: missing
+stapel: in.jsonl:1: round: missing
+stapel: in.jsonl:1: role: missing
+stapel: in.jsonl:1: severity: missing
+stapel: in.jsonl:1: promise: missing
+stapel: in.jsonl:1: claim: missing
+stapel: in.jsonl:1: catchable_at: missing
+stapel: in.jsonl:1: fate: missing
+stapel: in.jsonl:1: id: must be a non-empty string
+stapel: in.jsonl:1: id: must be a non-empty string
+stapel: in.jsonl:1: id: must be a non-empty string
+stapel: in.jsonl:1: claim: must be a non-empty string
+stapel: in.jsonl:1: round: must be a non-negative whole number or a non-empty string
+stapel: in.jsonl:1: round: must be a non-negative whole number or a non-empty string
+stapel: in.jsonl:1: round: must be a non-negative whole number or a non-empty string
+stapel: in.jsonl:1: round: must be a non-negative whole number or a non-empty string
+stapel: in.jsonl:1: severity: must be one of HIGH, MEDIUM, LOW
+stapel: in.jsonl:1: promise: must be one of inside, outside
+stapel: in.jsonl:1: catchable_at: must be one of spec, design, test-plan, code
+stapel: in.jsonl:1: stage: must be one of spec-review, step-drift, code-review, after-close
+stapel: in.jsonl:1: role: must be one of external, drift, reviewer, fresh-code, builder, orchestrator, human
+stapel: in.jsonl:1: ticket: must be ABC-1
+stapel: in.jsonl:1: rule: must be a non-empty string
+stapel: in.jsonl:1: fate: must be a non-empty string
+stapel: in.jsonl:1: v: must be 1
+stapel: in.jsonl:1: v: must be 1
+stapel: in.jsonl:3: severity: must be one of HIGH, MEDIUM, LOW
