@@ -119,19 +119,19 @@ Terms:
 | № | Criterion | Test |
 |---|---|---|
 | AC-1 | WHEN a person runs `stapel findings import FILE [KEY]` in a terminal and every record passes AC-2 THE command appends all records, in file order and with their fields as given, to the target file in one write, and prints `imported: <N> findings into <KEY>` (exit 0). A missing target file is created; a target file without a final newline gets one first. | `records::import_appends_all_in_order`, `records::import_creates_and_repairs_target` |
-| AC-2 | IF a record of `FILE` lacks a required field, has a wrong type, or has a value outside its list (Frame promise item 2; `id`, `claim` and `fate`: non-empty strings, SR1-7; `stage`: `spec-review`, `step-drift`, `code-review`, `after-close`; `role`: `external`, `drift`, `reviewer`, `fresh-code`, `builder`, `orchestrator`, `human`), its `ticket` differs from the folder key, `rule` is present and not a non-empty string, or `v` is present and not `1` (SR1-3), THEN the command exits 2 with `stapel: <FILE>:<line>: <field>: <reason>` for the first such record and writes nothing. Output: `golden/records_refusals.txt`. | `records::import_refuses_bad_fields` |
+| AC-2 | IF a record of `FILE` lacks a required field, has a wrong type, or has a value outside its list (Frame promise item 2; `id`: 1 to 64 characters with no whitespace or control character (D3-1); `claim` and `fate`: non-empty strings, SR1-7; `stage`: `spec-review`, `step-drift`, `code-review`, `after-close`; `role`: `external`, `drift`, `reviewer`, `fresh-code`, `builder`, `orchestrator`, `human`), its `ticket` differs from the folder key, `rule` is present and not a non-empty string, or `v` is present and not `1` (SR1-3), THEN the command exits 2 with `stapel: <FILE>:<line>: <field>: <reason>` for the first such record and writes nothing. Output: `golden/records_refusals.txt`. | `records::import_refuses_bad_fields`, `records::import_refuses_unsafe_id` |
 | AC-3 | IF `FILE` has a line that is not a JSON object, a line longer than 64 KiB with its newline (as `journal::MAX_LINE`; SR1-3, D2-3), no record (blank lines are skipped), more than 100 records, more than 256 KiB, or an `id` that repeats an earlier line of `FILE` or a record of the target file, THEN the command exits 2 with the line number and the reason and writes nothing. | `records::import_refuses_bad_file`, `records::import_refuses_repeated_id`, `records::import_accepts_the_limits` |
 | AC-4 | IF `FILE` is missing, `-`, not a regular file after following symlinks (a directory, a FIFO, a device; checked before it is read, SR1-4), not UTF-8, or a machine file (any `MACHINE_FILES` name of a ticket folder, or the ledger; compared on the resolved path without case, SR1-15), or the target file has a line that is not a JSON object, THEN the command exits 2 with the path and the reason and writes nothing. | `records::import_refuses_bad_input_path`, `records::import_refuses_broken_target` |
 | AC-5 | WHEN a person runs `stapel ledger add --kind KIND --note TEXT [KEY]` THE command appends `{"v":1,"at":"<UTC date YYYY-MM-DD>","kind":KIND,"ticket":<folder key>,"note":TEXT}` to `.stapel/process-ledger.jsonl` and prints `recorded: <KIND> for <KEY>` (exit 0); a missing ledger is created and a missing final newline added. | `records::ledger_add_appends_one_record` |
 | AC-6 | IF `KIND` is not `finding`, `catches` or `decision`, or `TEXT` is empty after trimming, or the ledger has a line that is not a JSON object, THEN `ledger add` exits 2 with the reason and writes nothing. | `records::ledger_add_refusals` |
 | AC-7 | WHEN a record command names a closed ticket by `KEY` THE command writes as for an open ticket; without `KEY` it takes the only open ticket. | `records::closed_ticket_by_key_only` |
 | AC-8 | IF an agent's Edit, Write, MultiEdit or NotebookEdit targets `.stapel/process-ledger.jsonl` (any case) THEN the guard denies with today's machine-file reason. | `records::guard_denies_ledger_writes` |
-| AC-9 | WHEN an agent runs `findings import` as one plain command in a dialog permission mode and its checks pass THE guard answers `ask`, writes one grant file, replaces the command by `<program> findings import <FILE> <KEY> --grant <token>`, and gives the reason `stapel: import <N> findings into <KEY>[ (closed)]: <H> HIGH, <M> MEDIUM, <L> LOW \| <id> <severity> <promise> <claim, 80 characters, then …> \| …; runs: <program>. Answer Yes or No; do not choose "don't ask again".` Output: `golden/records_dialog.txt`. | `records::dialog_for_findings_import` |
+| AC-9 | WHEN an agent runs `findings import` as one plain command in a dialog permission mode and its checks pass THE guard answers `ask`, writes one grant file, replaces the command by `<program> findings import <FILE> <KEY> --grant <token>`, and gives the reason `stapel: import <N> findings into <KEY>[ (closed)]: <H> HIGH, <M> MEDIUM, <L> LOW \| <id> <severity> <promise> <claim, 80 characters, then …> \| …; runs: <program>. Answer Yes or No; do not choose "don't ask again".` Output: `golden/records_dialog.txt`. | `records::dialog_for_findings_import`, `records::dialog_cuts_at_the_limits` |
 | AC-10 | IF the checks of AC-2 to AC-4 or AC-6 fail when the guard prepares the dialog, or the permission mode is not a dialog mode, or an allow rule would skip the dialog, THEN the guard denies with the same reason as the command or as `stapel ok`, and writes no grant. | `records::guard_denies_what_the_command_refuses` |
-| AC-11 | WHEN a record command runs with the grant token, its checks pass again, and the ticket key, the action and the records hash are those of the dialog THE command writes as in a terminal and removes the grant; the same token then exits 1 with the mismatch reason of AC-14. A check that fails at the run (an id added to the target meanwhile) refuses by AC-2 to AC-6 and leaves the grant unused (SR1-1). | `records::grant_writes_once` |
+| AC-11 | WHEN a record command runs with the grant token, its checks pass again, and the ticket key, the action and the records hash are those of the dialog THE command writes as in a terminal and removes the grant; the same token then refuses again: `ledger add` with the mismatch reason of AC-14, `findings import` by AC-3 (exit 2), because its ids are now in the target. A check that fails at the run (an id added to the target meanwhile) refuses by AC-2 to AC-6 and leaves the grant unused (SR1-1, D3-2). | `records::grant_writes_once`, `records::ledger_grant_survives_a_failed_check` |
 | AC-12 | IF a record command runs in an agent's shell without a grant THEN it exits 1 with `only a person writes review records and ledger records: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT` (SR1-14) and writes nothing. | `records::agent_shell_without_grant_refused` |
 | AC-13 | WHEN an agent runs `ledger add` as one plain command in a dialog permission mode and its checks pass THE guard answers `ask`, writes one grant file, replaces the command by `<program> ledger add --kind <KIND> --note <TEXT> <KEY> --grant <token>`, and gives the reason `stapel: add a ledger record for <KEY>[ (closed)]: <KIND>: <note, 200 characters, then …>; runs: <program>. Answer Yes or No; do not choose "don't ask again".` Output: `golden/records_dialog.txt`. | `records::dialog_for_ledger_add` |
-| AC-14 | IF the records hash, the key or the action differs from the dialog's (`FILE`, the note, the kind or the key changed), or the grant was used, THEN the record command exits 1 with `the grant does not match: the records, the ticket or the stapel build changed since the dialog, or the grant was used already; ask the agent to run the command again` and writes nothing; an expired grant gives today's "the grant expired". A grant of one record command does not open the other, nor `stapel ok` (SR1-5). | `records::grant_names_the_records` |
+| AC-14 | IF the records hash, the key or the action differs from the dialog's (`FILE`, the note, the kind or the key changed; for `findings import` another key meets the `ticket` check of AC-2 first, exit 2, D3-2), or the grant was used, THEN the record command exits 1 with `the grant does not match: the records, the ticket or the stapel build changed since the dialog, or the grant was used already; ask the agent to run the command again` and writes nothing; an expired grant gives today's "the grant expired". A grant of one record command does not open the other, nor `stapel ok` (SR1-5). | `records::grant_names_the_records` |
 | AC-15 | IF an agent adds its own `--grant` to a record command, or a word with `$` after the action, THEN the guard denies with `a --grant comes only from the permission dialog; stapel ok, stapel close, stapel findings import and stapel ledger add may not carry one of their own or words filled in at run time` (SR1-5). | `records::guard_denies_own_grant` |
 | AC-16 | WHEN `.stapel/process-ledger.jsonl` is the only changed path THE `stapel check` command reads the tree as clean and keeps its check fresh, as for the machine files of a ticket. | `records::ledger_change_keeps_tree_clean`, `records::ledger_change_keeps_check_fresh` |
 
@@ -141,7 +141,7 @@ Terms:
   their behaviour.
 - **Not promised:** the Frame's list; a record command inside a compound command, a pipe or a redirection
   (the guard allows it as today and the command refuses in an agent's shell by AC-12); a `--note` longer than
-  the 64 KiB journal line, which `journal::append` refuses as today; a run outside a stapel repository, which exits 1 as every command does (D1-2); a literal `$` in `--note` or in `FILE`, which the guard denies as a run-time word (AC-15, SR1-9); ` | ` inside a claim or a note, which the dialog shows as is.
+  the 64 KiB journal line, which `journal::append` refuses as today; a run outside a stapel repository, which exits 1 as every command does (D1-2); a literal `$` in `--note` or in `FILE`, which the guard denies as a run-time word (AC-15, SR1-9); ` | ` inside a claim or a note, which the dialog shows as is; a flag form that the guard reads and clap refuses (a repeated `--kind`, `--note -x`), which gets a dialog and then a usage error with no write (D3-5); Unicode line separators and bidi marks in a claim or a note (D3-6).
 
 ## Design
 
@@ -210,6 +210,8 @@ CLI tests in a new file `crates/stapel-cli/tests/records.rs`, with `common::repo
 | Dialog negative | a bad record; `bypassPermissions`; an allow rule `Bash(stapel findings:*)`; no grant file in each case | `records::guard_denies_what_the_command_refuses` |
 | Grant | used once, then "does not match"; an id added to the target after the dialog refuses by AC-3 and the grant stays; `FILE` edited, another note, another kind, another key; expired; a `findings-import` grant on `ledger add`, and an `ok` grant on `findings import` | `records::grant_writes_once`, `records::grant_names_the_records` |
 | Agent shell | both commands without grant; own `--grant` on both; `$(cat f)` as `FILE` | `records::agent_shell_without_grant_refused`, `records::guard_denies_own_grant` |
+| Coverage (step 3c) | a ledger line broken after the `ledger add` dialog refuses and leaves the grant, which then writes once the line is gone (D3-3); a claim of exactly 80 and a note of exactly 200 characters are shown whole, without `…` (D3-7) | `records::ledger_grant_survives_a_failed_check`, `records::dialog_cuts_at_the_limits` |
+| Step 4 | `id` of 65 characters, with a space, a tab, a newline: refused with the line number; `id` of 64 characters accepted (D3-1) | `records::import_refuses_unsafe_id` |
 
 ### Inputs
 
@@ -246,10 +248,10 @@ Attempts of a careless agent against "only a person approves records" and "a gra
 | Attempt | Outcome |
 |---|---|
 | The agent runs a record command in its own shell without a grant | refused, AC-12 |
-| The agent adds its own `--grant`, or builds `FILE` at run time | the guard denies, AC-12 |
-| The agent edits `FILE` after the dialog | the records hash changes: "does not match", AC-11 |
-| The agent imports into another ticket with the grant of one | the key differs: "does not match", AC-11 |
-| A grant of `ledger add` used for `findings import`, or an `ok` grant | the action differs: "does not match", AC-11 |
+| The agent adds its own `--grant`, or builds `FILE` at run time | the guard denies, AC-15 |
+| The agent edits `FILE` after the dialog | the records hash changes: "does not match", AC-14 |
+| The agent imports into another ticket with the grant of one | `findings import`: the `ticket` field check refuses, AC-2; `ledger add`: "does not match", AC-14 |
+| A grant of `ledger add` used for `findings import`, or an `ok` grant | the action differs: "does not match", AC-14 |
 | The agent writes the ledger with Edit or Write | denied, AC-8 |
 | The agent appends with `cat >>` or a script | not promised (Frame non-goals) |
 | The agent runs the command inside `cd …;` or a pipe | the guard allows, the command refuses in an agent shell, AC-12 |
@@ -271,22 +273,26 @@ SR1-16 (outside) accepted by the human as promise item 7 and AC-16; no round 2.
 (D1-3), the several-open case in step 2 (D1-1), a run outside a repository not promised (D1-2).
 2026-10-16, after the drift review of step 2: D2-1 to D2-6 (2 MEDIUM, 4 LOW; D2-2 and D2-4 no defect); one
 spec change: plan step 2c (D2-1), AC-3 counts the newline in the line limit (D2-3).
+2026-10-16, after the drift review of step 3: D3-1 to D3-7 (1 MEDIUM, 6 LOW) and the builder's intent_gap on
+AC-11; one spec change: AC-2 limits `id` and plan step 4 (D3-1), AC-11 and AC-14 say which check refuses
+first for `findings import` (D3-2), plan step 3c (D3-3, D3-7), the Abuse table cites AC-14 and AC-15 (D3-4),
+two items not promised (D3-5, D3-6).
 
 ## Proof
 
 | Criterion | Test |
 |---|---|
 | AC-1 | `records::import_appends_all_in_order`, `records::import_creates_and_repairs_target` |
-| AC-2 | `records::import_refuses_bad_fields` |
+| AC-2 | `records::import_refuses_bad_fields`, `records::import_refuses_unsafe_id` |
 | AC-3 | `records::import_refuses_bad_file`, `records::import_refuses_repeated_id`, `records::import_accepts_the_limits` |
 | AC-4 | `records::import_refuses_bad_input_path`, `records::import_refuses_broken_target` |
 | AC-5 | `records::ledger_add_appends_one_record` |
 | AC-6 | `records::ledger_add_refusals` |
 | AC-7 | `records::closed_ticket_by_key_only` |
 | AC-8 | `records::guard_denies_ledger_writes` |
-| AC-9 | `records::dialog_for_findings_import` |
+| AC-9 | `records::dialog_for_findings_import`, `records::dialog_cuts_at_the_limits` |
 | AC-10 | `records::guard_denies_what_the_command_refuses` |
-| AC-11 | `records::grant_writes_once` |
+| AC-11 | `records::grant_writes_once`, `records::ledger_grant_survives_a_failed_check` |
 | AC-12 | `records::agent_shell_without_grant_refused` |
 | AC-13 | `records::dialog_for_ledger_add` |
 | AC-14 | `records::grant_names_the_records` |
@@ -307,6 +313,10 @@ Route: full (tags `guard`, `data`, `interface`), pinned at the frame.
    one new `#[test]` function, no helper.
 3. The dialog and the grant for both commands, and the agent-shell refusal (AC-9 to AC-15). Must not change:
    the `ok` and `close` dialogs and their grant facts.
+3c. Coverage after the drift review of step 3 (D3-3, D3-7). Tests only: two new `#[test]` functions, no
+   helper.
+4. `id` limited to 64 characters without whitespace or control characters (AC-2, D3-1). Must not change the
+   other field checks.
 
 ## Review
 
