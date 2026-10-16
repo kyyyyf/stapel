@@ -228,6 +228,32 @@ fn import_refuses_unsafe_id() {
     assert_eq!(target_text(dir).unwrap(), line(&v));
 }
 
+#[test]
+fn id_rule_counts_characters_and_controls() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let reason = "stapel: in.jsonl:1: id: must be 1 to 64 characters with no whitespace or control character\n";
+    for (name, id) in [
+        ("control character", "F\u{1}1".to_string()),
+        ("65 Cyrillic characters", "ж".repeat(65)),
+    ] {
+        let mut v = base();
+        v["id"] = json!(id);
+        put(dir, "in.jsonl", &line(&v));
+        assert_eq!(refused(dir, &["in.jsonl"]), reason, "{name}");
+        assert!(target_text(dir).is_none(), "{name}: wrote something");
+    }
+    let mut v = base();
+    v["id"] = json!("ж".repeat(64));
+    put(dir, "in.jsonl", &line(&v));
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success()
+        .stdout("imported: 1 findings into ABC-1\n");
+    assert_eq!(target_text(dir).unwrap(), line(&v));
+}
+
 // ---- AC-3 ----
 
 #[test]
