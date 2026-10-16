@@ -219,6 +219,14 @@ Terms:
 - Steps 3c, 4 and 4c (7215567, 09d244e, ea29763, f069835): the `id` rule runs after the non-empty check, so
   a missing, non-string or empty id keeps its old text; the reason is `must be 1 to 64 characters with no
   whitespace or control character`, counted with `chars().count()`.
+- Steps 4d, 5, 5c and 6 (7258ac9, 1961a78, 2eecc55, f82aa51, fb916a6, 45ddd0b): the 101-record limit comes
+  before the field checks. The summary shows a numeric round as given and a string round without quotes, so
+  `1` and `"1"` are one value. `DIALOG_MAX_FINDINGS = 30`. The dialog reads `.stapel/stapel.toml` as
+  `repo::open` does, with its texts. The ledger line limit is inside `check_ledger`, with the text of
+  `journal::append_all`; a plain note that long meets the guard's 64 KiB command limit first.
+  `journal::is_unknown_version` replaces the text prefix; `check_stapel` compares the sub-action with
+  `eq_ignore_ascii_case`. The new round reason is `a string must be 1 to 32 characters with no control
+  character`.
 - History: the two RED commits of step 1 and the helper of step 1c were rewritten by the human's scripts
   before code review (a RED fix is an amend while no GREEN exists; a coverage commit adds only `#[test]`
   functions).
@@ -330,6 +338,8 @@ AC-9, AC-10, AC-15, new AC-17, Guarantees, F-2, plan steps 4d and 5.
 2026-10-16, after the drift review of step 5: D5-1 to D5-5 (1 MEDIUM, 4 LOW); one spec change: AC-2 limits a
 string round and plan step 6 (D5-1), AC-9 and AC-3 wording (D5-2, D5-5), plan step 5c (D5-2, D5-4), one item
 not promised (D5-3).
+2026-10-16, after step 6: drift findings D6-1 to D6-3 (all LOW, notes); `stapel check` passes at 45ddd0b (478
+tests); as built of steps 4d to 6 added; Review and Summary written.
 2026-10-16, after step 4c: `stapel check` passes at f069835 (466 tests); Design as built moved into the
 ticket; Design is complete before code review.
 
@@ -389,8 +399,45 @@ Route: full (tags `guard`, `data`, `interface`), pinned at the frame.
 
 ## Review
 
-TODO
+Spec review: one round by one external model (16 findings, no HIGH, 7 MEDIUM; SR1-16 outside, accepted by
+the human). Drift review after every GREEN of a step and its coverage (steps 1 to 6; 32 findings, no HIGH, 6
+MEDIUM, five of them no defect or a test gap). Code review round 1 by three reviewers (reviewer, external,
+drift; 29 findings, no HIGH, four MEDIUM inside, one MEDIUM outside accepted by the human); no round 2, as no
+finding was HIGH. Every finding with its fate is in `findings.jsonl`.
 
 ## Summary
 
-TODO
+**Measures after the close (2026-10-16), compared with STP-14.** Steps: RED/GREEN pairs 1 to 6, coverage
+commits 1c, 2c, 3c, 4c, 4d and 5c; `stapel check` passes at `45ddd0b` with 478 tests. Tokens are measured:
+the main transcript `7705cef7` up to 14:40Z and all 18 subagent files, mapped by their brief.
+
+| Measure | STP-14 | STP-18 |
+|---|---|---|
+| Escaped defects found so far | 0 | 0 |
+| Findings before code (spec review, per-step drift) | 27 + 15 (HIGH and MEDIUM: 16 + 2) | 16 + 32 (HIGH and MEDIUM: 7 + 6); one spec review round |
+| Code review findings, all / HIGH and MEDIUM inside the promise | 32 / 5 (0 HIGH) | 29 / 4 (0 HIGH); one MEDIUM outside (E-4), accepted |
+| Code review HIGH and MEDIUM inside by `catchable_at` | spec 2, test-plan 2, design 1 | test-plan 3, design 1 |
+| HIGH and MEDIUM inside per 100 changed lines | 0.15 | 0.14 |
+| `ticket.md` | 53 KB | 42 KB |
+| Changed lines (frame estimate) | about 3 240: 804 source, 2 439 tests | about 2 805: 842 source, 1 963 tests (430 and 1 000; re-stated 890 and 1 900 after code review) |
+| Steps with RED/GREEN, tests at the close | 7 and three coverage commits, 441 | 6 and six coverage commits, 478 |
+| Measured cache read (cache write) by role | orchestrator 63.7M (0.41M), builder 13.0M (0.98M), external 3.12M (0.33M), reviewer 0.81M (0.15M), drift 0.70M (0.32M) | orchestrator 36.8M (0.59M), builder 14.5M (0.64M), external 3.16M (0.25M), reviewer 1.38M (0.13M), drift 0.58M (0.31M) |
+| Orchestrator output | 208k | 149k |
+| `stapel ok` commands per confirmation | 14 for 9 | 9 for 8: one behind `cd …;`, which the guard does not read; each of the eight also needed a chat "ok" until item 5 changed (2026-10-16) |
+| Local history rewrites | 1 | 2 (two RED commits of step 1; a helper fn in the coverage commit 1c) |
+| Full checks to the close | 3 | 3 completed (one stopped, one with the unknown flag `--locked`) |
+| Wall time | 2026-10-15 08:49Z to 14:54Z | 2026-10-15 15:00Z to 2026-10-16 14:45Z |
+
+What improved: one spec review round instead of four; the orchestrator read 42 % less than in STP-14 with
+builders on Sonnet; fewer inside HIGH and MEDIUM per changed line again; the split at the frame (STP-19)
+kept the promise near its size; the human's double answer (chat "ok" and dialog) was removed by item 5. What
+did not: the frame's estimate was low by a factor of two; every step needed a coverage commit after its drift
+review (the test plan missed boundaries and as-built rules each time); three of six builders wrote into
+`crates/` through Bash (`cat >>`, `sed -i`, a heredoc the harness denied); the orchestrator's brief left out
+the rule "a coverage commit adds only `#[test]` functions" once and needed a history rewrite; two record
+behaviours (the hidden dialog fields, the length of the dialog) were found only by the external code
+reviewer.
+
+**Process ledger (CLAUDE.md item 9), code review HIGH and MEDIUM inside by the rule that should have caught
+them:** item 3: 2 (R-1, E-3), item 2: 1 (E-1), item 6: 1 (E-2); accepted outside: item 1: 1 (E-4). No item
+went three tickets in a row without a catch; nothing removed.
