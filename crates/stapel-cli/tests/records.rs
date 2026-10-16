@@ -821,3 +821,47 @@ fn ledger_change_keeps_tree_clean() {
     assert!(text.contains("src/x.rs"), "{text}");
     assert!(!text.contains("process-ledger"), "{text}");
 }
+
+#[test]
+fn ledger_change_keeps_check_fresh() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let config = std::fs::read_to_string(dir.join(".stapel/stapel.toml")).unwrap();
+    put(
+        dir,
+        ".stapel/stapel.toml",
+        &format!("{config}\n[check]\nrunner = \"cargo\"\n"),
+    );
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1: start"]);
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    let head = String::from_utf8(head.stdout).unwrap().trim().to_string();
+    // A passing check recorded at HEAD, as `stapel check` writes it.
+    let record = format!(
+        "{{\"v\":1,\"kind\":\"check\",\"id\":\"c-000000000000\",\"at\":\"2026-01-01T00:00:00Z\",\"ticket\":\"ABC-1\",\"head\":\"{head}\",\"result\":\"pass\",\"steps\":[]}}\n"
+    );
+    put(dir, ".stapel/tickets/ABC-1/runs.jsonl", &record);
+    let status_line = |dir: &Path| {
+        let out = stapel(dir).args(["status", "ABC-1"]).output().unwrap();
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .find(|l| l.starts_with("check:"))
+            .unwrap_or_default()
+            .to_string()
+    };
+    let pass = format!("check: pass at {}", &head[..7]);
+    assert_eq!(status_line(dir), pass);
+    // Only the ledger changed: the check stays fresh.
+    put(dir, LEDGER, "{\"v\":1}\n");
+    assert_eq!(status_line(dir), pass);
+    // A source file changed as well: the check is stale.
+    put(dir, "src/x.rs", "fn main() {}\n");
+    let line = status_line(dir);
+    assert!(line.starts_with("check: stale"), "{line}");
+    assert!(line.contains("src/x.rs"), "{line}");
+}
