@@ -240,6 +240,13 @@ fn listed(m: &Map<String, Value>, name: &str, list: &[&str]) -> Result<(), Strin
 /// The first rule a record breaks, as `<field>: <reason>`.
 fn check_record(m: &Map<String, Value>, key: &str) -> Result<(), String> {
     text_field(m, "id")?;
+    if let Some(Value::String(id)) = m.get("id")
+        && (id.chars().count() > 64 || id.chars().any(|c| c.is_whitespace() || c.is_control()))
+    {
+        return Err(
+            "id: must be 1 to 64 characters with no whitespace or control character".into(),
+        );
+    }
     match m.get("ticket") {
         None => return Err("ticket: missing".into()),
         Some(Value::String(s)) if s == key => {}
