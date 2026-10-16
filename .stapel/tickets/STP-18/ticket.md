@@ -119,7 +119,7 @@ Terms:
 | № | Criterion | Test |
 |---|---|---|
 | AC-1 | WHEN a person runs `stapel findings import FILE [KEY]` in a terminal and every record passes AC-2 THE command appends all records, in file order and with their fields as given, to the target file in one write, and prints `imported: <N> findings into <KEY>` (exit 0). A missing target file is created; a target file without a final newline gets one first. | `records::import_appends_all_in_order`, `records::import_creates_and_repairs_target` |
-| AC-2 | IF a record of `FILE` lacks a required field, has a wrong type, or has a value outside its list (Frame promise item 2; `id`: 1 to 64 characters with no whitespace or control character (D3-1); `claim` and `fate`: non-empty strings, SR1-7; `stage`: `spec-review`, `step-drift`, `code-review`, `after-close`; `role`: `external`, `drift`, `reviewer`, `fresh-code`, `builder`, `orchestrator`, `human`), its `ticket` differs from the folder key, `rule` is present and not a non-empty string, or `v` is present and not `1` (SR1-3), THEN the command exits 2 with `stapel: <FILE>:<line>: <field>: <reason>` for the first such record and writes nothing. Output: `golden/records_refusals.txt`. | `records::import_refuses_bad_fields`, `records::import_refuses_unsafe_id` |
+| AC-2 | IF a record of `FILE` lacks a required field, has a wrong type, or has a value outside its list (Frame promise item 2; `id`: 1 to 64 characters with no whitespace or control character (D3-1); `claim` and `fate`: non-empty strings, SR1-7; `stage`: `spec-review`, `step-drift`, `code-review`, `after-close`; `role`: `external`, `drift`, `reviewer`, `fresh-code`, `builder`, `orchestrator`, `human`), its `ticket` differs from the folder key, `rule` is present and not a non-empty string, or `v` is present and not `1` (SR1-3), THEN the command exits 2 with `stapel: <FILE>:<line>: <field>: <reason>` for the first such record and writes nothing. Output: `golden/records_refusals.txt`. | `records::import_refuses_bad_fields`, `records::import_refuses_unsafe_id`, `records::id_rule_counts_characters_and_controls` |
 | AC-3 | IF `FILE` has a line that is not a JSON object, a line longer than 64 KiB with its newline (as `journal::MAX_LINE`; SR1-3, D2-3), no record (blank lines are skipped), more than 100 records, more than 256 KiB, or an `id` that repeats an earlier line of `FILE` or a record of the target file, THEN the command exits 2 with the line number and the reason and writes nothing. | `records::import_refuses_bad_file`, `records::import_refuses_repeated_id`, `records::import_accepts_the_limits` |
 | AC-4 | IF `FILE` is missing, `-`, not a regular file after following symlinks (a directory, a FIFO, a device; checked before it is read, SR1-4), not UTF-8, or a machine file (any `MACHINE_FILES` name of a ticket folder, or the ledger; compared on the resolved path without case, SR1-15), or the target file has a line that is not a JSON object, THEN the command exits 2 with the path and the reason and writes nothing. | `records::import_refuses_bad_input_path`, `records::import_refuses_broken_target` |
 | AC-5 | WHEN a person runs `stapel ledger add --kind KIND --note TEXT [KEY]` THE command appends `{"v":1,"at":"<UTC date YYYY-MM-DD>","kind":KIND,"ticket":<folder key>,"note":TEXT}` to `.stapel/process-ledger.jsonl` and prints `recorded: <KIND> for <KEY>` (exit 0); a missing ledger is created and a missing final newline added. | `records::ledger_add_appends_one_record` |
@@ -212,6 +212,7 @@ CLI tests in a new file `crates/stapel-cli/tests/records.rs`, with `common::repo
 | Agent shell | both commands without grant; own `--grant` on both; `$(cat f)` as `FILE` | `records::agent_shell_without_grant_refused`, `records::guard_denies_own_grant` |
 | Coverage (step 3c) | a ledger line broken after the `ledger add` dialog refuses and leaves the grant, which then writes once the line is gone (D3-3); a claim of exactly 80 and a note of exactly 200 characters are shown whole, without `…` (D3-7) | `records::ledger_grant_survives_a_failed_check`, `records::dialog_cuts_at_the_limits` |
 | Step 4 | `id` of 65 characters, with a space, a tab, a newline: refused with the line number; `id` of 64 characters accepted (D3-1) | `records::import_refuses_unsafe_id` |
+| Coverage (step 4c) | an id with `\u0001` refused; 64 Cyrillic characters accepted, 65 refused; the whole refusal text `id: must be 1 to 64 characters with no whitespace or control character` (D4-1 to D4-3) | `records::id_rule_counts_characters_and_controls` |
 
 ### Inputs
 
@@ -277,13 +278,15 @@ spec change: plan step 2c (D2-1), AC-3 counts the newline in the line limit (D2-
 AC-11; one spec change: AC-2 limits `id` and plan step 4 (D3-1), AC-11 and AC-14 say which check refuses
 first for `findings import` (D3-2), plan step 3c (D3-3, D3-7), the Abuse table cites AC-14 and AC-15 (D3-4),
 two items not promised (D3-5, D3-6).
+2026-10-16, after the drift review of step 4: D4-1 to D4-4 (1 MEDIUM, 3 LOW; D4-4 no defect); one spec
+change: plan step 4c.
 
 ## Proof
 
 | Criterion | Test |
 |---|---|
 | AC-1 | `records::import_appends_all_in_order`, `records::import_creates_and_repairs_target` |
-| AC-2 | `records::import_refuses_bad_fields`, `records::import_refuses_unsafe_id` |
+| AC-2 | `records::import_refuses_bad_fields`, `records::import_refuses_unsafe_id`, `records::id_rule_counts_characters_and_controls` |
 | AC-3 | `records::import_refuses_bad_file`, `records::import_refuses_repeated_id`, `records::import_accepts_the_limits` |
 | AC-4 | `records::import_refuses_bad_input_path`, `records::import_refuses_broken_target` |
 | AC-5 | `records::ledger_add_appends_one_record` |
@@ -317,6 +320,8 @@ Route: full (tags `guard`, `data`, `interface`), pinned at the frame.
    helper.
 4. `id` limited to 64 characters without whitespace or control characters (AC-2, D3-1). Must not change the
    other field checks.
+4c. Coverage after the drift review of step 4 (D4-1 to D4-3). Tests only: one new `#[test]` function, no
+   helper.
 
 ## Review
 
