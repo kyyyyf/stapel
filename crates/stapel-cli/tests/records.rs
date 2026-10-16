@@ -865,3 +865,465 @@ fn ledger_change_keeps_check_fresh() {
     assert!(line.starts_with("check: stale"), "{line}");
     assert!(line.contains("src/x.rs"), "{line}");
 }
+
+// ---- Step 3: the dialog, the grant and the agent-shell refusal (AC-9 to AC-15) ----
+
+const DENY: i32 = 2;
+const TAIL: &str = "Answer Yes or No; do not choose \"don't ask again\".";
+const MISMATCH: &str = "stapel: the grant does not match: the records, the ticket or the stapel build changed since the dialog, or the grant was used already; ask the agent to run the command again\n";
+const GRANT_DENIED: &str = "a --grant comes only from the permission dialog; stapel ok, stapel close, stapel findings import and stapel ledger add may not carry one of their own or words filled in at run time";
+
+/// The block `## name` of `golden/records_dialog.txt`: the reason, then the replaced command with
+/// its token shown as `<token>`.
+fn dialog_golden(name: &str) -> String {
+    let text = golden("records_dialog.txt");
+    let start = text.find(&format!("## {name}\n")).unwrap() + name.len() + 4;
+    let end = text[start..].find("## ").map_or(text.len(), |i| start + i);
+    text[start..end].to_string()
+}
+
+/// The dialog's answer as `reason\nreplaced command\n`, the token shown as `<token>`.
+fn dialog_text(reason: &str, replaced: &str) -> String {
+    let token = common::token_of(replaced);
+    format!("{reason}\n{}\n", replaced.replace(&token, "<token>"))
+}
+
+fn grant_files(dir: &Path) -> usize {
+    std::fs::read_dir(common::grants_dir(dir)).map_or(0, |d| d.count())
+}
+
+/// A record as a line of a findings file.
+fn finding(id: &str, severity: &str, promise: &str, claim: &str) -> String {
+    let mut v = base();
+    v["id"] = json!(id);
+    v["severity"] = json!(severity);
+    v["promise"] = json!(promise);
+    v["claim"] = json!(claim);
+    line(&v)
+}
+
+/// A command run in an agent's shell: `CLAUDECODE` is set.
+fn agent(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    stapel(dir).args(args).env("CLAUDECODE", "1").assert()
+}
+
+fn close_ticket(dir: &Path, key: &str) {
+    stapel(dir)
+        .args(["close", key, "--reason", "done"])
+        .assert()
+        .success();
+}
+
+// ---- AC-9 ----
+
+#[test]
+fn dialog_for_findings_import() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let long = "я".repeat(81);
+    let file = format!(
+        "{}{}{}",
+        finding("F-1", "HIGH", "inside", "a claim"),
+        finding("F-2", "MEDIUM", "outside", &long),
+        finding("F-3", "LOW", "inside", "line one\nline two"),
+    );
+    put(dir, "in.jsonl", &file);
+    let before = std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/state.json")).unwrap();
+
+    // The golden: reason and replaced command; the key is added; one grant file per dialog.
+    let (reason, replaced) = common::ask(dir, "stapel findings import in.jsonl");
+    assert_eq!(
+        dialog_text(&reason, &replaced),
+        dialog_golden("findings"),
+        "{reason}"
+    );
+    assert_eq!(common::token_of(&replaced).len(), 32);
+    assert_eq!(grant_files(dir), 1);
+    // Nothing is written by the dialog.
+    assert!(target_text(dir).is_none());
+    assert_eq!(
+        std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/state.json")).unwrap(),
+        before
+    );
+
+    // A key in any case, and the `cargo run` form as written.
+    let (reason, replaced) = common::ask(dir, "stapel findings import in.jsonl abc-1");
+    assert!(reason.starts_with("stapel: import 3 findings into ABC-1: 1 HIGH"));
+    assert!(replaced.starts_with("stapel findings import in.jsonl ABC-1 --grant "));
+    let (reason, replaced) = common::ask(
+        dir,
+        "cargo run -q -p stapel-cli -- findings import in.jsonl",
+    );
+    assert!(
+        reason.ends_with(&format!("; runs: cargo run -q -p stapel-cli --. {TAIL}")),
+        "{reason}"
+    );
+    assert!(
+        replaced
+            .starts_with("cargo run -q -p stapel-cli -- findings import in.jsonl ABC-1 --grant "),
+        "{replaced}"
+    );
+    assert_eq!(grant_files(dir), 3);
+
+    // A closed ticket by its key: the reason says so.
+    close_ticket(dir, "ABC-1");
+    let (reason, _) = common::ask(dir, "stapel findings import in.jsonl ABC-1");
+    assert!(
+        reason.starts_with(
+            "stapel: import 3 findings into ABC-1 (closed): 1 HIGH, 1 MEDIUM, 1 LOW | F-1"
+        ),
+        "{reason}"
+    );
+}
+
+// ---- AC-13 ----
+
+#[test]
+fn dialog_for_ledger_add() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let note = "n".repeat(201);
+    let command = format!("stapel ledger add --kind catches --note {note}");
+    let (reason, replaced) = common::ask(dir, &command);
+    assert_eq!(
+        dialog_text(&reason, &replaced),
+        dialog_golden("ledger"),
+        "{reason}"
+    );
+    assert_eq!(grant_files(dir), 1);
+    assert!(ledger_text(dir).is_none());
+
+    // The replaced command keeps the whole note, quoted; the reason shows control characters as
+    // one space each; the key is added in its folder case.
+    let (reason, replaced) = common::ask(
+        dir,
+        "stapel ledger add --kind=decision --note='two words\nnext' abc-1",
+    );
+    assert_eq!(
+        reason,
+        format!(
+            "stapel: add a ledger record for ABC-1: decision: two words next; runs: stapel. {TAIL}"
+        )
+    );
+    assert!(
+        replaced.starts_with(
+            "stapel ledger add --kind decision --note 'two words\nnext' ABC-1 --grant "
+        ),
+        "{replaced}"
+    );
+
+    // The `cargo run` form as written.
+    let (reason, replaced) = common::ask(
+        dir,
+        "cargo run -q -p stapel-cli -- ledger add --kind finding --note x",
+    );
+    assert!(
+        reason.ends_with(&format!("; runs: cargo run -q -p stapel-cli --. {TAIL}")),
+        "{reason}"
+    );
+    assert!(
+        replaced.starts_with(
+            "cargo run -q -p stapel-cli -- ledger add --kind finding --note x ABC-1 --grant "
+        ),
+        "{replaced}"
+    );
+    assert_eq!(grant_files(dir), 3);
+
+    // A closed ticket by its key.
+    close_ticket(dir, "ABC-1");
+    let (reason, _) = common::ask(dir, "stapel ledger add --kind finding --note x ABC-1");
+    assert_eq!(
+        reason,
+        format!("stapel: add a ledger record for ABC-1 (closed): finding: x; runs: stapel. {TAIL}")
+    );
+}
+
+// ---- AC-10 ----
+
+#[test]
+fn guard_denies_what_the_command_refuses() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let mut bad = base();
+    bad["stage"] = json!("nobody");
+    put(dir, "bad.jsonl", &line(&bad));
+    put(dir, "ok.jsonl", &line(&base()));
+    put(dir, TARGET, "not json\n");
+    put(dir, "dir/x", "");
+
+    // The guard gives the reason of the command, and writes no grant.
+    let cases: [(&str, Vec<&str>); 5] = [
+        (
+            "stapel findings import bad.jsonl",
+            vec!["findings", "import", "bad.jsonl"],
+        ),
+        (
+            "stapel findings import missing.jsonl",
+            vec!["findings", "import", "missing.jsonl"],
+        ),
+        (
+            "stapel findings import ok.jsonl",
+            vec!["findings", "import", "ok.jsonl"],
+        ),
+        (
+            "stapel findings import dir",
+            vec!["findings", "import", "dir"],
+        ),
+        (
+            "stapel ledger add --kind other --note x",
+            vec!["ledger", "add", "--kind", "other", "--note", "x"],
+        ),
+    ];
+    for (command, args) in cases {
+        let out = stapel(dir)
+            .args(&args)
+            .assert()
+            .code(2)
+            .get_output()
+            .clone();
+        let expected = String::from_utf8(out.stderr).unwrap();
+        assert!(expected.starts_with("stapel: "), "{expected}");
+        let got = common::hook_bash(dir, command, "auto")
+            .code(DENY)
+            .get_output()
+            .clone();
+        assert_eq!(
+            String::from_utf8(got.stderr).unwrap(),
+            expected,
+            "{command}"
+        );
+        assert!(got.stdout.is_empty());
+    }
+    let blank = ledger_refused(dir, &["--kind", "finding", "--note", " "]);
+    common::hook_bash(dir, "stapel ledger add --kind finding --note ' '", "auto")
+        .code(DENY)
+        .stderr(blank);
+    assert_eq!(grant_files(dir), 0);
+
+    // Modes without a dialog deny.
+    std::fs::remove_file(dir.join(TARGET)).unwrap();
+    for command in [
+        "stapel findings import ok.jsonl",
+        "stapel ledger add --kind finding --note x",
+    ] {
+        for mode in ["bypassPermissions", "dontAsk", ""] {
+            common::hook_bash(dir, command, mode)
+                .code(DENY)
+                .stderr(predicates::str::contains("dialog"));
+        }
+    }
+    assert_eq!(grant_files(dir), 0);
+
+    // An allow rule that would skip the dialog denies.
+    put(
+        dir,
+        ".claude/settings.local.json",
+        r#"{"permissions":{"allow":["Bash(stapel findings:*)","Bash(stapel ledger:*)"]}}"#,
+    );
+    for command in [
+        "stapel findings import ok.jsonl",
+        "stapel ledger add --kind finding --note x",
+    ] {
+        common::hook_bash(dir, command, "auto")
+            .code(DENY)
+            .stderr(predicates::str::contains("allow rule"));
+    }
+    assert_eq!(grant_files(dir), 0);
+}
+
+// ---- AC-11 ----
+
+#[test]
+fn grant_writes_once() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &line(&base()));
+
+    // `findings import`: written once; the grant is gone; the same token then meets the check of
+    // the repeated id first (the checks run before the grant is used).
+    let (_, replaced) = common::ask(dir, "stapel findings import in.jsonl");
+    let token = common::token_of(&replaced);
+    agent(
+        dir,
+        &["findings", "import", "in.jsonl", "ABC-1", "--grant", &token],
+    )
+    .success()
+    .stdout("imported: 1 findings into ABC-1\n");
+    assert_eq!(target_text(dir).unwrap(), line(&base()));
+    assert_eq!(grant_files(dir), 0);
+    agent(
+        dir,
+        &["findings", "import", "in.jsonl", "ABC-1", "--grant", &token],
+    )
+    .code(2)
+    .stderr(predicates::str::contains("id F-1 is already in"))
+    .stdout("");
+    assert_eq!(target_text(dir).unwrap(), line(&base()));
+    // With the record gone from the target, the checks pass and the used grant does not match.
+    put(dir, TARGET, "");
+    agent(
+        dir,
+        &["findings", "import", "in.jsonl", "ABC-1", "--grant", &token],
+    )
+    .code(1)
+    .stderr(MISMATCH)
+    .stdout("");
+    assert_eq!(target_text(dir).unwrap(), "");
+    put(dir, TARGET, &line(&base()));
+
+    // An id added to the target after the dialog: a refusal of the checks, the grant stays.
+    let mut other = base();
+    other["id"] = json!("F-9");
+    put(dir, "in.jsonl", &line(&other));
+    let (_, replaced) = common::ask(dir, "stapel findings import in.jsonl");
+    let token = common::token_of(&replaced);
+    let target = format!("{}{}", target_text(dir).unwrap(), line(&other));
+    put(dir, TARGET, &target);
+    agent(
+        dir,
+        &["findings", "import", "in.jsonl", "ABC-1", "--grant", &token],
+    )
+    .code(2)
+    .stderr(predicates::str::contains("id F-9 is already in"));
+    assert_eq!(target_text(dir).unwrap(), target);
+    assert_eq!(grant_files(dir), 1);
+
+    // `ledger add`: written once; the same token then does not match.
+    let at = today_utc();
+    let (_, replaced) = common::ask(dir, "stapel ledger add --kind catches --note 'a note'");
+    let token = common::token_of(&replaced);
+    let args = [
+        "ledger", "add", "--kind", "catches", "--note", "a note", "ABC-1", "--grant", &token,
+    ];
+    agent(dir, &args)
+        .success()
+        .stdout("recorded: catches for ABC-1\n");
+    let record = format!(
+        "{{\"v\":1,\"at\":\"{at}\",\"kind\":\"catches\",\"ticket\":\"ABC-1\",\"note\":\"a note\"}}\n"
+    );
+    assert_eq!(ledger_text(dir).unwrap(), record);
+    agent(dir, &args).code(1).stderr(MISMATCH).stdout("");
+    assert_eq!(ledger_text(dir).unwrap(), record);
+}
+
+// ---- AC-14 ----
+
+#[test]
+fn grant_names_the_records() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    stapel(dir).args(["new", "Second"]).assert().success();
+    put(dir, "in.jsonl", &line(&base()));
+    let import = |token: &str| {
+        agent(
+            dir,
+            &["findings", "import", "in.jsonl", "ABC-1", "--grant", token],
+        )
+    };
+    let add = |kind: &str, note: &str, key: &str, token: &str| {
+        agent(
+            dir,
+            &[
+                "ledger", "add", "--kind", kind, "--note", note, key, "--grant", token,
+            ],
+        )
+    };
+    let token = |command: &str| common::token_of(&common::ask(dir, command).1);
+
+    // `FILE` edited after the dialog.
+    let t = token("stapel findings import in.jsonl ABC-1");
+    put(
+        dir,
+        "in.jsonl",
+        &finding("F-1", "HIGH", "inside", "another claim"),
+    );
+    import(&t).code(1).stderr(MISMATCH);
+    // The file as it was, with a grant of the ledger, and a grant of `ok`.
+    put(dir, "in.jsonl", &line(&base()));
+    let t = token("stapel ledger add --kind finding --note x ABC-1");
+    import(&t).code(1).stderr(MISMATCH);
+    let t = token("stapel ok ABC-1 spec");
+    import(&t)
+        .code(1)
+        .stderr(predicates::str::contains("the grant does not match"));
+    assert!(target_text(dir).is_none());
+
+    // Another note, kind or key after the dialog.
+    let t = token("stapel ledger add --kind finding --note x ABC-1");
+    add("finding", "y", "ABC-1", &t).code(1).stderr(MISMATCH);
+    let t = token("stapel ledger add --kind finding --note x ABC-1");
+    add("catches", "x", "ABC-1", &t).code(1).stderr(MISMATCH);
+    let t = token("stapel ledger add --kind finding --note x ABC-1");
+    add("finding", "x", "ABC-2", &t).code(1).stderr(MISMATCH);
+    // A grant of `findings import` on `ledger add`, and a grant of `ledger add` on `ok`.
+    let t = token("stapel findings import in.jsonl ABC-1");
+    add("finding", "x", "ABC-1", &t).code(1).stderr(MISMATCH);
+    let t = token("stapel ledger add --kind finding --note x ABC-1");
+    agent(dir, &["ok", "ABC-1", "spec", "--grant", &t])
+        .code(1)
+        .stderr(predicates::str::contains("the grant does not match"));
+    assert!(ledger_text(dir).is_none());
+
+    // An expired grant.
+    let t = token("stapel findings import in.jsonl ABC-1");
+    for entry in std::fs::read_dir(common::grants_dir(dir)).unwrap() {
+        std::fs::write(entry.unwrap().path(), r#"{"expires_at":1}"#).unwrap();
+    }
+    import(&t)
+        .code(1)
+        .stderr("stapel: the grant expired; ask the agent to run the command again\n");
+    assert!(target_text(dir).is_none());
+    assert_eq!(grant_files(dir), 0);
+}
+
+// ---- AC-12 ----
+
+#[test]
+fn agent_shell_without_grant_refused() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &line(&base()));
+    let before = common::snapshot(dir);
+    let refusal = "stapel: only a person writes review records and ledger records: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT\n";
+    for var in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] {
+        for args in [
+            vec!["findings", "import", "in.jsonl"],
+            vec!["ledger", "add", "--kind", "finding", "--note", "x"],
+        ] {
+            stapel(dir)
+                .args(&args)
+                .env(var, "1")
+                .assert()
+                .code(1)
+                .stdout("")
+                .stderr(refusal);
+        }
+    }
+    assert_eq!(common::snapshot(dir), before);
+}
+
+// ---- AC-15 ----
+
+#[test]
+fn guard_denies_own_grant() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "f", "x");
+    for command in [
+        "stapel findings import in.jsonl --grant abc",
+        "stapel findings import in.jsonl ABC-1 --grant=abc",
+        "stapel ledger add --kind finding --note x --grant abc",
+        "cargo run -q -p stapel-cli -- findings import in.jsonl --grant abc",
+        "cargo run -q -p stapel-cli -- ledger add --kind finding --note x --grant abc",
+        "stapel findings import $(cat f)",
+        "stapel ledger add --kind finding --note $NOTE",
+        "stapel ok spec --grant abc",
+        "stapel close --reason done --grant abc",
+    ] {
+        common::hook_bash(dir, command, "auto")
+            .code(DENY)
+            .stdout("")
+            .stderr(format!("stapel: {GRANT_DENIED}\n"));
+    }
+    assert_eq!(grant_files(dir), 0);
+}

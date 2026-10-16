@@ -1,0 +1,6 @@
+## findings
+stapel: import 3 findings into ABC-1: 1 HIGH, 1 MEDIUM, 1 LOW | F-1 HIGH inside a claim | F-2 MEDIUM outside яяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяяя… | F-3 LOW inside line one line two; runs: stapel. Answer Yes or No; do not choose "don't ask again".
+stapel findings import in.jsonl ABC-1 --grant <token>
+## ledger
+stapel: add a ledger record for ABC-1: catches: nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn…; runs: stapel. Answer Yes or No; do not choose "don't ask again".
+stapel ledger add --kind catches --note nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn ABC-1 --grant <token>
