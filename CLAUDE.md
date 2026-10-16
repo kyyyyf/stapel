@@ -55,7 +55,9 @@ Rules that catch nothing are removed (item 9), so this list must not only grow.
    confirmed by one `stapel ok KEY`, which prints the diff of every section since its last confirmation.
    Before it the orchestrator lists each change in one plain sentence: what the ticket now says and why,
    never only a finding id ("AC-9: an unknown argument in an agent's shell gets 'only a person confirms',
-   because a missing test let it show the ticket list (R-2)"). A spec change during the build is explicit:
+   because a missing test let it show the ticket list (R-2)"). Right after the list the orchestrator runs
+   `stapel ok KEY` as one plain command, without waiting for an "ok" in the chat: the permission dialog is
+   the human's one answer (Yes confirms; No sends the human's remarks back to the chat for a new round). A spec change during the build is explicit:
    the GREEN commit says `spec change: AC-x, <reason>` and the confirmation goes stale.
 6. **During the build.** Design "as built" is written as notes and moved into the ticket once, before code
    review, so the build permit is not lost at every step. A cheap drift review runs after a GREEN step only
