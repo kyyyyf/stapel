@@ -453,3 +453,371 @@ fn import_accepts_the_limits() {
         .stdout("imported: 4 findings into ABC-1\n");
     assert_eq!(target_text(dir).unwrap(), file);
 }
+
+// ---- Step 2: `ledger add`, the ledger as a machine file ----
+
+const LEDGER: &str = ".stapel/process-ledger.jsonl";
+
+/// Today's date in UTC, `YYYY-MM-DD`.
+fn today_utc() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let z = (secs / 86_400) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn ledger_text(dir: &Path) -> Option<String> {
+    std::fs::read_to_string(dir.join(LEDGER)).ok()
+}
+
+/// Runs `ledger add` with the given arguments and expects exit 2, an empty stdout and the stderr
+/// returned.
+fn ledger_refused(dir: &Path, args: &[&str]) -> String {
+    let out = stapel(dir)
+        .args(["ledger", "add"])
+        .args(args)
+        .assert()
+        .code(2)
+        .get_output()
+        .clone();
+    assert!(
+        out.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    String::from_utf8(out.stderr).unwrap()
+}
+
+// ---- AC-5 ----
+
+#[test]
+fn ledger_add_appends_one_record() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let at = today_utc();
+    assert!(ledger_text(dir).is_none());
+    stapel(dir)
+        .args([
+            "ledger",
+            "add",
+            "--kind",
+            "catches",
+            "--note",
+            "item 3 caught it",
+        ])
+        .assert()
+        .success()
+        .stdout("recorded: catches for ABC-1\n");
+    let first = format!(
+        "{{\"v\":1,\"at\":\"{at}\",\"kind\":\"catches\",\"ticket\":\"ABC-1\",\"note\":\"item 3 caught it\"}}\n"
+    );
+    assert_eq!(ledger_text(dir).unwrap(), first);
+
+    // A ledger cut short gets its newline first; the key may have any case; the note is kept as
+    // given.
+    put(dir, LEDGER, first.trim_end());
+    stapel(dir)
+        .args([
+            "ledger",
+            "add",
+            "--kind",
+            "decision",
+            "--note",
+            " Caf\u{e9} \"q\" \\ ",
+            "abc-1",
+        ])
+        .assert()
+        .success()
+        .stdout("recorded: decision for ABC-1\n");
+    let second = format!(
+        "{{\"v\":1,\"at\":\"{at}\",\"kind\":\"decision\",\"ticket\":\"ABC-1\",\"note\":\" Caf\u{e9} \\\"q\\\" \\\\ \"}}\n"
+    );
+    assert_eq!(ledger_text(dir).unwrap(), format!("{first}{second}"));
+
+    stapel(dir)
+        .args(["ledger", "add", "--note", "n", "--kind", "finding", "ABC-1"])
+        .assert()
+        .success()
+        .stdout("recorded: finding for ABC-1\n");
+    assert_eq!(ledger_text(dir).unwrap().lines().count(), 3);
+}
+
+// ---- AC-6 ----
+
+#[test]
+fn ledger_add_refusals() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for (kind, want) in [
+        (
+            "Finding",
+            "stapel: --kind must be one of finding, catches, decision\n",
+        ),
+        (
+            "other",
+            "stapel: --kind must be one of finding, catches, decision\n",
+        ),
+        (
+            "",
+            "stapel: --kind must be one of finding, catches, decision\n",
+        ),
+    ] {
+        let err = ledger_refused(dir, &["--kind", kind, "--note", "n"]);
+        assert_eq!(err, want, "kind {kind:?}");
+        assert!(ledger_text(dir).is_none());
+    }
+    for note in ["", "  ", "\n\t "] {
+        let err = ledger_refused(dir, &["--kind", "finding", "--note", note]);
+        assert_eq!(err, "stapel: --note must not be empty\n", "note {note:?}");
+        assert!(ledger_text(dir).is_none());
+    }
+    // A missing option is a usage error, also exit 2.
+    for args in [&["--kind", "finding"][..], &["--note", "n"][..], &[][..]] {
+        let out = stapel(dir)
+            .args(["ledger", "add"])
+            .args(args)
+            .assert()
+            .code(2)
+            .get_output()
+            .clone();
+        assert!(out.stdout.is_empty());
+        assert!(ledger_text(dir).is_none());
+    }
+    // A ledger line that is not a JSON object.
+    for (text, want) in [
+        (
+            "{\"v\":1}\nnot json\n",
+            format!("stapel: {LEDGER}:2: not JSON"),
+        ),
+        (
+            "{\"v\":1}\n[1]\n",
+            format!("stapel: {LEDGER}:2: not a JSON object\n"),
+        ),
+    ] {
+        put(dir, LEDGER, text);
+        let err = ledger_refused(dir, &["--kind", "finding", "--note", "n"]);
+        assert!(err.starts_with(&want), "want {want:?}, got {err:?}");
+        assert_eq!(ledger_text(dir).unwrap(), text);
+    }
+}
+
+// ---- AC-7, both record commands ----
+
+#[test]
+fn closed_ticket_by_key_only() {
+    let one_finding = |key: &str| {
+        let mut v = base();
+        v["ticket"] = json!(key);
+        line(&v)
+    };
+    let ledger_add = |dir: &Path, key: Option<&str>| {
+        let mut args = vec!["ledger", "add", "--kind", "finding", "--note", "n"];
+        args.extend(key);
+        stapel(dir).args(&args).assert()
+    };
+    let import = |dir: &Path, key: Option<&str>| {
+        let mut args = vec!["findings", "import", "in.jsonl"];
+        args.extend(key);
+        stapel(dir).args(&args).assert()
+    };
+    let one_line = |err: &str| {
+        assert!(
+            err.starts_with("stapel: ") && !err.starts_with("stapel: stapel: "),
+            "{err}"
+        );
+        assert_eq!(err.lines().count(), 1, "{err}");
+    };
+
+    // A closed ticket by key: both commands write as for an open one, in any case.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["close", "--reason", "done"])
+        .assert()
+        .success();
+    put(dir, "in.jsonl", &one_finding("ABC-1"));
+    import(dir, Some("abc-1"))
+        .success()
+        .stdout("imported: 1 findings into ABC-1\n");
+    assert_eq!(target_text(dir).unwrap(), one_finding("ABC-1"));
+    ledger_add(dir, Some("ABC-1"))
+        .success()
+        .stdout("recorded: finding for ABC-1\n");
+    assert_eq!(ledger_text(dir).unwrap().lines().count(), 1);
+
+    // No KEY and no open ticket: today's refusal, one `stapel: `.
+    let out = import(dir, None).code(2).get_output().clone();
+    assert!(out.stdout.is_empty());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(
+        err,
+        "stapel: no open ticket; name one, e.g. stapel status <KEY>\n"
+    );
+    let out = ledger_add(dir, None).code(2).get_output().clone();
+    assert!(out.stdout.is_empty());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(
+        err,
+        "stapel: no open ticket; name one, e.g. stapel status <KEY>\n"
+    );
+    assert_eq!(ledger_text(dir).unwrap().lines().count(), 1);
+
+    // No KEY with one open ticket: that ticket, not the closed one.
+    stapel(dir).args(["new", "Second"]).assert().success();
+    put(dir, "in.jsonl", &one_finding("ABC-2"));
+    import(dir, None)
+        .success()
+        .stdout("imported: 1 findings into ABC-2\n");
+    assert!(
+        std::fs::read_to_string(dir.join(".stapel/tickets/ABC-2/findings.jsonl"))
+            .unwrap()
+            .contains("ABC-2")
+    );
+    ledger_add(dir, None)
+        .success()
+        .stdout("recorded: finding for ABC-2\n");
+    assert_eq!(target_text(dir).unwrap(), one_finding("ABC-1"));
+
+    // No KEY with two open tickets.
+    stapel(dir).args(["new", "Third"]).assert().success();
+    let before = ledger_text(dir).unwrap();
+    for out in [
+        import(dir, None).code(2).get_output().clone(),
+        ledger_add(dir, None).code(2).get_output().clone(),
+    ] {
+        assert!(out.stdout.is_empty());
+        let err = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(
+            err,
+            "stapel: several open tickets, name one: ABC-2, ABC-3\n"
+        );
+        one_line(&err);
+    }
+    assert_eq!(ledger_text(dir).unwrap(), before);
+
+    // A legacy ticket by key.
+    put(
+        dir,
+        ".stapel/tickets/ABC-9/state.json",
+        r#"{"key":"ABC-9","build":{"allowed":false}}"#,
+    );
+    put(dir, "in.jsonl", &one_finding("ABC-9"));
+    for out in [
+        import(dir, Some("ABC-9")).code(2).get_output().clone(),
+        ledger_add(dir, Some("abc-9")).code(2).get_output().clone(),
+    ] {
+        assert!(out.stdout.is_empty());
+        let err = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(
+            err,
+            "stapel: ticket ABC-9 has a legacy (STP-1) state.json; its journal is kept by hand\n"
+        );
+        one_line(&err);
+    }
+    assert_eq!(ledger_text(dir).unwrap(), before);
+    assert!(!dir.join(".stapel/tickets/ABC-9/findings.jsonl").exists());
+}
+
+// ---- AC-8 ----
+
+#[test]
+fn guard_denies_ledger_writes() {
+    let repo = repo_with_ticket();
+    let root = repo.path();
+    for rel in [
+        ".stapel/process-ledger.jsonl",
+        ".STAPEL/Process-Ledger.jsonl",
+    ] {
+        let path = root.join(rel).display().to_string();
+        for tool in ["Write", "Edit", "MultiEdit", "NotebookEdit"] {
+            let input = match tool {
+                "NotebookEdit" => json!({ "notebook_path": path, "new_source": "x" }),
+                "MultiEdit" => json!({ "file_path": path, "edits": [] }),
+                _ => {
+                    json!({ "file_path": path, "content": "x", "old_string": "a", "new_string": "b" })
+                }
+            };
+            let payload = json!({
+                "session_id": "test",
+                "hook_event_name": "PreToolUse",
+                "cwd": root,
+                "tool_name": tool,
+                "tool_input": input,
+            });
+            let out = stapel(root)
+                .args(["hook", "pre-tool-use"])
+                .write_stdin(payload.to_string())
+                .assert()
+                .code(2)
+                .get_output()
+                .clone();
+            let err = String::from_utf8(out.stderr).unwrap();
+            assert!(
+                err.contains("only stapel or the human writes"),
+                "{tool} {rel}: {err}"
+            );
+        }
+    }
+}
+
+// ---- AC-16 ----
+
+fn git(dir: &Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .args(["-c", "user.email=ci@host.invalid"])
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+/// The output of `stapel check` and its exit code.
+fn check_text(dir: &Path) -> (i32, String) {
+    let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    (
+        out.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+#[test]
+fn ledger_change_keeps_tree_clean() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let config = std::fs::read_to_string(dir.join(".stapel/stapel.toml")).unwrap();
+    put(
+        dir,
+        ".stapel/stapel.toml",
+        &format!("{config}\n[check]\nrunner = \"cargo\"\n"),
+    );
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1: start"]);
+    // Only the ledger changed: the tree is clean, so the check gets as far as the steps.
+    put(dir, LEDGER, "{\"v\":1}\n");
+    let (code, text) = check_text(dir);
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("no step commits"), "{text}");
+    assert!(!text.contains("uncommitted"), "{text}");
+    // The ledger and a source file changed: the tree is dirty, and the source file is named.
+    put(dir, "src/x.rs", "fn main() {}\n");
+    let (code, text) = check_text(dir);
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("uncommitted changes"), "{text}");
+    assert!(text.contains("src/x.rs"), "{text}");
+    assert!(!text.contains("process-ledger"), "{text}");
+}
