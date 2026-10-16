@@ -1820,3 +1820,77 @@ fn own_grant_in_any_case() {
     }
     assert_eq!(grant_files(dir), 0);
 }
+
+#[test]
+fn dialog_summary_edges() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let two = |edit: &dyn Fn(&mut Value, &mut Value)| -> String {
+        let (mut a, mut b) = (base(), base());
+        b["id"] = json!("F-2");
+        edit(&mut a, &mut b);
+        format!("{}{}", line(&a), line(&b))
+    };
+    let summary = |text: String| -> String {
+        put(dir, "in.jsonl", &text);
+        let (reason, _) = common::ask(dir, "stapel findings import in.jsonl");
+        reason
+    };
+
+    // A number and the same digits as a string are one value.
+    let reason = summary(two(&|_, b| b["round"] = json!("1")));
+    assert!(
+        reason.contains("; stage code-review, role reviewer, round 1 | F-1"),
+        "{reason}"
+    );
+    // Role `mixed` alone.
+    let reason = summary(two(&|_, b| b["role"] = json!("external")));
+    assert!(
+        reason.contains("; stage code-review, role mixed, round 1 | F-1"),
+        "{reason}"
+    );
+    // Round `mixed` alone.
+    let reason = summary(two(&|_, b| b["round"] = json!(2)));
+    assert!(
+        reason.contains("; stage code-review, role reviewer, round mixed | F-1"),
+        "{reason}"
+    );
+    // A Cyrillic fate of 41 characters is cut at 40 characters.
+    let reason = summary(two(&|a, _| a["fate"] = json!("я".repeat(41))));
+    assert!(
+        reason.contains(&format!("fate {}…: a claim", "я".repeat(40))),
+        "{reason}"
+    );
+}
+
+#[test]
+fn dialog_refuses_an_unreadable_config() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &line(&base()));
+    let config = dir.join(".stapel/stapel.toml");
+    put(dir, ".stapel/stapel.toml", "[x]\n");
+    std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // A process that can still read the file (root) cannot show the case.
+    if std::fs::read_to_string(&config).is_ok() {
+        return;
+    }
+
+    let out = stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    let expected = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        expected.starts_with("stapel: ") && expected.contains("stapel.toml: Permission denied"),
+        "{expected}"
+    );
+    common::hook_bash(dir, "stapel findings import in.jsonl", "auto")
+        .code(DENY)
+        .stdout("")
+        .stderr(expected);
+    assert_eq!(grant_files(dir), 0);
+}
