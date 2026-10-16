@@ -1327,3 +1327,66 @@ fn guard_denies_own_grant() {
     }
     assert_eq!(grant_files(dir), 0);
 }
+
+// ---- Step 3c: coverage ----
+
+#[test]
+fn ledger_grant_survives_a_failed_check() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let at = today_utc();
+    let (_, replaced) = common::ask(dir, "stapel ledger add --kind catches --note 'a note'");
+    let token = common::token_of(&replaced);
+    let args = [
+        "ledger", "add", "--kind", "catches", "--note", "a note", "ABC-1", "--grant", &token,
+    ];
+    assert_eq!(grant_files(dir), 1);
+
+    // A broken line added after the dialog: the run refuses, writes nothing, keeps the grant.
+    put(dir, LEDGER, "not json\n");
+    let out = agent(dir, &args).code(2).get_output().clone();
+    assert!(out.stdout.is_empty());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        err.starts_with(&format!("stapel: {LEDGER}:1: not JSON")),
+        "{err}"
+    );
+    assert_eq!(ledger_text(dir).unwrap(), "not json\n");
+    assert_eq!(grant_files(dir), 1);
+
+    // With the line removed, the same grant writes once.
+    put(dir, LEDGER, "");
+    agent(dir, &args)
+        .success()
+        .stdout("recorded: catches for ABC-1\n");
+    let record = format!(
+        "{{\"v\":1,\"at\":\"{at}\",\"kind\":\"catches\",\"ticket\":\"ABC-1\",\"note\":\"a note\"}}\n"
+    );
+    assert_eq!(ledger_text(dir).unwrap(), record);
+    assert_eq!(grant_files(dir), 0);
+}
+
+#[test]
+fn dialog_cuts_at_the_limits() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let claim = "я".repeat(80);
+    let mut record = base();
+    record["claim"] = json!(claim);
+    put(dir, "in.jsonl", &format!("{record}\n"));
+    let (reason, _) = common::ask(dir, "stapel findings import in.jsonl");
+    assert!(
+        reason.contains(&format!("F-1 HIGH inside {claim};")),
+        "{reason}"
+    );
+    assert!(!reason.contains('…'), "{reason}");
+
+    let note = "n".repeat(200);
+    let command = format!("stapel ledger add --kind catches --note {note}");
+    let (reason, _) = common::ask(dir, &command);
+    assert!(
+        reason.contains(&format!("catches: {note}; runs:")),
+        "{reason}"
+    );
+    assert!(!reason.contains('…'), "{reason}");
+}
