@@ -183,6 +183,36 @@ Terms:
   guard's grant reason (`GRANT_REASON`) becomes the one sentence of AC-15 for all four commands; no existing
   test quotes the old sentence.
 
+### Decisions (as built)
+
+- Step 1 (04c451a, 7cd2984): `stapel_core::records::read_input` checks the regular file, the machine file, the
+  size (from metadata, before reading) and UTF-8; `check_findings` checks each line in the order length, JSON
+  object, 100-record limit, fields, repeated id; a broken target line is reported after the records pass. A
+  record is appended as the raw line, with a trailing `\r` stripped; duplicate JSON keys are kept as given
+  and the checks see the last one. A target line with an unknown version is skipped, both for the refusal
+  and for the ids (D1-4). `journal::append_all` writes all lines in one `write` with the newline repair of
+  `append`. The CLI's `fail.rs` (`Fail { code, message }`, `finish`) prints `stapel: <reason>`;
+  ticket-choice and record refusals exit 2.
+- Steps 1c and 2 (d659309, b237eaf, 3843141): a line of 64 KiB is 65 536 bytes with its newline.
+  `records::check_ledger` writes the keys in the order `v, at, kind, ticket, note`; `at` is
+  `now_rfc3339()[..10]`, counted from the UNIX epoch (UTC). The ledger hash is SHA-256 of
+  `kind \0 ticket \0 note \0`. Check order of `ledger add`: ticket choice, kind, note, ledger lines. Texts:
+  `--kind must be one of finding, catches, decision`, `--note must not be empty`,
+  `.stapel/process-ledger.jsonl:<n>: <reason>`; a missing `--kind` or `--note` is clap's usage error (exit 2).
+  `guard::is_machine_file` (any case) and `worktree::is_machine_file` (as committed) match the ledger.
+- Steps 2c and 3 (3b9323d, e626e31, 7f571bf): `Invocation.action` is `findings import` or `ledger add`;
+  `check_stapel` denies `--grant` and `$` words after these sub-actions. In the dialog, a relative `FILE`
+  resolves against the hook's `cwd`. `records::journal_ticket` moved into core; `tokens::journal_ticket`
+  delegates to it. `grant::consume_with` takes the mismatch text, and `consume` keeps the old one for `ok`
+  and `close`. The record dialog reads no git identity (no person is recorded). Dialog texts: control
+  characters become one space, then the claim (80) or the note (200) is cut by characters and `…` added.
+- Steps 3c, 4 and 4c (7215567, 09d244e, ea29763, f069835): the `id` rule runs after the non-empty check, so
+  a missing, non-string or empty id keeps its old text; the reason is `must be 1 to 64 characters with no
+  whitespace or control character`, counted with `chars().count()`.
+- History: the two RED commits of step 1 and the helper of step 1c were rewritten by the human's scripts
+  before code review (a RED fix is an amend while no GREEN exists; a coverage commit adds only `#[test]`
+  functions).
+
 ## Test plan
 
 CLI tests in a new file `crates/stapel-cli/tests/records.rs`, with `common::repo_with_ticket`,
@@ -280,6 +310,8 @@ first for `findings import` (D3-2), plan step 3c (D3-3, D3-7), the Abuse table c
 two items not promised (D3-5, D3-6).
 2026-10-16, after the drift review of step 4: D4-1 to D4-4 (1 MEDIUM, 3 LOW; D4-4 no defect); one spec
 change: plan step 4c.
+2026-10-16, after step 4c: `stapel check` passes at f069835 (466 tests); Design as built moved into the
+ticket; Design is complete before code review.
 
 ## Proof
 
