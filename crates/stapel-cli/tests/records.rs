@@ -392,3 +392,64 @@ fn import_refuses_broken_target() {
         assert_eq!(target_text(dir).unwrap(), text);
     }
 }
+
+// ---- AC-3, step 1c: the accepted limits ----
+
+#[test]
+fn import_accepts_the_limits() {
+    /// A record line of `total` bytes with its newline, padded through `claim`.
+    fn padded(id: &str, total: usize) -> String {
+        let mut v = base();
+        v["id"] = json!(id);
+        let short = format!("{v}\n").len();
+        v["claim"] = json!("x".repeat(total - short + "a claim".len()));
+        let text = format!("{v}\n");
+        assert_eq!(text.len(), total);
+        text
+    }
+
+    // Exactly 100 records.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let hundred: String = (1..=100)
+        .map(|n| {
+            let mut v = base();
+            v["id"] = json!(format!("F-{n}"));
+            line(&v)
+        })
+        .collect();
+    put(dir, "in.jsonl", &hundred);
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success()
+        .stdout("imported: 100 findings into ABC-1\n");
+    assert_eq!(target_text(dir).unwrap(), hundred);
+
+    // A line of exactly 64 KiB, newline included.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let big = padded("F-1", 64 * 1024);
+    put(dir, "in.jsonl", &big);
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success()
+        .stdout("imported: 1 findings into ABC-1\n");
+    assert_eq!(target_text(dir).unwrap(), big);
+
+    // A file of exactly 256 KiB: four lines of 64 KiB.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let file: String = (1..=4)
+        .map(|n| padded(&format!("F-{n}"), 64 * 1024))
+        .collect();
+    assert_eq!(file.len(), 256 * 1024);
+    put(dir, "in.jsonl", &file);
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success()
+        .stdout("imported: 4 findings into ABC-1\n");
+    assert_eq!(target_text(dir).unwrap(), file);
+}
