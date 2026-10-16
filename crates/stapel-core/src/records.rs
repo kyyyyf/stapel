@@ -268,7 +268,13 @@ fn check_record(m: &Map<String, Value>, key: &str) -> Result<(), String> {
     listed(m, "stage", &STAGES)?;
     match m.get("round") {
         None => return Err("round: missing".into()),
-        Some(Value::String(s)) if !s.is_empty() => {}
+        Some(Value::String(s)) if !s.is_empty() => {
+            if s.chars().count() > 32 || s.chars().any(|c| c.is_control()) {
+                return Err(
+                    "round: a string must be 1 to 32 characters with no control character".into(),
+                );
+            }
+        }
         Some(Value::Number(n)) if n.as_u64().is_some() => {}
         Some(_) => {
             return Err("round: must be a non-negative whole number or a non-empty string".into());
