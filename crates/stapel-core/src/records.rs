@@ -47,6 +47,11 @@ pub struct Row {
     pub severity: String,
     pub promise: String,
     pub claim: String,
+    pub fate: String,
+    pub stage: String,
+    pub role: String,
+    /// The round as given: a number or a string, shown without quotes.
+    pub round: String,
 }
 
 /// A ticket that accepts records: open or closed, not legacy or unreadable.
@@ -110,7 +115,7 @@ pub fn plan_ledger(
     key: Option<&str>,
 ) -> Result<LedgerPlan, String> {
     let ticket = journal_ticket(root, key)?;
-    let record = check_ledger(&root.join(LEDGER), LEDGER, kind, &ticket.key, note)?;
+    let record = check_ledger(root, kind, &ticket.key, note)?;
     Ok(LedgerPlan {
         closed: matches!(ticket.status, Status::Closed(_)),
         key: ticket.key,
@@ -135,11 +140,10 @@ pub struct LedgerRecord {
     pub hash: String,
 }
 
-/// Checks a ledger record and the ledger file `ledger`, shown as `label`, and returns the line to
-/// append; `at` is today's UTC date.
+/// Checks a ledger record and the ledger file of the repository at `root`, and returns the line to
+/// append; `at` is today's UTC date. The line, with its newline, is at most `MAX_LINE` bytes.
 pub fn check_ledger(
-    ledger: &Path,
-    label: &str,
+    root: &Path,
     kind: &str,
     key: &str,
     note: &str,
@@ -150,11 +154,11 @@ pub fn check_ledger(
     if note.trim().is_empty() {
         return Err("--note must not be empty".into());
     }
-    for (n, entry) in &journal::read(ledger)? {
+    for (n, entry) in &journal::read(&root.join(LEDGER))? {
         if let Entry::Problem(reason) = entry
-            && !reason.starts_with("unknown version")
+            && !journal::is_unknown_version(reason)
         {
-            return Err(format!("{label}:{n}: {reason}"));
+            return Err(format!("{LEDGER}:{n}: {reason}"));
         }
     }
     let at = &crate::time::now_rfc3339()[..10];
@@ -165,6 +169,12 @@ pub fn check_ledger(
         text(key),
         text(note)
     );
+    if line.len() + 1 > MAX_LINE {
+        return Err(format!(
+            "a journal line is at most 64 KiB; this one is {} bytes",
+            line.len() + 1
+        ));
+    }
     let mut digest = Sha256::new();
     for part in [kind, key, note] {
         digest.update(part.as_bytes());
@@ -193,7 +203,10 @@ pub fn read_input(root: &Path, base: &Path, file: &str) -> Result<String, String
         return Err(format!("{file}: a machine file; it cannot be imported"));
     }
     if meta.len() > MAX_BYTES {
-        return Err(format!("{file}: more than 256 KiB; split the file"));
+        return Err(format!(
+            "{file}: more than {} KiB; split the file",
+            MAX_BYTES / 1024
+        ));
     }
     let bytes = std::fs::read(&path).map_err(|e| format!("{file}: {e}"))?;
     String::from_utf8(bytes).map_err(|_| format!("{file}: not UTF-8"))
@@ -317,7 +330,9 @@ pub fn check_findings(
             Err(e) => return Err(format!("{file}:{n}: not JSON: {e}")),
         };
         if lines.len() == MAX_RECORDS {
-            return Err(format!("{file}:{n}: more than 100 records; split the file"));
+            return Err(format!(
+                "{file}:{n}: more than {MAX_RECORDS} records; split the file"
+            ));
         }
         check_record(&map, key).map_err(|reason| format!("{file}:{n}: {reason}"))?;
         let Some(Value::String(id)) = map.get("id") else {
@@ -340,6 +355,14 @@ pub fn check_findings(
             severity: field("severity"),
             promise: field("promise"),
             claim: field("claim"),
+            fate: field("fate"),
+            stage: field("stage"),
+            role: field("role"),
+            round: match map.get("round") {
+                Some(Value::String(s)) => s.clone(),
+                Some(other) => other.to_string(),
+                None => String::new(),
+            },
         });
         ids.push(id.clone());
         numbers.push(n);
@@ -350,7 +373,7 @@ pub fn check_findings(
     }
     for (n, entry) in &existing {
         if let Entry::Problem(reason) = entry
-            && !reason.starts_with("unknown version")
+            && !journal::is_unknown_version(reason)
         {
             return Err(format!("{target_label}:{n}: {reason}"));
         }

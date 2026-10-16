@@ -16,7 +16,8 @@ impl Fail {
         }
     }
 
-    /// A grant error, an agent shell or any other failure of the run itself: exit 1.
+    /// A failure that is not a record check: no repository or a bad `stapel.toml`, an agent shell
+    /// without a grant, or a grant error: exit 1.
     pub fn failed(message: impl Into<String>) -> Fail {
         Fail {
             code: 1,

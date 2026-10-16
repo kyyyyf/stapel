@@ -141,8 +141,17 @@ fn parse_line(raw: &[u8]) -> Entry {
     match map.get("v") {
         None => Entry::Legacy(map),
         Some(v) if v == 1 => Entry::V1(map),
-        Some(v) => Entry::Problem(format!("unknown version {v}")),
+        Some(v) => Entry::Problem(format!("{UNKNOWN_VERSION} {v}")),
     }
+}
+
+/// The start of the reason of a line whose `v` is not 1.
+const UNKNOWN_VERSION: &str = "unknown version";
+
+/// Whether a problem reason is the one of a line with an unknown version, which the record
+/// commands skip.
+pub fn is_unknown_version(reason: &str) -> bool {
+    reason.starts_with(UNKNOWN_VERSION)
 }
 
 /// `(line, reason)` of each problem line in a journal.

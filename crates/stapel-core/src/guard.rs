@@ -463,8 +463,9 @@ fn check_words(words: &[String], found: &mut Found) {
     }
 }
 
-/// `stapel hook ...` run by an agent, and `stapel ok|close` with a `--grant` or a run-time word
-/// (`$`), whether as `stapel` or `cargo run ... --`.
+/// `stapel hook ...` run by an agent, and `stapel ok|close|findings import|ledger add` with a
+/// `--grant` or a run-time word (`$`) after the action, whether as `stapel` or `cargo run ... --`.
+/// The action and the sub-action are compared in any case.
 fn check_stapel(name: &str, args: &[String], found: &mut Found) {
     let rest = match name {
         "stapel" => args,
@@ -492,7 +493,7 @@ fn check_stapel(name: &str, args: &[String], found: &mut Found) {
         "findings" | "ledger" => {
             let record_action = rest
                 .get(at + 1)
-                .is_some_and(|w| w == "import" || w == "add");
+                .is_some_and(|w| w.eq_ignore_ascii_case("import") || w.eq_ignore_ascii_case("add"));
             if record_action
                 && rest[at + 2..]
                     .iter()

@@ -1,4 +1,5 @@
-//! The permission dialog for `stapel ok` and `stapel close` run by an agent (STP-2 AC-15, AC-16).
+//! The permission dialog for `stapel ok`, `stapel close`, `stapel findings import` and `stapel
+//! ledger add` run by an agent (STP-2 AC-15, AC-16; STP-18 AC-9, AC-13).
 //!
 //! The guard runs the same checks the command will run, so a "yes" does not end in a refusal,
 //! issues a one-time grant, and asks Claude Code to show the person what they approve.
@@ -9,7 +10,7 @@ use crate::grant::{Facts, issue};
 use crate::guard::{Decision, Invocation, stapel_root};
 use crate::hash::normal_form;
 use crate::identity::user_name;
-use crate::records::{FindingsPlan, LedgerPlan, plan_findings, plan_ledger};
+use crate::records::{FindingsPlan, LedgerPlan, Row, plan_findings, plan_ledger};
 use crate::stage::{Reason, freshness, latest};
 use crate::ticket::{find, parse, read};
 use crate::tickets::{Status, resolve};
@@ -17,6 +18,9 @@ use std::path::Path;
 
 /// Permission modes in which Claude Code shows the dialog for an `ask` answer.
 pub const DIALOG_MODES: [&str; 4] = ["default", "acceptEdits", "auto", "plan"];
+
+/// The permission dialog of `findings import` shows at most this many records (STP-18 AC-17).
+pub const DIALOG_MAX_FINDINGS: usize = 30;
 
 pub fn ok_facts(p: &Prepared) -> Facts {
     Facts {
@@ -131,6 +135,12 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
     }
     let root = stapel_root(cwd).ok_or("not inside a stapel repository")?;
     if inv.action == "findings import" || inv.action == "ledger add" {
+        // The command reads the configuration first (`repo::open`); so does the dialog, with the
+        // same reasons.
+        let path = root.join(".stapel/stapel.toml");
+        let text =
+            std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Config::parse_at(&text, &root).map_err(|e| format!(".stapel/stapel.toml: {e}"))?;
         return prepare_records(inv, cwd, &root);
     }
     let text = std::fs::read_to_string(root.join(".stapel/stapel.toml"))
@@ -264,22 +274,41 @@ fn prepare_records(inv: &Invocation, cwd: &Path, root: &Path) -> Result<Decision
         };
         let plan = plan_findings(root, cwd, file, key)?;
         let rows = &plan.findings.rows;
+        if rows.len() > DIALOG_MAX_FINDINGS {
+            return Err(format!(
+                "the permission dialog shows at most {DIALOG_MAX_FINDINGS} findings; split the \
+                 file into parts of at most {DIALOG_MAX_FINDINGS} records"
+            ));
+        }
         let count = |severity: &str| rows.iter().filter(|r| r.severity == severity).count();
+        // The value all records share, else `mixed`.
+        let common = |value: fn(&Row) -> &str| {
+            let first = value(&rows[0]);
+            if rows.iter().all(|r| value(r) == first) {
+                first.to_string()
+            } else {
+                "mixed".to_string()
+            }
+        };
         let reason = format!(
-            "stapel: import {} findings into {}{}: {} HIGH, {} MEDIUM, {} LOW | {}; runs: {program}. \
-             Answer Yes or No; do not choose \"don't ask again\".",
+            "stapel: import {} findings into {}{}: {} HIGH, {} MEDIUM, {} LOW; stage {}, role {}, \
+             round {} | {}; runs: {program}. Answer Yes or No; do not choose \"don't ask again\".",
             rows.len(),
             plan.key,
             if plan.closed { " (closed)" } else { "" },
             count("HIGH"),
             count("MEDIUM"),
             count("LOW"),
+            common(|r| &r.stage),
+            common(|r| &r.role),
+            common(|r| &r.round),
             rows.iter()
                 .map(|r| format!(
-                    "{} {} {} {}",
+                    "{} {} {} fate {}: {}",
                     r.id,
                     r.severity,
                     r.promise,
+                    shown(&r.fate, 40),
                     shown(&r.claim, 80)
                 ))
                 .collect::<Vec<_>>()
