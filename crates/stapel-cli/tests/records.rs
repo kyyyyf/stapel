@@ -229,6 +229,38 @@ fn import_refuses_unsafe_id() {
 }
 
 #[test]
+fn import_refuses_unsafe_round() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for (name, round) in [
+        ("33 characters", "я".repeat(33)),
+        ("newline", "r\n1".to_string()),
+    ] {
+        let mut v = base();
+        v["round"] = json!(round);
+        // `line` writes the control characters as JSON escapes, so the record stays one line.
+        put(dir, "in.jsonl", &line(&v));
+        let err = refused(dir, &["in.jsonl"]);
+        assert!(
+            err.starts_with("stapel: in.jsonl:1: round: "),
+            "{name}: {err}"
+        );
+        assert_eq!(err.lines().count(), 1, "{name}: {err}");
+        assert!(target_text(dir).is_none(), "{name}: wrote something");
+    }
+    // 32 characters, 64 bytes: characters are counted, not bytes.
+    let mut v = base();
+    v["round"] = json!("я".repeat(32));
+    put(dir, "in.jsonl", &line(&v));
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success()
+        .stdout("imported: 1 findings into ABC-1\n");
+    assert_eq!(target_text(dir).unwrap(), line(&v));
+}
+
+#[test]
 fn id_rule_counts_characters_and_controls() {
     let repo = repo_with_ticket();
     let dir = repo.path();
