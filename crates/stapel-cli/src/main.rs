@@ -2,6 +2,8 @@
 mod out;
 mod check;
 mod close;
+mod fail;
+mod findings;
 mod hook;
 mod init;
 mod new;
@@ -83,6 +85,9 @@ enum Command {
         #[arg(long, conflicts_with = "list")]
         history: bool,
     },
+    /// Review findings kept in a ticket's findings.jsonl.
+    #[command(subcommand)]
+    Findings(FindingsAction),
     /// Hook entry points called by Claude Code; not meant to be run by hand.
     #[command(subcommand)]
     Hook(HookCommand),
@@ -129,6 +134,17 @@ enum TokensAction {
         /// Count messages before this time (YYYY-MM-DDTHH:MM:SSZ).
         #[arg(long)]
         until: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum FindingsAction {
+    /// Append every record of a JSON lines file to the ticket's findings.jsonl, all or nothing.
+    Import {
+        /// A regular UTF-8 file of JSON lines.
+        file: String,
+        /// The ticket key; without it, the only open ticket.
+        key: Option<String>,
     },
 }
 
@@ -196,6 +212,9 @@ fn main() -> ExitCode {
             [key, section] => ok::run(Some(key), section, grant.as_deref()),
             _ => unreachable!("clap limits the arguments"),
         },
+        Command::Findings(FindingsAction::Import { file, key }) => {
+            return fail::finish(findings::import(&file, key.as_deref()));
+        }
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),
         Command::Hook(HookCommand::PostToolUse) => return hook::post_tool_use(),
         Command::Check { key, list, history } => {

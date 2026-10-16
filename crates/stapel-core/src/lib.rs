@@ -12,6 +12,7 @@ pub mod includes;
 pub mod journal;
 pub mod outcomes;
 pub mod privacy;
+pub mod records;
 pub mod runner;
 pub mod rust_tests;
 pub mod stage;

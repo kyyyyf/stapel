@@ -54,6 +54,42 @@ pub fn append(path: &Path, record: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// Appends every line (given without its newline) in one `write` call, with the same repair of a
+/// missing final newline as `append` (STP-18).
+pub fn append_all(path: &Path, lines: &[String]) -> Result<(), String> {
+    let mut text = String::new();
+    for l in lines {
+        if l.len() + 1 > MAX_LINE {
+            return Err(format!(
+                "a journal line is at most 64 KiB; this one is {} bytes",
+                l.len() + 1
+            ));
+        }
+        text.push_str(l);
+        text.push('\n');
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .read(true)
+        .open(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if ends_without_newline(&mut file).map_err(|e| format!("{}: {e}", path.display()))? {
+        text.insert(0, '\n');
+    }
+    let written = file
+        .write(text.as_bytes())
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if written != text.len() {
+        return Err(format!(
+            "{}: short write ({written} of {} bytes); the journal may need a look",
+            path.display(),
+            text.len()
+        ));
+    }
+    Ok(())
+}
+
 fn ends_without_newline(file: &mut std::fs::File) -> std::io::Result<bool> {
     let len = file.metadata()?.len();
     if len == 0 {
