@@ -1445,3 +1445,187 @@ fn dialog_cuts_at_the_limits() {
     );
     assert!(!reason.contains('…'), "{reason}");
 }
+
+// ---- Step 4d: coverage after code review round 1 ----
+
+#[test]
+fn hidden_field_edit_voids_the_grant() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &line(&base()));
+    let (_, replaced) = common::ask(dir, "stapel findings import in.jsonl");
+    let token = common::token_of(&replaced);
+
+    // Only `fate`, which the dialog did not show, is edited after the dialog.
+    let mut edited = base();
+    edited["fate"] = json!("rejected");
+    put(dir, "in.jsonl", &line(&edited));
+    agent(
+        dir,
+        &["findings", "import", "in.jsonl", "ABC-1", "--grant", &token],
+    )
+    .code(1)
+    .stderr(MISMATCH)
+    .stdout("");
+    assert!(target_text(dir).is_none());
+}
+
+#[test]
+fn as_built_line_rules() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+
+    // CRLF input is stored without the `\r`.
+    put(dir, "in.jsonl", &line(&base()).replace('\n', "\r\n"));
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success();
+    assert_eq!(target_text(dir).unwrap(), line(&base()));
+
+    // A target line with an unknown version is skipped: its id does not count.
+    let old = "{\"v\":2,\"id\":\"F-1\"}\n";
+    put(dir, TARGET, old);
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success();
+    assert_eq!(target_text(dir).unwrap(), format!("{old}{}", line(&base())));
+    put(dir, TARGET, "");
+
+    // A duplicate key is read by its last value, and the line is kept as given.
+    let text = line(&base());
+    let body = text.trim_end().strip_prefix('{').unwrap().to_string();
+    let accepted = format!("{{\"severity\":\"nobody\",{body}\n");
+    put(dir, "in.jsonl", &accepted);
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success();
+    assert_eq!(target_text(dir).unwrap(), accepted);
+    put(dir, TARGET, "");
+    let rejected = format!(
+        "{},\"severity\":\"nobody\"}}\n",
+        text.trim_end().strip_suffix('}').unwrap()
+    );
+    put(dir, "in.jsonl", &rejected);
+    assert_eq!(
+        refused(dir, &["in.jsonl"]),
+        "stapel: in.jsonl:1: severity: must be one of HIGH, MEDIUM, LOW\n"
+    );
+    assert!(target_text(dir).is_none_or(|t| t.is_empty()));
+
+    // The 101st line is refused by its own reason: a bad line by its defect, a good one by the limit.
+    let hundred: String = (0..100)
+        .map(|i| {
+            let mut v = base();
+            v["id"] = json!(format!("F-{i}"));
+            line(&v)
+        })
+        .collect();
+    put(dir, "in.jsonl", &format!("{hundred}not json\n"));
+    let err = refused(dir, &["in.jsonl"]);
+    assert!(err.starts_with("stapel: in.jsonl:101: not JSON"), "{err}");
+    let mut extra = base();
+    extra["id"] = json!("F-100");
+    put(dir, "in.jsonl", &format!("{hundred}{}", line(&extra)));
+    assert_eq!(
+        refused(dir, &["in.jsonl"]),
+        "stapel: in.jsonl:101: more than 100 records; split the file\n"
+    );
+    put(dir, "in.jsonl", &format!("{hundred}[1]\n"));
+    assert_eq!(
+        refused(dir, &["in.jsonl"]),
+        "stapel: in.jsonl:101: not a JSON object\n"
+    );
+}
+
+#[test]
+fn dialog_reads_file_from_the_hook_cwd() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "sub/in.jsonl", &line(&base()));
+
+    // The hook process runs in the repository root; the payload's `cwd` is the subdirectory.
+    let hook = |cwd: &Path| {
+        let payload = json!({
+            "tool_name": "Bash",
+            "cwd": cwd,
+            "permission_mode": "auto",
+            "tool_input": { "command": "stapel findings import in.jsonl", "description": "test" },
+        });
+        stapel(dir)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+    };
+    let out = hook(&dir.join("sub")).success().get_output().stdout.clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    let h = &v["hookSpecificOutput"];
+    assert_eq!(h["permissionDecision"], "ask", "{v}");
+    assert!(
+        h["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .starts_with("stapel: import 1 findings into ABC-1: 1 HIGH"),
+        "{v}"
+    );
+    assert!(
+        h["updatedInput"]["command"]
+            .as_str()
+            .unwrap()
+            .starts_with("stapel findings import in.jsonl ABC-1 --grant "),
+        "{v}"
+    );
+    assert_eq!(grant_files(dir), 1);
+
+    // From the root the same relative name is a missing file: the denial names it.
+    let err = String::from_utf8(hook(dir).code(DENY).get_output().stderr.clone()).unwrap();
+    assert!(err.starts_with("stapel: in.jsonl: "), "{err}");
+    assert_eq!(grant_files(dir), 1);
+}
+
+#[test]
+fn dialog_usage_denials() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let findings_usage = "usage: stapel findings import FILE [KEY]";
+    let ledger_usage = "usage: stapel ledger add --kind KIND --note TEXT [KEY]";
+    let cases = [
+        (
+            "stapel findings import --x in.jsonl",
+            "unexpected option --x for stapel findings import",
+        ),
+        ("stapel findings import", findings_usage),
+        ("stapel findings import a b c", findings_usage),
+        (
+            "stapel ledger add --kind finding --note x --bogus",
+            "unexpected option --bogus for stapel ledger add",
+        ),
+        (
+            "stapel ledger add --kind finding --note x ABC-1 extra",
+            ledger_usage,
+        ),
+        ("stapel ledger add --kind finding", ledger_usage),
+        ("stapel ledger add --note x", ledger_usage),
+    ];
+    for (command, reason) in cases {
+        common::hook_bash(dir, command, "auto")
+            .code(DENY)
+            .stdout("")
+            .stderr(format!("stapel: {reason}\n"));
+    }
+    assert_eq!(grant_files(dir), 0);
+
+    // The `--kind=` and `--note=` forms are read as the separate-word forms.
+    let (reason, replaced) = common::ask(dir, "stapel ledger add --kind=catches --note=hello");
+    assert_eq!(
+        reason,
+        format!("stapel: add a ledger record for ABC-1: catches: hello; runs: stapel. {TAIL}")
+    );
+    assert!(
+        replaced.starts_with("stapel ledger add --kind catches --note hello ABC-1 --grant "),
+        "{replaced}"
+    );
+    assert_eq!(grant_files(dir), 1);
+}
