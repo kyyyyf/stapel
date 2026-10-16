@@ -3,9 +3,10 @@
 //! dialog refuses what the command refuses.
 
 use crate::journal::{self, Entry, MAX_LINE};
+use crate::tickets::{Status, Ticket, resolve};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A findings file has at most this many records.
 pub const MAX_RECORDS: usize = 100;
@@ -35,6 +36,88 @@ pub struct Findings {
     pub ids: Vec<String>,
     /// SHA-256 of the lines, each followed by a newline, as lowercase hex.
     pub hash: String,
+    /// What the dialog shows of each record.
+    pub rows: Vec<Row>,
+}
+
+/// The fields of a finding that the permission dialog shows.
+#[derive(Debug)]
+pub struct Row {
+    pub id: String,
+    pub severity: String,
+    pub promise: String,
+    pub claim: String,
+}
+
+/// A ticket that accepts records: open or closed, not legacy or unreadable.
+pub fn journal_ticket(root: &Path, key: Option<&str>) -> Result<Ticket, String> {
+    let ticket = resolve(root, key)?;
+    match &ticket.status {
+        Status::Open(_) | Status::Closed(_) => Ok(ticket),
+        Status::Legacy(_) => Err(format!(
+            "ticket {} has a legacy (STP-1) state.json; its journal is kept by hand",
+            ticket.key
+        )),
+        Status::Unreadable(reason) => Err(reason.clone()),
+    }
+}
+
+/// A findings import that passed every check.
+#[derive(Debug)]
+pub struct FindingsPlan {
+    pub key: String,
+    pub closed: bool,
+    pub target: PathBuf,
+    pub findings: Findings,
+}
+
+/// Every check of `findings import FILE [KEY]`; `base` is the directory that a relative `FILE`
+/// is read from.
+pub fn plan_findings(
+    root: &Path,
+    base: &Path,
+    file: &str,
+    key: Option<&str>,
+) -> Result<FindingsPlan, String> {
+    let ticket = journal_ticket(root, key)?;
+    let text = read_input(root, base, file)?;
+    let target = ticket.dir.join("findings.jsonl");
+    let label = format!(".stapel/tickets/{}/findings.jsonl", ticket.key);
+    let findings = check_findings(file, &text, &ticket.key, &target, &label)?;
+    Ok(FindingsPlan {
+        closed: matches!(ticket.status, Status::Closed(_)),
+        key: ticket.key,
+        target,
+        findings,
+    })
+}
+
+/// A ledger record that passed every check.
+#[derive(Debug)]
+pub struct LedgerPlan {
+    pub key: String,
+    pub closed: bool,
+    pub kind: String,
+    pub note: String,
+    pub record: LedgerRecord,
+}
+
+/// Every check of `ledger add --kind KIND --note TEXT [KEY]`.
+pub fn plan_ledger(
+    root: &Path,
+    kind: &str,
+    note: &str,
+    key: Option<&str>,
+) -> Result<LedgerPlan, String> {
+    let ticket = journal_ticket(root, key)?;
+    let record = check_ledger(&root.join(LEDGER), LEDGER, kind, &ticket.key, note)?;
+    Ok(LedgerPlan {
+        closed: matches!(ticket.status, Status::Closed(_)),
+        key: ticket.key,
+        kind: kind.to_string(),
+        note: note.to_string(),
+        record,
+    })
 }
 
 /// The process ledger, relative to the repository root.
@@ -97,21 +180,22 @@ pub fn check_ledger(
 
 /// The text of `file` when it may be imported: a regular UTF-8 file of at most 256 KiB that is not
 /// a machine file. Reasons start with `file` as the person typed it.
-pub fn read_input(root: &Path, file: &str) -> Result<String, String> {
+pub fn read_input(root: &Path, base: &Path, file: &str) -> Result<String, String> {
     if file == "-" {
         return Err("-: stdin is not accepted; give a file".into());
     }
-    let meta = std::fs::metadata(file).map_err(|e| format!("{file}: {e}"))?;
+    let path = base.join(file);
+    let meta = std::fs::metadata(&path).map_err(|e| format!("{file}: {e}"))?;
     if !meta.is_file() {
         return Err(format!("{file}: not a regular file"));
     }
-    if is_machine_path(root, Path::new(file)) {
+    if is_machine_path(root, &path) {
         return Err(format!("{file}: a machine file; it cannot be imported"));
     }
     if meta.len() > MAX_BYTES {
         return Err(format!("{file}: more than 256 KiB; split the file"));
     }
-    let bytes = std::fs::read(file).map_err(|e| format!("{file}: {e}"))?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("{file}: {e}"))?;
     String::from_utf8(bytes).map_err(|_| format!("{file}: not UTF-8"))
 }
 
@@ -198,6 +282,7 @@ pub fn check_findings(
     let mut lines: Vec<String> = Vec::new();
     let mut ids: Vec<String> = Vec::new();
     let mut numbers: Vec<usize> = Vec::new();
+    let mut rows: Vec<Row> = Vec::new();
     let mut known: Vec<(String, usize)> = Vec::new();
     // The target is read first as a set of ids; its own defects are reported after the records.
     let existing = journal::read(target)?;
@@ -237,6 +322,18 @@ pub fn check_findings(
         if known.iter().any(|(e, _)| e == id) {
             return Err(format!("{file}:{n}: id {id} is already in {target_label}"));
         }
+        let field = |name: &str| {
+            map.get(name)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        rows.push(Row {
+            id: id.clone(),
+            severity: field("severity"),
+            promise: field("promise"),
+            claim: field("claim"),
+        });
         ids.push(id.clone());
         numbers.push(n);
         lines.push(raw.to_string());
@@ -261,5 +358,10 @@ pub fn check_findings(
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    Ok(Findings { lines, ids, hash })
+    Ok(Findings {
+        lines,
+        ids,
+        hash,
+        rows,
+    })
 }

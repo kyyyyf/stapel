@@ -9,6 +9,7 @@ use crate::grant::{Facts, issue};
 use crate::guard::{Decision, Invocation, stapel_root};
 use crate::hash::normal_form;
 use crate::identity::user_name;
+use crate::records::{FindingsPlan, LedgerPlan, plan_findings, plan_ledger};
 use crate::stage::{Reason, freshness, latest};
 use crate::ticket::{find, parse, read};
 use crate::tickets::{Status, resolve};
@@ -129,6 +130,9 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
         ));
     }
     let root = stapel_root(cwd).ok_or("not inside a stapel repository")?;
+    if inv.action == "findings import" || inv.action == "ledger add" {
+        return prepare_records(inv, cwd, &root);
+    }
     let text = std::fs::read_to_string(root.join(".stapel/stapel.toml"))
         .map_err(|e| format!(".stapel/stapel.toml: {e}"))?;
     let config = Config::parse_at(&text, &root).map_err(|e| format!(".stapel/stapel.toml: {e}"))?;
@@ -203,6 +207,127 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
         (close_facts(&ticket.key, &reason_text), reason, tail)
     };
     finish(inv, &root, facts, reason, tail)
+}
+
+/// The grant facts of `findings import`: the ids, and the hash of the lines to append.
+pub fn findings_facts(plan: &FindingsPlan) -> Facts {
+    Facts {
+        key: plan.key.clone(),
+        action: "findings-import".into(),
+        detail: plan.findings.ids.join(","),
+        hash: plan.findings.hash.clone(),
+        dependencies: Vec::new(),
+    }
+}
+
+/// The grant facts of `ledger add`: the kind, and the hash of kind, ticket and note.
+pub fn ledger_facts(plan: &LedgerPlan) -> Facts {
+    Facts {
+        key: plan.key.clone(),
+        action: "ledger-add".into(),
+        detail: plan.kind.clone(),
+        hash: plan.record.hash.clone(),
+        dependencies: Vec::new(),
+    }
+}
+
+/// `text` with every control character shown as one space, cut to `max` characters and ended by
+/// `…` when it was longer.
+fn shown(text: &str, max: usize) -> String {
+    let flat: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    if flat.chars().count() > max {
+        format!("{}…", flat.chars().take(max).collect::<String>())
+    } else {
+        flat
+    }
+}
+
+/// The dialog of `findings import` and `ledger add`: the same checks as the command, then the
+/// grant over the records.
+fn prepare_records(inv: &Invocation, cwd: &Path, root: &Path) -> Result<Decision, String> {
+    let program = program(inv).join(" ");
+    let (facts, reason, tail) = if inv.action == "findings import" {
+        let mut positional = Vec::new();
+        for a in &inv.args {
+            if a.starts_with('-') && a != "-" {
+                return Err(format!("unexpected option {a} for stapel findings import"));
+            }
+            positional.push(a.as_str());
+        }
+        let (file, key) = match positional.as_slice() {
+            [file] => (*file, None),
+            [file, key] => (*file, Some(*key)),
+            _ => return Err("usage: stapel findings import FILE [KEY]".into()),
+        };
+        let plan = plan_findings(root, cwd, file, key)?;
+        let rows = &plan.findings.rows;
+        let count = |severity: &str| rows.iter().filter(|r| r.severity == severity).count();
+        let reason = format!(
+            "stapel: import {} findings into {}{}: {} HIGH, {} MEDIUM, {} LOW | {}; runs: {program}. \
+             Answer Yes or No; do not choose \"don't ask again\".",
+            rows.len(),
+            plan.key,
+            if plan.closed { " (closed)" } else { "" },
+            count("HIGH"),
+            count("MEDIUM"),
+            count("LOW"),
+            rows.iter()
+                .map(|r| format!(
+                    "{} {} {} {}",
+                    r.id,
+                    r.severity,
+                    r.promise,
+                    shown(&r.claim, 80)
+                ))
+                .collect::<Vec<_>>()
+                .join(" | "),
+        );
+        let tail = format!("findings import {} {}", quote(file), quote(&plan.key));
+        (findings_facts(&plan), reason, tail)
+    } else {
+        let (mut kind, mut note, mut key) = (None, None, None);
+        let mut it = inv.args.iter();
+        while let Some(a) = it.next() {
+            if a == "--kind" {
+                kind = it.next().cloned();
+            } else if let Some(v) = a.strip_prefix("--kind=") {
+                kind = Some(v.to_string());
+            } else if a == "--note" {
+                note = it.next().cloned();
+            } else if let Some(v) = a.strip_prefix("--note=") {
+                note = Some(v.to_string());
+            } else if a.starts_with('-') {
+                return Err(format!("unexpected option {a} for stapel ledger add"));
+            } else if key.is_none() {
+                key = Some(a.as_str());
+            } else {
+                return Err("usage: stapel ledger add --kind KIND --note TEXT [KEY]".into());
+            }
+        }
+        let (Some(kind), Some(note)) = (kind, note) else {
+            return Err("usage: stapel ledger add --kind KIND --note TEXT [KEY]".into());
+        };
+        let plan = plan_ledger(root, &kind, &note, key)?;
+        let reason = format!(
+            "stapel: add a ledger record for {}{}: {}: {}; runs: {program}. Answer Yes or No; do \
+             not choose \"don't ask again\".",
+            plan.key,
+            if plan.closed { " (closed)" } else { "" },
+            plan.kind,
+            shown(&plan.note, 200),
+        );
+        let tail = format!(
+            "ledger add --kind {} --note {} {}",
+            quote(&plan.kind),
+            quote(&plan.note),
+            quote(&plan.key)
+        );
+        (ledger_facts(&plan), reason, tail)
+    };
+    finish(inv, root, facts, reason, tail)
 }
 
 /// Refuses when an allow rule would skip the dialog; else issues the grant and asks.

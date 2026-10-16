@@ -4,7 +4,7 @@ use crate::repo;
 use serde_json::{Map, Value, json};
 use sha2::Digest;
 use stapel_core::journal::{Entry, append, new_id, read};
-use stapel_core::tickets::{Status, Ticket, resolve, tickets_dir};
+use stapel_core::tickets::{Ticket, tickets_dir};
 use stapel_core::time::{now_rfc3339, parse_cli_time, parse_transcript_time, rfc3339_millis};
 use std::path::Path;
 
@@ -27,15 +27,7 @@ pub struct Add {
 
 /// A ticket that accepts token records: open or closed, not legacy or unreadable.
 pub fn journal_ticket(root: &Path, key: Option<&str>) -> Result<Ticket, String> {
-    let ticket = resolve(root, key)?;
-    match &ticket.status {
-        Status::Open(_) | Status::Closed(_) => Ok(ticket),
-        Status::Legacy(_) => Err(format!(
-            "ticket {} has a legacy (STP-1) state.json; its journal is kept by hand",
-            ticket.key
-        )),
-        Status::Unreadable(reason) => Err(reason.clone()),
-    }
+    stapel_core::records::journal_ticket(root, key)
 }
 
 fn count(name: &str, value: &str) -> Result<u64, String> {

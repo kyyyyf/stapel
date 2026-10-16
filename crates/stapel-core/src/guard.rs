@@ -64,9 +64,9 @@ const UNREADABLE_REASON: &str = "the command is too long, too deeply nested or t
 
 const INJECT_REASON: &str = "the command can type into the terminal where the permission dialog \
                              is answered; only a person answers it";
-const GRANT_REASON: &str = "a --grant comes only from the permission dialog; stapel ok and \
-                            stapel close may not carry one of their own or words filled in at \
-                            run time";
+const GRANT_REASON: &str = "a --grant comes only from the permission dialog; stapel ok, stapel \
+                            close, stapel findings import and stapel ledger add may not carry \
+                            one of their own or words filled in at run time";
 const HOOK_SELF_REASON: &str = "stapel hook is run only by Claude Code; an agent may not run the \
                                 hook entry point itself";
 
@@ -485,6 +485,18 @@ fn check_stapel(name: &str, args: &[String], found: &mut Found) {
             if rest[at + 1..]
                 .iter()
                 .any(|w| w.starts_with("--grant") || w.contains('$'))
+            {
+                found.grant = true;
+            }
+        }
+        "findings" | "ledger" => {
+            let record_action = rest
+                .get(at + 1)
+                .is_some_and(|w| w == "import" || w == "add");
+            if record_action
+                && rest[at + 2..]
+                    .iter()
+                    .any(|w| w.starts_with("--grant") || w.contains('$'))
             {
                 found.grant = true;
             }
@@ -982,7 +994,7 @@ fn lex(text: &str) -> Lexed {
 pub struct Invocation {
     /// `stapel` (as written) or `cargo run [options] --`.
     pub program: Vec<String>,
-    /// `ok` or `close`.
+    /// `ok`, `close`, `findings import` or `ledger add`.
     pub action: String,
     /// The words after the action, assignments and redirections dropped.
     pub args: Vec<String>,
@@ -1009,12 +1021,21 @@ pub fn plain_invocation(command: &str) -> Option<Invocation> {
     };
     let at = rest.iter().position(|w| !w.starts_with('-'))?;
     let action = rest[at].to_ascii_lowercase();
-    if action != "ok" && action != "close" {
-        return None;
-    }
+    let (action, from) = match action.as_str() {
+        "ok" | "close" => (action, at + 1),
+        "findings" | "ledger" => {
+            let sub = rest.get(at + 1)?.to_ascii_lowercase();
+            if (action == "findings") != (sub == "import") || (action == "ledger") != (sub == "add")
+            {
+                return None;
+            }
+            (format!("{action} {sub}"), at + 2)
+        }
+        _ => return None,
+    };
     Some(Invocation {
         program,
         action,
-        args: rest[at + 1..].to_vec(),
+        args: rest[from..].to_vec(),
     })
 }

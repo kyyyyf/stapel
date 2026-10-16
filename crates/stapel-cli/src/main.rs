@@ -149,6 +149,9 @@ enum FindingsAction {
         file: String,
         /// The ticket key; without it, the only open ticket.
         key: Option<String>,
+        /// One-time grant from the permission dialog; set by the guard, never by hand.
+        #[arg(long, hide = true)]
+        grant: Option<String>,
     },
 }
 
@@ -164,6 +167,9 @@ enum LedgerAction {
         note: String,
         /// The ticket key; without it, the only open ticket.
         key: Option<String>,
+        /// One-time grant from the permission dialog; set by the guard, never by hand.
+        #[arg(long, hide = true)]
+        grant: Option<String>,
     },
 }
 
@@ -231,11 +237,16 @@ fn main() -> ExitCode {
             [key, section] => ok::run(Some(key), section, grant.as_deref()),
             _ => unreachable!("clap limits the arguments"),
         },
-        Command::Findings(FindingsAction::Import { file, key }) => {
-            return fail::finish(findings::import(&file, key.as_deref()));
+        Command::Findings(FindingsAction::Import { file, key, grant }) => {
+            return fail::finish(findings::import(&file, key.as_deref(), grant.as_deref()));
         }
-        Command::Ledger(LedgerAction::Add { kind, note, key }) => {
-            return fail::finish(ledger::add(&kind, &note, key.as_deref()));
+        Command::Ledger(LedgerAction::Add {
+            kind,
+            note,
+            key,
+            grant,
+        }) => {
+            return fail::finish(ledger::add(&kind, &note, key.as_deref(), grant.as_deref()));
         }
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),
         Command::Hook(HookCommand::PostToolUse) => return hook::post_tool_use(),

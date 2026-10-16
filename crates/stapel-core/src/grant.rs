@@ -105,14 +105,21 @@ pub fn issue(root: &Path, facts: &Facts) -> Result<String, String> {
 
 /// Checks and removes the grant for `token` and `facts`; it is removed whatever the outcome.
 pub fn consume(root: &Path, token: &str, facts: &Facts) -> Result<(), String> {
+    consume_with(
+        root,
+        token,
+        facts,
+        "the grant does not match: the section, a dependency or the stapel build changed \
+         since the dialog, or the grant was used already; ask the agent to run the command \
+         again",
+    )
+}
+
+/// As `consume`, with the text of the refusal when no grant matches `facts`.
+pub fn consume_with(root: &Path, token: &str, facts: &Facts, mismatch: &str) -> Result<(), String> {
     let path = grants_dir(root)?.join(file_name(token, facts));
     if std::fs::symlink_metadata(&path).is_err() {
-        return Err(
-            "the grant does not match: the section, a dependency or the stapel build changed \
-             since the dialog, or the grant was used already; ask the agent to run the command \
-             again"
-                .into(),
-        );
+        return Err(mismatch.into());
     }
     let expires = expires_at(&path);
     let _ = std::fs::remove_file(&path);
