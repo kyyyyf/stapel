@@ -37,6 +37,64 @@ pub struct Findings {
     pub hash: String,
 }
 
+/// The process ledger, relative to the repository root.
+pub const LEDGER: &str = ".stapel/process-ledger.jsonl";
+
+/// The kinds a ledger record may have.
+pub const KINDS: [&str; 3] = ["finding", "catches", "decision"];
+
+/// A ledger record that passed every check.
+#[derive(Debug)]
+pub struct LedgerRecord {
+    /// The exact line to append, without its newline.
+    pub line: String,
+    /// SHA-256 of `kind`, `ticket` and `note`, without `at`, as lowercase hex.
+    pub hash: String,
+}
+
+/// Checks a ledger record and the ledger file `ledger`, shown as `label`, and returns the line to
+/// append; `at` is today's UTC date.
+pub fn check_ledger(
+    ledger: &Path,
+    label: &str,
+    kind: &str,
+    key: &str,
+    note: &str,
+) -> Result<LedgerRecord, String> {
+    if !KINDS.contains(&kind) {
+        return Err(format!("--kind must be one of {}", KINDS.join(", ")));
+    }
+    if note.trim().is_empty() {
+        return Err("--note must not be empty".into());
+    }
+    for (n, entry) in &journal::read(ledger)? {
+        if let Entry::Problem(reason) = entry
+            && !reason.starts_with("unknown version")
+        {
+            return Err(format!("{label}:{n}: {reason}"));
+        }
+    }
+    let at = &crate::time::now_rfc3339()[..10];
+    let text = |s: &str| serde_json::to_string(s).expect("a string is JSON");
+    let line = format!(
+        "{{\"v\":1,\"at\":\"{at}\",\"kind\":{},\"ticket\":{},\"note\":{}}}",
+        text(kind),
+        text(key),
+        text(note)
+    );
+    let mut digest = Sha256::new();
+    for part in [kind, key, note] {
+        digest.update(part.as_bytes());
+        digest.update([0u8]);
+    }
+    let hash = digest
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    Ok(LedgerRecord { line, hash })
+}
+
 /// The text of `file` when it may be imported: a regular UTF-8 file of at most 256 KiB that is not
 /// a machine file. Reasons start with `file` as the person typed it.
 pub fn read_input(root: &Path, file: &str) -> Result<String, String> {

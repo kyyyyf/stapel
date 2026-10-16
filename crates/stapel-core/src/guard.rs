@@ -204,7 +204,8 @@ fn is_machine_file(rel: &Path) -> bool {
         .collect();
     match parts.as_slice() {
         [a, b] => {
-            (a == ".stapel" && b == "stapel.toml") || (a == ".claude" && b == "settings.json")
+            (a == ".stapel" && (b == "stapel.toml" || b == "process-ledger.jsonl"))
+                || (a == ".claude" && b == "settings.json")
         }
         [a, b, _, f] => a == ".stapel" && b == "tickets" && MACHINE_FILES.contains(&f.as_str()),
         _ => false,

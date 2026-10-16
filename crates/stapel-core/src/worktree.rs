@@ -16,7 +16,8 @@ pub const MACHINE_FILES: [&str; 5] = [
 
 pub fn is_machine_file(path: &str) -> bool {
     let parts: Vec<&str> = path.split('/').collect();
-    matches!(parts.as_slice(), [".stapel", "tickets", _, f] if MACHINE_FILES.contains(f))
+    matches!(parts.as_slice(), [".stapel", "process-ledger.jsonl"])
+        || matches!(parts.as_slice(), [".stapel", "tickets", _, f] if MACHINE_FILES.contains(f))
 }
 
 /// `<git common dir>/stapel`, created when missing.

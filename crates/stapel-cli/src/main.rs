@@ -6,6 +6,7 @@ mod fail;
 mod findings;
 mod hook;
 mod init;
+mod ledger;
 mod new;
 mod ok;
 mod repo;
@@ -88,6 +89,9 @@ enum Command {
     /// Review findings kept in a ticket's findings.jsonl.
     #[command(subcommand)]
     Findings(FindingsAction),
+    /// The process ledger kept in .stapel/process-ledger.jsonl.
+    #[command(subcommand)]
+    Ledger(LedgerAction),
     /// Hook entry points called by Claude Code; not meant to be run by hand.
     #[command(subcommand)]
     Hook(HookCommand),
@@ -143,6 +147,21 @@ enum FindingsAction {
     Import {
         /// A regular UTF-8 file of JSON lines.
         file: String,
+        /// The ticket key; without it, the only open ticket.
+        key: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum LedgerAction {
+    /// Append one record to the process ledger.
+    Add {
+        /// `finding`, `catches` or `decision`.
+        #[arg(long, allow_hyphen_values = true)]
+        kind: String,
+        /// The note; not empty.
+        #[arg(long, allow_hyphen_values = true)]
+        note: String,
         /// The ticket key; without it, the only open ticket.
         key: Option<String>,
     },
@@ -214,6 +233,9 @@ fn main() -> ExitCode {
         },
         Command::Findings(FindingsAction::Import { file, key }) => {
             return fail::finish(findings::import(&file, key.as_deref()));
+        }
+        Command::Ledger(LedgerAction::Add { kind, note, key }) => {
+            return fail::finish(ledger::add(&kind, &note, key.as_deref()));
         }
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),
         Command::Hook(HookCommand::PostToolUse) => return hook::post_tool_use(),
