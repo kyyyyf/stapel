@@ -199,6 +199,35 @@ fn import_refuses_bad_fields() {
     assert_eq!(got, golden("records_refusals.txt"));
 }
 
+#[test]
+fn import_refuses_unsafe_id() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for (name, id) in [
+        ("65 characters", "x".repeat(65)),
+        ("space", "F 1".to_string()),
+        ("tab", "F\t1".to_string()),
+        ("newline", "F\n1".to_string()),
+    ] {
+        let mut v = base();
+        v["id"] = json!(id);
+        // `line` writes the control characters as JSON escapes, so the record stays one line.
+        put(dir, "in.jsonl", &line(&v));
+        let err = refused(dir, &["in.jsonl"]);
+        assert!(err.starts_with("stapel: in.jsonl:1: id: "), "{name}: {err}");
+        assert!(target_text(dir).is_none(), "{name}: wrote something");
+    }
+    let mut v = base();
+    v["id"] = json!("x".repeat(64));
+    put(dir, "in.jsonl", &line(&v));
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success()
+        .stdout("imported: 1 findings into ABC-1\n");
+    assert_eq!(target_text(dir).unwrap(), line(&v));
+}
+
 // ---- AC-3 ----
 
 #[test]
