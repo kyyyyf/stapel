@@ -120,7 +120,7 @@ Terms:
 |---|---|---|
 | AC-1 | WHEN a person runs `stapel findings import FILE [KEY]` in a terminal and every record passes AC-2 THE command appends all records, in file order and with their fields as given, to the target file in one write, and prints `imported: <N> findings into <KEY>` (exit 0). A missing target file is created; a target file without a final newline gets one first. | `records::import_appends_all_in_order`, `records::import_creates_and_repairs_target` |
 | AC-2 | IF a record of `FILE` lacks a required field, has a wrong type, or has a value outside its list (Frame promise item 2; `id`, `claim` and `fate`: non-empty strings, SR1-7; `stage`: `spec-review`, `step-drift`, `code-review`, `after-close`; `role`: `external`, `drift`, `reviewer`, `fresh-code`, `builder`, `orchestrator`, `human`), its `ticket` differs from the folder key, `rule` is present and not a non-empty string, or `v` is present and not `1` (SR1-3), THEN the command exits 2 with `stapel: <FILE>:<line>: <field>: <reason>` for the first such record and writes nothing. Output: `golden/records_refusals.txt`. | `records::import_refuses_bad_fields` |
-| AC-3 | IF `FILE` has a line that is not a JSON object, a line longer than 64 KiB (SR1-3), no record (blank lines are skipped), more than 100 records, more than 256 KiB, or an `id` that repeats an earlier line of `FILE` or a record of the target file, THEN the command exits 2 with the line number and the reason and writes nothing. | `records::import_refuses_bad_file`, `records::import_refuses_repeated_id` |
+| AC-3 | IF `FILE` has a line that is not a JSON object, a line longer than 64 KiB (SR1-3), no record (blank lines are skipped), more than 100 records, more than 256 KiB, or an `id` that repeats an earlier line of `FILE` or a record of the target file, THEN the command exits 2 with the line number and the reason and writes nothing. | `records::import_refuses_bad_file`, `records::import_refuses_repeated_id`, `records::import_accepts_the_limits` |
 | AC-4 | IF `FILE` is missing, `-`, not a regular file after following symlinks (a directory, a FIFO, a device; checked before it is read, SR1-4), not UTF-8, or a machine file (any `MACHINE_FILES` name of a ticket folder, or the ledger; compared on the resolved path without case, SR1-15), or the target file has a line that is not a JSON object, THEN the command exits 2 with the path and the reason and writes nothing. | `records::import_refuses_bad_input_path`, `records::import_refuses_broken_target` |
 | AC-5 | WHEN a person runs `stapel ledger add --kind KIND --note TEXT [KEY]` THE command appends `{"v":1,"at":"<UTC date YYYY-MM-DD>","kind":KIND,"ticket":<folder key>,"note":TEXT}` to `.stapel/process-ledger.jsonl` and prints `recorded: <KIND> for <KEY>` (exit 0); a missing ledger is created and a missing final newline added. | `records::ledger_add_appends_one_record` |
 | AC-6 | IF `KIND` is not `finding`, `catches` or `decision`, or `TEXT` is empty after trimming, or the ledger has a line that is not a JSON object, THEN `ledger add` exits 2 with the reason and writes nothing. | `records::ledger_add_refusals` |
@@ -141,7 +141,7 @@ Terms:
   their behaviour.
 - **Not promised:** the Frame's list; a record command inside a compound command, a pipe or a redirection
   (the guard allows it as today and the command refuses in an agent's shell by AC-12); a `--note` longer than
-  the 64 KiB journal line, which `journal::append` refuses as today; a literal `$` in `--note` or in `FILE`, which the guard denies as a run-time word (AC-15, SR1-9); ` | ` inside a claim or a note, which the dialog shows as is.
+  the 64 KiB journal line, which `journal::append` refuses as today; a run outside a stapel repository, which exits 1 as every command does (D1-2); a literal `$` in `--note` or in `FILE`, which the guard denies as a run-time word (AC-15, SR1-9); ` | ` inside a claim or a note, which the dialog shows as is.
 
 ## Design
 
@@ -196,12 +196,13 @@ CLI tests in a new file `crates/stapel-cli/tests/records.rs`, with `common::repo
 | State | target missing; target ending without a newline | `records::import_creates_and_repairs_target` |
 | Negative fields | each required field missing; `id` as `""`, `7` and `null`; `claim` `""`; `round` as `true`, `""` and `-1`; `severity` `high`; `stage` `spec-review-2`; `role` `nobody`; `ticket` of another key; `rule` `""`; `fate` `""`; `v` `2` and `"1"` | `records::import_refuses_bad_fields` |
 | Negative file | a line `[1]`, a broken line, a line of 64 KiB + 1 byte, only blank lines, 101 records, 256 KiB + 1 byte, an id twice in `FILE` | `records::import_refuses_bad_file` |
+| Coverage (step 1c) | exactly 100 records, a line of exactly 64 KiB, a file of exactly 256 KiB are imported (D1-3) | `records::import_accepts_the_limits` |
 | Repeated id | an id already in the target file, including a legacy line | `records::import_refuses_repeated_id` |
 | Input path | missing, a directory, a FIFO, `-`, Latin-1 bytes, the ticket's own `findings.jsonl`, another ticket's `state.json`, the ledger, a symlink to another ticket's `state.json`, `.STAPEL/tickets/STP-1/FINDINGS.jsonl`; a symlink to a regular file is read | `records::import_refuses_bad_input_path` |
 | Broken target | a non-JSON line in `findings.jsonl` | `records::import_refuses_broken_target` |
 | Ledger | record bytes and output; missing ledger; missing final newline | `records::ledger_add_appends_one_record` |
 | Ledger negative | kind `Finding`, `other`; note `"  "`; a broken ledger line | `records::ledger_add_refusals` |
-| Closed ticket | closed by explicit key in upper and lower case; without key and one open ticket; without key and no open ticket; a legacy ticket by key for both commands | `records::closed_ticket_by_key_only` |
+| Closed ticket | closed by explicit key in upper and lower case; without key and one open ticket; without key and no open ticket; without key and two open tickets; a legacy ticket by key for both commands; each refusal starts with one `stapel: ` | `records::closed_ticket_by_key_only` |
 | Guard | Write, Edit, MultiEdit, NotebookEdit on `.stapel/process-ledger.jsonl` and `.STAPEL/Process-Ledger.jsonl` | `records::guard_denies_ledger_writes` |
 | Check | only the ledger changed: `stapel check` reads the tree clean; the ledger and a source file changed: dirty | `records::ledger_change_keeps_tree_clean` |
 | Dialog | reason, replaced command and one grant file for both commands, `stapel` and `cargo run … --` forms; a claim of 81 characters, in Cyrillic; a claim with a newline; a note of 201 characters; a closed ticket | `records::dialog_for_findings_import`, `records::dialog_for_ledger_add` |
@@ -265,6 +266,8 @@ the Claude Code behaviour the dialog relies on was checked in the hooks docs (F-
 2026-10-15, after spec review round 1: 0 HIGH, 7 MEDIUM, 9 LOW; every inside finding applied as one change
 (SR1-1 to SR1-15); AC-9, AC-11 and AC-12 split into AC-9 and AC-13, AC-11 and AC-14, AC-12 and AC-15 (SR1-13);
 SR1-16 (outside) accepted by the human as promise item 7 and AC-16; no round 2.
+2026-10-16, after the drift review of step 1: D1-1 to D1-7 (1 MEDIUM, 6 LOW); one spec change: plan step 1c
+(D1-3), the several-open case in step 2 (D1-1), a run outside a repository not promised (D1-2).
 
 ## Proof
 
@@ -272,7 +275,7 @@ SR1-16 (outside) accepted by the human as promise item 7 and AC-16; no round 2.
 |---|---|
 | AC-1 | `records::import_appends_all_in_order`, `records::import_creates_and_repairs_target` |
 | AC-2 | `records::import_refuses_bad_fields` |
-| AC-3 | `records::import_refuses_bad_file`, `records::import_refuses_repeated_id` |
+| AC-3 | `records::import_refuses_bad_file`, `records::import_refuses_repeated_id`, `records::import_accepts_the_limits` |
 | AC-4 | `records::import_refuses_bad_input_path`, `records::import_refuses_broken_target` |
 | AC-5 | `records::ledger_add_appends_one_record` |
 | AC-6 | `records::ledger_add_refusals` |
@@ -293,6 +296,7 @@ Route: full (tags `guard`, `data`, `interface`), pinned at the frame.
 
 1. `findings import` in a terminal: `stapel_core::records`, the CLI command, the multi-record append (AC-1 to
    AC-4, AC-7 for findings). Must not change: `journal::append`, `ok`, `close`.
+1c. Coverage after the drift review of step 1: the accepted limits (D1-3). Tests only.
 2. `ledger add` in a terminal and the ledger as a machine file (AC-5, AC-6, AC-7 for the ledger, AC-8,
    AC-16). Must
    not change: the guard's other machine files.
