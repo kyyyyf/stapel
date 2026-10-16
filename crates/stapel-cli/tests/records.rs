@@ -1025,7 +1025,7 @@ fn dialog_for_findings_import() {
     let (reason, _) = common::ask(dir, "stapel findings import in.jsonl ABC-1");
     assert!(
         reason.starts_with(
-            "stapel: import 3 findings into ABC-1 (closed): 1 HIGH, 1 MEDIUM, 1 LOW | F-1"
+            "stapel: import 3 findings into ABC-1 (closed): 1 HIGH, 1 MEDIUM, 1 LOW; stage code-review, role reviewer, round 1 | F-1"
         ),
         "{reason}"
     );
@@ -1431,7 +1431,7 @@ fn dialog_cuts_at_the_limits() {
     put(dir, "in.jsonl", &format!("{record}\n"));
     let (reason, _) = common::ask(dir, "stapel findings import in.jsonl");
     assert!(
-        reason.contains(&format!("F-1 HIGH inside {claim};")),
+        reason.contains(&format!("F-1 HIGH inside fate fixed: {claim};")),
         "{reason}"
     );
     assert!(!reason.contains('…'), "{reason}");
@@ -1628,4 +1628,195 @@ fn dialog_usage_denials() {
         "{replaced}"
     );
     assert_eq!(grant_files(dir), 1);
+}
+
+// ---- Step 5: code review round 1 fixes ----
+
+#[test]
+fn dialog_shows_fate_and_summary() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let with = |id: &str, stage: &str, round: Value, fate: &str| {
+        let mut v = base();
+        v["id"] = json!(id);
+        v["stage"] = json!(stage);
+        v["round"] = round;
+        v["fate"] = json!(fate);
+        line(&v)
+    };
+
+    // A string round and a differing stage: the round as given, the stage `mixed`.
+    let fate41 = "f".repeat(41);
+    let fate40 = "g".repeat(40);
+    put(
+        dir,
+        "in.jsonl",
+        &format!(
+            "{}{}{}",
+            with("F-1", "code-review", json!("r1"), &fate41),
+            with("F-2", "spec-review", json!("r1"), &fate40),
+            with("F-3", "code-review", json!("r1"), "two\nlines"),
+        ),
+    );
+    let (reason, _) = common::ask(dir, "stapel findings import in.jsonl");
+    let f = "f".repeat(40);
+    assert!(
+        reason.contains(&format!(
+            "0 LOW; stage mixed, role reviewer, round r1 | F-1 HIGH inside fate {f}…: a claim | \
+             F-2 HIGH inside fate {fate40}: a claim | F-3 HIGH inside fate two lines: a claim; runs:"
+        )),
+        "{reason}"
+    );
+
+    // A differing role and round: `mixed` each.
+    let mut other = base();
+    other["id"] = json!("F-2");
+    other["role"] = json!("external");
+    other["round"] = json!(2);
+    put(
+        dir,
+        "in.jsonl",
+        &format!("{}{}", line(&base()), line(&other)),
+    );
+    let (reason, _) = common::ask(dir, "stapel findings import in.jsonl");
+    assert!(
+        reason.contains(
+            "; stage code-review, role mixed, round mixed | F-1 HIGH inside fate fixed: a claim |"
+        ),
+        "{reason}"
+    );
+}
+
+#[test]
+fn dialog_limits_to_30_records() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let records = |n: usize| -> String {
+        (0..n)
+            .map(|i| {
+                let mut v = base();
+                v["id"] = json!(format!("F-{i}"));
+                line(&v)
+            })
+            .collect()
+    };
+
+    // 31 records: a denial with the exact text, no grant.
+    put(dir, "in.jsonl", &records(31));
+    common::hook_bash(dir, "stapel findings import in.jsonl", "auto")
+        .code(DENY)
+        .stdout("")
+        .stderr(
+            "stapel: the permission dialog shows at most 30 findings; split the file into parts of at most 30 records\n",
+        );
+    assert_eq!(grant_files(dir), 0);
+
+    // 30 records ask.
+    put(dir, "in.jsonl", &records(30));
+    let (reason, _) = common::ask(dir, "stapel findings import in.jsonl");
+    assert!(
+        reason.starts_with("stapel: import 30 findings into ABC-1:"),
+        "{reason}"
+    );
+    assert_eq!(grant_files(dir), 1);
+
+    // A person in a terminal imports 31.
+    put(dir, "in.jsonl", &records(31));
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success()
+        .stdout("imported: 31 findings into ABC-1\n");
+}
+
+#[test]
+fn dialog_refuses_a_broken_config() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &line(&base()));
+    put(dir, ".stapel/stapel.toml", "this is = [not toml\n");
+
+    // The guard gives the reason that the command gives, and writes no grant.
+    for (command, args) in [
+        (
+            "stapel findings import in.jsonl",
+            vec!["findings", "import", "in.jsonl"],
+        ),
+        (
+            "stapel ledger add --kind finding --note x",
+            vec!["ledger", "add", "--kind", "finding", "--note", "x"],
+        ),
+    ] {
+        let out = stapel(dir)
+            .args(&args)
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        let expected = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            expected.starts_with("stapel: .stapel/stapel.toml: "),
+            "{expected}"
+        );
+        common::hook_bash(dir, command, "auto")
+            .code(DENY)
+            .stdout("")
+            .stderr(expected);
+    }
+    assert_eq!(grant_files(dir), 0);
+}
+
+#[test]
+fn ledger_line_limit_before_the_grant() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    // Quotes take two bytes in the record and one in the command, so the record can pass 64 KiB
+    // while the command stays under the guard's own limit.
+    let overhead = format!(
+        "{{\"v\":1,\"at\":\"{}\",\"kind\":\"catches\",\"ticket\":\"ABC-1\",\"note\":\"\"}}\n",
+        today_utc()
+    )
+    .len();
+    let note = |line_len: usize| {
+        let extra = line_len - overhead;
+        format!("{}{}", "\"".repeat(extra / 2), "a".repeat(extra % 2))
+    };
+    let command = |note: &str| format!("stapel ledger add --kind catches --note '{note}'");
+
+    // A line of 64 KiB + 1 byte: the command refuses, and the guard denies with the same reason
+    // before any grant.
+    let over = note(65_537);
+    let expected = ledger_refused(dir, &["--kind", "catches", "--note", &over]);
+    assert!(expected.contains("64 KiB"), "{expected}");
+    common::hook_bash(dir, &command(&over), "auto")
+        .code(DENY)
+        .stdout("")
+        .stderr(expected);
+    assert_eq!(grant_files(dir), 0);
+    assert!(ledger_text(dir).is_none());
+
+    // A line of exactly 64 KiB asks.
+    let exact = note(65_536);
+    let (_, replaced) = common::ask(dir, &command(&exact));
+    assert!(replaced.contains("--grant "), "{}", replaced.len());
+    assert_eq!(grant_files(dir), 1);
+}
+
+#[test]
+fn own_grant_in_any_case() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for command in [
+        "stapel ledger ADD --kind finding --note x --grant abc",
+        "stapel Ledger Add --kind finding --note x --grant=abc",
+        "stapel findings IMPORT in.jsonl --grant abc",
+        "stapel FINDINGS import in.jsonl $x",
+        "cargo run -q -p stapel-cli -- findings IMPORT in.jsonl $x",
+    ] {
+        common::hook_bash(dir, command, "auto")
+            .code(DENY)
+            .stdout("")
+            .stderr(format!("stapel: {GRANT_DENIED}\n"));
+    }
+    assert_eq!(grant_files(dir), 0);
 }
