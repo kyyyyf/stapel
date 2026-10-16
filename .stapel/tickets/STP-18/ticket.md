@@ -120,7 +120,7 @@ Terms:
 |---|---|---|
 | AC-1 | WHEN a person runs `stapel findings import FILE [KEY]` in a terminal and every record passes AC-2 THE command appends all records, in file order and with their fields as given, to the target file in one write, and prints `imported: <N> findings into <KEY>` (exit 0). A missing target file is created; a target file without a final newline gets one first. | `records::import_appends_all_in_order`, `records::import_creates_and_repairs_target` |
 | AC-2 | IF a record of `FILE` lacks a required field, has a wrong type, or has a value outside its list (Frame promise item 2; `id`, `claim` and `fate`: non-empty strings, SR1-7; `stage`: `spec-review`, `step-drift`, `code-review`, `after-close`; `role`: `external`, `drift`, `reviewer`, `fresh-code`, `builder`, `orchestrator`, `human`), its `ticket` differs from the folder key, `rule` is present and not a non-empty string, or `v` is present and not `1` (SR1-3), THEN the command exits 2 with `stapel: <FILE>:<line>: <field>: <reason>` for the first such record and writes nothing. Output: `golden/records_refusals.txt`. | `records::import_refuses_bad_fields` |
-| AC-3 | IF `FILE` has a line that is not a JSON object, a line longer than 64 KiB (SR1-3), no record (blank lines are skipped), more than 100 records, more than 256 KiB, or an `id` that repeats an earlier line of `FILE` or a record of the target file, THEN the command exits 2 with the line number and the reason and writes nothing. | `records::import_refuses_bad_file`, `records::import_refuses_repeated_id`, `records::import_accepts_the_limits` |
+| AC-3 | IF `FILE` has a line that is not a JSON object, a line longer than 64 KiB with its newline (as `journal::MAX_LINE`; SR1-3, D2-3), no record (blank lines are skipped), more than 100 records, more than 256 KiB, or an `id` that repeats an earlier line of `FILE` or a record of the target file, THEN the command exits 2 with the line number and the reason and writes nothing. | `records::import_refuses_bad_file`, `records::import_refuses_repeated_id`, `records::import_accepts_the_limits` |
 | AC-4 | IF `FILE` is missing, `-`, not a regular file after following symlinks (a directory, a FIFO, a device; checked before it is read, SR1-4), not UTF-8, or a machine file (any `MACHINE_FILES` name of a ticket folder, or the ledger; compared on the resolved path without case, SR1-15), or the target file has a line that is not a JSON object, THEN the command exits 2 with the path and the reason and writes nothing. | `records::import_refuses_bad_input_path`, `records::import_refuses_broken_target` |
 | AC-5 | WHEN a person runs `stapel ledger add --kind KIND --note TEXT [KEY]` THE command appends `{"v":1,"at":"<UTC date YYYY-MM-DD>","kind":KIND,"ticket":<folder key>,"note":TEXT}` to `.stapel/process-ledger.jsonl` and prints `recorded: <KIND> for <KEY>` (exit 0); a missing ledger is created and a missing final newline added. | `records::ledger_add_appends_one_record` |
 | AC-6 | IF `KIND` is not `finding`, `catches` or `decision`, or `TEXT` is empty after trimming, or the ledger has a line that is not a JSON object, THEN `ledger add` exits 2 with the reason and writes nothing. | `records::ledger_add_refusals` |
@@ -133,7 +133,7 @@ Terms:
 | AC-13 | WHEN an agent runs `ledger add` as one plain command in a dialog permission mode and its checks pass THE guard answers `ask`, writes one grant file, replaces the command by `<program> ledger add --kind <KIND> --note <TEXT> <KEY> --grant <token>`, and gives the reason `stapel: add a ledger record for <KEY>[ (closed)]: <KIND>: <note, 200 characters, then …>; runs: <program>. Answer Yes or No; do not choose "don't ask again".` Output: `golden/records_dialog.txt`. | `records::dialog_for_ledger_add` |
 | AC-14 | IF the records hash, the key or the action differs from the dialog's (`FILE`, the note, the kind or the key changed), or the grant was used, THEN the record command exits 1 with `the grant does not match: the records, the ticket or the stapel build changed since the dialog, or the grant was used already; ask the agent to run the command again` and writes nothing; an expired grant gives today's "the grant expired". A grant of one record command does not open the other, nor `stapel ok` (SR1-5). | `records::grant_names_the_records` |
 | AC-15 | IF an agent adds its own `--grant` to a record command, or a word with `$` after the action, THEN the guard denies with `a --grant comes only from the permission dialog; stapel ok, stapel close, stapel findings import and stapel ledger add may not carry one of their own or words filled in at run time` (SR1-5). | `records::guard_denies_own_grant` |
-| AC-16 | WHEN `.stapel/process-ledger.jsonl` is the only changed path THE `stapel check` command reads the tree as clean and keeps its check fresh, as for the machine files of a ticket. | `records::ledger_change_keeps_tree_clean` |
+| AC-16 | WHEN `.stapel/process-ledger.jsonl` is the only changed path THE `stapel check` command reads the tree as clean and keeps its check fresh, as for the machine files of a ticket. | `records::ledger_change_keeps_tree_clean`, `records::ledger_change_keeps_check_fresh` |
 
 ### Guarantees
 
@@ -205,6 +205,7 @@ CLI tests in a new file `crates/stapel-cli/tests/records.rs`, with `common::repo
 | Closed ticket | closed by explicit key in upper and lower case; without key and one open ticket; without key and no open ticket; without key and two open tickets; a legacy ticket by key for both commands; each refusal starts with one `stapel: ` | `records::closed_ticket_by_key_only` |
 | Guard | Write, Edit, MultiEdit, NotebookEdit on `.stapel/process-ledger.jsonl` and `.STAPEL/Process-Ledger.jsonl` | `records::guard_denies_ledger_writes` |
 | Check | only the ledger changed: `stapel check` reads the tree clean; the ledger and a source file changed: dirty | `records::ledger_change_keeps_tree_clean` |
+| Coverage (step 2c) | a passing check recorded at HEAD, then only the ledger changed: `stapel status` still shows the check as passing; a source file changed as well: stale (D2-1) | `records::ledger_change_keeps_check_fresh` |
 | Dialog | reason, replaced command and one grant file for both commands, `stapel` and `cargo run … --` forms; a claim of 81 characters, in Cyrillic; a claim with a newline; a note of 201 characters; a closed ticket | `records::dialog_for_findings_import`, `records::dialog_for_ledger_add` |
 | Dialog negative | a bad record; `bypassPermissions`; an allow rule `Bash(stapel findings:*)`; no grant file in each case | `records::guard_denies_what_the_command_refuses` |
 | Grant | used once, then "does not match"; an id added to the target after the dialog refuses by AC-3 and the grant stays; `FILE` edited, another note, another kind, another key; expired; a `findings-import` grant on `ledger add`, and an `ok` grant on `findings import` | `records::grant_writes_once`, `records::grant_names_the_records` |
@@ -268,6 +269,8 @@ the Claude Code behaviour the dialog relies on was checked in the hooks docs (F-
 SR1-16 (outside) accepted by the human as promise item 7 and AC-16; no round 2.
 2026-10-16, after the drift review of step 1: D1-1 to D1-7 (1 MEDIUM, 6 LOW); one spec change: plan step 1c
 (D1-3), the several-open case in step 2 (D1-1), a run outside a repository not promised (D1-2).
+2026-10-16, after the drift review of step 2: D2-1 to D2-6 (2 MEDIUM, 4 LOW; D2-2 and D2-4 no defect); one
+spec change: plan step 2c (D2-1), AC-3 counts the newline in the line limit (D2-3).
 
 ## Proof
 
@@ -288,7 +291,7 @@ SR1-16 (outside) accepted by the human as promise item 7 and AC-16; no round 2.
 | AC-13 | `records::dialog_for_ledger_add` |
 | AC-14 | `records::grant_names_the_records` |
 | AC-15 | `records::guard_denies_own_grant` |
-| AC-16 | `records::ledger_change_keeps_tree_clean` |
+| AC-16 | `records::ledger_change_keeps_tree_clean`, `records::ledger_change_keeps_check_fresh` |
 
 ## Plan
 
@@ -300,6 +303,8 @@ Route: full (tags `guard`, `data`, `interface`), pinned at the frame.
 2. `ledger add` in a terminal and the ledger as a machine file (AC-5, AC-6, AC-7 for the ledger, AC-8,
    AC-16). Must
    not change: the guard's other machine files.
+2c. Coverage after the drift review of step 2: a check stays fresh after a ledger change (D2-1). Tests only:
+   one new `#[test]` function, no helper.
 3. The dialog and the grant for both commands, and the agent-shell refusal (AC-9 to AC-15). Must not change:
    the `ok` and `close` dialogs and their grant facts.
 
