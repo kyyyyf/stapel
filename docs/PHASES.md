@@ -142,6 +142,15 @@ token record, even if some steps were still performed by the orchestrator by han
   tokens import-records FILE [KEY]` appends checked records to a ticket's `tokens.jsonl` through the same
   permission dialog; a `measured` record gets the field `imported_from`, and the token report shows such
   records apart.
+- STP-20 (asked by the human at the close of STP-18) the guard denies Bash commands that write into
+  `crates/` (`>`, `>>`, `tee`, `sed -i`, `perl -i`, a heredoc into a file): seven of eleven builders of STP-14
+  and STP-18 wrote repository files through Bash although their briefs named Edit and Write only.
+- STP-21 (asked by the human at the close of STP-18) the guard denies a compound command, a pipe or a
+  redirection that holds `stapel ok`, `close`, `findings import` or `ledger add`, with "run it as one plain
+  command"; today it allows the call and the command refuses in the agent's shell without a dialog (seen at
+  the frame of STP-18 and three times in STP-14).
+- STP-22 (asked by the human at the close of STP-18; finding E-3 of STP-14) `stapel check` and the commit hook
+  walk only `base..HEAD` of the ticket, so the hook stays fast on a long first-parent history.
 
 **To discuss with the human:** a feature or epic level with its own human-facing spec and "Done when", with
 tickets limited in size and written for an agent (`docs/decisions/0003`, open question).

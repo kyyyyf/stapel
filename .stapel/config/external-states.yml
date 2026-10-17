@@ -25,6 +25,7 @@ claude-code:
   - environment of hook processes versus the agent's Bash shell
   - transcripts: main and subagent files, streamed lines of one message, resumed sessions, compaction
   - settings at user, project and local level; allow rules that skip the dialog
+  - tool call succeeded or failed (PostToolUse versus PostToolUseFailure)
 os:
   - case-insensitive file systems; symlinks; file permissions
   - processes: signals, process groups, children that leave the group, pid reuse
