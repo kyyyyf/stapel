@@ -391,3 +391,90 @@ fn confirm_names_each_section() {
     ));
     assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
 }
+
+// AC-7, coverage (step 1c): a label with a letter is named with its letter.
+#[test]
+fn plan_labels_with_letters() {
+    let repo = written();
+    let dir = repo.path();
+    set_plan(dir, "Route: full, auto.\n\n12b. One.\n12b. Again.");
+    assert_eq!(action(dir), format!("next: write-section Plan — {TICKET}"));
+    assert!(facts(dir).contains(&"blocked: the Plan names step 12b twice".to_string()));
+}
+
+// AC-7, coverage (step 1c): Review and Summary are generated and do not hold the build.
+#[test]
+fn generated_sections_wait() {
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    let text = std::fs::read_to_string(dir.join(TICKET)).unwrap();
+    assert!(text.contains("## Review\n\nTODO"));
+    assert!(text.contains("## Summary\n\nTODO"));
+    assert_eq!(action(dir), format!("next: build-step step 1 — {TICKET}"));
+    assert!(facts(dir).is_empty());
+}
+
+// AC-8, coverage (step 1c): the first word of the Route line, with trailing punctuation removed.
+#[test]
+fn route_word_edges() {
+    let repo = written();
+    let dir = repo.path();
+    let spec_review = format!("next: spec-review — {TICKET}");
+    let confirm = "next: confirm — stapel ok ABC-1";
+    for (line, light) in [
+        ("Route: light.", true),
+        ("Route: light;", true),
+        ("Route: light!", false),
+        ("Route: light-ish", false),
+    ] {
+        set_plan(dir, &format!("{line}\n\n1. One."));
+        let expected = if light { confirm } else { spec_review.as_str() };
+        assert_eq!(action(dir), expected, "{line}");
+    }
+}
+
+// AC-9, coverage (step 1c): one fact per stale reason, the changed one first.
+#[test]
+fn stale_reasons_each_a_fact() {
+    let repo = written();
+    let dir = repo.path();
+    stapel(dir).args(["ok", "design"]).assert().success();
+    set_section(dir, "ABC-1", "Design", "The design, edited.");
+    set_section(dir, "ABC-1", "Spec", "The spec, edited.");
+    let lines = facts(dir);
+    let design: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.starts_with("blocked: design "))
+        .collect();
+    assert_eq!(design.len(), 2, "{lines:?}");
+    assert!(
+        design[0].starts_with(
+            "blocked: design confirmation is stale: changed since confirmed by test-user at "
+        ),
+        "{}",
+        design[0]
+    );
+    assert_eq!(
+        design[1],
+        "blocked: design confirmation is stale: depends on spec, which changed"
+    );
+    assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
+}
+
+// AC-7 and AC-9, coverage (step 1c): a lowercase key names the ticket, the output uses the folder key.
+#[test]
+fn folder_key_in_outputs() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    assert_eq!(
+        action_of(dir, &["abc-1"]),
+        format!("next: write-frame — {TICKET}")
+    );
+
+    let repo = written();
+    let dir = repo.path();
+    add_finding(dir, "spec-review");
+    assert_eq!(action_of(dir, &["abc-1"]), "next: confirm — stapel ok ABC-1");
+    assert!(output(dir, &["abc-1"], 0).starts_with("ticket: ABC-1 — "));
+}
