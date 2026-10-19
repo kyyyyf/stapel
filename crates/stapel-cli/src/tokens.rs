@@ -701,7 +701,8 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
         if !path.exists() {
             continue;
         }
-        // Key: role, model, origin (0 for v1 records, 1 for legacy ones), legacy kind.
+        // Key: role, model, origin (0 for v1 records, 1 for legacy ones,
+        // 2 for records with `imported_from`), legacy kind.
         let mut rows: std::collections::BTreeMap<(String, String, u8, String), Row> =
             Default::default();
         for (n, entry) in read(&path)? {
@@ -713,14 +714,19 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
                 Entry::Problem(_) => problems.push(problem),
                 Entry::V1(m) => {
                     let num = |k: &str| m.get(k).and_then(Value::as_u64);
-                    let key = (text(&m, "role"), text(&m, "model"), 0, String::new());
+                    let imported = m.contains_key("imported_from");
+                    let origin = if imported { 2 } else { 0 };
+                    let key = (text(&m, "role"), text(&m, "model"), origin, String::new());
                     match m.get("source").and_then(Value::as_str) {
                         Some("estimate") => {
                             add_to(&mut rows.entry(key).or_default().estimate, num("estimate"))
                         }
                         Some("measured") if !measured_fields_valid(&m) => problems.push(problem),
                         Some("measured") => {
-                            measured_records.push(m.clone());
+                            // The sessions table compares totals with transcript records only.
+                            if !imported {
+                                measured_records.push(m.clone());
+                            }
                             let row = rows.entry(key).or_default();
                             row.partial |= partial_output(&m);
                             for (slot, k) in row.measured.iter_mut().zip([
@@ -772,7 +778,11 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
                 m[1] = format!("≥{}", row.measured[1].unwrap_or(0));
             }
             table.push([
-                role.clone(),
+                if *origin == 2 {
+                    format!("{role} (file)")
+                } else {
+                    role.clone()
+                },
                 model.clone(),
                 m[0].clone(),
                 m[1].clone(),
