@@ -1,14 +1,25 @@
 # stapel — overall plan
 
-Status: plan at the start of the project, 2026-10-02. Changed by decisions recorded in tickets.
+Status: plan at the start of the project, 2026-10-02. Changed by decisions recorded in tickets and in
+`docs/decisions/`; the product direction and the interface changed on 2026-10-19 (`docs/decisions/0004`).
 
 ## 1. What it is
 
 `stapel` is a tool that takes a development ticket from description to merge so that the result is
 repeatable, the process is understandable without reading the internals, and token spending is measured from
 day one. It is built for a team of three roles — product, engineer, QA — who may be the same person. It
-works on any repository that has a `.stapel/` folder. Interfaces: command line, Zed, Claude Code in the Zed
-agent panel, a merge request in GitLab or GitHub.
+works on any repository that has a `.stapel/` folder.
+
+**For whom (2026-10-19, `docs/decisions/0004`).** Companies and departments that build software they could
+not afford before, and keep it changeable: the first segment is a company or department with one technical
+person; the second stage is a founder who builds alone, served by a configurable autonomy level (phase 3).
+Not for fast hypothesis checks: an agent alone serves those. The claim is "stays changeable at a known cost", measured by escaped defects and tokens per
+ticket (§8).
+
+**Interface.** The person works in the Claude Code chat and types no stapel command: the orchestrator (the
+Claude Code main agent with the stapel skill) asks questions, writes the ticket, runs builders and reviewers
+as subagents, and confirms with the person through the permission dialog. `stapel` is the backbone the agent
+calls. The merge request in GitLab or GitHub is the second interface, for the reviewers. Zed is optional.
 
 The name means a slipway: the place where a ship is built step by step before it is launched.
 
@@ -35,18 +46,30 @@ The name means a slipway: the place where a ship is built step by step before it
 
 ## 3. What it looks like for the team
 
-Five actions and one query:
+For the person, one ticket is six moments (`docs/decisions/0004` §4): the request in the chat; the frame
+and coverage questions, each with options and a recommendation; one dialog that confirms the human page
+(the Frame and the criteria, with their diff) and with it every section; a question only for an
+`intent_gap` or a finding the orchestrator could not settle; one dialog for the push and the MR; the
+summary after the merge. Which of these moments ask the person is the autonomy level (phase 3).
+
+For the orchestrator, the backbone is a few commands, each one deterministic:
 
 ```text
-stapel new <key|link>      create a ticket from a description or a task in an external tracker
-stapel ask                 the agent asks questions with a recommendation, the human answers
-stapel ok <section>        confirm a section: spec | design | proof | review
-stapel build               build step by step, each step RED → GREEN
-stapel ship                merge the MR, record the summary
-stapel q <question>        query the index: symbol | refs | callers | tests | history | impact
+stapel new <title>         create a ticket; a link to an external tracker as an option
+stapel next [KEY]          the next action from the facts, with its command or file (phase 1)
+stapel brief KEY STEP      the builder brief for one plan step, 900 to 1 300 tokens (phase 1)
+stapel ok KEY              confirm, through the permission dialog; shows the diff since the last confirmation
+stapel check [KEY]         every step's tests failed at RED and pass at GREEN and HEAD; --history in seconds
+stapel lint [KEY]          the ticket is consistent: tests and paths exist, tables present, lists agree (phase 1)
+stapel review start KEY    the git archive copy and the review pack for a round (phase 1)
+stapel ship KEY            preconditions, push and the MR with the review map, through the dialog (phase 1)
+stapel close KEY           close after the merge, through the dialog
+stapel q <question>        query the index: symbol | refs | callers | tests | impact (phase 4)
 ```
 
-Auxiliary: `status`, `inbox` (what is waiting for me), `guide` (step-by-step procedure), `init`, `index`.
+Records: `findings import`, `tokens import-records`, `ledger add`, each through the dialog; `tokens` for the
+report. Auxiliary: `status`, `init`, `hook` (the entry points Claude Code calls). The orchestrator's skill
+is one rule: run `stapel next`, do what it says, run it again.
 
 One file for people — `ticket.md`:
 
@@ -133,8 +156,10 @@ cheap    = { provider = "claude-code", model = "claude-haiku-4-5" }
 ```
 
 If a role has no key or subscription, the tool says so and works with what it has (`required = false` for
-the external reviewer). In phase 0 the orchestrator role is played by Claude Code in an interactive session;
-from phase 1 it is `stapel` itself.
+the external reviewer). The orchestrator role is played by Claude Code in an interactive session in every
+phase (`docs/decisions/0004`); from phase 1 it follows `stapel next`, and every other role runs as a Claude
+Code subagent whose definition `stapel init` writes from `[models]`. The `anthropic-api` provider stays an
+option for a role that must run outside the subscription.
 
 ## 6. Integrations
 
@@ -145,10 +170,13 @@ from phase 1 it is `stapel` itself.
 - **CI.** The proof of a test is a record "command, output, commit, source". The source is CI or a local
   run. Both are acceptable, and the difference is visible in the ticket summary.
 - **Tracker.** An adapter from day one: key, link, status sent outward. Jira is connected later.
-- **Zed.** `stapel-lsp` for `ticket.md` and code (buttons, highlighting, hints), `inbox` in the status bar,
-  Claude Code in the agent panel through ACP, Zed tasks and hotkeys as a quick start.
-- **Claude Code hooks.** Installed by `init`: no writes to code before the build permit, no `git push` for
-  agents, reviewers without write access to git.
+- **Claude Code.** Installed by `init` as data: the hooks (no writes to code before the build permit, no
+  push for agents, no writes to machine files, the permission dialog for `ok`, `close`, `ship` and the
+  record commands, token records at `SubagentStop` and `Stop`), the orchestrator skill (the spec process),
+  and the agent definitions (builder, drift reviewer, code reviewers, spec reviewer) with tools, model and
+  permission mode; reviewers are read-only. The person's own edits to these files survive a re-run.
+- **Zed.** Optional, after a pilot person asks for it: `stapel-lsp` buttons would each call one existing
+  command. Not in the phases (`docs/decisions/0004`).
 
 ## 7. What is carried over from klc
 
@@ -197,15 +225,26 @@ process"; rules that catch nothing for three tickets are removed (`.stapel/proce
   until there is a number, the mark "estimate", never presenting it as a measurement.
 - **A single maintainer.** Defense: the tool must run its own tickets as early as possible (phase 1), so
   that the process does not depend on one person's memory.
+- **The product runs inside Claude Code.** Hooks, the permission dialog, custom agents and skills are
+  documented; the transcript format is documented as internal and may change. Defense: the `estimate` mark
+  when a transcript cannot be read, and the usage of headless runs as a second source.
+- **The process stays heavier than the segment accepts.** Phase 0 tickets reached 50 KB and 2 500 changed
+  lines for small commands. Defense: the human page and the engagement levels (phase 3), the ticket lint's
+  size limits, and the pilot's measurements before the index is built.
 
 ## 10. Phases
 
 In detail — in `docs/PHASES.md`.
 
 ```text
-0  bootstrap         state core, sections, confirmations, RED→GREEN, findings, tokens        ~1 week
-1  self-service      stapel runs its own tickets from new to ship                            ~2 weeks
-2  index             language adapters, blast radius, MCP, context packages with a budget    ~2–3 weeks
-3  Zed               LSP, inbox, status bar, guide                                           ~2 weeks
-4  verification      3–5 klc tickets through stapel against klc; a decision on klc's fate    ~1–2 weeks
+0  bootstrap         state core, sections, confirmations, RED→GREEN, findings, tokens;      closed 2026-10-19
+                     guard, dialog, check on history, records through the dialog
+1  backbone          next, briefs, the process installed by init, tokens from hooks,         ~3 weeks
+                     review packs, lint, ship with the review map, one dialog, the junit runner
+2  pilot             a foreign TypeScript repository: init there, three tickets,             ~2–3 weeks
+                     the first one also through klc, the comparison
+3  context & guards  project context, machine guards out of the agent's reach,               ~3–4 weeks
+                     autonomy levels, the human page, bug and spike tickets
+4  index             TypeScript and Rust adapters, blast radius, selective tests, MCP         ~2–3 weeks
+5  Zed & languages   stapel-lsp buttons, inbox; Python and Go adapters and runners           not sized
 ```

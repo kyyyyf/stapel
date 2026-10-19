@@ -22,6 +22,14 @@ phases: `docs/PHASES.md`. Rust, one cargo workspace.
 - Heavy test runs use `cargo test -j 4 … -- --test-threads=4` at most; parallel nested builds crashed the
   machine (STP-4).
 
+## The plan
+
+The plan is `docs/PHASES.md` (`docs/decisions/0004`). Tickets are taken in the order of its items; a ticket's
+Frame names its plan item (`1.3`) and its promise stays inside that item. An item is added, moved, split or
+widened only by a dated `decision` record in `.stapel/process-ledger.jsonl` that names the reason, made with
+the human in the chat; an agent never does it on its own. A ticket gets its `STP-<n>` key from `stapel new`
+when it is taken; the keys in the phase-0 list that have no folder are labels.
+
 ## The spec process
 
 Goals, in this order of trade-off: complete enough to catch defects before code, simple enough that the
