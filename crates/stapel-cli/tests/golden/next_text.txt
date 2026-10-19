@@ -1,0 +1,4 @@
+ticket: ABC-1 — First
+blocked: spec confirmation is stale: confirmed under normal form 0
+blocked: plan not confirmed
+next: confirm — stapel ok ABC-1
