@@ -796,3 +796,124 @@ fn closed_ticket_by_key_only() {
     );
     assert!(!dir.join(".stapel/tickets/ABC-9/tokens.jsonl").exists());
 }
+
+// ---- Coverage (step 1c) ----
+
+#[test]
+fn field_check_order_edges() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let first_error = |v: Value| try_import(dir, &line(&v)).unwrap_err();
+
+    // Two other fields: the first in the line, not in a sorted order.
+    let mut v = measured("T-1");
+    v["zzz"] = json!(1);
+    v["at"] = json!("x");
+    assert_eq!(
+        first_error(v),
+        "stapel: in.jsonl:1: zzz: not allowed in a token record\n"
+    );
+
+    // Two bad counts: `output` before `cache_read`.
+    let mut v = measured("T-1");
+    v["output"] = json!(-1);
+    v["cache_read"] = json!(-1);
+    assert_eq!(
+        first_error(v),
+        format!("stapel: in.jsonl:1: output: {COUNT_REASON}\n")
+    );
+
+    // `role` and `model` both missing: `role` first.
+    let mut v = measured("T-1");
+    v.as_object_mut().unwrap().remove("role");
+    v.as_object_mut().unwrap().remove("model");
+    assert_eq!(first_error(v), "stapel: in.jsonl:1: role: missing\n");
+
+    // A blank id.
+    let mut v = measured("T-1");
+    v["id"] = json!("  ");
+    assert_eq!(
+        first_error(v),
+        "stapel: in.jsonl:1: id: must be 1 to 64 characters with no whitespace or control character\n"
+    );
+
+    // `model` with DEL.
+    let mut v = measured("T-1");
+    v["model"] = json!("m\u{7f}1");
+    assert_eq!(
+        first_error(v),
+        format!("stapel: in.jsonl:1: model: {SHORT_REASON}\n")
+    );
+
+    // `note` with a carriage return.
+    let mut v = measured("T-1");
+    v["note"] = json!("a\rb");
+    assert_eq!(
+        first_error(v),
+        "stapel: in.jsonl:1: note: must be a string of at most 4096 bytes with no control character but newline\n"
+    );
+
+    // `step` null is present and not a short text.
+    let mut v = measured("T-1");
+    v["step"] = Value::Null;
+    assert_eq!(
+        first_error(v),
+        format!("stapel: in.jsonl:1: step: {SHORT_REASON}\n")
+    );
+}
+
+#[test]
+fn file_limit_edges() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+
+    // A 101st line with a bad field gets the limit reason.
+    let mut text: String = (1..=100)
+        .map(|i| line(&estimate(&format!("T-{i}"))))
+        .collect();
+    let mut bad = estimate("T-101");
+    bad.as_object_mut().unwrap().remove("role");
+    text.push_str(&line(&bad));
+    assert_eq!(
+        try_import(dir, &text).unwrap_err(),
+        "stapel: in.jsonl:101: more than 100 records; split the file\n"
+    );
+
+    // A CRLF line is measured without its CR: 64 KiB with LF plus a CR is accepted.
+    let crlf = |total_without_cr: usize| -> String {
+        let record = format!("{}", estimate("T-1"));
+        let pad = " ".repeat(total_without_cr - record.len() - 1);
+        let text = format!("{record}{pad}\r\n");
+        assert_eq!(text.len(), total_without_cr + 1);
+        text
+    };
+    let text = try_import(dir, &crlf(64 * 1024)).unwrap();
+    assert_eq!(text.lines().count(), 1);
+    assert!(!text.contains('\r'), "{text:?}");
+    // One byte more is refused.
+    assert_eq!(
+        try_import(dir, &crlf(64 * 1024 + 1)).unwrap_err(),
+        "stapel: in.jsonl:1: longer than 64 KiB\n"
+    );
+}
+
+#[test]
+fn missing_file_reason() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    assert_eq!(
+        refused(dir, &["nope.jsonl"]),
+        "stapel: nope.jsonl: No such file or directory (os error 2)\n"
+    );
+    assert!(target_text(dir).is_none());
+}
+
+#[test]
+fn ticket_chosen_before_file() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    assert_eq!(
+        refused(dir, &["nope.jsonl", "NOPE-1"]),
+        "stapel: no ticket NOPE-1 in .stapel/tickets\n"
+    );
+}
