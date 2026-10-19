@@ -10,7 +10,9 @@ use crate::grant::{Facts, issue};
 use crate::guard::{Decision, Invocation, stapel_root};
 use crate::hash::normal_form;
 use crate::identity::user_name;
-use crate::records::{FindingsPlan, LedgerPlan, Row, plan_findings, plan_ledger};
+use crate::records::{
+    FindingsPlan, LedgerPlan, Row, TokenRecord, TokensPlan, plan_findings, plan_ledger, plan_tokens,
+};
 use crate::stage::{Reason, freshness, latest};
 use crate::ticket::{find, parse, read};
 use crate::tickets::{Status, resolve};
@@ -134,7 +136,10 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
         ));
     }
     let root = stapel_root(cwd).ok_or("not inside a stapel repository")?;
-    if inv.action == "findings import" || inv.action == "ledger add" {
+    if inv.action == "findings import"
+        || inv.action == "ledger add"
+        || inv.action == "tokens import-records"
+    {
         // The command reads the configuration first (`repo::open`); so does the dialog, with the
         // same reasons.
         let path = root.join(".stapel/stapel.toml");
@@ -230,6 +235,42 @@ pub fn findings_facts(plan: &FindingsPlan) -> Facts {
     }
 }
 
+/// The grant facts of `tokens import-records`: the ids, and the records hash.
+pub fn tokens_facts(plan: &TokensPlan) -> Facts {
+    Facts {
+        key: plan.key.clone(),
+        action: "tokens-import-records".into(),
+        detail: plan.tokens.ids.join(","),
+        hash: plan.tokens.hash.clone(),
+        dependencies: Vec::new(),
+    }
+}
+
+/// One record in the dialog of `tokens import-records`.
+fn token_entry(r: &TokenRecord) -> String {
+    let count = |n: Option<u64>| n.map_or("—".to_string(), |n| n.to_string());
+    let counts = if r.source == "measured" {
+        format!(
+            "input {} output {} cache read {} cache write {}",
+            count(r.counts[0]),
+            count(r.counts[1]),
+            count(r.counts[2]),
+            count(r.counts[3])
+        )
+    } else {
+        format!("estimate {}", count(r.estimate))
+    };
+    format!(
+        "{} {} {} {} {counts} step {} note {}",
+        r.id,
+        shown(&r.role, 40),
+        shown(&r.model, 40),
+        r.source,
+        r.step.as_deref().map_or("—".to_string(), |s| shown(s, 40)),
+        r.note.as_deref().map_or("—".to_string(), |s| shown(s, 40)),
+    )
+}
+
 /// The grant facts of `ledger add`: the kind, and the hash of kind, ticket and note.
 pub fn ledger_facts(plan: &LedgerPlan) -> Facts {
     Facts {
@@ -316,6 +357,61 @@ fn prepare_records(inv: &Invocation, cwd: &Path, root: &Path) -> Result<Decision
         );
         let tail = format!("findings import {} {}", quote(file), quote(&plan.key));
         (findings_facts(&plan), reason, tail)
+    } else if inv.action == "tokens import-records" {
+        let mut positional = Vec::new();
+        for a in &inv.args {
+            if a.starts_with('-') && a != "-" {
+                return Err(format!(
+                    "unexpected option {a} for stapel tokens import-records"
+                ));
+            }
+            positional.push(a.as_str());
+        }
+        let (file, key) = match positional.as_slice() {
+            [file] => (*file, None),
+            [file, key] => (*file, Some(*key)),
+            _ => return Err("usage: stapel tokens import-records FILE [KEY]".into()),
+        };
+        let plan = plan_tokens(root, cwd, file, key)?;
+        let records = &plan.tokens.records;
+        if records.len() > DIALOG_MAX_FINDINGS {
+            return Err(format!(
+                "the permission dialog shows at most {DIALOG_MAX_FINDINGS} token records; \
+                 split the file into parts of at most {DIALOG_MAX_FINDINGS} records"
+            ));
+        }
+        let measured = |pick: fn(&TokenRecord) -> Option<u64>| -> u64 {
+            records
+                .iter()
+                .filter(|r| r.source == "measured")
+                .filter_map(pick)
+                .sum()
+        };
+        let estimate: u64 = records
+            .iter()
+            .filter(|r| r.source == "estimate")
+            .filter_map(|r| r.estimate)
+            .sum();
+        let reason = format!(
+            "stapel: import {} token records from {} into {}{}: measured input {}, output {}, \
+             cache read {}, cache write {}; estimate {estimate} | {}; runs: {program}. Answer \
+             Yes or No; do not choose \"don't ask again\".",
+            records.len(),
+            shown(&plan.base_name, usize::MAX),
+            plan.key,
+            if plan.closed { " (closed)" } else { "" },
+            measured(|r| r.counts[0]),
+            measured(|r| r.counts[1]),
+            measured(|r| r.counts[2]),
+            measured(|r| r.counts[3]),
+            records
+                .iter()
+                .map(token_entry)
+                .collect::<Vec<_>>()
+                .join(" | "),
+        );
+        let tail = format!("tokens import-records {} {}", quote(file), quote(&plan.key));
+        (tokens_facts(&plan), reason, tail)
     } else {
         let (mut kind, mut note, mut key) = (None, None, None);
         let mut it = inv.args.iter();

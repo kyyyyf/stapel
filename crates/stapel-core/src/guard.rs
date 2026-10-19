@@ -65,8 +65,9 @@ const UNREADABLE_REASON: &str = "the command is too long, too deeply nested or t
 const INJECT_REASON: &str = "the command can type into the terminal where the permission dialog \
                              is answered; only a person answers it";
 const GRANT_REASON: &str = "a --grant comes only from the permission dialog; stapel ok, stapel \
-                            close, stapel findings import and stapel ledger add may not carry \
-                            one of their own or words filled in at run time";
+                            close, stapel findings import, stapel ledger add and stapel tokens \
+                            import-records may not carry one of their own or words filled in \
+                            at run time";
 const HOOK_SELF_REASON: &str = "stapel hook is run only by Claude Code; an agent may not run the \
                                 hook entry point itself";
 
@@ -495,6 +496,17 @@ fn check_stapel(name: &str, args: &[String], found: &mut Found) {
                 .get(at + 1)
                 .is_some_and(|w| w.eq_ignore_ascii_case("import") || w.eq_ignore_ascii_case("add"));
             if record_action
+                && rest[at + 2..]
+                    .iter()
+                    .any(|w| w.starts_with("--grant") || w.contains('$'))
+            {
+                found.grant = true;
+            }
+        }
+        "tokens" => {
+            if rest
+                .get(at + 1)
+                .is_some_and(|w| w.eq_ignore_ascii_case("import-records"))
                 && rest[at + 2..]
                     .iter()
                     .any(|w| w.starts_with("--grant") || w.contains('$'))
@@ -995,7 +1007,7 @@ fn lex(text: &str) -> Lexed {
 pub struct Invocation {
     /// `stapel` (as written) or `cargo run [options] --`.
     pub program: Vec<String>,
-    /// `ok`, `close`, `findings import` or `ledger add`.
+    /// `ok`, `close`, `findings import`, `ledger add` or `tokens import-records`.
     pub action: String,
     /// The words after the action, assignments and redirections dropped.
     pub args: Vec<String>,
@@ -1031,6 +1043,14 @@ pub fn plain_invocation(command: &str) -> Option<Invocation> {
                 return None;
             }
             (format!("{action} {sub}"), at + 2)
+        }
+        "tokens" => {
+            // Only `tokens import-records`; `tokens import`, `tokens add` and `tokens` alone
+            // are not read.
+            if !rest.get(at + 1)?.eq_ignore_ascii_case("import-records") {
+                return None;
+            }
+            ("tokens import-records".to_string(), at + 2)
         }
         _ => return None,
     };
