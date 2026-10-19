@@ -427,8 +427,49 @@ Route: full (tags `guard`, `data`, `interface`), pinned at the frame.
 
 ## Review
 
-TODO
+Spec review: one round by one external model (16 findings, no HIGH, 4 MEDIUM, all inside). Drift review after
+the GREEN of steps 1, 2 and 3 (19 findings, no HIGH, 4 MEDIUM; D3-1 no defect). Code review round 1 by three
+reviewers (reviewer, external, drift; 20 findings, no HIGH, two MEDIUM: DR-1 a test gap inside, E-1 no defect
+after F-8); no round 2, as no finding was HIGH. Every finding with its fate is in `findings.jsonl`.
 
 ## Summary
 
-TODO
+**Measures after the build (2026-10-19), compared with STP-18.** Steps: RED/GREEN pairs 1, 2 and 3; coverage
+commits 1c, 2c, 3c, 3d and 4c; the cleanup commit 4 (no behaviour change). `stapel check` passed at
+`6d41d1b`, `5fa5028` and `9cf4fbb` (506 tests) during the build; the last check before the close is recorded
+in `runs.jsonl`. Tokens are measured: the main transcript `f93fe6d1` up to 12:05Z and all 15 subagent files.
+The main transcript also holds a product discussion with the human (goals, segment, pilot, Phase 1, the
+interface), which is not ticket work but is counted under `orchestrator`.
+
+| Measure | STP-18 | STP-19 |
+|---|---|---|
+| Escaped defects found so far | 0 | 0 |
+| Findings before code (spec review, per-step drift) | 16 + 32 (HIGH and MEDIUM: 7 + 6) | 16 + 19 (HIGH and MEDIUM: 4 + 4); one spec review round |
+| Code review findings, all / HIGH and MEDIUM inside the promise | 29 / 4 (0 HIGH) | 20 / 1 (0 HIGH; DR-1, a test gap); E-1 MEDIUM was no defect |
+| Code review HIGH and MEDIUM inside by `catchable_at` | test-plan 3, design 1 | test-plan 1 |
+| HIGH and MEDIUM inside per 100 changed lines | 0.14 | 0.04 |
+| `ticket.md` | 42 KB | 52 KB |
+| Changed lines (frame estimate) | about 2 805: 842 source, 1 963 tests | about 2 543: 544 source, 1 999 tests (350 and 1 000) |
+| Steps with RED/GREEN, coverage commits | 6 and 6 | 3 and 5, one cleanup commit |
+| Measured cache read (cache write) by role | orchestrator 36.8M (0.59M), builder 14.5M (0.64M), external 3.16M (0.25M), reviewer 1.38M (0.13M), drift 0.58M (0.31M) | orchestrator 39.5M (0.73M), builder 7.9M (0.50M), external 2.29M (0.37M), drift 1.31M (0.19M), reviewer 0.86M (0.07M), research 0.13M (0.04M) |
+| Orchestrator output | 149k | 148k |
+| `stapel ok` commands per confirmation | 9 for 8 | 8 for 7 (one grant expired after 30 minutes) |
+| `findings import` dialogs | — | 5 |
+| Local history rewrites | 2 | 0 |
+| Builders that wrote repository files through Bash | 3 of 6 | 0 of 7 |
+| Full checks to the close | 3 completed | 3 during the build, one before the close |
+| Wall time | 2026-10-15 15:00Z to 2026-10-16 14:45Z | 2026-10-19 05:56Z to about 12:30Z |
+
+What improved: no history rewrite and no Bash write by any of the seven builders (every brief repeated the
+rules, and each step's tests that pass before the code were planned as a coverage step before the build);
+builder cache read fell by almost half; one inside MEDIUM in code review instead of four; the build took one
+day instead of two. What did not: the frame's source estimate was low again (544 against 350; the dialog
+branch and the record checks were larger than the findings pattern suggested); every step still needed a
+coverage commit after its drift review, so the test plan still misses boundaries and orders; the test plan
+had two wrong rows (a note cannot hold a tab; `ok` and `close` print their own mismatch text), found by the
+builder of 3d; `ticket.md` grew to 52 KB for a smaller ticket; the orchestrator's cache read did not fall,
+partly because of the product discussion in the same session; three commit messages named token records
+that the import refused as too fresh.
+
+**Process ledger (CLAUDE.md item 9), code review HIGH and MEDIUM inside by the rule that should have caught
+them:** item 3: 1 (DR-1). No item went three tickets in a row without a catch; nothing removed.
