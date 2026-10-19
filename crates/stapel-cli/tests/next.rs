@@ -1063,3 +1063,285 @@ fn coverage_and_cleanup_steps_are_done() {
         "no word"
     );
 }
+
+// AC-11 and AC-12, coverage (step 2c): facts come in history order.
+#[test]
+fn history_order_of_facts() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) -> String {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim()[..7].to_string()
+    }
+    fn ready(plan: &str) -> tempfile::TempDir {
+        let repo = written();
+        set_plan(repo.path(), plan);
+        confirm_all(repo.path());
+        commit(repo.path(), &[], "initial");
+        repo
+    }
+    let test = "#[test]\nfn t() {\n    assert!(true);\n}\n";
+
+    // Step 6 RED, then step 5 RED, the Plan has steps 1 to 4: outside facts in history order,
+    // then the fault of the step 6 RED, which is no longer the newest step commit.
+    let repo = ready("Route: full, auto.\n\n1. One.\n2. Two.\n3. Three.\n4. Four.");
+    let dir = repo.path();
+    commit(
+        dir,
+        &[("crates/tiny/tests/t6.rs", test)],
+        "ABC-1 step 6 RED: six",
+    );
+    let five = commit(
+        dir,
+        &[("crates/tiny/tests/t5.rs", test)],
+        "ABC-1 step 5 RED: five",
+    );
+    assert_eq!(
+        facts(dir),
+        vec![
+            "blocked: history has step 6, the Plan does not".to_string(),
+            "blocked: history has step 5, the Plan does not".to_string(),
+            format!("blocked: step 6: unpaired at {five} — no GREEN commit"),
+        ]
+    );
+    assert_eq!(action(dir), format!("next: write-section Plan — {TICKET}"));
+
+    // Step 2 faults before step 1 in history: the fact of step 2 comes first, and the action names it.
+    let repo = ready("Route: full, auto.\n\n1. One.\n2. Two.");
+    let dir = repo.path();
+    let two = commit(
+        dir,
+        &[("crates/tiny/src/lib.rs", "// two\n")],
+        "ABC-1 step 2 GREEN: two",
+    );
+    let one = commit(
+        dir,
+        &[("crates/tiny/src/lib.rs", "// one\n")],
+        "ABC-1 step 1 GREEN: one",
+    );
+    assert_eq!(
+        facts(dir),
+        vec![
+            format!("blocked: step 2: unpaired at {two} — no RED commit"),
+            format!("blocked: step 1: unpaired at {one} — no RED commit"),
+        ]
+    );
+    assert_eq!(
+        action(dir),
+        "next: fix-history step 2 — stapel check --history ABC-1"
+    );
+}
+
+// AC-12, coverage (step 2c): an open RED behind a GREEN of another step is a fault of that RED's step.
+#[test]
+fn unpaired_red_behind_a_green() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) -> String {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim()[..7].to_string()
+    }
+    let test = "#[test]\nfn t() {\n    assert!(true);\n}\n";
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    commit(dir, &[], "initial");
+    commit(
+        dir,
+        &[("crates/tiny/tests/t1.rs", test)],
+        "ABC-1 step 1 RED: one",
+    );
+    commit(
+        dir,
+        &[("crates/tiny/tests/t2.rs", test)],
+        "ABC-1 step 2 RED: two",
+    );
+    let green = commit(
+        dir,
+        &[("crates/tiny/src/lib.rs", "// one\n")],
+        "ABC-1 step 1 GREEN: one",
+    );
+    assert_eq!(
+        facts(dir),
+        vec![format!(
+            "blocked: step 2: unpaired at {green} — no GREEN commit"
+        )]
+    );
+    assert_eq!(
+        action(dir),
+        "next: fix-history step 2 — stapel check --history ABC-1"
+    );
+}
+
+// AC-12 and AC-13, coverage (step 2c): the order of the rules after the history facts.
+#[test]
+fn rule_order_after_history() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) -> String {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    }
+    // A confirmed ticket with a commit `initial`; `[check]` is set when `with_check` is true.
+    fn ready(with_check: bool) -> tempfile::TempDir {
+        let repo = written();
+        let dir = repo.path();
+        if with_check {
+            let toml = dir.join(".stapel/stapel.toml");
+            let mut text = std::fs::read_to_string(&toml).unwrap();
+            text.push_str("\n[check]\nrunner = \"cargo\"\ntimeout_secs = 900\n");
+            std::fs::write(&toml, text).unwrap();
+        }
+        confirm_all(dir);
+        commit(dir, &[], "initial");
+        repo
+    }
+    fn fail_record(dir: &Path, head: &str) {
+        let record = serde_json::json!({
+            "v": 1, "kind": "check", "id": "c1", "at": "2026-10-19T10:00:00Z",
+            "ticket": "ABC-1", "head": head, "result": "fail", "steps": [],
+        });
+        std::fs::write(
+            dir.join(".stapel/tickets/ABC-1/runs.jsonl"),
+            format!("{record}\n"),
+        )
+        .unwrap();
+    }
+    let test = "#[test]\nfn t() {\n    assert!(true);\n}\n";
+
+    // A failing check and a history fault: the fault fact, then the check fact, action `fix-history`.
+    let repo = ready(true);
+    let dir = repo.path();
+    let green = commit(
+        dir,
+        &[("crates/tiny/src/lib.rs", "// one\n")],
+        "ABC-1 step 1 GREEN: one",
+    );
+    fail_record(dir, &green);
+    assert_eq!(
+        facts(dir),
+        vec![
+            format!(
+                "blocked: step 1: unpaired at {} — no RED commit",
+                &green[..7]
+            ),
+            format!("blocked: check fails at {}", &green[..7]),
+        ]
+    );
+    assert_eq!(
+        action(dir),
+        "next: fix-history step 1 — stapel check --history ABC-1"
+    );
+
+    // A failing check and step 2 not built: `fix-check` comes before `build-step`.
+    let repo = ready(true);
+    let dir = repo.path();
+    commit(
+        dir,
+        &[("crates/tiny/tests/t1.rs", test)],
+        "ABC-1 step 1 RED: one",
+    );
+    let head = commit(
+        dir,
+        &[("crates/tiny/src/lib.rs", "// one\n")],
+        "ABC-1 step 1 GREEN: one",
+    );
+    fail_record(dir, &head);
+    assert_eq!(
+        facts(dir),
+        vec![format!("blocked: check fails at {}", &head[..7])]
+    );
+    assert_eq!(
+        action(dir),
+        "next: fix-check — .stapel/tickets/ABC-1/runs.jsonl"
+    );
+
+    // No `[check]` and a `fail` record: no check fact, and the build goes on.
+    let repo = ready(false);
+    let dir = repo.path();
+    let head = commit(dir, &[], "ABC-1: a later commit");
+    fail_record(dir, &head);
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    assert_eq!(action(dir), format!("next: build-step step 1 — {TICKET}"));
+}
