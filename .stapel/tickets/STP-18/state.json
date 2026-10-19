@@ -395,5 +395,10 @@
       "text": "Route: full (tags `guard`, `data`, `interface`), pinned at the frame.\n\n1. `findings import` in a terminal: `stapel_core::records`, the CLI command, the multi-record append (AC-1 to\n   AC-4, AC-7 for findings). Must not change: `journal::append`, `ok`, `close`.\n1c. Coverage after the drift review of step 1: the accepted limits (D1-3). Tests only.\n2. `ledger add` in a terminal and the ledger as a machine file (AC-5, AC-6, AC-7 for the ledger, AC-8,\n   AC-16). Must\n   not change: the guard's other machine files.\n2c. Coverage after the drift review of step 2: a check stays fresh after a ledger change (D2-1). Tests only:\n   one new `#[test]` function, no helper.\n3. The dialog and the grant for both commands, and the agent-shell refusal (AC-9 to AC-15). Must not change:\n   the `ok` and `close` dialogs and their grant facts.\n3c. Coverage after the drift review of step 3 (D3-3, D3-7). Tests only: two new `#[test]` functions, no\n   helper.\n4. `id` limited to 64 characters without whitespace or control characters (AC-2, D3-1). Must not change the\n   other field checks.\n4c. Coverage after the drift review of step 4 (D4-1 to D4-3). Tests only: one new `#[test]` function, no\n   helper.\n4d. Coverage after code review round 1 (R-1, E-2, E-3, DR-4, DR-5). Tests only: four new `#[test]` functions,\n   no helper.\n5. Code review round 1 fixes (AC-6, AC-9, AC-10, AC-15, AC-17): fate and the summary in the dialog, the\n   30-record dialog limit, the config check in the dialog, the ledger line limit before the grant, the\n   sub-action in any case; in the GREEN also the stale comments (R-6, R-9), the unused parameters of\n   `check_ledger` and the literal limits (R-10, E-11), one shared text for the unknown-version skip (DR-6).\n   Must not change: the `ok` and `close` dialogs.\n5c. Coverage after the drift review of step 5 (D5-2, D5-4). Tests only: two new `#[test]` functions, no\n   helper.\n6. A string `round` limited to 32 characters without control characters (AC-2, D5-1). Must not change the\n   other field checks.",
       "via": "grant"
     }
-  ]
+  ],
+  "closed": {
+    "by": "kyyyyf",
+    "at": "2026-10-19T05:53:34Z",
+    "reason": "findings import and ledger add through the permission dialog; check\n  passes at 13b3f92"
+  }
 }
