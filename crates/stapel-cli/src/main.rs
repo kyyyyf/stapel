@@ -8,6 +8,7 @@ mod hook;
 mod init;
 mod ledger;
 mod new;
+mod next;
 mod ok;
 mod repo;
 mod status;
@@ -56,6 +57,14 @@ enum Command {
     Status {
         /// The ticket key; without it, the only open ticket.
         key: Option<String>,
+    },
+    /// Name the next action of a ticket from the facts on disk. Writes nothing.
+    Next {
+        /// The ticket key; without it, the only open ticket.
+        key: Option<String>,
+        /// Print the action as one JSON line.
+        #[arg(long)]
+        json: bool,
     },
     /// Close a ticket: its confirmations stop permitting code writes. Only a person closes.
     Close {
@@ -272,6 +281,8 @@ fn main() -> ExitCode {
         Command::Check { key, list, history } => {
             return check::run(key.as_deref(), list, history);
         }
+        // The JSON form is plan step 3; the flag is accepted and the text is printed.
+        Command::Next { key, json: _ } => return fail::finish(next::run(key.as_deref())),
         Command::Status { key } => match status::run(key.as_deref()) {
             Ok(code) => return code,
             Err(message) => Err(message),

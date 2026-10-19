@@ -10,6 +10,7 @@ pub mod hash;
 pub mod identity;
 pub mod includes;
 pub mod journal;
+pub mod next;
 pub mod outcomes;
 pub mod privacy;
 pub mod records;
