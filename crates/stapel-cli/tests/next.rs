@@ -1345,3 +1345,274 @@ fn rule_order_after_history() {
     assert!(facts(dir).is_empty(), "{:?}", facts(dir));
     assert_eq!(action(dir), format!("next: build-step step 1 — {TICKET}"));
 }
+
+// AC-2: the same action as one JSON line, keys in the stated order.
+#[test]
+fn json_has_the_same_action() {
+    fn commit(dir: &Path, subject: &str) {
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+    let one_line = |dir: &Path, args: &[&str]| {
+        let text = output(dir, args, 0);
+        assert!(text.ends_with('\n'), "{text:?}");
+        assert_eq!(text.lines().count(), 1, "one line: {text:?}");
+        text
+    };
+
+    // The ticket of the golden file of the text form: two facts, `confirm`.
+    let repo = written();
+    let dir = repo.path();
+    for s in ["spec", "design", "proof"] {
+        stapel(dir).args(["ok", s]).assert().success();
+    }
+    let mut state = state_json(dir, "ABC-1");
+    state["confirmations"][0]["normal_form"] = serde_json::json!(0);
+    write_state(dir, &state);
+    let golden = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/next_json.txt"),
+    )
+    .unwrap();
+    assert_eq!(one_line(dir, &["--json"]), golden);
+    // The flag may come before the key.
+    assert_eq!(one_line(dir, &["--json", "abc-1"]), golden);
+
+    // A build step: a subject and a path, no command, no facts.
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    commit(dir, "initial");
+    assert_eq!(
+        one_line(dir, &["--json"]),
+        format!(
+            "{{\"v\":1,\"ticket\":\"ABC-1\",\"action\":\"build-step\",\"subject\":\"step 1\",\
+             \"command\":null,\"path\":\"{TICKET}\",\"facts\":[]}}\n"
+        )
+    );
+
+    // A closed ticket and no open ticket.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    close(dir);
+    assert_eq!(
+        one_line(dir, &["--json", "ABC-1"]),
+        "{\"v\":1,\"ticket\":\"ABC-1\",\"action\":\"closed\",\"subject\":null,\
+         \"command\":null,\"path\":null,\"facts\":[]}\n"
+    );
+    assert_eq!(
+        one_line(dir, &["--json"]),
+        "{\"v\":1,\"ticket\":null,\"action\":\"new-ticket\",\"subject\":null,\
+         \"command\":\"stapel new \\\"<title>\\\"\",\"path\":null,\"facts\":[]}\n"
+    );
+}
+
+/// The shared setup of the tests after the build: one step, its RED and GREEN committed.
+macro_rules! after_the_build {
+    () => {
+        fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) -> String {
+            for (rel, text) in files {
+                let path = dir.join(rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, text).unwrap();
+            }
+            for args in [
+                vec!["add", "-A"],
+                vec!["commit", "-q", "--allow-empty", "-m", subject],
+            ] {
+                let out = std::process::Command::new("git")
+                    .args(&args)
+                    .current_dir(dir)
+                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                    .env("GIT_AUTHOR_NAME", "test-user")
+                    .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                    .env("GIT_COMMITTER_NAME", "test-user")
+                    .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                    .output()
+                    .unwrap();
+                assert!(
+                    out.status.success(),
+                    "git {args:?}: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            let out = std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        }
+        /// A confirmed ticket with a one-step Plan whose RED and GREEN are committed; returns the
+        /// repository and the ids of the RED and the GREEN. `[check]` is set when `with_check`.
+        fn done(with_check: bool) -> (tempfile::TempDir, String, String) {
+            let repo = written();
+            let dir = repo.path();
+            set_plan(dir, "Route: full, auto.\n\n1. One.");
+            if with_check {
+                let toml = dir.join(".stapel/stapel.toml");
+                let mut text = std::fs::read_to_string(&toml).unwrap();
+                text.push_str("\n[check]\nrunner = \"cargo\"\ntimeout_secs = 900\n");
+                std::fs::write(&toml, text).unwrap();
+            }
+            confirm_all(dir);
+            commit(dir, &[], "initial");
+            let red = commit(
+                dir,
+                &[(
+                    "crates/tiny/tests/t1.rs",
+                    "#[test]\nfn t() {\n    assert!(true);\n}\n",
+                )],
+                "ABC-1 step 1 RED: test",
+            );
+            let green = commit(
+                dir,
+                &[("crates/tiny/src/lib.rs", "// one\n")],
+                "ABC-1 step 1 GREEN: code",
+            );
+            (repo, red, green)
+        }
+        #[allow(dead_code)]
+        fn record(dir: &Path, head: &str, result: &str) {
+            let record = serde_json::json!({
+                "v": 1, "kind": "check", "id": "c1", "at": "2026-10-19T10:00:00Z",
+                "ticket": "ABC-1", "head": head, "result": result, "steps": [],
+            });
+            std::fs::write(
+                dir.join(".stapel/tickets/ABC-1/runs.jsonl"),
+                format!("{record}\n"),
+            )
+            .unwrap();
+        }
+    };
+}
+
+// AC-20: changes outside the machine files after the steps come before the check.
+#[test]
+fn uncommitted_changes_before_the_check() {
+    after_the_build!();
+    let review = format!("next: code-review — {TICKET}");
+    let commit_line = "next: commit — git status";
+
+    // A clean tree after the steps: no commit to make.
+    let (repo, _, _) = done(false);
+    assert_eq!(action(repo.path()), review);
+
+    // `ticket.md` edited and not committed.
+    set_section(repo.path(), "ABC-1", "Review", "Reviewed.");
+    assert_eq!(
+        facts(repo.path()),
+        vec!["blocked: uncommitted changes: .stapel/tickets/ABC-1/ticket.md".to_string()]
+    );
+    assert_eq!(action(repo.path()), commit_line);
+
+    // At most five paths are named.
+    let (repo, _, _) = done(false);
+    let dir = repo.path();
+    for n in 1..=6 {
+        std::fs::write(dir.join(format!("f{n}.txt")), "x\n").unwrap();
+    }
+    assert_eq!(
+        facts(dir),
+        vec!["blocked: uncommitted changes: f1.txt, f2.txt, f3.txt, f4.txt, f5.txt".to_string()]
+    );
+    assert_eq!(action(dir), commit_line);
+
+    // Only a machine file changed: not `commit`.
+    let (repo, _, green) = done(false);
+    let dir = repo.path();
+    record(dir, &green, "pass");
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    assert_eq!(action(dir), review);
+
+    // With `[check]` and no record, `commit` still comes before `run-check`.
+    let (repo, _, _) = done(true);
+    let dir = repo.path();
+    assert_eq!(action(dir), "next: run-check — stapel check ABC-1");
+    std::fs::write(dir.join("f1.txt"), "x\n").unwrap();
+    assert_eq!(action(dir), commit_line);
+}
+
+// AC-16: after the steps, a check that is not a pass at HEAD is to be run.
+#[test]
+fn run_check_after_the_steps() {
+    after_the_build!();
+    let run = "next: run-check — stapel check ABC-1";
+    let review = format!("next: code-review — {TICKET}");
+
+    // No record.
+    let (repo, _, _) = done(true);
+    assert_eq!(action(repo.path()), run);
+    assert!(facts(repo.path()).is_empty());
+
+    // A passing check at HEAD.
+    let (repo, _, green) = done(true);
+    record(repo.path(), &green, "pass");
+    assert_eq!(action(repo.path()), review);
+
+    // A pass at an older commit is stale: the code changed since.
+    let (repo, red, _) = done(true);
+    record(repo.path(), &red, "pass");
+    assert_eq!(action(repo.path()), run);
+
+    // No `[check]`: the rule does not apply.
+    let (repo, _, _) = done(false);
+    assert_eq!(action(repo.path()), review);
+}
+
+// AC-17 and AC-18: the Review section, then the Summary.
+#[test]
+fn code_review_then_summary() {
+    after_the_build!();
+    let (repo, _, _) = done(false);
+    let dir = repo.path();
+    assert_eq!(action(dir), format!("next: code-review — {TICKET}"));
+    assert!(facts(dir).is_empty());
+
+    set_section(dir, "ABC-1", "Review", "Reviewed: no findings.");
+    commit(dir, &[], "ABC-1: review");
+    assert_eq!(action(dir), format!("next: write-summary — {TICKET}"));
+    assert!(facts(dir).is_empty());
+}
+
+// AC-19: nothing left to do but close.
+#[test]
+fn close_at_the_end() {
+    after_the_build!();
+    let (repo, _, _) = done(false);
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Review", "Reviewed: no findings.");
+    set_section(dir, "ABC-1", "Summary", "Done.");
+    commit(dir, &[], "ABC-1: review and summary");
+    assert_eq!(action(dir), "next: close — stapel close ABC-1");
+    assert!(facts(dir).is_empty());
+
+    // With `[check]`: the commit of Review and Summary makes the record stale, so the check runs
+    // again (SR2-6); a pass at the new HEAD gives `close`.
+    let (repo, _, green) = done(true);
+    let dir = repo.path();
+    record(dir, &green, "pass");
+    set_section(dir, "ABC-1", "Review", "Reviewed: no findings.");
+    set_section(dir, "ABC-1", "Summary", "Done.");
+    let head = commit(dir, &[], "ABC-1: review and summary");
+    assert_eq!(action(dir), "next: run-check — stapel check ABC-1");
+    record(dir, &head, "pass");
+    assert_eq!(action(dir), "next: close — stapel close ABC-1");
+}
