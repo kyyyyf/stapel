@@ -22,3 +22,4 @@
 {"v":1,"id":"d-e84d14606091","at":"2026-10-19T12:01:01Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:19e3047f5841a4eb34ca7d6d53a87af5d4c40ee29b5d19294a81eae4cd714069","via":"grant"}
 {"v":1,"id":"d-725bb533d5f1","at":"2026-10-19T12:01:01Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:f60c31c71bf98785db6d5c7d943e2d7065e2cab1497fb57457b4d456da7fb54c","via":"grant"}
 {"v":1,"id":"d-0c44259e6d45","at":"2026-10-19T12:01:01Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:a21e2f8c2e275f6820af37827bdc7e51fcb78a4e1bd7a14395d45acde45915d1","via":"grant"}
+{"v":1,"id":"d-5b2ceb912fa5","at":"2026-10-19T12:24:57Z","by":"kyyyyf","action":"close","reason":"built and reviewed: import-records, dialog, report row"}
