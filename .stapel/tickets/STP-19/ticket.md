@@ -141,7 +141,7 @@ Terms:
 | AC-9 | IF the records hash, the key or the action differs from the dialog's (`FILE` edited, renamed to another base name, another key with records that carry no `ticket` (records that carry `ticket` meet the AC-2 check first, exit 2; SR1-7); a grant of `findings import`, `ledger add` or `ok`), or the grant was used, THEN the command exits 1 with the mismatch text of `findings import` (`the grant does not match: the records, the ticket or the stapel build changed since the dialog, or the grant was used already; ask the agent to run the command again`) and writes nothing; an expired grant gives today's `the grant expired; ask the agent to run the command again`. A grant of the import command opens no other command. | `token_records::grant_names_the_records` |
 | AC-10 | IF the import command runs in an agent's shell without a grant THEN it exits 1 with `only a person imports token records: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT` and writes nothing. | `token_records::agent_shell_without_grant_refused` |
 | AC-11 | IF an agent adds its own `--grant`, or a word with `$`, after `tokens import-records` (sub-action in any case) THEN the guard denies with `a --grant comes only from the permission dialog; stapel ok, stapel close, stapel findings import, stapel ledger add and stapel tokens import-records may not carry one of their own or words filled in at run time`; this one sentence replaces today's for all five commands. `stapel tokens add …`, `stapel tokens import …`, `stapel tokens` and `stapel tokens <KEY>` stay allowed by the guard without a dialog (SR1-3). | `token_records::guard_denies_own_grant`, `token_records::other_tokens_commands_stay_allowed` |
-| AC-12 | WHEN `stapel tokens [KEY]` reads a `source` `measured` or `estimate` record that has the field `imported_from` THE report adds it to its own row per role and model, with the role cell `<role> (file)`, sorted after the rows of records without `imported_from` and the legacy rows of the same role and model (SR1-14); it checks and sums it as other v1 records; other rows and the columns do not change; the sessions table of `stapel tokens` without `KEY` does not count it (SR1-2). Output: `golden/tokens_report_file.txt`. | `token_records::report_shows_imported_rows` |
+| AC-12 | WHEN `stapel tokens [KEY]` reads a `source` `measured` or `estimate` record that has the field `imported_from` THE report adds it to its own row per role and model, with the role cell `<role> (file)`, sorted after the rows of records without `imported_from` and the legacy rows of the same role and model (SR1-14); it checks and sums it as other v1 records; other rows and the columns do not change; the sessions table of `stapel tokens` without `KEY` does not count it (SR1-2). Output: `golden/tokens_report_file.txt`. | `token_records::report_shows_imported_rows`, `token_records::report_imported_row_edges`, `token_records::sessions_ignore_imported_without_transcript` |
 
 ### Guarantees
 
@@ -241,6 +241,8 @@ ticket_drift`.
 | Coverage (step 1c) | a 101st line with `role` missing gets the limit reason (D1-3); a CRLF line of 64 KiB with its LF plus a CR is accepted, one byte more is refused (D1-4) | `token_records::file_limit_edges` |
 | Coverage (step 1c) | a missing `FILE` gives `stapel: nope.jsonl: No such file or directory (os error 2)` (D1-6) | `token_records::missing_file_reason` |
 | Coverage (step 1c) | `KEY` `NOPE-1` with a missing `FILE` gives the `KEY` refusal (D1-7) | `token_records::ticket_chosen_before_file` |
+| Coverage (step 2c) | a plain `builder` record of `claude-sonnet-5-5` sorts after the imported `builder (file)` row of `claude-opus-5-5` (D2-1); a hand-written imported measured record with `partial` `0` and one with `source` `other` (AC-2 refuses both at the import) each give a `problem:` line and are left out of the sums (D2-2); two imported measured and two imported estimate records of one role and model are summed in one row (D2-3) | `token_records::report_imported_row_edges` |
+| Coverage (step 2c) | an imported measured record without `transcript` of the same model next to a matching session leaves the session row as it is without it (D2-4) | `token_records::sessions_ignore_imported_without_transcript` |
 | Other tokens commands | in mode `auto` the hook allows (exit 0, no JSON) `stapel tokens add --role r --estimate 1`, `stapel tokens import t.jsonl --role r`, `stapel tokens` and `stapel tokens ABC-1` (SR1-3) | `token_records::other_tokens_commands_stay_allowed` |
 | Report | one ticket with a transcript record, a `tokens add` record, a legacy line and two imported records of the same role and model (one measured, one estimate) and one imported record of another role: rows and order by the golden file; a ticket of the history shape without `imported_from` keeps `golden/tokens_report.txt`; with a `.stapel/sessions.jsonl` whose session matches the transcript record, `stapel tokens` without `KEY` counts only the transcript record's output in the sessions table (SR1-2) | `token_records::report_shows_imported_rows` |
 
@@ -315,6 +317,9 @@ AC-11; Facts F-6 corrected and F-7 added; no round 2.
 with four coverage tests, AC-3 says how a CRLF line is measured, AC-5 says the ticket is chosen first; D1-5
 (a write error exits 2, as `findings import` and External states say) and D1-8 (the step-1 grant stub, tested
 in step 3; duplicate keys not promised) need no change.
+2026-10-19, after the drift review of step 2: D2-1 to D2-5 (2 MEDIUM, 3 LOW); one spec change: plan step 2c
+with two coverage tests (D2-1 to D2-4); D2-5 (a hand-written `imported_from`) is not promised by
+Guarantees and needs no change.
 
 ## Proof
 
@@ -331,7 +336,7 @@ in step 3; duplicate keys not promised) need no change.
 | AC-9 | `token_records::grant_names_the_records` |
 | AC-10 | `token_records::agent_shell_without_grant_refused` |
 | AC-11 | `token_records::guard_denies_own_grant`, `token_records::other_tokens_commands_stay_allowed` |
-| AC-12 | `token_records::report_shows_imported_rows` |
+| AC-12 | `token_records::report_shows_imported_rows`, `token_records::report_imported_row_edges`, `token_records::sessions_ignore_imported_without_transcript` |
 
 ## Plan
 
@@ -344,6 +349,8 @@ Route: full (tags `guard`, `data`, `interface`), pinned at the frame.
    functions, each helper nested inside its function.
 2. The report row of imported records (AC-12). Must not change: the other rows, the columns, the sessions
    table, `golden/tokens_report.txt` and `golden/tokens_report_all.txt`.
+2c. Coverage after the drift review of step 2 (D2-1 to D2-4). Tests only: two new `#[test]` functions, each
+   helper nested inside its function, expected texts inline.
 3. The dialog, the grant, the agent-shell refusal and the own-grant denial (AC-6 to AC-11); the RED commit
    also changes `GRANT_DENIED` in `crates/stapel-cli/tests/records.rs` to the AC-11 sentence. Must not
    change: the `ok`, `close`, `findings import` and `ledger add` dialogs and their grant facts.
