@@ -32,6 +32,12 @@ pub const AGENT_SHELL: &str = "only a person writes review records and ledger re
      as one plain command so that Claude Code shows the permission dialog, or, from a Zed task \
      started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT";
 
+/// The refusal of `tokens import-records` in an agent's shell without a grant (STP-19 AC-10).
+pub const AGENT_SHELL_TOKENS: &str = "only a person imports token records: this shell belongs \
+     to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain \
+     command so that Claude Code shows the permission dialog, or, from a Zed task started from a \
+     Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT";
+
 /// The text of a grant that matches no dialog of a record command (STP-18 AC-14).
 pub const MISMATCH: &str = "the grant does not match: the records, the ticket or the stapel \
      build changed since the dialog, or the grant was used already; ask the agent to run the \

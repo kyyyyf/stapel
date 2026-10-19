@@ -11,6 +11,7 @@ mod new;
 mod ok;
 mod repo;
 mod status;
+mod token_records;
 mod tokens;
 
 use clap::{Parser, Subcommand};
@@ -123,6 +124,17 @@ enum TokensAction {
         #[arg(long, allow_hyphen_values = true)]
         note: Option<String>,
     },
+    /// Append every record of a JSON lines file to the ticket's tokens.jsonl, all or nothing.
+    #[command(name = "import-records")]
+    ImportRecords {
+        /// A regular UTF-8 file of JSON lines.
+        file: String,
+        /// The ticket key; without it, the only open ticket.
+        key: Option<String>,
+        /// One-time grant from the permission dialog; set by the guard, never by hand.
+        #[arg(long, hide = true)]
+        grant: Option<String>,
+    },
     /// Record the session totals of a Claude Code transcript's last cost-state line.
     Session { transcript: std::path::PathBuf },
     /// Record the measured usage of a Claude Code transcript (main or subagent file).
@@ -223,6 +235,13 @@ fn main() -> ExitCode {
                 since,
                 until,
             }),
+            Some(TokensAction::ImportRecords { file, key, grant }) => {
+                return fail::finish(token_records::import(
+                    &file,
+                    key.as_deref(),
+                    grant.as_deref(),
+                ));
+            }
             Some(TokensAction::Session { transcript }) => tokens::session(&transcript),
             None => match tokens::report(key.as_deref()) {
                 Ok(code) => return code,
