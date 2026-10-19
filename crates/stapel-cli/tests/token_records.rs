@@ -1823,3 +1823,119 @@ fn own_grant_edges() {
     .stderr("");
     assert_eq!(grant_files(dir), 0);
 }
+
+// ---- Step 4c: coverage after code review round 1 (DR-1, R-4, E-7, E-1, F-8) ----
+
+#[test]
+fn ticket_and_v_types() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    // `ticket` of the wrong type, and `v` that is a number but not the integer 1.
+    let cases: [(&str, Value, &str); 3] = [
+        ("ticket", json!(7), "stapel: in.jsonl:1: ticket: must be ABC-1\n"),
+        ("ticket", Value::Null, "stapel: in.jsonl:1: ticket: must be ABC-1\n"),
+        ("v", json!(1.0), "stapel: in.jsonl:1: v: must be 1\n"),
+    ];
+    for (field, value, expected) in cases {
+        let mut record = measured("T-1");
+        record[field] = value.clone();
+        put(dir, "in.jsonl", &line(&record));
+        assert_eq!(refused(dir, &["in.jsonl"]), expected, "{field} {value}");
+        assert!(target_text(dir).is_none(), "{field} {value}: wrote something");
+    }
+}
+
+#[test]
+fn grant_binds_text_not_line_endings() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let run_with = |token: &str| {
+        agent(
+            dir,
+            &["tokens", "import-records", "in.jsonl", "ABC-1", "--grant", token],
+        )
+    };
+    let text = many(2);
+    put(dir, "in.jsonl", &text);
+    let (_, replaced) = common::ask(dir, "stapel tokens import-records in.jsonl");
+    let token = common::token_of(&replaced);
+
+    // The file turned to CRLF with a blank line added: the same records, so the grant holds.
+    let crlf = format!("{}\r\n\r\n", text.trim_end().replace('\n', "\r\n"));
+    put(dir, "in.jsonl", &crlf);
+    run_with(&token)
+        .success()
+        .stdout("imported: 2 token records into ABC-1\n");
+    let written = target_text(dir).unwrap();
+    assert_eq!(written.lines().count(), 2, "{written}");
+    assert!(written.contains("\"id\":\"r-0\"") && written.contains("\"id\":\"r-1\""));
+    assert_eq!(grant_files(dir), 0);
+
+    // After another dialog, a changed `step` or `note` is another text: the grant does not match.
+    for (field, value) in [("step", "changed"), ("note", "changed")] {
+        put(dir, TARGET, "");
+        put(dir, "in.jsonl", &text);
+        let (_, replaced) = common::ask(dir, "stapel tokens import-records in.jsonl");
+        let token = common::token_of(&replaced);
+        let mut first = measured("r-0");
+        first[field] = json!(value);
+        put(dir, "in.jsonl", &format!("{}{}", line(&first), line(&measured("r-1"))));
+        run_with(&token).code(1).stderr(MISMATCH).stdout("");
+        assert_eq!(target_text(dir).unwrap(), "", "{field}");
+    }
+}
+
+#[test]
+fn foreign_grant_leaves_the_ledger() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &many(1));
+    let ledger = ".stapel/process-ledger.jsonl";
+    let first = "{\"v\":1,\"at\":\"2026-01-01T00:00:00Z\",\"kind\":\"catches\",\"ticket\":\"ABC-1\",\"note\":\"item 3 caught it\"}\n";
+    put(dir, ledger, first);
+    let (_, replaced) = common::ask(dir, "stapel tokens import-records in.jsonl ABC-1");
+    let token = common::token_of(&replaced);
+    agent(
+        dir,
+        &["ledger", "add", "--kind", "finding", "--note", "x", "ABC-1", "--grant", &token],
+    )
+    .code(1)
+    .stderr(MISMATCH)
+    .stdout("");
+    assert_eq!(std::fs::read(dir.join(ledger)).unwrap(), first.as_bytes());
+    assert!(target_text(dir).is_none());
+}
+
+#[test]
+fn allow_rule_forms() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &many(1));
+    let settings = ".claude/settings.local.json";
+    let allow = |rule: &str| {
+        put(
+            dir,
+            settings,
+            &json!({"permissions": {"allow": [rule]}}).to_string(),
+        );
+    };
+    // These rules do not skip the dialog of `import-records`: it asks.
+    for rule in ["Bash(stapel tokens import:*)", "Bash(stapel tokens import *)"] {
+        allow(rule);
+        let before = grant_files(dir);
+        let (reason, replaced) = common::ask(dir, "stapel tokens import-records in.jsonl");
+        assert!(reason.starts_with("stapel: import 1 token records from in.jsonl"), "{rule}");
+        assert!(replaced.contains(" --grant "), "{rule}");
+        assert_eq!(grant_files(dir), before + 1, "{rule}");
+    }
+    // These rules would skip the dialog: denied, and no grant file is written.
+    let before = grant_files(dir);
+    for rule in ["Bash(stapel tokens import*)", "Bash(stapel tokens import-records:*)"] {
+        allow(rule);
+        common::hook_bash(dir, "stapel tokens import-records in.jsonl", "auto")
+            .code(DENY)
+            .stdout("")
+            .stderr(predicates::str::contains("allow rule"));
+        assert_eq!(grant_files(dir), before, "{rule}");
+    }
+}
