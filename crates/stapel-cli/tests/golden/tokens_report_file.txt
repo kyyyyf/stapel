@@ -1,0 +1,7 @@
+ticket: ABC-1
+role             model                           input   output  cache read  cache write  estimate           legacy
+builder          claude-opus-5-5                    10       20           0            —         —                —
+builder          claude-opus-5-5                     —        —           —            —         —     500 measured
+builder (file)   claude-opus-5-5                     4       90           —            —        80                —
+orchestrator     claude-opus-5-5                     —      300           —            —         —                —
+reviewer (file)  claude-opus-5-5                     1        2           —            —         —                —

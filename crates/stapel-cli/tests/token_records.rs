@@ -917,3 +917,85 @@ fn ticket_chosen_before_file() {
         "stapel: no ticket NOPE-1 in .stapel/tickets\n"
     );
 }
+
+#[test]
+fn report_shows_imported_rows() {
+    // Rows of a ticket with every origin, in the order of the golden file.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let lines = [
+        r#"{"v":1,"id":"t-1","role":"orchestrator","model":"claude-opus-5-5","source":"measured","output":300,"transcript":"s-sess","from":"2026-01-01T12:00:00.000Z","to":"2026-01-01T12:00:00.000Z","importer":2}"#,
+        r#"{"v":1,"id":"t-2","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"builder","model":"claude-opus-5-5","source":"measured","input":10,"output":20,"cache_read":0}"#,
+        r#"{"ts":"2026-10-02T18:00:00Z","ticket":"ABC-1","role":"builder","model":"claude-opus-5-5","total_tokens":500,"kind":"measured"}"#,
+        r#"{"v":1,"id":"t-4","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"builder","model":"claude-opus-5-5","source":"measured","input":4,"output":90,"transcript":"s-sess","from":"2026-01-01T12:01:00.000Z","to":"2026-01-01T12:01:00.000Z","importer":2,"imported_from":"in.jsonl"}"#,
+        r#"{"v":1,"id":"t-5","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"builder","model":"claude-opus-5-5","source":"estimate","estimate":80,"imported_from":"in.jsonl"}"#,
+        r#"{"v":1,"id":"t-6","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"reviewer","model":"claude-opus-5-5","source":"measured","input":1,"output":2,"imported_from":"in.jsonl"}"#,
+    ];
+    put(dir, TARGET, &(lines.join("\n") + "\n"));
+    let report = |dir: &Path, args: &[&str]| {
+        let out = stapel(dir)
+            .args(["tokens"])
+            .args(args)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        String::from_utf8(out).unwrap()
+    };
+    assert_eq!(report(dir, &["ABC-1"]), golden("tokens_report_file.txt"));
+
+    // The sessions table counts the transcript record only, not the imported one of the same
+    // session and model.
+    put(
+        dir,
+        ".stapel/sessions.jsonl",
+        "{\"v\":1,\"id\":\"s-1\",\"at\":\"2026-01-02T00:00:00Z\",\"session\":\"s-sess\",\"start\":1767268800000,\"duration_ms\":120000,\"models\":{\"claude-opus-5-5\":{\"output\":800,\"thinking\":150}}}\n",
+    );
+    let text = report(dir, &[]);
+    let row: Vec<&str> = text
+        .lines()
+        .find(|l| l.starts_with("s-sess"))
+        .unwrap_or_else(|| panic!("no session row:\n{text}"))
+        .split_whitespace()
+        .collect();
+    assert_eq!(
+        row,
+        ["s-sess", "claude-opus-5-5", "800", "150", "300", "0", "0", "500"]
+    );
+
+    // A ticket of the history shape, with no `imported_from`, keeps its report.
+    let history = repo_with_ticket();
+    let hdir = history.path();
+    for args in [
+        vec![
+            "--role",
+            "builder",
+            "--input",
+            "10",
+            "--output",
+            "20",
+            "--cache-read",
+            "0",
+        ],
+        vec!["--role", "author", "--estimate", "5000"],
+        vec!["--role", "builder", "--estimate", "70"],
+    ] {
+        let mut a = vec!["tokens", "add", "ABC-1"];
+        a.extend(args);
+        stapel(hdir).args(&a).assert().success();
+    }
+    let main = hdir.join("main.jsonl");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/main.jsonl"),
+        &main,
+    )
+    .unwrap();
+    stapel(hdir)
+        .args(["tokens", "import"])
+        .arg(&main)
+        .args(["--role", "orchestrator", "--until", "2026-01-02T00:00:00Z"])
+        .assert()
+        .success();
+    assert_eq!(report(hdir, &["ABC-1"]), golden("tokens_report.txt"));
+}
