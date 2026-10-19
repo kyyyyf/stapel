@@ -1,0 +1,3 @@
+## import
+stapel: import 3 token records from in.jsonl into ABC-1: measured input 30, output 12, cache read 3, cache write 2; estimate 100 | m-1 builder m-1 measured input 10 output 5 cache read 3 cache write 2 step step 1 note first | m-2 builder m-1 measured input 20 output 7 cache read — cache write — step — note — | e-1 reviewer m-2 estimate estimate 100 step — note —; runs: stapel. Answer Yes or No; do not choose "don't ask again".
+stapel tokens import-records in.jsonl ABC-1 --grant <token>

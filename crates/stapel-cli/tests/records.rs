@@ -958,7 +958,7 @@ fn ledger_change_keeps_check_fresh() {
 const DENY: i32 = 2;
 const TAIL: &str = "Answer Yes or No; do not choose \"don't ask again\".";
 const MISMATCH: &str = "stapel: the grant does not match: the records, the ticket or the stapel build changed since the dialog, or the grant was used already; ask the agent to run the command again\n";
-const GRANT_DENIED: &str = "a --grant comes only from the permission dialog; stapel ok, stapel close, stapel findings import and stapel ledger add may not carry one of their own or words filled in at run time";
+const GRANT_DENIED: &str = "a --grant comes only from the permission dialog; stapel ok, stapel close, stapel findings import, stapel ledger add and stapel tokens import-records may not carry one of their own or words filled in at run time";
 
 /// The block `## name` of `golden/records_dialog.txt`: the reason, then the replaced command with
 /// its token shown as `<token>`.

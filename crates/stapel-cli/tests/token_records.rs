@@ -1086,3 +1086,583 @@ fn sessions_ignore_imported_without_transcript() {
         [["s-sess", "claude-opus-5-5", "800", "150", "300", "0", "0", "500"]]
     );
 }
+
+// ---- Step 3: the dialog, the grant, the own-grant denial (AC-6 to AC-9, AC-11) ----
+
+const DENY: i32 = 2;
+const TAIL: &str = "Answer Yes or No; do not choose \"don't ask again\".";
+const MISMATCH: &str = "stapel: the grant does not match: the records, the ticket or the stapel build changed since the dialog, or the grant was used already; ask the agent to run the command again\n";
+const GRANT_DENIED: &str = "a --grant comes only from the permission dialog; stapel ok, stapel close, stapel findings import, stapel ledger add and stapel tokens import-records may not carry one of their own or words filled in at run time";
+
+/// The block `## name` of `golden/token_records_dialog.txt`: the reason, then the replaced
+/// command with its token shown as `<token>`.
+fn dialog_golden(name: &str) -> String {
+    let text = golden("token_records_dialog.txt");
+    let start = text.find(&format!("## {name}\n")).unwrap() + name.len() + 4;
+    let end = text[start..].find("## ").map_or(text.len(), |i| start + i);
+    text[start..end].to_string()
+}
+
+/// The dialog's answer as `reason\nreplaced command\n`, the token shown as `<token>`.
+fn dialog_text(reason: &str, replaced: &str) -> String {
+    let token = common::token_of(replaced);
+    format!("{reason}\n{}\n", replaced.replace(&token, "<token>"))
+}
+
+fn grant_files(dir: &Path) -> usize {
+    std::fs::read_dir(common::grants_dir(dir)).map_or(0, |d| d.count())
+}
+
+/// A command run in an agent's shell: `CLAUDECODE` is set.
+fn agent(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    stapel(dir).args(args).env("CLAUDECODE", "1").assert()
+}
+
+/// `n` measured records `r-0`, `r-1`, … as the lines of a file.
+fn many(n: usize) -> String {
+    (0..n).map(|i| line(&measured(&format!("r-{i}")))).collect()
+}
+
+#[test]
+fn dialog_for_import() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let mut first = measured("m-1");
+    first["cache_read"] = json!(3);
+    first["cache_write"] = json!(2);
+    first["step"] = json!("step 1");
+    first["note"] = json!("first");
+    let mut second = measured("m-2");
+    second["input"] = json!(20);
+    second["output"] = json!(7);
+    let mut third = estimate("e-1");
+    third["role"] = json!("reviewer");
+    third["model"] = json!("m-2");
+    put(
+        dir,
+        "in.jsonl",
+        &format!("{}{}{}", line(&first), line(&second), line(&third)),
+    );
+    let before = std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/state.json")).unwrap();
+
+    // The golden: reason and replaced command; the key is added; one grant file per dialog.
+    let (reason, replaced) = common::ask(dir, "stapel tokens import-records in.jsonl");
+    assert_eq!(
+        dialog_text(&reason, &replaced),
+        dialog_golden("import"),
+        "{reason}"
+    );
+    assert_eq!(common::token_of(&replaced).len(), 32);
+    assert_eq!(grant_files(dir), 1);
+    // Nothing is written by the dialog.
+    assert!(target_text(dir).is_none());
+    assert_eq!(
+        std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/state.json")).unwrap(),
+        before
+    );
+
+    // A key in any case, the sub-action in any case, and the `cargo run` form as written.
+    let (reason, replaced) = common::ask(dir, "stapel TOKENS Import-Records in.jsonl abc-1");
+    assert!(reason.starts_with("stapel: import 3 token records from in.jsonl into ABC-1: "));
+    assert!(replaced.starts_with("stapel tokens import-records in.jsonl ABC-1 --grant "));
+    let (reason, replaced) = common::ask(
+        dir,
+        "cargo run -q -p stapel-cli -- tokens import-records in.jsonl",
+    );
+    assert!(
+        reason.ends_with(&format!("; runs: cargo run -q -p stapel-cli --. {TAIL}")),
+        "{reason}"
+    );
+    assert!(
+        replaced.starts_with(
+            "cargo run -q -p stapel-cli -- tokens import-records in.jsonl ABC-1 --grant "
+        ),
+        "{replaced}"
+    );
+    assert_eq!(grant_files(dir), 3);
+
+    // No estimate record: the estimate sum is 0.
+    put(dir, "m.jsonl", &line(&measured("x-1")));
+    let (reason, _) = common::ask(dir, "stapel tokens import-records m.jsonl");
+    assert_eq!(
+        reason,
+        format!(
+            "stapel: import 1 token records from m.jsonl into ABC-1: measured input 10, output 5, cache read 0, cache write 0; estimate 0 | x-1 builder m-1 measured input 10 output 5 cache read — cache write — step — note —; runs: stapel. {TAIL}"
+        )
+    );
+    // Only estimate records: the measured sums are 0.
+    put(
+        dir,
+        "e.jsonl",
+        &format!("{}{}", line(&estimate("y-1")), line(&estimate("y-2"))),
+    );
+    let (reason, _) = common::ask(dir, "stapel tokens import-records e.jsonl");
+    assert!(
+        reason.starts_with(
+            "stapel: import 2 token records from e.jsonl into ABC-1: measured input 0, output 0, cache read 0, cache write 0; estimate 200 | y-1 builder m-1 estimate estimate 100 step — note — | y-2 "
+        ),
+        "{reason}"
+    );
+
+    // A closed ticket by its key: the reason says so.
+    stapel(dir)
+        .args(["close", "ABC-1", "--reason", "done"])
+        .assert()
+        .success();
+    let (reason, _) = common::ask(dir, "stapel tokens import-records m.jsonl ABC-1");
+    assert!(
+        reason.starts_with("stapel: import 1 token records from m.jsonl into ABC-1 (closed): "),
+        "{reason}"
+    );
+}
+
+#[test]
+fn dialog_cuts_the_note() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let mut records = Vec::new();
+    let mut with_note = |id: &str, note: String| {
+        let mut v = measured(id);
+        v["note"] = json!(note);
+        records.push(v);
+    };
+    with_note("n40", "n".repeat(40));
+    with_note("n41", "n".repeat(41));
+    with_note("c41", "я".repeat(41));
+    with_note("nl", "a\nb".to_string());
+    let mut whole = measured("whole");
+    whole["role"] = json!("r".repeat(40));
+    whole["model"] = json!("m".repeat(40));
+    whole["step"] = json!("s".repeat(40));
+    records.push(whole);
+    let mut cut = measured("cut");
+    cut["role"] = json!("r".repeat(41));
+    cut["model"] = json!("m".repeat(41));
+    cut["step"] = json!("s".repeat(41));
+    records.push(cut);
+    let text: String = records.iter().map(line).collect();
+    // A tab in the base name is shown as a space (the word is quoted, so the tab stays).
+    put(dir, "t\tab.jsonl", &text);
+    let (reason, _) = common::ask(dir, "stapel tokens import-records 't\tab.jsonl'");
+    assert!(
+        reason.starts_with("stapel: import 6 token records from t ab.jsonl into ABC-1: "),
+        "{reason}"
+    );
+    let counts = "measured input 10 output 5 cache read — cache write —";
+    let entry = |id: &str, role: &str, model: &str, step: &str, note: &str| {
+        format!("{id} {role} {model} {counts} step {step} note {note}")
+    };
+    let expected = [
+        entry("n40", "builder", "m-1", "—", &"n".repeat(40)),
+        entry("n41", "builder", "m-1", "—", &format!("{}…", "n".repeat(40))),
+        entry("c41", "builder", "m-1", "—", &format!("{}…", "я".repeat(40))),
+        entry("nl", "builder", "m-1", "—", "a b"),
+        entry(
+            "whole",
+            &"r".repeat(40),
+            &"m".repeat(40),
+            &"s".repeat(40),
+            "—",
+        ),
+        entry(
+            "cut",
+            &format!("{}…", "r".repeat(40)),
+            &format!("{}…", "m".repeat(40)),
+            &format!("{}…", "s".repeat(40)),
+            "—",
+        ),
+    ]
+    .join(" | ");
+    assert!(
+        reason.contains(&format!("| {expected}; runs: stapel.")),
+        "{reason}"
+    );
+}
+
+#[test]
+fn guard_denies_what_the_command_refuses() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let mut bad = measured("b-1");
+    bad.as_object_mut().unwrap().remove("role");
+    put(dir, "bad.jsonl", &line(&bad));
+    put(dir, "ok.jsonl", &line(&measured("o-1")));
+    put(dir, "dup.jsonl", &line(&measured("o-1")));
+    put(dir, "dir/x", "");
+
+    // The guard gives the reason of the command, and writes no grant.
+    let cases: [(&str, Vec<&str>); 4] = [
+        (
+            "stapel tokens import-records bad.jsonl",
+            vec!["tokens", "import-records", "bad.jsonl"],
+        ),
+        (
+            "stapel tokens import-records missing.jsonl",
+            vec!["tokens", "import-records", "missing.jsonl"],
+        ),
+        (
+            "stapel tokens import-records dir",
+            vec!["tokens", "import-records", "dir"],
+        ),
+        (
+            "stapel tokens import-records ok.jsonl NOPE-1",
+            vec!["tokens", "import-records", "ok.jsonl", "NOPE-1"],
+        ),
+    ];
+    for (command, args) in cases {
+        let out = stapel(dir)
+            .args(&args)
+            .assert()
+            .code(2)
+            .get_output()
+            .clone();
+        let expected = String::from_utf8(out.stderr).unwrap();
+        assert!(expected.starts_with("stapel: "), "{expected}");
+        let got = common::hook_bash(dir, command, "auto")
+            .code(DENY)
+            .get_output()
+            .clone();
+        assert_eq!(
+            String::from_utf8(got.stderr).unwrap(),
+            expected,
+            "{command}"
+        );
+        assert!(got.stdout.is_empty());
+    }
+    // An id that is already in the journal.
+    put(dir, TARGET, &line(&measured("o-1")));
+    let expected = refused(dir, &["ok.jsonl"]);
+    common::hook_bash(dir, "stapel tokens import-records ok.jsonl", "auto")
+        .code(DENY)
+        .stdout("")
+        .stderr(expected);
+    std::fs::remove_file(dir.join(TARGET)).unwrap();
+    assert_eq!(grant_files(dir), 0);
+
+    // Modes without a dialog deny.
+    for mode in ["bypassPermissions", "dontAsk", ""] {
+        common::hook_bash(dir, "stapel tokens import-records ok.jsonl", mode)
+            .code(DENY)
+            .stderr(predicates::str::contains("dialog"));
+    }
+    assert_eq!(grant_files(dir), 0);
+
+    // A relative `FILE` is read from the hook's `cwd`; from the root it is a missing file.
+    put(dir, "sub/in.jsonl", &line(&measured("s-1")));
+    let hook = |cwd: &Path| {
+        let payload = json!({
+            "tool_name": "Bash",
+            "cwd": cwd,
+            "permission_mode": "auto",
+            "tool_input": { "command": "stapel tokens import-records in.jsonl", "description": "test" },
+        });
+        stapel(dir)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+    };
+    let out = hook(&dir.join("sub")).success().get_output().stdout.clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    let h = &v["hookSpecificOutput"];
+    assert_eq!(h["permissionDecision"], "ask", "{v}");
+    assert!(
+        h["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .starts_with("stapel: import 1 token records from in.jsonl into ABC-1:"),
+        "{v}"
+    );
+    assert!(
+        h["updatedInput"]["command"]
+            .as_str()
+            .unwrap()
+            .starts_with("stapel tokens import-records in.jsonl ABC-1 --grant "),
+        "{v}"
+    );
+    assert_eq!(grant_files(dir), 1);
+    let err = String::from_utf8(hook(dir).code(DENY).get_output().stderr.clone()).unwrap();
+    assert!(err.starts_with("stapel: in.jsonl: "), "{err}");
+    assert_eq!(grant_files(dir), 1);
+
+    // An allow rule that would skip the dialog denies, and writes no new grant.
+    put(
+        dir,
+        ".claude/settings.local.json",
+        r#"{"permissions":{"allow":["Bash(stapel tokens:*)"]}}"#,
+    );
+    common::hook_bash(dir, "stapel tokens import-records ok.jsonl", "auto")
+        .code(DENY)
+        .stderr(predicates::str::contains("allow rule"));
+    assert_eq!(grant_files(dir), 1);
+    std::fs::remove_file(dir.join(".claude/settings.local.json")).unwrap();
+
+    // A broken configuration: the reason of the command.
+    put(dir, ".stapel/stapel.toml", "this is = [not toml\n");
+    let out = stapel(dir)
+        .args(["tokens", "import-records", "ok.jsonl"])
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    let expected = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        expected.starts_with("stapel: .stapel/stapel.toml: "),
+        "{expected}"
+    );
+    common::hook_bash(dir, "stapel tokens import-records ok.jsonl", "auto")
+        .code(DENY)
+        .stdout("")
+        .stderr(expected);
+    assert_eq!(grant_files(dir), 1);
+}
+
+#[test]
+fn dialog_limits_to_30_records() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+
+    // 31 records: a denial with the exact text, no grant.
+    put(dir, "in.jsonl", &many(31));
+    common::hook_bash(dir, "stapel tokens import-records in.jsonl", "auto")
+        .code(DENY)
+        .stdout("")
+        .stderr(
+            "stapel: the permission dialog shows at most 30 token records; split the file into parts of at most 30 records\n",
+        );
+    assert_eq!(grant_files(dir), 0);
+
+    // 30 records ask.
+    put(dir, "in.jsonl", &many(30));
+    let (reason, _) = common::ask(dir, "stapel tokens import-records in.jsonl");
+    assert!(
+        reason.starts_with("stapel: import 30 token records from in.jsonl into ABC-1:"),
+        "{reason}"
+    );
+    assert_eq!(grant_files(dir), 1);
+
+    // A person in a terminal imports 31.
+    put(dir, "in.jsonl", &many(31));
+    run(dir, &["in.jsonl"])
+        .success()
+        .stdout("imported: 31 token records into ABC-1\n");
+}
+
+#[test]
+fn dialog_usage_denials() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let usage = "usage: stapel tokens import-records FILE [KEY]";
+    let cases = [
+        (
+            "stapel tokens import-records --role x",
+            "unexpected option --role for stapel tokens import-records",
+        ),
+        (
+            "stapel tokens import-records in.jsonl --note=y",
+            "unexpected option --note=y for stapel tokens import-records",
+        ),
+        ("stapel tokens import-records a b c", usage),
+        ("stapel tokens import-records", usage),
+    ];
+    put(dir, "in.jsonl", &many(1));
+    for (command, reason) in cases {
+        common::hook_bash(dir, command, "auto")
+            .code(DENY)
+            .stdout("")
+            .stderr(format!("stapel: {reason}\n"));
+    }
+    assert_eq!(grant_files(dir), 0);
+}
+
+#[test]
+fn grant_writes_once() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &many(2));
+
+    // Written once; the grant is gone; the same token then meets the check of the repeated id
+    // first (the checks run before the grant is used).
+    let (_, replaced) = common::ask(dir, "stapel tokens import-records in.jsonl");
+    let token = common::token_of(&replaced);
+    let args = [
+        "tokens",
+        "import-records",
+        "in.jsonl",
+        "ABC-1",
+        "--grant",
+        &token,
+    ];
+    agent(dir, &args)
+        .success()
+        .stdout("imported: 2 token records into ABC-1\n");
+    let written = target_text(dir).unwrap();
+    assert_eq!(written.lines().count(), 2, "{written}");
+    assert!(written.contains("\"id\":\"r-0\"") && written.contains("\"id\":\"r-1\""));
+    assert!(written.contains("\"imported_from\":\"in.jsonl\""));
+    assert_eq!(grant_files(dir), 0);
+    agent(dir, &args)
+        .code(2)
+        .stderr(predicates::str::contains("id r-0 is already in"))
+        .stdout("");
+    assert_eq!(target_text(dir).unwrap(), written);
+    // With the records gone from the target, the checks pass and the used grant does not match.
+    put(dir, TARGET, "");
+    agent(dir, &args).code(1).stderr(MISMATCH).stdout("");
+    assert_eq!(target_text(dir).unwrap(), "");
+}
+
+#[test]
+fn grant_survives_a_failed_check() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &many(2));
+    let (_, replaced) = common::ask(dir, "stapel tokens import-records in.jsonl");
+    let token = common::token_of(&replaced);
+    let args = [
+        "tokens",
+        "import-records",
+        "in.jsonl",
+        "ABC-1",
+        "--grant",
+        &token,
+    ];
+
+    // An id of `FILE` added to the journal after the dialog: a refusal of the checks, the grant
+    // stays.
+    let other = "{\"v\":1,\"id\":\"r-1\",\"at\":\"2026-01-01T00:00:00Z\",\"ticket\":\"ABC-1\",\"role\":\"x\",\"model\":\"m\",\"source\":\"estimate\",\"estimate\":1}\n";
+    put(dir, TARGET, other);
+    agent(dir, &args)
+        .code(2)
+        .stderr(predicates::str::contains("id r-1 is already in"))
+        .stdout("");
+    assert_eq!(target_text(dir).unwrap(), other);
+    assert_eq!(grant_files(dir), 1);
+
+    // With that line gone the same grant writes once.
+    std::fs::remove_file(dir.join(TARGET)).unwrap();
+    agent(dir, &args)
+        .success()
+        .stdout("imported: 2 token records into ABC-1\n");
+    assert_eq!(target_text(dir).unwrap().lines().count(), 2);
+    assert_eq!(grant_files(dir), 0);
+}
+
+#[test]
+fn grant_names_the_records() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    stapel(dir).args(["new", "Second"]).assert().success();
+    put(dir, "in.jsonl", &many(1));
+    let import = |file: &str, key: &str, token: &str| {
+        agent(
+            dir,
+            &["tokens", "import-records", file, key, "--grant", token],
+        )
+    };
+    let token = |command: &str| common::token_of(&common::ask(dir, command).1);
+    let nothing_written = || {
+        assert!(target_text(dir).is_none());
+        assert!(!dir.join(".stapel/tickets/ABC-2/tokens.jsonl").exists());
+    };
+
+    // `FILE` edited in a count after the dialog.
+    let t = token("stapel tokens import-records in.jsonl ABC-1");
+    let mut edited = measured("r-0");
+    edited["output"] = json!(6);
+    put(dir, "in.jsonl", &line(&edited));
+    import("in.jsonl", "ABC-1", &t).code(1).stderr(MISMATCH);
+    nothing_written();
+
+    // `FILE` copied to another base name.
+    put(dir, "in.jsonl", &many(1));
+    put(dir, "copy.jsonl", &many(1));
+    let t = token("stapel tokens import-records in.jsonl ABC-1");
+    import("copy.jsonl", "ABC-1", &t).code(1).stderr(MISMATCH);
+    nothing_written();
+
+    // Another key, with records that carry no `ticket`.
+    let t = token("stapel tokens import-records in.jsonl ABC-1");
+    import("in.jsonl", "ABC-2", &t).code(1).stderr(MISMATCH);
+    nothing_written();
+
+    // A grant of `findings import`, of `ledger add` and of `ok` on the import command, and a
+    // grant of the import command on `findings import`.
+    put(
+        dir,
+        "f.jsonl",
+        &line(&json!({
+            "id": "F-1", "ticket": "ABC-1", "stage": "code-review", "round": 1,
+            "role": "reviewer", "severity": "HIGH", "promise": "inside", "claim": "a claim",
+            "catchable_at": "code", "fate": "fixed",
+        })),
+    );
+    let t = token("stapel findings import f.jsonl ABC-1");
+    import("in.jsonl", "ABC-1", &t).code(1).stderr(MISMATCH);
+    let t = token("stapel ledger add --kind finding --note x ABC-1");
+    import("in.jsonl", "ABC-1", &t).code(1).stderr(MISMATCH);
+    let t = token("stapel ok ABC-1 spec");
+    import("in.jsonl", "ABC-1", &t)
+        .code(1)
+        .stderr(predicates::str::contains("the grant does not match"));
+    nothing_written();
+    let t = token("stapel tokens import-records in.jsonl ABC-1");
+    agent(dir, &["findings", "import", "f.jsonl", "ABC-1", "--grant", &t])
+        .code(1)
+        .stderr(MISMATCH);
+    assert!(!dir.join(".stapel/tickets/ABC-1/findings.jsonl").exists());
+
+    // Used twice: the first run writes, the second (with the records gone) does not match.
+    let t = token("stapel tokens import-records in.jsonl ABC-1");
+    import("in.jsonl", "ABC-1", &t).success();
+    assert_eq!(target_text(dir).unwrap().lines().count(), 1);
+    put(dir, TARGET, "");
+    import("in.jsonl", "ABC-1", &t).code(1).stderr(MISMATCH);
+    assert_eq!(target_text(dir).unwrap(), "");
+    std::fs::remove_file(dir.join(TARGET)).unwrap();
+
+    // An expired grant.
+    let t = token("stapel tokens import-records in.jsonl ABC-1");
+    for entry in std::fs::read_dir(common::grants_dir(dir)).unwrap() {
+        std::fs::write(entry.unwrap().path(), r#"{"expires_at":1}"#).unwrap();
+    }
+    import("in.jsonl", "ABC-1", &t)
+        .code(1)
+        .stderr("stapel: the grant expired; ask the agent to run the command again\n");
+    nothing_written();
+    assert_eq!(grant_files(dir), 0);
+}
+
+#[test]
+fn guard_denies_own_grant() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "f", "x");
+    for command in [
+        "stapel tokens import-records in.jsonl --grant abc",
+        "stapel tokens import-records in.jsonl ABC-1 --grant=abc",
+        "stapel TOKENS IMPORT-RECORDS in.jsonl --grant x",
+        "cargo run -q -p stapel-cli -- tokens import-records in.jsonl --grant abc",
+        "stapel tokens import-records $(cat f)",
+        "stapel tokens import-records in.jsonl $KEY",
+        "stapel findings import in.jsonl --grant abc",
+        "stapel ledger add --kind finding --note x --grant abc",
+        "stapel ok spec --grant abc",
+        "stapel close --reason done --grant abc",
+    ] {
+        common::hook_bash(dir, command, "auto")
+            .code(DENY)
+            .stdout("")
+            .stderr(format!("stapel: {GRANT_DENIED}\n"));
+    }
+    // The other tokens commands are not read by this rule.
+    for command in [
+        "stapel tokens import t.jsonl --role r $x",
+        "stapel tokens add --role r --estimate 1 --note $x",
+    ] {
+        common::hook_bash(dir, command, "auto")
+            .success()
+            .stdout("")
+            .stderr("");
+    }
+    assert_eq!(grant_files(dir), 0);
+}
