@@ -25,7 +25,7 @@ import, so `next` reads no fate); the drift review after a GREEN step; choosing 
 1. `stapel next [KEY] [--json]` resolves the ticket as `stapel status` does; with no `KEY` and no open
    ticket it names the action `new-ticket` with `stapel new "<title>"`. It writes nothing.
 2. It reads only: `state.json` (closed, confirmations), the sections of `ticket.md`, the `Route:` line and
-   the numbered step items of the Plan, the first-parent history `base..HEAD` (step commits and the
+   the numbered step items of the Plan, the first-parent history of `HEAD`, `base` bounding the build-input range as in `check` (step commits and the
    history analysis of `stapel check --history`, without cargo), the newest check record of `runs.jsonl`,
    and the `stage` of the records in `findings.jsonl`.
 3. It prints the blocking facts first (each confirmation missing or stale, a Plan with no step or a step
@@ -34,7 +34,8 @@ import, so `next` reads no fate); the drift review after a GREEN step; choosing 
    is empty, `TODO` or has no `### Frame`); `write-section` (the first configured, not `generated` section
    that is empty or `TODO`); `spec-review` (route not `light`, no confirmation ever, no `spec-review`
    finding); `confirm` (`stapel ok KEY`); `fix-history` (the step, its outcome and commit); `fix-check`;
-   `green-step` or `build-step` (the first Plan step not done, in Plan order); `run-check` (`stapel check
+   `green-step` or `build-step` (the first Plan step not done, in Plan order); `commit` (the tree has
+   changes outside the machine files); `run-check` (`stapel check
    KEY`, when `[check]` is set and the check is not a pass at HEAD); `code-review` (Review is `TODO`);
    `write-summary`; `close` (`stapel close KEY`, by the person).
 4. A Plan step `N.` or `Nx.` (a letter suffix) has the label `step N` or `step Nx`. It is done when
@@ -106,37 +107,42 @@ Terms:
 - **Done step**: a Plan step whose label has a GREEN commit in history, or a commit on the first-parent
   history of `HEAD` whose subject starts with `<KEY> <label> ` followed by a word other than `RED:` or
   `GREEN:` that ends with `:` (`STP-19 step 3c coverage: …`).
+- **Open RED**: a Plan step whose only step commit is a RED that is the newest step commit of the ticket,
+  as the commit hook reads it (`check::hook_faults`); history gives it `unpaired`, which is not a fault here.
 - **Fact line**: `blocked: <fact>`. **Action line**: `next: <action>` followed by ` <subject>` when the
   action has one and by ` — <target>` when it has a command or a path.
 - **Ticket path**: `.stapel/tickets/<KEY>/ticket.md`, with the folder key.
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN the next command runs on an open ticket THE command prints `ticket: <KEY> — <title>`, then one fact line per blocking fact of AC-7, AC-9 and AC-11 to AC-13, then one action line: the first of AC-5 to AC-19 that applies, in that order; exit 0; it writes no file and no git object. Output: `golden/next_text.txt`. | `next::prints_facts_then_one_action`, `next::writes_nothing` |
-| AC-2 | WHEN the next command runs with `--json` THE command prints one line, a JSON object with the keys `v` (1), `ticket` (the key or `null`), `action`, `subject`, `command`, `path` (each a string or `null`) and `facts` (the fact texts without `blocked: `), in this order, and nothing else; exit as AC-1. Output: `golden/next_json.txt`. | `next::json_has_the_same_action` |
+| AC-1 | WHEN the next command runs on an open ticket THE command prints `ticket: <KEY> — <title>`, then one fact line per blocking fact of AC-7 and AC-9, and of AC-11 to AC-13 and AC-20 when the history is read (AC-10), then one action line: the first that applies of AC-5 to AC-15, AC-20, AC-16 to AC-19, in that order; exit 0; it writes no file and no git object. Output: `golden/next_text.txt`. | `next::prints_facts_then_one_action`, `next::writes_nothing` |
+| AC-2 | WHEN the next command runs with `--json` THE command prints one line, a JSON object with the keys `v` (1), `ticket` (the key or `null`), `action`, `subject`, `command`, `path` (each a string or `null`) and `facts` (an array of strings: the fact texts without `blocked: `), in this order, and nothing else; exit as AC-1. Output: `golden/next_json.txt`. | `next::json_has_the_same_action` |
 | AC-3 | WHEN the next command runs without `KEY` and no ticket is open THE command prints `next: new-ticket — stapel new "<title>"` (exit 0); with `--json`, `ticket` is `null` and `command` is `stapel new "<title>"`. | `next::no_open_ticket_names_new` |
-| AC-4 | IF `KEY` names no ticket folder, or no `KEY` is given and several tickets are open, THEN the command prints `stapel: <reason of the ticket choice>` on stderr and exits 2; IF the ticket is legacy, its `state.json` or `ticket.md` cannot be read, or there is no repository or `.stapel/stapel.toml` cannot be read, THEN it prints `stapel: <reason>` and exits 1; stdout is empty in both cases. | `next::refuses_a_wrong_call`, `next::refuses_an_unreadable_ticket` |
+| AC-4 | IF `KEY` names no ticket folder or several folders that differ only in case, or no `KEY` is given and several tickets are open, THEN the command prints `stapel: <reason of the ticket choice>` on stderr and exits 2; IF the ticket is legacy, its `state.json` or `ticket.md` cannot be read, or there is no repository or `.stapel/stapel.toml` cannot be read, THEN it prints `stapel: <reason>` and exits 1; stdout is empty in both cases. | `next::refuses_a_wrong_call`, `next::refuses_an_unreadable_ticket` |
 | AC-5 | WHEN the ticket is closed THE action line is `next: closed` and there is no fact line. | `next::closed_ticket` |
 | AC-6 | WHEN the Description section is not written or has no line `### Frame` THE action line is `next: write-frame — <ticket path>`. | `next::frame_first` |
 | AC-7 | WHEN a confirmed section is not written, is missing or is found twice THE action line is `next: write-section <title> — <ticket path>` for the first such section in the configured order; a found-twice section adds the fact `<title> is duplicated`. A Plan with no Plan step adds the fact `the Plan has no steps`, one with a label twice adds `the Plan names <label> twice`, and either counts as the Plan not written. | `next::sections_in_order`, `next::plan_structure` |
-| AC-8 | WHEN every confirmed section is written, the route is not `light`, `state.json` holds no confirmation of any section, and no record of `findings.jsonl` has `stage` `spec-review` THE action line is `next: spec-review — <ticket path>`; on a `light` route this rule does not apply. | `next::spec_review_until_a_fact`, `next::light_route_skips_spec_review` |
-| AC-9 | WHEN a confirmed section has no confirmation or a stale one THE command adds the fact `<id> not confirmed` or `<id> confirmation is stale: <reason>` (the text of `stapel status`) for each, in the configured order, and the action line is `next: confirm — stapel ok <KEY>`. | `next::confirm_names_each_section` |
+| AC-8 | WHEN every confirmed section is written, the route is not `light`, `state.json` holds no confirmation of any section, and no record of `findings.jsonl` has `stage` `spec-review` THE action line is `next: spec-review — <ticket path>`; a review with no finding is followed by `stapel ok <KEY>`, whose confirmation ends this rule; on a `light` route the rule does not apply. | `next::spec_review_until_a_fact`, `next::light_route_skips_spec_review` |
+| AC-9 | WHEN a confirmed section has no confirmation or a stale one THE command adds the fact `<id> not confirmed` or `<id> confirmation is stale: <reason>` (`Reason::describe`) for each, in the configured order, and the action line is `next: confirm — stapel ok <KEY>`. | `next::confirm_names_each_section` |
 | AC-10 | IF no rule of AC-5 to AC-9 applies and the history cannot be read (a shallow clone, a `base` off the first-parent history of `HEAD`, a git error) THEN the command prints `stapel: <the refusal of stapel check>` and exits 1; while one of those rules applies, the command does not read the history, so neither stops it. | `next::history_read_only_when_needed` |
 | AC-11 | WHEN a step commit of the ticket has a label that no Plan step has THE command adds the fact `history has <label>, the Plan does not` for each such label in history order, and the action line is `next: write-section Plan — <ticket path>`. | `next::step_outside_the_plan` |
-| AC-12 | WHEN a step's history outcome is not passing (`unpaired`, `duplicate`, `no-tests`, `red-changes-code`, `tests-changed`, a build-input outcome, `unverified`) THE command adds the fact `<label>: <outcome> — <reason>` for each such step in history order, and the action line is `next: fix-history <label> — stapel check --history <KEY>` for the first. | `next::history_faults_block_the_build` |
+| AC-12 | WHEN a step other than an open RED has a history outcome that is not passing and not `unverified` THE command adds the fact `<label>: <outcome> at <short sha> — <reason>` (the fault commit) for each such step in history order, and the action line is `next: fix-history <label> — stapel check --history <KEY>` for the first; the fact goes only when the history is rewritten (amend or rebase); `unverified` is left to the full check (AC-16). | `next::history_faults_block_the_build` |
 | AC-13 | WHEN `[check]` is set and the newest check record is a current `fail` (`check: fail at <sha>` in `stapel status`) THE command adds the fact `check fails at <short sha>` and the action line is `next: fix-check — .stapel/tickets/<KEY>/runs.jsonl`. | `next::failing_check_blocks_the_build` |
-| AC-14 | WHEN the first Plan step in Plan order that is not done has a RED and no GREEN in history THE action line is `next: green-step <label> — <ticket path>`; with no step commit, `next: build-step <label> — <ticket path>`. | `next::first_open_step` |
+| AC-14 | WHEN the first Plan step in Plan order that is not done is an open RED THE action line is `next: green-step <label> — <ticket path>`, unless `outcomes::open_red` gives `no-tests` or `red-changes-code`, which is a fact and a `fix-history` action as in AC-12; with no step commit, `next: build-step <label> — <ticket path>`. | `next::first_open_step`, `next::open_red_is_judged_alone` |
 | AC-15 | WHEN a Plan step has no GREEN but a commit `<KEY> <label> <word>: …` with another word (coverage, cleanup) THE step is done and AC-14 moves to the next Plan step. | `next::coverage_and_cleanup_steps_are_done` |
 | AC-16 | WHEN every Plan step is done, `[check]` is set and the check line of `stapel status` is not `check: pass at <sha>` THE action line is `next: run-check — stapel check <KEY>`; without `[check]` this rule does not apply. | `next::run_check_after_the_steps` |
 | AC-17 | WHEN the rules above do not apply and the section of id `review` is configured and not written THE action line is `next: code-review — <ticket path>`. | `next::code_review_then_summary` |
 | AC-18 | WHEN the rules above do not apply and the section of id `summary` is configured and not written THE action line is `next: write-summary — <ticket path>`. | `next::code_review_then_summary` |
-| AC-19 | WHEN no rule of AC-5 to AC-18 applies THE action line is `next: close — stapel close <KEY>`. | `next::close_at_the_end` |
+| AC-19 | WHEN no rule of AC-5 to AC-18 and AC-20 applies THE action line is `next: close — stapel close <KEY>`. | `next::close_at_the_end` |
+| AC-20 | WHEN every Plan step is done and the working tree has changes outside the machine files (`worktree::dirty_paths`, which `stapel check` refuses) THE command adds the fact `uncommitted changes: <at most five paths>` and the action line is `next: commit — git status`; this rule comes before AC-16. | `next::uncommitted_changes_before_the_check` |
 
 ### Guarantees
 
 - **Promised:** the Frame's promise, by AC-1 to AC-19; `stapel status`, `stapel check` and `stapel check
   --history` keep their output and their tests.
-- **Not promised:** the Frame's list; a Plan step written inside a list item or a code block (any line
+- **Not promised:** the Frame's list; without `KEY`, a ticket whose `state.json` cannot be read counts as
+  not open, as `tickets::resolve` reads it; a subject `<KEY> step 2 coverage RED: …` is a step commit with
+  the label `step 2 coverage` (`parse_subject`), so AC-11 names it; a Plan step written inside a list item or a code block (any line
   that starts at the first column counts); a label in history that differs from a Plan label only in case
   (they differ); `findings.jsonl` lines that are not JSON (skipped, as `status` skips them); the time a long
   history takes (item 1.11); a ticket that changes while the command runs.
@@ -191,7 +197,7 @@ status`, `--test check_history` and `--test ticket_drift`.
 | Read-only | the tree, `.stapel/` and `git count-objects`/refs before and after a run at each of `confirm`, `build-step` and `run-check` are equal | `next::writes_nothing` |
 | JSON | the same ticket with `--json`: one line, key order, `facts` without `blocked: `, `subject` `null`; a `build-step` case with `subject` `step 1` and `path`; by the golden file | `next::json_has_the_same_action` |
 | No ticket | no ticket folder; only closed tickets; text and JSON | `next::no_open_ticket_names_new` |
-| Wrong call | `KEY` `NOPE-1`; two open tickets without `KEY`; exit 2, stderr text, empty stdout | `next::refuses_a_wrong_call` |
+| Wrong call | `KEY` `NOPE-1`; two folders `ABC-1` and `abc-1` with `KEY` `abc-1`; `--jsonx`; two open tickets without `KEY`; exit 2, stderr text, empty stdout | `next::refuses_a_wrong_call` |
 | Unreadable | a legacy `state.json`; a `state.json` that is not JSON; a `ticket.md` that is a directory; outside a repository; a broken `stapel.toml`; exit 1, empty stdout | `next::refuses_an_unreadable_ticket` |
 | Closed | a closed ticket by `KEY` in lower case: `next: closed`, no fact line | `next::closed_ticket` |
 | Frame | Description `TODO`; empty; written without `### Frame`; `#### Frame` does not count | `next::frame_first` |
@@ -202,10 +208,12 @@ status`, `--test check_history` and `--test ticket_drift`.
 | Confirm | `spec` not confirmed and `design` stale by a change: two facts with the `status` texts, `next: confirm — stapel ok ABC-1` | `next::confirm_names_each_section` |
 | Lazy history | a shallow clone at the `confirm` stage: the action is printed (exit 0); the same clone with every section confirmed: exit 1 with the shallow refusal; a `base` off history at the `confirm` stage: the action is printed; with every section confirmed: exit 1 with the `check` text | `next::history_read_only_when_needed` |
 | Step outside | history has `step 5` RED, the Plan has `1.` to `4.`: the fact and `write-section Plan` | `next::step_outside_the_plan` |
-| History faults | a RED that changes code (`red-changes-code`); a GREEN without a RED (`unpaired`); two faults: two facts in history order, the action names the first | `next::history_faults_block_the_build` |
+| History faults | a RED that changes code with its GREEN after it (`red-changes-code`); a GREEN without a RED (`unpaired`); two faults: two facts in history order with their commits, the action names the first; step 2 RED between step 1 RED and GREEN (`unverified: interleaved`): no fact | `next::history_faults_block_the_build` |
 | Failing check | a `runs.jsonl` check record `fail` at `HEAD` with a clean tree: the fact and `fix-check`; the same record after a new commit is stale and does not block | `next::failing_check_blocks_the_build` |
+| Open RED | step 1 RED only, which changes code: `fix-history step 1`; step 1 RED only with no test: `fix-history step 1`; step 2 RED after step 1 RED with no GREEN: step 1 `unpaired` is a fault, step 2 is the open RED | `next::open_red_is_judged_alone` |
 | Steps | no commit: `build-step step 1`; step 1 RED only: `green-step step 1`; step 1 RED and GREEN: `build-step step 2`; step 2 done before step 1: `build-step step 1` | `next::first_open_step` |
 | Coverage steps | `ABC-1 step 1c coverage: …` marks `step 1c` done; `ABC-1 step 4 cleanup: …` marks `step 4` done; `ABC-1 step 2 notes` (no colon) does not; `ABC-1 step 2: …` does not | `next::coverage_and_cleanup_steps_are_done` |
+| Uncommitted | all steps done, `ticket.md` edited and not committed: the fact and `next: commit — git status`; only `runs.jsonl` changed: not `commit` | `next::uncommitted_changes_before_the_check` |
 | Run check | all steps done, no check record: `run-check`; a passing check at `HEAD`: not `run-check`; no `[check]`: not `run-check` | `next::run_check_after_the_steps` |
 | Review and summary | Review `TODO`: `code-review`; Review written, Summary `TODO`: `write-summary` | `next::code_review_then_summary` |
 | Close | everything done: `next: close — stapel close ABC-1` | `next::close_at_the_end` |
@@ -215,7 +223,10 @@ status`, `--test check_history` and `--test ticket_drift`.
 | Input | Type | Smallest / largest | Empty | Invalid | Precision | Test |
 |---|---|---|---|---|---|---|
 | `KEY` (positional of `next`) | ticket folder name, any case | one ticket | absent: the only open ticket, or `new-ticket` when none is open | no such folder, several open without key: exit 2; legacy or unreadable: exit 1 | ASCII case ignored | `next::refuses_a_wrong_call`, `next::closed_ticket` |
-| `--json` | flag | — | absent: text | — | — | `next::json_has_the_same_action` |
+| `--json` | flag | — | absent: text | an unknown option such as `--jsonx`: exit 2 (clap) | — | `next::json_has_the_same_action`, `next::refuses_a_wrong_call` |
+| `state.json` | JSON, `state::load` | — | no confirmations: AC-8 or AC-9 | not JSON, legacy: exit 1 | — | `next::refuses_an_unreadable_ticket`, `next::spec_review_until_a_fact` |
+| `runs.jsonl` check record | JSON line, newest well-formed (`checkstate::current`: full `head`, `result` `pass` or `fail`) | — | no file or no record: `run-check` | a record without `head` or with another `result`: skipped | short sha of 7 | `next::failing_check_blocks_the_build`, `next::run_check_after_the_steps` |
+| `[check]` of `stapel.toml` | table | — | absent: AC-13 and AC-16 do not apply | a broken `stapel.toml`: exit 1 | — | `next::run_check_after_the_steps`, `next::refuses_an_unreadable_ticket` |
 | `ticket.md` sections | Markdown, `## ` headings | — | missing, empty or `TODO`: not written | found twice: a fact | title case ignored (`ticket::find`) | `next::sections_in_order` |
 | Plan step lines | `<digits>[a-z]. ` at the first column | `1.`; any number of digits | none: a fact | indented, uppercase letter, two letters: not a step | exact label | `next::plan_structure` |
 | `Route:` line | text | — | absent: `full` | other word: `full` | `light` in any case, whole word | `next::light_route_skips_spec_review` |
@@ -233,7 +244,7 @@ status`, `--test check_history` and `--test ticket_drift`.
 | git | submodules | not read | — |
 | git | paths with spaces and odd bytes | not read: only subjects | — |
 | git | commit messages with control bytes | subjects are compared as text; not promised | — |
-| git | dirty tree | does not block; a dirty tree makes the check line stale, so `run-check` | `next::run_check_after_the_steps` |
+| git | dirty tree | after the steps, changes outside the machine files give `commit` (AC-20); machine files do not count | `next::uncommitted_changes_before_the_check` |
 | git | configuration and `GIT_*` environment | not promised, as `check --history` | — |
 | cargo | every dimension | not run | — |
 | claude-code | every dimension | not read: the guard allows `stapel next` like `stapel status` | — |
@@ -249,6 +260,13 @@ another ticket's key (counted: the file is the ticket's own; not tested).
 **Author self-check:** 2026-10-19, before spec review: every promise item has a criterion and a test; each
 input has its empty and invalid case; the Inputs and External states rows were checked against `status.rs`,
 `check.rs`, `stage.rs`, `steps.rs`, `checkstate.rs` and the catalogue; no open question is left.
+2026-10-19, after spec review round 1 (external): 1 HIGH (SR1-1: an open RED reads `unpaired`, so
+`green-step` was never named), 4 MEDIUM, 6 LOW; 10 inside, 1 outside (SR1-10, recorded as not promised).
+All applied as one change: the term Open RED and test `next::open_red_is_judged_alone` (SR1-1); AC-12 names
+the fault commit, says how the fact goes and leaves `unverified` to the full check (SR1-2); AC-20 `commit`
+before `run-check` and test `next::uncommitted_changes_before_the_check` (SR1-3); Inputs rows for
+`state.json`, `runs.jsonl` and `[check]` (SR1-4); AC-8 names the exit after a clean review (SR1-5); AC-1,
+Frame item 2, AC-4, AC-9, AC-2 and Not promised (SR1-6 to SR1-11). Round 2 runs, as SR1-1 is HIGH.
 
 ## Proof
 
@@ -267,12 +285,13 @@ input has its empty and invalid case; the Inputs and External states rows were c
 | AC-11 | `next::step_outside_the_plan` |
 | AC-12 | `next::history_faults_block_the_build` |
 | AC-13 | `next::failing_check_blocks_the_build` |
-| AC-14 | `next::first_open_step` |
+| AC-14 | `next::first_open_step`, `next::open_red_is_judged_alone` |
 | AC-15 | `next::coverage_and_cleanup_steps_are_done` |
 | AC-16 | `next::run_check_after_the_steps` |
 | AC-17 | `next::code_review_then_summary` |
 | AC-18 | `next::code_review_then_summary` |
 | AC-19 | `next::close_at_the_end` |
+| AC-20 | `next::uncommitted_changes_before_the_check` |
 
 ## Plan
 
@@ -282,10 +301,10 @@ Route: full (tag `interface`), auto.
    frame, sections and Plan structure, spec review, confirm (AC-1 without `next::writes_nothing`, AC-3 to
    AC-9). Must not change: `stapel status`, `tickets::resolve`, `stage.rs`.
 2. The rules that read history: lazy history and its refusals, steps outside the Plan, history faults,
-   failing check, open steps, coverage and cleanup steps (AC-10 to AC-15). Must not change: the output and the exit codes of `stapel check` and `stapel check
+   failing check, open RED, open steps, coverage and cleanup steps (AC-10 to AC-15). Must not change: the output and the exit codes of `stapel check` and `stapel check
    --history`, `outcomes.rs`, `steps::parse_subject`.
-3. The rules after the build and the JSON form: run check, code review, summary, close, `--json` (AC-2,
-   AC-16 to AC-19, and `next::writes_nothing` of AC-1 over the `confirm`, `build-step` and `run-check` stages). Must not change: `checkstate.rs`.
+3. The rules after the build and the JSON form: uncommitted changes, run check, code review, summary,
+   close, `--json` (AC-2, AC-16 to AC-20, and `next::writes_nothing` of AC-1 over the `confirm`, `build-step` and `run-check` stages). Must not change: `checkstate.rs`.
 
 ## Review
 
