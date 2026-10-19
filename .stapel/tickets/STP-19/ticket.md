@@ -206,7 +206,34 @@ Terms:
 
 ### Decisions (as built)
 
-None yet.
+- Step 1 (2bea010, 6d41d1b): `records::plan_tokens` runs ticket choice, `read_input`, the base name, then
+  `check_tokens`, as `plan_findings`; an unreachable missing base name gives `<file>: not a regular file`.
+  `TokensPlan` holds `records: Vec<TokenRecord>`, `ids` and `hash`; `TokensPlan::lines(at)` builds each line
+  with `format!` in the AC-1 order. `at` is `now_rfc3339()` (UTC, `Z`), taken once per run in the CLI.
+  Check order of a record: `id`, `ticket`, `role`, `model`, `source`, presence by source, count types
+  (`input`, `output`, `cache_read`, `cache_write`, `estimate`), `step`, `note`, `v`, other fields in line
+  order (the binary has `preserve_order` through `stapel-cli`). A non-string `ticket` gets `ticket: must be
+  <KEY>`; `v` `1.0` is refused. The 101st record line gets the limit reason after the JSON-object check.
+  Known ids come from V1 and Legacy lines; Problem lines (unknown `v` included) give none. The agent-shell
+  refusal (`fail::AGENT_SHELL_TOKENS`) comes before `repo::open`. Until step 3, any `--grant` exited 1 with
+  the mismatch text and wrote nothing.
+- Steps 1c, 2c, 3c and 3d (ae8f673, cb65afe, 9cf4fbb, 7287982): coverage tests, all passing at once.
+- Step 2 (e979520, 6f0a166): the presence of the key `imported_from`, whatever its value, gives origin 2;
+  rows sort by role, model, then origin (0, legacy 1, imported 2). An imported record with a bad `partial`
+  or `importer` is a problem line, as other v1 records. Imported measured records are not passed to the
+  sessions table, even when they carry `transcript`, `from` and `to`.
+- Step 3 (c45b8ff, e42dbcc): `plain_invocation` reads `tokens import-records` in any case and returns `None`
+  for `tokens import`, `tokens add` and `tokens` alone; `check_stapel` has a `tokens` arm for the
+  sub-action. The dialog checks options and the number of positional words before `plan_tokens` (an option
+  is a word starting with `-` other than `-`); the 30-record limit reuses `DIALOG_MAX_FINDINGS` and comes
+  after `plan_tokens`, so a check refusal wins (D3-6). The base name is shown through `shown` without a cut.
+  A `note` of `""` shows as `note ` (no `—`). The sums count the four measured counts of `measured` records
+  and the estimates of `estimate` records; an absent count adds 0. The tail is `tokens import-records <FILE
+  as typed, quoted> <folder key>`. The command runs: agent-shell check, `repo::open`, `plan_tokens`,
+  `consume_with(…, MISMATCH)`, `append_all`; so a write error after the grant needs a new dialog, as for
+  `findings import` (D3-5). The shared `GRANT_REASON` gives the AC-11 sentence for all five commands. The
+  RED of step 3 added file-level test helpers to `token_records.rs`, which `stapel check` reports as
+  "superseded by step 3" for the step-1 file; the check passes.
 
 ## Test plan
 
@@ -243,8 +270,8 @@ ticket_drift`.
 | Coverage (step 1c) | `KEY` `NOPE-1` with a missing `FILE` gives the `KEY` refusal (D1-7) | `token_records::ticket_chosen_before_file` |
 | Coverage (step 2c) | a plain `builder` record of `claude-sonnet-5-5` sorts after the imported `builder (file)` row of `claude-opus-5-5` (D2-1); a hand-written imported measured record with `partial` `0` and one with `source` `other` (AC-2 refuses both at the import) each give a `problem:` line and are left out of the sums (D2-2); two imported measured and two imported estimate records of one role and model are summed in one row (D2-3) | `token_records::report_imported_row_edges` |
 | Coverage (step 2c) | an imported measured record without `transcript` of the same model next to a matching session leaves the session row as it is without it (D2-4) | `token_records::sessions_ignore_imported_without_transcript` |
-| Coverage (step 3d) | a measured record with `cache_read` only shows `cache write —`; a note with a tab, a `\r` and `\u{1b}` shows each as a space; a Cyrillic note of exactly 40 characters is whole; a Cyrillic role cut at 40 (D3-2) | `token_records::dialog_text_edges` |
-| Coverage (step 3d) | an import grant on `ledger add`, `ok` and `close` runs, and a `close` grant on the import command: each refuses with its mismatch text and writes nothing (D3-3) | `token_records::grants_of_other_commands_do_not_cross` |
+| Coverage (step 3d) | a measured record with `cache_read` only shows `cache write —`; a base name with a tab, a `\r` and `\u{1b}` shows each as a space (a note cannot hold them by AC-2), a note with a newline shows it as a space; a Cyrillic note of exactly 40 characters is whole; a Cyrillic role cut at 40 (D3-2) | `token_records::dialog_text_edges` |
+| Coverage (step 3d) | an import grant on `ledger add`, `ok` and `close` runs, and a `close` grant on the import command: each refuses and writes nothing: `ledger add` and the import command with the AC-9 text, `ok` and `close` with their own `the grant does not match: the section, a dependency or the stapel build changed since the dialog, …` (D3-3) | `token_records::grants_of_other_commands_do_not_cross` |
 | Coverage (step 3d) | `stapel tokens import-records in.jsonl --grant x; true` and a word `a$b` are denied with the AC-11 sentence; `env -u CLAUDECODE stapel tokens import-records in.jsonl` is denied by the guard's rule against removing `CLAUDECODE` (D3-1); `stapel tokens add --role r --estimate 1 --grant x` is not denied by the AC-11 rule (D3-4) | `token_records::own_grant_edges` |
 | Other tokens commands | in mode `auto` the hook allows (exit 0, no JSON) `stapel tokens add --role r --estimate 1`, `stapel tokens import t.jsonl --role r`, `stapel tokens` and `stapel tokens ABC-1` (SR1-3) | `token_records::other_tokens_commands_stay_allowed` |
 | Report | one ticket with a transcript record, a `tokens add` record, a legacy line and two imported records of the same role and model (one measured, one estimate) and one imported record of another role: rows and order by the golden file; a ticket of the history shape without `imported_from` keeps `golden/tokens_report.txt`; with a `.stapel/sessions.jsonl` whose session matches the transcript record, `stapel tokens` without `KEY` counts only the transcript record's output in the sessions table (SR1-2) | `token_records::report_shows_imported_rows` |
@@ -327,6 +354,10 @@ Guarantees and needs no change.
 with three coverage tests (D3-1 to D3-4; D3-1 is no defect, as the guard denies a command that removes
 `CLAUDECODE`); D3-5 (the grant is used before the write, as `findings import`) and D3-6 (the 30-record
 limit shares `DIALOG_MAX_FINDINGS`) go to Design as built.
+2026-10-19, after step 3d: the builder found two wrong cases in the step 3d rows (a note cannot hold a tab,
+`ok` and `close` print their own mismatch text); the rows are corrected to what the tests check. `stapel
+check` passes at 9cf4fbb (506 tests). Design as built moved into the ticket; Design is complete before code
+review.
 
 ## Proof
 
