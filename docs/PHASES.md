@@ -237,7 +237,7 @@ read per ticket is under half of STP-19 (39.5M).
 
 **Items, in order.**
 
-- 1.1 `stapel next [KEY]`: the next action computed from `state.json`, the Plan steps, `check --history`,
+- 1.1 (STP-20) `stapel next [KEY]`: the next action computed from `state.json`, the Plan steps, `check --history`,
   `runs.jsonl` and `findings.jsonl`; one line of action plus the command or the path (`--json` for the
   skill); the facts that block an action named first (stale, failed, unpaired, lint). First, because it
   replaces the orchestrator re-reading `CLAUDE.md` and a 50 KB ticket on every turn (ledger 2026-10-08: the
