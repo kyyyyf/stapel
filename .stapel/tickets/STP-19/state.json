@@ -137,7 +137,19 @@
         "design": "sha256:04659245829bc7e3718d017fe8f205124edd100d9ea02c64fe36d98421c4bd6d",
         "spec": "sha256:176ca47a4efa6a11ede584e109d83968da1974b7083596af58df9bb51340f8eb"
       },
-      "text": "Route: full (tags `guard`, `data`, `interface`), pinned at the frame.\n\n1. The import command in a terminal: `records::plan_tokens` and its checks, the CLI command, the append\n   (AC-1 to AC-5). Must not change: `findings import`, `ledger add`, `tokens add`, `tokens import`,\n   `journal::append_all`.\n1c. Coverage after the drift review of step 1 (D1-1 to D1-4, D1-6, D1-7). Tests only: four new `#[test]`\n   functions, each helper nested inside its function.\n2. The report row of imported records (AC-12). Must not change: the other rows, the columns, the sessions\n   table, `golden/tokens_report.txt` and `golden/tokens_report_all.txt`.\n2c. Coverage after the drift review of step 2 (D2-1 to D2-4). Tests only: two new `#[test]` functions, each\n   helper nested inside its function, expected texts inline.\n3. The dialog, the grant, the agent-shell refusal and the own-grant denial (AC-6 to AC-11); the RED commit\n   also changes `GRANT_DENIED` in `crates/stapel-cli/tests/records.rs` to the AC-11 sentence. Must not\n   change: the `ok`, `close`, `findings import` and `ledger add` dialogs and their grant facts.",
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-10-19T09:28:31Z",
+      "hash": "sha256:8f75ad61678298604b1dac00c408ee47fea76e2feecb2928be553c9e34183b86",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:04659245829bc7e3718d017fe8f205124edd100d9ea02c64fe36d98421c4bd6d",
+        "spec": "sha256:176ca47a4efa6a11ede584e109d83968da1974b7083596af58df9bb51340f8eb"
+      },
+      "text": "Route: full (tags `guard`, `data`, `interface`), pinned at the frame.\n\n1. The import command in a terminal: `records::plan_tokens` and its checks, the CLI command, the append\n   (AC-1 to AC-5). Must not change: `findings import`, `ledger add`, `tokens add`, `tokens import`,\n   `journal::append_all`.\n1c. Coverage after the drift review of step 1 (D1-1 to D1-4, D1-6, D1-7). Tests only: four new `#[test]`\n   functions, each helper nested inside its function.\n2. The report row of imported records (AC-12). Must not change: the other rows, the columns, the sessions\n   table, `golden/tokens_report.txt` and `golden/tokens_report_all.txt`.\n2c. Coverage after the drift review of step 2 (D2-1 to D2-4). Tests only: two new `#[test]` functions, each\n   helper nested inside its function, expected texts inline.\n3. The dialog, the grant, the agent-shell refusal and the own-grant denial (AC-6 to AC-11); the RED commit\n   also changes `GRANT_DENIED` in `crates/stapel-cli/tests/records.rs` to the AC-11 sentence. Must not\n   change: the `ok`, `close`, `findings import` and `ledger add` dialogs and their grant facts. The tests\n   `token_records::agent_shell_without_grant_refused` (built in step 1) and\n   `token_records::other_tokens_commands_stay_allowed` (today's guard) pass before the code, so they are not\n   in the RED.\n3c. Coverage after the GREEN of step 3: the two tests above, and any other test of step 3 that passed at its\n   RED. Tests only: new `#[test]` functions, each helper nested inside its function.",
       "via": "grant"
     }
   ]
