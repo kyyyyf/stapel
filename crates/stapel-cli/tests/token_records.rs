@@ -999,3 +999,90 @@ fn report_shows_imported_rows() {
         .success();
     assert_eq!(report(hdir, &["ABC-1"]), golden("tokens_report.txt"));
 }
+
+#[test]
+fn report_imported_row_edges() {
+    // Hand-written imported records go straight into the target: the import command refuses
+    // the two invalid ones.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let lines = [
+        r#"{"v":1,"id":"e-1","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"builder","model":"claude-opus-5-5","source":"measured","input":4,"output":90,"imported_from":"in.jsonl"}"#,
+        r#"{"v":1,"id":"e-2","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"builder","model":"claude-sonnet-5-5","source":"measured","input":7,"output":8}"#,
+        r#"{"v":1,"id":"e-3","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"reviewer","model":"claude-opus-5-5","source":"measured","input":1,"output":2,"imported_from":"in.jsonl"}"#,
+        r#"{"v":1,"id":"e-4","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"reviewer","model":"claude-opus-5-5","source":"measured","input":3,"output":4,"imported_from":"in.jsonl"}"#,
+        r#"{"v":1,"id":"e-5","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"reviewer","model":"claude-opus-5-5","source":"estimate","estimate":10,"imported_from":"in.jsonl"}"#,
+        r#"{"v":1,"id":"e-6","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"reviewer","model":"claude-opus-5-5","source":"estimate","estimate":20,"imported_from":"in.jsonl"}"#,
+        r#"{"v":1,"id":"e-7","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"builder","model":"claude-opus-5-5","source":"measured","input":1000,"output":1000,"partial":0,"imported_from":"in.jsonl"}"#,
+        r#"{"v":1,"id":"e-8","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"builder","model":"claude-opus-5-5","source":"other","input":2000,"output":2000,"imported_from":"in.jsonl"}"#,
+    ];
+    put(dir, TARGET, &(lines.join("\n") + "\n"));
+    let out = stapel(dir)
+        .args(["tokens", "ABC-1"])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).unwrap();
+    let (table, problems) = text.split_once("\n\n").unwrap();
+    // The two invalid records give a problem line each and are left out of the sums.
+    assert_eq!(
+        problems,
+        "problem: .stapel/tickets/ABC-1/tokens.jsonl:7\nproblem: .stapel/tickets/ABC-1/tokens.jsonl:8\n"
+    );
+    let rows: Vec<Vec<&str>> = table
+        .lines()
+        .map(|l| l.split_whitespace().collect())
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            vec!["ticket:", "ABC-1"],
+            vec![
+                "role", "model", "input", "output", "cache", "read", "cache", "write",
+                "estimate", "legacy"
+            ],
+            // The imported row of opus sorts before the plain row of sonnet; the model is
+            // the key before the origin.
+            vec!["builder", "(file)", "claude-opus-5-5", "4", "90", "—", "—", "—", "—"],
+            vec!["builder", "claude-sonnet-5-5", "7", "8", "—", "—", "—", "—"],
+            // Two measured and two estimate records are summed in one row.
+            vec!["reviewer", "(file)", "claude-opus-5-5", "4", "6", "—", "—", "30", "—"],
+        ]
+    );
+}
+
+#[test]
+fn sessions_ignore_imported_without_transcript() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let lines = [
+        r#"{"v":1,"id":"n-1","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"orchestrator","model":"claude-opus-5-5","source":"measured","output":300,"transcript":"s-sess","from":"2026-01-01T12:00:00.000Z","to":"2026-01-01T12:00:00.000Z","importer":2}"#,
+        r#"{"v":1,"id":"n-2","at":"2026-01-02T00:00:00Z","ticket":"ABC-1","role":"builder","model":"claude-opus-5-5","source":"measured","input":4,"output":90,"imported_from":"in.jsonl"}"#,
+    ];
+    put(dir, TARGET, &(lines.join("\n") + "\n"));
+    put(
+        dir,
+        ".stapel/sessions.jsonl",
+        "{\"v\":1,\"id\":\"s-1\",\"at\":\"2026-01-02T00:00:00Z\",\"session\":\"s-sess\",\"start\":1767268800000,\"duration_ms\":120000,\"models\":{\"claude-opus-5-5\":{\"output\":800,\"thinking\":150}}}\n",
+    );
+    let out = stapel(dir)
+        .args(["tokens"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).unwrap();
+    let rows: Vec<Vec<&str>> = text
+        .lines()
+        .filter(|l| l.starts_with("s-sess"))
+        .map(|l| l.split_whitespace().collect())
+        .collect();
+    // Only the record with a transcript counts: the imported one adds nothing to the session.
+    assert_eq!(
+        rows,
+        [["s-sess", "claude-opus-5-5", "800", "150", "300", "0", "0", "500"]]
+    );
+}
