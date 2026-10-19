@@ -1666,3 +1666,45 @@ fn guard_denies_own_grant() {
     }
     assert_eq!(grant_files(dir), 0);
 }
+
+// ---- Step 3c: coverage ----
+
+#[test]
+fn agent_shell_without_grant_refused() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &line(&measured("a-1")));
+    let before = common::snapshot(dir);
+    let refusal = "stapel: only a person imports token records: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT\n";
+    for var in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] {
+        for args in [vec!["in.jsonl"], vec!["in.jsonl", "ABC-1"]] {
+            stapel(dir)
+                .args(["tokens", "import-records"])
+                .args(&args)
+                .env(var, "1")
+                .assert()
+                .code(1)
+                .stdout("")
+                .stderr(refusal);
+        }
+    }
+    assert_eq!(common::snapshot(dir), before);
+}
+
+#[test]
+fn other_tokens_commands_stay_allowed() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for command in [
+        "stapel tokens add --role r --estimate 1",
+        "stapel tokens import t.jsonl --role r",
+        "stapel tokens",
+        "stapel tokens ABC-1",
+    ] {
+        common::hook_bash(dir, command, "auto")
+            .success()
+            .stdout("")
+            .stderr("");
+    }
+    assert!(!common::grants_dir(dir).exists());
+}
