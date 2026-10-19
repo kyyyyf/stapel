@@ -47,12 +47,12 @@ fn status_refusal(ticket: &Ticket) -> Result<(), String> {
 }
 
 /// The full id of `HEAD`.
-fn read_head(root: &Path) -> Result<String, String> {
+pub(crate) fn read_head(root: &Path) -> Result<String, String> {
     git_text(root, &["rev-parse", "--verify", "HEAD"]).map(|h| h.trim().to_string())
 }
 
 /// A shallow clone hides history the check reads.
-fn shallow_refusal(root: &Path) -> Result<(), String> {
+pub(crate) fn shallow_refusal(root: &Path) -> Result<(), String> {
     if git_text(root, &["rev-parse", "--is-shallow-repository"])
         .map(|s| s.trim() == "true")
         .unwrap_or(false)
@@ -66,7 +66,7 @@ fn shallow_refusal(root: &Path) -> Result<(), String> {
 }
 
 /// The `base` of the ticket's `state.json`, which must lie on the first-parent history of `HEAD`.
-fn base_of(root: &Path, ticket: &Ticket, head: &str) -> Result<Option<String>, String> {
+pub(crate) fn base_of(root: &Path, ticket: &Ticket, head: &str) -> Result<Option<String>, String> {
     let base = match &ticket.status {
         Status::Open(s) | Status::Closed(s) => s.base.clone(),
         _ => None,

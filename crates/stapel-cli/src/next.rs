@@ -1,11 +1,105 @@
 //! `stapel next [KEY]`: the next action of a ticket, from the facts on disk (STP-20). Read-only.
 
+use crate::check::{base_of, history_report, read_head, shallow_refusal};
 use crate::fail::Fail;
 use crate::repo;
+use stapel_core::build_inputs::Bounds;
+use stapel_core::checkstate::{self, CheckLine};
+use stapel_core::config::Config;
 use stapel_core::journal::{self, Entry};
-use stapel_core::next::{Facts, decide};
+use stapel_core::next::{Facts, Fault, History, decide};
+use stapel_core::outcomes::{open_red, passing};
+use stapel_core::steps::{Marker, git_text, step_commits, steps};
 use stapel_core::ticket::{parse, read};
-use stapel_core::tickets::{Status, list, resolve};
+use stapel_core::tickets::{Status, Ticket, list, resolve};
+use std::path::Path;
+
+fn short(sha: &str) -> String {
+    sha.chars().take(7).collect()
+}
+
+/// The history facts of an open ticket: its steps, their faults, the subjects of the first-parent
+/// history and a failing current check. The refusals are those of `stapel check`, with exit 1.
+fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail> {
+    let key = &ticket.key;
+    let head = match read_head(root) {
+        Ok(head) => head,
+        // A repository with no commit has no history.
+        Err(_) if git_text(root, &["rev-parse", "--git-dir"]).is_ok() => {
+            return Ok(History::default());
+        }
+        Err(e) => return Err(Fail::failed(e)),
+    };
+    shallow_refusal(root).map_err(Fail::failed)?;
+    let base = base_of(root, ticket, &head).map_err(Fail::failed)?;
+    let commits = step_commits(root, key, &head).map_err(Fail::failed)?;
+    let last = commits.last().map(|c| c.sha.clone());
+    let steps = steps(commits);
+    let bounds = Bounds {
+        base: base.as_deref(),
+        closed: false,
+    };
+    let report = history_report(root, key, &head, &steps, bounds).map_err(Fail::failed)?;
+
+    let mut faults = Vec::new();
+    for (step, s) in steps.iter().zip(&report.steps) {
+        let a = &s.analysis;
+        // An open RED is the only commit of its step and the newest step commit: it is judged by
+        // its own changes, and its `unpaired` is no fault.
+        let open = match step.commits.as_slice() {
+            [only] if only.marker == Marker::Red && Some(&only.sha) == last.as_ref() => {
+                Some(only.sha.clone())
+            }
+            _ => None,
+        };
+        let found = match open {
+            Some(red) => open_red(root, &red, &head)
+                .map_err(Fail::failed)?
+                .map(|(outcome, reason)| (outcome, reason, red)),
+            None => match &s.outcome {
+                Some((outcome, reason)) if !passing(outcome) && outcome != "unverified" => {
+                    let sha = a
+                        .fault
+                        .clone()
+                        .or_else(|| a.red.as_ref().map(|c| c.sha.clone()))
+                        .or_else(|| a.green.as_ref().map(|c| c.sha.clone()))
+                        .unwrap_or_default();
+                    Some((outcome.clone(), reason.clone(), sha))
+                }
+                _ => None,
+            },
+        };
+        if let Some((outcome, reason, sha)) = found {
+            faults.push(Fault {
+                label: a.label.clone(),
+                outcome,
+                sha: short(&sha),
+                reason,
+            });
+        }
+    }
+
+    let subjects = git_text(root, &["log", "--first-parent", "--format=%s", &head])
+        .map_err(Fail::failed)?
+        .lines()
+        .map(String::from)
+        .collect();
+    let check_fail = match checkstate::current(root, config, &ticket.dir) {
+        CheckLine::Fail(sha) => Some(sha),
+        _ => None,
+    };
+    Ok(History {
+        labels: steps.iter().map(|s| s.label.clone()).collect(),
+        greens: steps
+            .iter()
+            .filter(|s| s.greens().next().is_some())
+            .map(|s| s.label.clone())
+            .collect(),
+        faults,
+        subjects,
+        check_fail,
+    })
+}
 
 pub fn run(key: Option<&str>) -> Result<(), Fail> {
     let (root, config) = repo::open().map_err(Fail::failed)?;
@@ -39,13 +133,22 @@ pub fn run(key: Option<&str>) -> Result<(), Fail> {
         })
         .collect();
 
-    let decision = decide(&Facts {
+    let mut facts = Facts {
         key: &ticket.key,
         config: &config,
         state,
         sections: &sections,
         finding_stages: &finding_stages,
-    });
+        history: None,
+    };
+    let mut decision = decide(&facts);
+    // The history is read only when no rule before the build applies (AC-10).
+    let history;
+    if decision.needs_history {
+        history = gather(&root, &config, &ticket)?;
+        facts.history = Some(&history);
+        decision = decide(&facts);
+    }
     say!("ticket: {} — {}", ticket.key, state.title);
     for fact in &decision.facts {
         say!("{fact}");

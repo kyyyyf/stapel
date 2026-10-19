@@ -50,6 +50,46 @@ impl Action {
 pub struct Decision {
     pub facts: Vec<String>,
     pub action: Action,
+    /// Set when no rule before the build applied and `Facts::history` was `None`: the action is a
+    /// placeholder, and the caller reads the history and decides again.
+    pub needs_history: bool,
+}
+
+/// A step with a history outcome that blocks the build (STP-20 AC-12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fault {
+    pub label: String,
+    pub outcome: String,
+    /// The short id of the fault commit.
+    pub sha: String,
+    pub reason: String,
+}
+
+/// What the rules that read history need (STP-20 AC-11 to AC-15).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct History {
+    /// The labels of the step commits of the ticket, in history order, each once.
+    pub labels: Vec<String>,
+    /// The labels that have a GREEN commit.
+    pub greens: Vec<String>,
+    /// The faults, in history order.
+    pub faults: Vec<Fault>,
+    /// The subjects of the first-parent history of `HEAD`.
+    pub subjects: Vec<String>,
+    /// The short id of a current failing check.
+    pub check_fail: Option<String>,
+}
+
+/// Whether `subject` is `<KEY> <label> <word>: …` with a word other than `RED:` and `GREEN:`
+/// (a coverage or cleanup commit of the step).
+pub fn closes_step(key: &str, label: &str, subject: &str) -> bool {
+    let rest = subject
+        .strip_prefix(key)
+        .and_then(|r| r.strip_prefix(' '))
+        .and_then(|r| r.strip_prefix(label))
+        .and_then(|r| r.strip_prefix(' '));
+    rest.and_then(|r| r.split_whitespace().next())
+        .is_some_and(|w| w.len() > 1 && w.ends_with(':') && w != "RED:" && w != "GREEN:")
 }
 
 /// What the rules before the build read.
@@ -61,6 +101,8 @@ pub struct Facts<'a> {
     pub sections: &'a [Section],
     /// The `stage` of each record of `findings.jsonl`.
     pub finding_stages: &'a [String],
+    /// The history facts; `None` until the caller has read the history.
+    pub history: Option<&'a History>,
 }
 
 /// The ticket file, relative to the repository root.
@@ -128,12 +170,76 @@ fn plan_faults(plan: &str) -> Vec<String> {
         .collect()
 }
 
+/// The history facts of AC-11 to AC-13 and the action of AC-11 to AC-15 (the placeholder after the
+/// last step is replaced by step 3).
+fn history_action(f: &Facts, h: &History, plan: &str, facts: &mut Vec<String>) -> Action {
+    let path = ticket_path(f.key);
+    let labels = plan_steps(plan);
+    let outside: Vec<&String> = h.labels.iter().filter(|l| !labels.contains(l)).collect();
+    for label in &outside {
+        facts.push(format!("history has {label}, the Plan does not"));
+    }
+    for fault in &h.faults {
+        facts.push(format!(
+            "{}: {} at {} — {}",
+            fault.label, fault.outcome, fault.sha, fault.reason
+        ));
+    }
+    if let Some(sha) = &h.check_fail {
+        facts.push(format!("check fails at {sha}"));
+    }
+    if !outside.is_empty() {
+        let title = f
+            .config
+            .section("plan")
+            .map_or("Plan", |d| d.title.as_str());
+        return Action::new(
+            "write-section",
+            Some(title.to_string()),
+            Some(Target::Path(path)),
+        );
+    }
+    if let Some(fault) = h.faults.first() {
+        return Action::new(
+            "fix-history",
+            Some(fault.label.clone()),
+            Some(Target::Command(format!("stapel check --history {}", f.key))),
+        );
+    }
+    if h.check_fail.is_some() {
+        return Action::new(
+            "fix-check",
+            None,
+            Some(Target::Path(format!(
+                ".stapel/tickets/{}/runs.jsonl",
+                f.key
+            ))),
+        );
+    }
+    let open = labels
+        .iter()
+        .find(|l| !h.greens.contains(l) && !h.subjects.iter().any(|s| closes_step(f.key, l, s)));
+    match open {
+        Some(label) if h.labels.contains(label) => {
+            Action::new("green-step", Some(label.clone()), Some(Target::Path(path)))
+        }
+        Some(label) => Action::new("build-step", Some(label.clone()), Some(Target::Path(path))),
+        // Placeholder until step 3: every Plan step is done.
+        None => Action::new(
+            "run-check",
+            None,
+            Some(Target::Command(format!("stapel check {}", f.key))),
+        ),
+    }
+}
+
 pub fn decide(f: &Facts) -> Decision {
     let path = ticket_path(f.key);
     if f.state.closed.is_some() {
         return Decision {
             facts: Vec::new(),
             action: Action::new("closed", None, None),
+            needs_history: false,
         };
     }
 
@@ -183,13 +289,13 @@ pub fn decide(f: &Facts) -> Decision {
             }
         }
     }
-    let facts: Vec<String> = facts.into_iter().map(|s| format!("blocked: {s}")).collect();
 
-    let plan_is_light = f
+    let plan = f
         .config
         .section("plan")
-        .and_then(|def| find(f.sections, &def.title).found())
-        .is_some_and(is_light);
+        .and_then(|def| find(f.sections, &def.title).found());
+    let plan_is_light = plan.is_some_and(is_light);
+    let mut needs_history = false;
     let action = if !written(f.sections, "Description")
         || !find(f.sections, "Description")
             .found()
@@ -209,14 +315,18 @@ pub fn decide(f: &Facts) -> Decision {
             None,
             Some(Target::Command(format!("stapel ok {}", f.key))),
         )
+    } else if let (Some(h), Some(plan)) = (f.history, plan) {
+        history_action(f, h, plan, &mut facts)
     } else {
-        // Step 1 stops here; the rules that read history come next.
-        let first = f
-            .config
-            .section("plan")
-            .and_then(|def| find(f.sections, &def.title).found())
-            .and_then(|plan| plan_steps(plan).into_iter().next());
+        // The rules that read history come next; the caller reads it and decides again.
+        needs_history = true;
+        let first = plan.and_then(|plan| plan_steps(plan).into_iter().next());
         Action::new("build-step", first, Some(Target::Path(path)))
     };
-    Decision { facts, action }
+    let facts = facts.into_iter().map(|s| format!("blocked: {s}")).collect();
+    Decision {
+        facts,
+        action,
+        needs_history,
+    }
 }
