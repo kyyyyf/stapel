@@ -464,8 +464,9 @@ fn check_words(words: &[String], found: &mut Found) {
     }
 }
 
-/// `stapel hook ...` run by an agent, and `stapel ok|close|findings import|ledger add` with a
-/// `--grant` or a run-time word (`$`) after the action, whether as `stapel` or `cargo run ... --`.
+/// `stapel hook ...` run by an agent, and `stapel ok|close|findings import|ledger add|tokens
+/// import-records` with a `--grant` or a run-time word (`$`) after the action, whether as
+/// `stapel` or `cargo run ... --`.
 /// The action and the sub-action are compared in any case.
 fn check_stapel(name: &str, args: &[String], found: &mut Found) {
     let rest = match name {
@@ -1002,7 +1003,8 @@ fn lex(text: &str) -> Lexed {
     }
 }
 
-/// A Bash command that is exactly one `stapel ok|close` call (STP-2 AC-15).
+/// A Bash command that is exactly one `stapel ok|close|findings import|ledger add|tokens
+/// import-records` call (STP-2 AC-15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invocation {
     /// `stapel` (as written) or `cargo run [options] --`.
@@ -1013,7 +1015,8 @@ pub struct Invocation {
     pub args: Vec<String>,
 }
 
-/// The `stapel ok|close` call when `command` is exactly one simple command, else `None`.
+/// The `stapel ok|close|findings import|ledger add|tokens import-records` call when `command` is
+/// exactly one simple command, else `None`.
 pub fn plain_invocation(command: &str) -> Option<Invocation> {
     let lexed = lex(command);
     if lexed.commands.len() != 1 || !lexed.nested.is_empty() {

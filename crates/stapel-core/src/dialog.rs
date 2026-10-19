@@ -1,5 +1,6 @@
-//! The permission dialog for `stapel ok`, `stapel close`, `stapel findings import` and `stapel
-//! ledger add` run by an agent (STP-2 AC-15, AC-16; STP-18 AC-9, AC-13).
+//! The permission dialog for `stapel ok`, `stapel close`, `stapel findings import`, `stapel
+//! ledger add` and `stapel tokens import-records` run by an agent (STP-2 AC-15, AC-16; STP-18
+//! AC-9, AC-13; STP-19).
 //!
 //! The guard runs the same checks the command will run, so a "yes" does not end in a refusal,
 //! issues a one-time grant, and asks Claude Code to show the person what they approve.
@@ -23,6 +24,9 @@ pub const DIALOG_MODES: [&str; 4] = ["default", "acceptEdits", "auto", "plan"];
 
 /// The permission dialog of `findings import` shows at most this many records (STP-18 AC-17).
 pub const DIALOG_MAX_FINDINGS: usize = 30;
+
+/// The permission dialog of `tokens import-records` shows at most this many records (STP-19).
+pub const DIALOG_MAX_TOKEN_RECORDS: usize = 30;
 
 pub fn ok_facts(p: &Prepared) -> Facts {
     Facts {
@@ -296,8 +300,8 @@ fn shown(text: &str, max: usize) -> String {
     }
 }
 
-/// The dialog of `findings import` and `ledger add`: the same checks as the command, then the
-/// grant over the records.
+/// The dialog of `findings import`, `ledger add` and `tokens import-records`: the same checks as
+/// the command, then the grant over the records.
 fn prepare_records(inv: &Invocation, cwd: &Path, root: &Path) -> Result<Decision, String> {
     let program = program(inv).join(" ");
     let (facts, reason, tail) = if inv.action == "findings import" {
@@ -374,10 +378,10 @@ fn prepare_records(inv: &Invocation, cwd: &Path, root: &Path) -> Result<Decision
         };
         let plan = plan_tokens(root, cwd, file, key)?;
         let records = &plan.tokens.records;
-        if records.len() > DIALOG_MAX_FINDINGS {
+        if records.len() > DIALOG_MAX_TOKEN_RECORDS {
             return Err(format!(
-                "the permission dialog shows at most {DIALOG_MAX_FINDINGS} token records; \
-                 split the file into parts of at most {DIALOG_MAX_FINDINGS} records"
+                "the permission dialog shows at most {DIALOG_MAX_TOKEN_RECORDS} token records; \
+                 split the file into parts of at most {DIALOG_MAX_TOKEN_RECORDS} records"
             ));
         }
         let measured = |pick: fn(&TokenRecord) -> Option<u64>| -> u64 {

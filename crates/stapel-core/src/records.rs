@@ -307,6 +307,7 @@ fn check_token_record(m: &Map<String, Value>, key: &str) -> Result<TokenRecord, 
     if m.get("v").is_some_and(|v| v != 1) {
         return Err("v: must be 1".into());
     }
+    // "First" follows line order: serde_json `preserve_order`, enabled by stapel-cli.
     if let Some(other) = m.keys().find(|k| !TOKEN_FIELDS.contains(&k.as_str())) {
         return Err(format!("{other}: not allowed in a token record"));
     }

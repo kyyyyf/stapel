@@ -16,7 +16,7 @@ pub const LIFETIME: u64 = 30 * 60;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Facts {
     pub key: String,
-    /// `ok`, `ok-key` or `close`.
+    /// `ok`, `ok-key`, `close`, `findings import`, `ledger add` or `tokens import-records`.
     pub action: String,
     /// The section id for `ok`, the waiting section ids joined by `,` for `ok-key`, the reason
     /// for `close`.

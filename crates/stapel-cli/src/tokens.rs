@@ -8,8 +8,7 @@ use stapel_core::tickets::{Ticket, tickets_dir};
 use stapel_core::time::{now_rfc3339, parse_cli_time, parse_transcript_time, rfc3339_millis};
 use std::path::Path;
 
-/// The largest count one record may carry; sums of many such records still fit in `u64`.
-const MAX_COUNT: u64 = 1_000_000_000_000_000;
+use stapel_core::records::MAX_COUNT;
 
 /// The options of `stapel tokens add`, as typed.
 pub struct Add {
