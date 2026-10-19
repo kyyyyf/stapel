@@ -1708,3 +1708,118 @@ fn other_tokens_commands_stay_allowed() {
     }
     assert!(!common::grants_dir(dir).exists());
 }
+
+// ---- Step 3d: coverage ----
+
+#[test]
+fn dialog_text_edges() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    // A measured record with `cache_read` only.
+    let mut cache = measured("c-1");
+    cache["cache_read"] = json!(3);
+    // A note with a newline (the only control character the records check lets through).
+    let mut control = measured("k-1");
+    control["note"] = json!("a\nb");
+    // A Cyrillic note of exactly 40 characters (80 bytes) stays whole.
+    let mut cyr_note = measured("n-1");
+    cyr_note["note"] = json!("я".repeat(40));
+    // A Cyrillic role of 41 characters is cut at 40.
+    let mut cyr_role = measured("r-1");
+    cyr_role["role"] = json!("ы".repeat(41));
+    let text: String = [cache, control, cyr_note, cyr_role].iter().map(line).collect();
+    // A tab, a carriage return and an escape character in the base name: one space each.
+    put(dir, "a\tb\rc\u{1b}d.jsonl", &text);
+    let (reason, _) = common::ask(
+        dir,
+        "stapel tokens import-records 'a\tb\rc\u{1b}d.jsonl'",
+    );
+    let expected = format!(
+        "stapel: import 4 token records from a b c d.jsonl into ABC-1: measured input 40, output 20, cache read 3, cache write 0; estimate 0 | c-1 builder m-1 measured input 10 output 5 cache read 3 cache write — step — note — | k-1 builder m-1 measured input 10 output 5 cache read — cache write — step — note a b | n-1 builder m-1 measured input 10 output 5 cache read — cache write — step — note {} | r-1 {}… m-1 measured input 10 output 5 cache read — cache write — step — note —; runs: stapel. {TAIL}",
+        "я".repeat(40),
+        "ы".repeat(40),
+    );
+    assert_eq!(reason, expected);
+}
+
+#[test]
+fn grants_of_other_commands_do_not_cross() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &many(1));
+    let token = |command: &str| common::token_of(&common::ask(dir, command).1);
+    let state = || std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/state.json")).unwrap();
+    let before = state();
+    let nothing_written = || {
+        assert!(target_text(dir).is_none());
+        assert!(!dir.join(".stapel/tickets/ABC-1/ledger.jsonl").exists());
+        assert_eq!(state(), before);
+    };
+
+    // A grant of the import command on `ledger add`, `ok` and `close`.
+    let t = token("stapel tokens import-records in.jsonl ABC-1");
+    agent(
+        dir,
+        &["ledger", "add", "--kind", "finding", "--note", "x", "ABC-1", "--grant", &t],
+    )
+    .code(1)
+    .stderr(MISMATCH);
+    nothing_written();
+    let t = token("stapel tokens import-records in.jsonl ABC-1");
+    agent(dir, &["ok", "ABC-1", "spec", "--grant", &t])
+        .code(1)
+        .stderr("stapel: the grant does not match: the section, a dependency or the stapel build changed since the dialog, or the grant was used already; ask the agent to run the command again\n");
+    nothing_written();
+    let t = token("stapel tokens import-records in.jsonl ABC-1");
+    agent(
+        dir,
+        &["close", "ABC-1", "--reason", "done", "--grant", &t],
+    )
+    .code(1)
+    .stderr("stapel: the grant does not match: the section, a dependency or the stapel build changed since the dialog, or the grant was used already; ask the agent to run the command again\n");
+    nothing_written();
+
+    // A grant of `close` on the import command.
+    let t = token("stapel close ABC-1 --reason done");
+    agent(
+        dir,
+        &["tokens", "import-records", "in.jsonl", "ABC-1", "--grant", &t],
+    )
+    .code(1)
+    .stderr(MISMATCH);
+    nothing_written();
+}
+
+#[test]
+fn own_grant_edges() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for command in [
+        "stapel tokens import-records in.jsonl --grant x; true",
+        "stapel tokens import-records a$b",
+    ] {
+        common::hook_bash(dir, command, "auto")
+            .code(DENY)
+            .stdout("")
+            .stderr(format!("stapel: {GRANT_DENIED}\n"));
+    }
+    // Removing CLAUDECODE is denied by the rule of the pre-push layer.
+    common::hook_bash(
+        dir,
+        "env -u CLAUDECODE stapel tokens import-records in.jsonl",
+        "auto",
+    )
+    .code(DENY)
+    .stdout("")
+    .stderr("stapel: the command may switch off a second layer of protection (the git pre-push hook, or the Claude Code variables the hooks rely on); agents may not do that. To read a hook, use the Read tool\n");
+    // `tokens add` is not read by the own-grant rule.
+    common::hook_bash(
+        dir,
+        "stapel tokens add --role r --estimate 1 --grant x",
+        "auto",
+    )
+    .success()
+    .stdout("")
+    .stderr("");
+    assert_eq!(grant_files(dir), 0);
+}
