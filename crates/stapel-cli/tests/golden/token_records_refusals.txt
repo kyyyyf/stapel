@@ -1,0 +1,46 @@
+stapel: in.jsonl:1: id: missing
+stapel: in.jsonl:1: id: must be a non-empty string
+stapel: in.jsonl:1: id: must be a non-empty string
+stapel: in.jsonl:1: ticket: must be ABC-1
+stapel: in.jsonl:1: role: missing
+stapel: in.jsonl:1: role: must be a non-blank string of at most 256 bytes with no control character
+stapel: in.jsonl:1: role: must be a non-blank string of at most 256 bytes with no control character
+stapel: in.jsonl:1: role: must be a non-blank string of at most 256 bytes with no control character
+stapel: in.jsonl:1: role: must be a non-blank string of at most 256 bytes with no control character
+stapel: in.jsonl:1: model: missing
+stapel: in.jsonl:1: source: missing
+stapel: in.jsonl:1: source: must be one of measured, estimate
+stapel: in.jsonl:1: input: missing
+stapel: in.jsonl:1: output: missing
+stapel: in.jsonl:1: estimate: not allowed in a measured record
+stapel: in.jsonl:1: estimate: missing
+stapel: in.jsonl:1: input: not allowed in an estimate record
+stapel: in.jsonl:1: cache_write: not allowed in an estimate record
+stapel: in.jsonl:1: cache_read: not allowed in an estimate record
+stapel: in.jsonl:1: input: must be a whole number from 0 to 10^15
+stapel: in.jsonl:1: input: must be a whole number from 0 to 10^15
+stapel: in.jsonl:1: input: must be a whole number from 0 to 10^15
+stapel: in.jsonl:1: input: must be a whole number from 0 to 10^15
+stapel: in.jsonl:1: input: must be a whole number from 0 to 10^15
+stapel: in.jsonl:1: output: must be a whole number from 0 to 10^15
+stapel: in.jsonl:1: cache_read: must be a whole number from 0 to 10^15
+stapel: in.jsonl:1: cache_write: must be a whole number from 0 to 10^15
+stapel: in.jsonl:1: estimate: must be a whole number from 0 to 10^15
+stapel: in.jsonl:1: step: must be a non-blank string of at most 256 bytes with no control character
+stapel: in.jsonl:1: note: must be a string of at most 4096 bytes with no control character but newline
+stapel: in.jsonl:1: note: must be a string of at most 4096 bytes with no control character but newline
+stapel: in.jsonl:1: v: must be 1
+stapel: in.jsonl:1: v: must be 1
+stapel: in.jsonl:1: at: not allowed in a token record
+stapel: in.jsonl:1: transcript: not allowed in a token record
+stapel: in.jsonl:1: importer: not allowed in a token record
+stapel: in.jsonl:1: partial: not allowed in a token record
+stapel: in.jsonl:1: from: not allowed in a token record
+stapel: in.jsonl:1: to: not allowed in a token record
+stapel: in.jsonl:1: messages: not allowed in a token record
+stapel: in.jsonl:1: imported_from: not allowed in a token record
+stapel: in.jsonl:1: kind: not allowed in a token record
+stapel: in.jsonl:1: input: missing
+stapel: in.jsonl:1: input: not allowed in an estimate record
+stapel: in.jsonl:1: cache_read: must be a whole number from 0 to 10^15
+stapel: in.jsonl:3: role: missing
