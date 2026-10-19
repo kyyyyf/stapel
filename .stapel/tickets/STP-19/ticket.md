@@ -97,6 +97,11 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
 - 2026-10-19: Decision (`model`, recommended): required in `FILE`; no default from `stapel.toml`. Rejected:
   the default of `tokens add`.
 - 2026-10-19: Decision (frame): the human confirmed the frame in the chat; `stapel ok` has no section for it.
+- 2026-10-19: Decision (SR1-15, recommended): an allow rule that covers `stapel tokens` (such as
+  `Bash(stapel tokens:*)`) denies the dialog, as for `findings import`; the person narrows it to
+  `Bash(stapel tokens add:*)` and `Bash(stapel tokens import:*)`. No such rule exists in the settings today.
+- 2026-10-19: Decision (SR1-13, recommended): the dialog cuts `role`, `model` and `step` to 40 characters as
+  it cuts `note`, so 30 records keep the dialog readable.
 - 2026-10-19: Assumption: `ticket` may be given in `FILE` and must then equal the folder key, as in
   `findings import`; the command writes the folder key in every case.
 - 2026-10-19: Assumption: `at` of every appended record is the time of the run, the same for all records of
@@ -116,8 +121,8 @@ Terms:
 - **Records hash**: SHA-256 of the base name followed by `\n`, then of each record line of `FILE` as read (a
   trailing `\r` removed, blank lines skipped) followed by `\n`; lowercase hex. It does not cover `at`, so a
   dialog and a later run agree.
-- **Refusal**: printed as `stapel: <reason>` on stderr, exit 2; a grant error and the agent-shell refusal exit
-  1, as for `findings import`.
+- **Refusal**: printed as `stapel: <reason>` on stderr, exit 2; a grant error, the agent-shell refusal, no
+  repository and an unreadable `.stapel/stapel.toml` exit 1, as for `findings import` (SR1-16).
 - **Short text**: a JSON string that is not blank after trimming, at most 256 bytes, with no control
   character (the rule of `tokens add` for `--role`, `--model` and `--step`).
 - **Count**: a JSON number that is a whole number from 0 to 10^15 (`u64`); `1.0`, `1e3`, `-1`, a string and
@@ -126,17 +131,17 @@ Terms:
 | № | Criterion | Test |
 |---|---|---|
 | AC-1 | WHEN a person runs the import command in a terminal and every record passes AC-2 and AC-3 THE command appends one line per record, in file order and in one write, to the ticket's `tokens.jsonl`: `{"v":1,"id":<id>,"at":<now, UTC, as tokens add writes it, the same for all records>,"ticket":<folder key>,"role":<role>,"model":<model>,"source":<source>,` then the counts given, in the order `input`, `output`, `cache_read`, `cache_write`, `estimate`, then `step` and `note` when given, then `"imported_from":<base name>}`; and prints `imported: <N> token records into <KEY>` (exit 0). A missing `tokens.jsonl` is created; one without a final newline gets one first. | `token_records::import_appends_all_in_order`, `token_records::import_creates_and_repairs_target` |
-| AC-2 | IF a token record breaks a field rule THEN the command exits 2 with `stapel: <FILE>:<line>: <field>: <reason>` for the first rule broken in this order, and writes nothing: `id` missing, not a non-empty string, or not 1 to 64 characters with no whitespace or control character (the texts of `findings import`); `ticket` present and not the folder key (`ticket: must be <KEY>`); `role`, then `model` missing or not a short text (`must be a non-empty string of at most 256 bytes with no control character`); `source` missing or not `measured` or `estimate` (`must be one of measured, estimate`); for `measured`: `input`, then `output` missing, `estimate` present (`estimate: not allowed in a measured record`); for `estimate`: `estimate` missing, or the first of `input`, `output`, `cache_read`, `cache_write` present (`<field>: not allowed in an estimate record`); a count field present and not a count (`must be a whole number from 0 to 10^15`), checked in the order `input`, `output`, `cache_read`, `cache_write`, `estimate`; `step` present and not a short text; `note` present and not a string of at most 4096 bytes with no control character but newline (`must be a string of at most 4096 bytes with no control character but newline`); `v` present and not `1` (`v: must be 1`); then the first other field of the line (`<field>: not allowed in a token record`). Output: `golden/token_records_refusals.txt`. | `token_records::import_refuses_bad_fields`, `token_records::field_limits_count_bytes_and_characters` |
+| AC-2 | IF a token record breaks a field rule THEN the command exits 2 with `stapel: <FILE>:<line>: <field>: <reason>` for the first rule broken in this order, and writes nothing; a missing required field gets `<field>: missing` (SR1-12): `id` missing, not a non-empty string, or not 1 to 64 characters with no whitespace or control character (the texts of `findings import`); `ticket` present and not the folder key (`ticket: must be <KEY>`); `role`, then `model` missing or not a short text (`must be a non-blank string of at most 256 bytes with no control character`); `source` missing or not `measured` or `estimate` (`must be one of measured, estimate`); for `measured`: `input`, then `output` missing, `estimate` present (`estimate: not allowed in a measured record`); for `estimate`: `estimate` missing, or the first of `input`, `output`, `cache_read`, `cache_write` present (`<field>: not allowed in an estimate record`); a count field present and not a count (`must be a whole number from 0 to 10^15`), checked in the order `input`, `output`, `cache_read`, `cache_write`, `estimate`; `step` present and not a short text; `note` present and not a string of at most 4096 bytes with no control character but newline (`must be a string of at most 4096 bytes with no control character but newline`); `v` present and not `1` (`v: must be 1`); then the first other field of the line (`<field>: not allowed in a token record`). Output: `golden/token_records_refusals.txt`. | `token_records::import_refuses_bad_fields`, `token_records::field_limits_count_bytes_and_characters` |
 | AC-3 | IF `FILE` has a line that is not a JSON object, a line longer than 64 KiB with its newline, no record (blank lines are skipped), more than 100 records (the 101st record line gets `more than 100 records; split the file` unless it is not a JSON object, which is checked first), more than 256 KiB, or an `id` that repeats an earlier line of `FILE` (`id <id> repeats line <n>`) or a record of `tokens.jsonl` (`id <id> is already in .stapel/tickets/<KEY>/tokens.jsonl`, legacy lines included when they have an `id`), THEN the command exits 2 with the reason, prefixed by `<FILE>:<line>: ` when it is about one line, and writes nothing; the texts are those of `findings import`. | `token_records::import_refuses_bad_file`, `token_records::import_refuses_repeated_id`, `token_records::import_accepts_the_limits` |
 | AC-4 | IF `FILE` is missing, `-`, not a regular file after following symlinks, not UTF-8, or a machine file (as `findings import`: any machine file of a ticket folder, the ledger, compared on the resolved path without case), or `tokens.jsonl` has a line that is not a JSON object (reported after the records pass, `.stapel/tickets/<KEY>/tokens.jsonl:<line>: <reason>`; a line with an unknown `v` is skipped), THEN the command exits 2 with the path and the reason and writes nothing. | `token_records::import_refuses_bad_input_path`, `token_records::import_refuses_broken_target` |
 | AC-5 | WHEN the import command names a closed ticket by `KEY` THE command writes as for an open ticket; without `KEY` it takes the only open ticket; no open ticket, several, or a legacy ticket by `KEY` give the refusals of the Ticket choice term (exit 2). | `token_records::closed_ticket_by_key_only` |
-| AC-6 | WHEN an agent runs the import command as one plain command in a dialog permission mode and its checks pass THE guard answers `ask`, writes one grant file, replaces the command by `<program> tokens import-records <FILE> <KEY> --grant <token>`, and gives the reason `stapel: import <N> token records from <base name> into <KEY>[ (closed)]: measured input <sum>, output <sum>, cache read <sum>, cache write <sum>; estimate <sum> \| <id> <role> <model> <source> <counts> step <step or —> note <note, 40 characters, then …, or —> \| …; runs: <program>. Answer Yes or No; do not choose "don't ask again".` where `<counts>` is `input <n> output <n> cache read <n or —> cache write <n or —>` for `measured` and `estimate <n>` for `estimate`; a sum of no record is `0`; in the base name, role, model, step and note every control character is shown as one space. Output: `golden/token_records_dialog.txt`. | `token_records::dialog_for_import`, `token_records::dialog_cuts_the_note` |
-| AC-7 | IF the checks of AC-2 to AC-5 fail when the guard prepares the dialog, or `.stapel/stapel.toml` cannot be read as the command reads it, or the permission mode is not a dialog mode, or an allow rule would skip the dialog, or the command has an option other than `--grant` or more than two positional words (`unexpected option <opt> for stapel tokens import-records`, `usage: stapel tokens import-records FILE [KEY]`), or `FILE` has more than 30 records (`the permission dialog shows at most 30 token records; split the file into parts of at most 30 records`), THEN the guard denies with that reason and writes no grant; a relative `FILE` is read from the hook's `cwd`; a person in a terminal imports up to 100. | `token_records::guard_denies_what_the_command_refuses`, `token_records::dialog_limits_to_30_records`, `token_records::dialog_usage_denials` |
+| AC-6 | WHEN an agent runs the import command as one plain command in a dialog permission mode and its checks pass THE guard answers `ask`, writes one grant file, replaces the command by `<program> tokens import-records <FILE> <KEY> --grant <token>`, and gives the reason `stapel: import <N> token records from <base name> into <KEY>[ (closed)]: measured input <sum>, output <sum>, cache read <sum>, cache write <sum>; estimate <sum> \| <id> <role> <model> <source> <counts> step <step or —> note <note or —> \| …; runs: <program>. Answer Yes or No; do not choose "don't ask again".` where `<counts>` is `input <n> output <n> cache read <n or —> cache write <n or —>` for `measured` and `estimate <n>` for `estimate`; a sum of no record is `0`; `role`, `model`, `step` and `note` are cut to 40 characters with `…` added when longer (SR1-13); in the base name and the note every control character is shown as one space (SR1-1). Output: `golden/token_records_dialog.txt`. | `token_records::dialog_for_import`, `token_records::dialog_cuts_the_note` |
+| AC-7 | IF the checks of AC-2 to AC-5 fail when the guard prepares the dialog, or `.stapel/stapel.toml` cannot be read as the command reads it, or the permission mode is not a dialog mode, or an allow rule would skip the dialog, or the command has an option (`unexpected option <opt> for stapel tokens import-records`) or not one or two positional words (`usage: stapel tokens import-records FILE [KEY]`) (SR1-6), or `FILE` has more than 30 records (`the permission dialog shows at most 30 token records; split the file into parts of at most 30 records`), THEN the guard denies with that reason and writes no grant; a relative `FILE` is read from the hook's `cwd`; a person in a terminal imports up to 100. | `token_records::guard_denies_what_the_command_refuses`, `token_records::dialog_limits_to_30_records`, `token_records::dialog_usage_denials` |
 | AC-8 | WHEN the import command runs with the grant token, its checks pass again, and the key, the action and the records hash are those of the dialog THE command writes as in a terminal and removes the grant; the same token then refuses by AC-3 (exit 2), as its ids are now in `tokens.jsonl`. A check that fails at the run refuses by AC-2 to AC-5 and leaves the grant unused. | `token_records::grant_writes_once`, `token_records::grant_survives_a_failed_check` |
-| AC-9 | IF the records hash, the key or the action differs from the dialog's (`FILE` edited, renamed to another base name, another key; a grant of `findings import`, `ledger add` or `ok`), or the grant was used, THEN the command exits 1 with the mismatch text of `findings import` (`the grant does not match: the records, the ticket or the stapel build changed since the dialog, or the grant was used already; ask the agent to run the command again`) and writes nothing; an expired grant gives today's `the grant expired; ask the agent to run the command again`. A grant of the import command opens no other command. | `token_records::grant_names_the_records` |
+| AC-9 | IF the records hash, the key or the action differs from the dialog's (`FILE` edited, renamed to another base name, another key with records that carry no `ticket` (records that carry `ticket` meet the AC-2 check first, exit 2; SR1-7); a grant of `findings import`, `ledger add` or `ok`), or the grant was used, THEN the command exits 1 with the mismatch text of `findings import` (`the grant does not match: the records, the ticket or the stapel build changed since the dialog, or the grant was used already; ask the agent to run the command again`) and writes nothing; an expired grant gives today's `the grant expired; ask the agent to run the command again`. A grant of the import command opens no other command. | `token_records::grant_names_the_records` |
 | AC-10 | IF the import command runs in an agent's shell without a grant THEN it exits 1 with `only a person imports token records: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT` and writes nothing. | `token_records::agent_shell_without_grant_refused` |
-| AC-11 | IF an agent adds its own `--grant`, or a word with `$`, after `tokens import-records` (sub-action in any case) THEN the guard denies with `a --grant comes only from the permission dialog; stapel ok, stapel close, stapel findings import, stapel ledger add and stapel tokens import-records may not carry one of their own or words filled in at run time`; this one sentence replaces today's for all five commands. | `token_records::guard_denies_own_grant` |
-| AC-12 | WHEN `stapel tokens [KEY]` reads a `source` `measured` or `estimate` record that has the field `imported_from` THE report adds it to its own row per role and model, with the role cell `<role> (file)`, sorted after the transcript and legacy rows of the same role and model; it checks and sums it as other v1 records; other rows and the columns do not change; the sessions table does not count it. Output: `golden/tokens_report_file.txt`. | `token_records::report_shows_imported_rows` |
+| AC-11 | IF an agent adds its own `--grant`, or a word with `$`, after `tokens import-records` (sub-action in any case) THEN the guard denies with `a --grant comes only from the permission dialog; stapel ok, stapel close, stapel findings import, stapel ledger add and stapel tokens import-records may not carry one of their own or words filled in at run time`; this one sentence replaces today's for all five commands. `stapel tokens add …`, `stapel tokens import …`, `stapel tokens` and `stapel tokens <KEY>` stay allowed by the guard without a dialog (SR1-3). | `token_records::guard_denies_own_grant`, `token_records::other_tokens_commands_stay_allowed` |
+| AC-12 | WHEN `stapel tokens [KEY]` reads a `source` `measured` or `estimate` record that has the field `imported_from` THE report adds it to its own row per role and model, with the role cell `<role> (file)`, sorted after the rows of records without `imported_from` and the legacy rows of the same role and model (SR1-14); it checks and sums it as other v1 records; other rows and the columns do not change; the sessions table of `stapel tokens` without `KEY` does not count it (SR1-2). Output: `golden/tokens_report_file.txt`. | `token_records::report_shows_imported_rows` |
 
 ### Guarantees
 
@@ -166,21 +171,26 @@ Terms:
   one write with the final-newline repair; `journal::read` gives `V1`, `Legacy` and `Problem` entries;
   `journal::is_unknown_version` marks a line with an unknown `v`.
 - F-5: the three record shapes in the history (`.stapel/tickets/*/tokens.jsonl`, 208 lines, read
-  2026-10-19): v1 `measured` (with or without `importer`, `partial`), v1 `estimate` (with or without `step`
+  2026-10-19; 228 lines, SR1-14): v1 `measured` (with or without `importer`, `partial`), v1 `estimate` (with or without `step`
   and `note`), legacy (`ts`, `kind`, `total_tokens` or `input_tokens` and `output_tokens`, STP-1 to STP-3).
   No line has `imported_from`, so AC-12 changes no report of the history.
-- F-6: `tokens add` writes its record with the key order of insertion (`serde_json` keeps the order), `at`
-  from `time::now_rfc3339()`, `id` from `journal::new_id("t")`.
+- F-6: `tokens add` writes its record with the key order of insertion, because `stapel-cli` enables the
+  `preserve_order` feature of `serde_json`; `stapel-core` does not (SR1-9). `at` comes from
+  `time::now_rfc3339()`, `id` from `journal::new_id("t")`.
+- F-7: the grant directory is `git rev-parse --git-path stapel/grants` and the grant file name hashes
+  `CARGO_PKG_VERSION` (`grant.rs`), so a rebuilt stapel between the dialog and the run is a mismatch.
 
 ### Decisions (before the build)
 
 - `stapel_core::records` gets `plan_tokens(root, base, file, key) -> TokensPlan` and `check_tokens`, next to
   `plan_findings`; the CLI (`crates/stapel-cli/src/token_records.rs`) and `dialog::prepare_records` both call
   it, so the dialog refuses what the command refuses. `TokensPlan` holds the key, `closed`, the target, the
-  base name, the record lines to append without `at` and `imported_from` filled at the run, the ids, the
-  records hash and the dialog rows.
-- The lines to append are built from the parsed values, not copied from `FILE`, in the key order of AC-1;
-  `at` is taken once per run.
+  base name, the parsed fields of each record (not lines), the ids, the records hash and the dialog rows.
+- The lines to append are built from the parsed fields with `format!` in the key order of AC-1, as
+  `check_ledger` builds the ledger line, not with a `serde_json::Map` (F-6, SR1-9); `at` is taken once per
+  run.
+- The base name is taken after `read_input` succeeds, so `.`, `..` and `/` are refused as not a regular file
+  before `Path::file_name` is read (SR1-10).
 - Grant `Facts`: action `tokens-import-records`, key the folder key, detail the ids joined by `,`, hash the
   records hash, no dependencies.
 - `plain_invocation` reads the action `tokens` with the sub-action `import-records` (any case) as `tokens
@@ -210,24 +220,25 @@ ticket_drift`.
 |---|---|---|
 | Main path | a measured record with all four counts, step and note; a measured record with only `input` and `output`; an estimate record; a record with `ticket` and `v`; the bytes of each line, the key order, one `at` for all, `imported_from` the base name of `sub/in.jsonl`; output line | `token_records::import_appends_all_in_order` |
 | State | `tokens.jsonl` missing; ending without a newline | `token_records::import_creates_and_repairs_target` |
-| Negative fields | each AC-2 reason once, in the golden order: `id` missing, `""`, `7`; `ticket` of another key; `role` missing, `""`, `"  "`, `7`, with a tab; `model` missing; `source` missing, `Measured`; measured without `input`, without `output`, with `estimate`; estimate without `estimate`, with `input`, with `cache_write`; counts `-1`, `1.0`, `1e3`, `"5"`, `null`; `step` `""`; `note` `7`, with a tab; `v` `2`, `"1"`; fields `at`, `transcript`, `importer`, `partial`, `imported_from`, `kind` | `token_records::import_refuses_bad_fields` |
+| Negative fields | each AC-2 reason once, in the golden order: `id` missing, `""`, `7`; `ticket` of another key; `role` missing, `""`, `"  "`, `7`, with a tab; `model` missing; `source` missing, `Measured`; measured without `input`, without `output`, with `estimate`; estimate without `estimate`, with `input`, with `cache_write`; counts `-1`, `1.0`, `1e3`, `"5"`, `null`; `step` `""`; `note` `7`, with a tab; `v` `2`, `"1"`; fields `at`, `transcript`, `importer`, `partial`, `imported_from`, `kind`; the order of AC-2 by three records that break two rules each: measured with `estimate` and no `input` (`input: missing`), estimate with `input` and `note` `7` (`input: not allowed …`), `at` present and `cache_read` `-1` (`cache_read: must be …`) (SR1-4) | `token_records::import_refuses_bad_fields` |
 | Boundaries of fields | `id` of 64 and 65 characters, 64 and 65 Cyrillic characters; a count of 10^15 accepted, 10^15 + 1 refused, `0` accepted; `role`, `model`, `step` of 256 bytes accepted, 257 refused, 128 Cyrillic characters (256 bytes) accepted, 129 refused; `note` of 4096 bytes accepted, 4097 refused, with a newline accepted; `note` `""` accepted | `token_records::field_limits_count_bytes_and_characters` |
 | Negative file | a line `[1]`, a broken line, a line of 64 KiB + 1 byte with its newline, only blank lines, 101 records, 256 KiB + 1 byte, an id twice in `FILE`; a bad 101st line gets its own reason | `token_records::import_refuses_bad_file` |
 | Boundaries of file | exactly 100 records; a line of exactly 64 KiB with its newline (padded with spaces); a file of exactly 256 KiB; CRLF lines | `token_records::import_accepts_the_limits` |
 | Repeated id | an id already in `tokens.jsonl` from `tokens add`; a legacy line with that `id`; a line with `v: 2` and that id is skipped | `token_records::import_refuses_repeated_id` |
-| Input path | missing, a directory, a FIFO, `-`, Latin-1 bytes, the ticket's own `tokens.jsonl`, another ticket's `findings.jsonl`, the ledger, a symlink to `tokens.jsonl`, `.STAPEL/tickets/ABC-1/TOKENS.jsonl`; a symlink to a regular file is read | `token_records::import_refuses_bad_input_path` |
+| Input path | missing, a directory, `sub/..`, a FIFO, `-`, Latin-1 bytes, the ticket's own `tokens.jsonl`, another ticket's `findings.jsonl`, the ledger, a symlink to `tokens.jsonl`, `.STAPEL/tickets/ABC-1/TOKENS.jsonl`; a symlink to a regular file is read | `token_records::import_refuses_bad_input_path` |
 | Broken target | a non-JSON line in `tokens.jsonl` with good records; the same with a bad record: the record's reason comes first | `token_records::import_refuses_broken_target` |
-| Closed ticket | closed by key in upper and lower case; without key and one open ticket; no open; two open; a legacy ticket by key | `token_records::closed_ticket_by_key_only` |
-| Dialog | reason, replaced command and one grant file; `stapel` and `cargo run … --` forms; two measured and one estimate record, sums; no estimate record gives `estimate 0`; a measured record without cache counts shows `—`; no step and no note show `—`; a closed ticket | `token_records::dialog_for_import` |
-| Dialog boundaries | a note of 40 characters whole, 41 cut with `…`, 41 Cyrillic characters cut at 40; a note and a model with a newline shown with a space; a base name with a tab | `token_records::dialog_cuts_the_note` |
+| Closed ticket | closed by key in upper and lower case; without key and one open ticket; no open; two open; a legacy ticket by key; a key with no folder (SR1-8) | `token_records::closed_ticket_by_key_only` |
+| Dialog | reason, replaced command and one grant file; `stapel` and `cargo run … --` forms; two measured and one estimate record, sums; no estimate record gives `estimate 0`; only estimate records give `measured input 0, output 0, cache read 0, cache write 0` (SR1-5); a measured record without cache counts shows `—`; no step and no note show `—`; a closed ticket | `token_records::dialog_for_import` |
+| Dialog boundaries | a note of 40 characters whole, 41 cut with `…`, 41 Cyrillic characters cut at 40; a role, a model and a step of 40 characters whole and 41 cut (SR1-13); a note with a newline shown with a space; a base name with a tab (SR1-1) | `token_records::dialog_cuts_the_note` |
 | Dialog negative | a bad record; `bypassPermissions`; an allow rule `Bash(stapel tokens:*)`; a broken `stapel.toml`; a relative `FILE` from a subdirectory as `cwd`; no grant file in each denial | `token_records::guard_denies_what_the_command_refuses` |
 | Dialog limit | 30 records ask; 31 deny with no grant; 31 in a terminal import | `token_records::dialog_limits_to_30_records` |
 | Dialog usage | `--role x`, `--note=y`, three positional words, no positional word | `token_records::dialog_usage_denials` |
 | Grant | used once, then refused by AC-3; a record added to `tokens.jsonl` by `tokens add` with an id of `FILE` after the dialog refuses by AC-3 and the grant then writes once that line is gone | `token_records::grant_writes_once`, `token_records::grant_survives_a_failed_check` |
-| Grant mismatch | `FILE` edited in a count; `FILE` copied to another base name; another key; a `findings-import` grant and an `ok` grant on the import command; an import grant on `findings import`; used twice; expired | `token_records::grant_names_the_records` |
+| Grant mismatch | `FILE` edited in a count; `FILE` copied to another base name; another key, records without `ticket` (SR1-7); a `findings-import` grant and an `ok` grant on the import command; an import grant on `findings import`; used twice; expired | `token_records::grant_names_the_records` |
 | Agent shell | without grant | `token_records::agent_shell_without_grant_refused` |
 | Own grant | `--grant x`, `--grant=x`, `$(cat f)` as `FILE`, `TOKENS IMPORT-RECORDS … --grant x`; `stapel tokens import … $x` is not denied by this rule; `findings import … --grant x` gets the new sentence | `token_records::guard_denies_own_grant` |
-| Report | one ticket with a transcript record, a `tokens add` record, a legacy line and two imported records of the same role and model (one measured, one estimate) and one imported record of another role: rows and order by the golden file; a ticket of the history shape without `imported_from` keeps `golden/tokens_report.txt` | `token_records::report_shows_imported_rows` |
+| Other tokens commands | in mode `auto` the hook allows (exit 0, no JSON) `stapel tokens add --role r --estimate 1`, `stapel tokens import t.jsonl --role r`, `stapel tokens` and `stapel tokens ABC-1` (SR1-3) | `token_records::other_tokens_commands_stay_allowed` |
+| Report | one ticket with a transcript record, a `tokens add` record, a legacy line and two imported records of the same role and model (one measured, one estimate) and one imported record of another role: rows and order by the golden file; a ticket of the history shape without `imported_from` keeps `golden/tokens_report.txt`; with a `.stapel/sessions.jsonl` whose session matches the transcript record, `stapel tokens` without `KEY` counts only the transcript record's output in the sessions table (SR1-2) | `token_records::report_shows_imported_rows` |
 
 ### Inputs
 
@@ -239,6 +250,9 @@ ticket_drift`.
 | `role`, `model`, `step` | short text | 1 non-blank character; 256 bytes (not characters) | blank: refused | control character, not a string: refused | kept as given | `token_records::field_limits_count_bytes_and_characters` |
 | `note` | string | `""`; 4096 bytes | `""`: accepted | control character other than newline, not a string: refused | kept as given | `token_records::field_limits_count_bytes_and_characters` |
 | `input`, `output`, `cache_read`, `cache_write`, `estimate` | count | 0; 10^15 | absent: by `source` (AC-2) | negative, fraction, exponent form, string, null, above 10^15: refused | whole tokens | `token_records::import_refuses_bad_fields`, `token_records::field_limits_count_bytes_and_characters` |
+| `source` | string | `measured` or `estimate` | absent: refused | other text, other case, not a string: refused | exact | `token_records::import_refuses_bad_fields` |
+| `ticket` (in a record) | string | the folder key | absent: the folder key is written | another key, not a string: refused | exact | `token_records::import_refuses_bad_fields` |
+| `v` (in a record) | number | `1` | absent: `1` is written | `2`, `"1"`: refused | exact | `token_records::import_refuses_bad_fields` |
 | `KEY` (positional) | ticket folder name, any case | one ticket | absent: the only open ticket | no such folder, legacy, none or several open without key: refused | ASCII case ignored | `token_records::closed_ticket_by_key_only` |
 | `--grant` | 32 hex characters, set by the guard | one grant per dialog | absent: terminal path or AC-10 | wrong, expired, reused, other action: AC-9 | exact | `token_records::grant_writes_once`, `token_records::grant_names_the_records` |
 
@@ -253,11 +267,13 @@ ticket_drift`.
 | claude-code | tool call succeeded or failed | not read | — |
 | os | case-insensitive file systems | a machine file as `FILE` is refused in any case | `token_records::import_refuses_bad_input_path` |
 | os | symlinks | a symlink to a regular file is read; to a machine file refused; the base name is that of `FILE` as typed, not of the link target | `token_records::import_refuses_bad_input_path` |
-| os | file permissions | an unreadable `FILE` or an unwritable `tokens.jsonl`: the OS error with the path, exit 2; not retested | — |
+| os | file permissions | an unreadable `FILE` or an unwritable `tokens.jsonl`: refused with the OS error and the path, exit 2; not promised (SR1-11) | — |
 | os | time: clock skew, time zones | `at` is the UTC time of the run; the records hash has no time; skew not promised | `token_records::import_appends_all_in_order` |
 | os | processes, WSL | not touched | — |
-| git | every dimension | not touched: the command reads no history | — |
-| cargo | every dimension | not touched | — |
+| git | linked worktrees; configuration | the grant lives in the git directory (F-7) of each worktree, as STP-18; not promised (SR1-11) | — |
+| git | other dimensions | not touched: the command reads no history | — |
+| cargo | stapel rebuilt between the dialog and the run | the grant does not match, AC-9 (F-7) | `token_records::grant_names_the_records` |
+| cargo | other dimensions | not touched | — |
 
 ### Abuse table
 
@@ -288,6 +304,9 @@ limit has its accepted and refused boundary in the test plan, bytes and characte
 External states rows were checked against `records.rs`, `dialog.rs`, `guard.rs`, `grant.rs`, `journal.rs`,
 `tokens.rs` and the catalogue; the record shapes were checked against every `tokens.jsonl` (F-5); no open
 question is left.
+2026-10-19, after spec review round 1 (external): 0 HIGH, 4 MEDIUM, 12 LOW, all inside; every finding
+applied as one change (SR1-1 to SR1-16); new test `token_records::other_tokens_commands_stay_allowed` for
+AC-11; Facts F-6 corrected and F-7 added; no round 2.
 
 ## Proof
 
@@ -303,7 +322,7 @@ question is left.
 | AC-8 | `token_records::grant_writes_once`, `token_records::grant_survives_a_failed_check` |
 | AC-9 | `token_records::grant_names_the_records` |
 | AC-10 | `token_records::agent_shell_without_grant_refused` |
-| AC-11 | `token_records::guard_denies_own_grant` |
+| AC-11 | `token_records::guard_denies_own_grant`, `token_records::other_tokens_commands_stay_allowed` |
 | AC-12 | `token_records::report_shows_imported_rows` |
 
 ## Plan
