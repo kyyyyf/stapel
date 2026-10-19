@@ -66,8 +66,8 @@ Rules that catch nothing are removed (item 9), so this list must not only grow.
    test that does not exist, a test exists that no ticket names, a criterion quotes an output line not in
    the code, a ticket names a missing path, a tagged ticket lacks its tables or a dated self-check, the
    test lists of criteria, Test plan and Proof disagree, or a CLI option is in no Inputs table. `stapel
-   check` shows that every step's tests failed at RED and pass at GREEN and HEAD; `--locked` covers
-   `Cargo.lock`.
+   check` shows that every step's tests failed at RED and pass at GREEN and HEAD; it runs cargo with
+   `--locked`, so a stale `Cargo.lock` fails the check.
 7. **Code review without quotas.** Each reviewer reports every HIGH and MEDIUM finding and a short summary of
    LOW ones, with no fixed maximum. Each finding gets `catchable_at` (`spec`, `design`, `test-plan`,
    `code`), `promise` (`inside` or `outside`) and `rule`: the item of this process that should have caught
