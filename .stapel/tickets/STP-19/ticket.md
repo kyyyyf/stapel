@@ -353,7 +353,12 @@ Route: full (tags `guard`, `data`, `interface`), pinned at the frame.
    helper nested inside its function, expected texts inline.
 3. The dialog, the grant, the agent-shell refusal and the own-grant denial (AC-6 to AC-11); the RED commit
    also changes `GRANT_DENIED` in `crates/stapel-cli/tests/records.rs` to the AC-11 sentence. Must not
-   change: the `ok`, `close`, `findings import` and `ledger add` dialogs and their grant facts.
+   change: the `ok`, `close`, `findings import` and `ledger add` dialogs and their grant facts. The tests
+   `token_records::agent_shell_without_grant_refused` (built in step 1) and
+   `token_records::other_tokens_commands_stay_allowed` (today's guard) pass before the code, so they are not
+   in the RED.
+3c. Coverage after the GREEN of step 3: the two tests above, and any other test of step 3 that passed at its
+   RED. Tests only: new `#[test]` functions, each helper nested inside its function.
 
 ## Review
 
