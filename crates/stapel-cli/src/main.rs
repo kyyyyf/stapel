@@ -281,8 +281,7 @@ fn main() -> ExitCode {
         Command::Check { key, list, history } => {
             return check::run(key.as_deref(), list, history);
         }
-        // The JSON form is plan step 3; the flag is accepted and the text is printed.
-        Command::Next { key, json: _ } => return fail::finish(next::run(key.as_deref())),
+        Command::Next { key, json } => return fail::finish(next::run(key.as_deref(), json)),
         Command::Status { key } => match status::run(key.as_deref()) {
             Ok(code) => return code,
             Err(message) => Err(message),

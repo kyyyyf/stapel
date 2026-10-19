@@ -7,12 +7,37 @@ use stapel_core::build_inputs::Bounds;
 use stapel_core::checkstate::{self, CheckLine};
 use stapel_core::config::Config;
 use stapel_core::journal::{self, Entry};
-use stapel_core::next::{Facts, Fault, History, decide};
+use stapel_core::next::{Action, Facts, Fault, History, Target, decide};
 use stapel_core::outcomes::{open_red, passing};
 use stapel_core::steps::{Marker, git_text, step_commits, steps};
 use stapel_core::ticket::{parse, read};
 use stapel_core::tickets::{Status, Ticket, list, resolve};
+use stapel_core::worktree::dirty_paths;
 use std::path::Path;
+
+/// The `--json` line: the keys of AC-2 in order, `facts` without the `blocked: ` prefix.
+fn json_line(ticket: Option<&str>, action: &Action, facts: &[String]) -> String {
+    let (mut command, mut path) = (None, None);
+    match &action.target {
+        Some(Target::Command(c)) => command = Some(c.clone()),
+        Some(Target::Path(p)) => path = Some(p.clone()),
+        None => {}
+    }
+    let facts: Vec<&str> = facts
+        .iter()
+        .map(|f| f.strip_prefix("blocked: ").unwrap_or(f))
+        .collect();
+    serde_json::json!({
+        "v": 1,
+        "ticket": ticket,
+        "action": action.name,
+        "subject": action.subject,
+        "command": command,
+        "path": path,
+        "facts": facts,
+    })
+    .to_string()
+}
 
 fn short(sha: &str) -> String {
     sha.chars().take(7).collect()
@@ -84,10 +109,14 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         .lines()
         .map(String::from)
         .collect();
-    let check_fail = match checkstate::current(root, config, &ticket.dir) {
+    let line = checkstate::current(root, config, &ticket.dir);
+    let check_configured = line != CheckLine::NotConfigured;
+    let check_pass = matches!(line, CheckLine::Pass(_));
+    let check_fail = match line {
         CheckLine::Fail(sha) => Some(sha),
         _ => None,
     };
+    let dirty = dirty_paths(root).map_err(Fail::failed)?;
     Ok(History {
         labels: steps.iter().map(|s| s.label.clone()).collect(),
         greens: steps
@@ -98,17 +127,29 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         faults,
         subjects,
         check_fail,
+        check_configured,
+        check_pass,
+        dirty,
     })
 }
 
-pub fn run(key: Option<&str>) -> Result<(), Fail> {
+pub fn run(key: Option<&str>, json: bool) -> Result<(), Fail> {
     let (root, config) = repo::open().map_err(Fail::failed)?;
     if key.is_none()
         && !list(&root)
             .iter()
             .any(|t| matches!(t.status, Status::Open(_)))
     {
-        say!("next: new-ticket — stapel new \"<title>\"");
+        let action = Action {
+            name: "new-ticket",
+            subject: None,
+            target: Some(Target::Command("stapel new \"<title>\"".to_string())),
+        };
+        if json {
+            say!("{}", json_line(None, &action, &[]));
+        } else {
+            say!("{}", action.line());
+        }
         return Ok(());
     }
     let ticket = resolve(&root, key).map_err(Fail::refused)?;
@@ -148,6 +189,13 @@ pub fn run(key: Option<&str>) -> Result<(), Fail> {
         history = gather(&root, &config, &ticket)?;
         facts.history = Some(&history);
         decision = decide(&facts);
+    }
+    if json {
+        say!(
+            "{}",
+            json_line(Some(&ticket.key), &decision.action, &decision.facts)
+        );
+        return Ok(());
     }
     say!("ticket: {} — {}", ticket.key, state.title);
     for fact in &decision.facts {

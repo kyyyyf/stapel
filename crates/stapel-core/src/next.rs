@@ -78,6 +78,12 @@ pub struct History {
     pub subjects: Vec<String>,
     /// The short id of a current failing check.
     pub check_fail: Option<String>,
+    /// Whether `[check]` is set in `stapel.toml`.
+    pub check_configured: bool,
+    /// Whether the newest check record is a pass at `HEAD` with a clean tree.
+    pub check_pass: bool,
+    /// The paths with uncommitted changes outside the machine files (`worktree::dirty_paths`).
+    pub dirty: Vec<String>,
 }
 
 /// Whether `subject` is `<KEY> <label> <word>: …` with a word other than `RED:` and `GREEN:`
@@ -170,8 +176,7 @@ fn plan_faults(plan: &str) -> Vec<String> {
         .collect()
 }
 
-/// The history facts of AC-11 to AC-13 and the action of AC-11 to AC-15 (the placeholder after the
-/// last step is replaced by step 3).
+/// The history facts of AC-11 to AC-13 and the action of AC-11 to AC-20.
 fn history_action(f: &Facts, h: &History, plan: &str, facts: &mut Vec<String>) -> Action {
     let path = ticket_path(f.key);
     let labels = plan_steps(plan);
@@ -224,13 +229,40 @@ fn history_action(f: &Facts, h: &History, plan: &str, facts: &mut Vec<String>) -
             Action::new("green-step", Some(label.clone()), Some(Target::Path(path)))
         }
         Some(label) => Action::new("build-step", Some(label.clone()), Some(Target::Path(path))),
-        // Placeholder until step 3: every Plan step is done.
-        None => Action::new(
+        None => after_the_steps(f, h, facts),
+    }
+}
+
+/// The rules once every Plan step is done (STP-20 AC-16 to AC-20).
+fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
+    if !h.dirty.is_empty() {
+        let first: Vec<&str> = h.dirty.iter().take(5).map(String::as_str).collect();
+        facts.push(format!("uncommitted changes: {}", first.join(", ")));
+        return Action::new(
+            "commit",
+            None,
+            Some(Target::Command("git status".to_string())),
+        );
+    }
+    if h.check_configured && !h.check_pass {
+        return Action::new(
             "run-check",
             None,
             Some(Target::Command(format!("stapel check {}", f.key))),
-        ),
+        );
     }
+    for (id, name) in [("review", "code-review"), ("summary", "write-summary")] {
+        if let Some(def) = f.config.section(id)
+            && !written(f.sections, &def.title)
+        {
+            return Action::new(name, None, Some(Target::Path(ticket_path(f.key))));
+        }
+    }
+    Action::new(
+        "close",
+        None,
+        Some(Target::Command(format!("stapel close {}", f.key))),
+    )
 }
 
 pub fn decide(f: &Facts) -> Decision {
