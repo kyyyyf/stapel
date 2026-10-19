@@ -478,3 +478,588 @@ fn folder_key_in_outputs() {
     assert_eq!(action_of(dir, &["abc-1"]), "next: confirm — stapel ok ABC-1");
     assert!(output(dir, &["abc-1"], 0).starts_with("ticket: ABC-1 — "));
 }
+
+// AC-10: the history is read only when no rule before the build applies.
+#[test]
+fn history_read_only_when_needed() {
+    fn commit(dir: &Path, subject: &str) {
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+    fn shallow_clone(origin: &Path, away: &Path) -> std::path::PathBuf {
+        let out = std::process::Command::new("git")
+            .args(["clone", "-q", "--depth", "1"])
+            .arg(format!("file://{}", origin.display()))
+            .arg("clone")
+            .current_dir(away)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        away.join("clone")
+    }
+    let bad_base = |dir: &Path| {
+        let mut state = state_json(dir, "ABC-1");
+        state["base"] = serde_json::json!("0".repeat(40));
+        write_state(dir, &state);
+    };
+    let confirm = "next: confirm — stapel ok ABC-1";
+
+    // A shallow clone at the confirm stage: the action is printed.
+    let repo = written();
+    let dir = repo.path();
+    add_finding(dir, "spec-review");
+    commit(dir, "initial");
+    commit(dir, "second");
+    let away = tempfile::tempdir().unwrap();
+    let clone = shallow_clone(dir, away.path());
+    assert_eq!(action(&clone), confirm);
+
+    // The same clone with every section confirmed: the shallow refusal.
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    commit(dir, "initial");
+    commit(dir, "second");
+    let away = tempfile::tempdir().unwrap();
+    let clone = shallow_clone(dir, away.path());
+    stapel(&clone)
+        .arg("next")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(contains("stapel: this is a shallow clone"));
+
+    // A base off the history at the confirm stage: the action is printed.
+    let repo = written();
+    let dir = repo.path();
+    add_finding(dir, "spec-review");
+    commit(dir, "initial");
+    bad_base(dir);
+    assert_eq!(action(dir), confirm);
+
+    // With every section confirmed: the refusal of `stapel check`.
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    commit(dir, "initial");
+    bad_base(dir);
+    stapel(dir)
+        .arg("next")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(contains("stapel: state.json has base"));
+}
+
+// AC-11: a step commit whose label the Plan does not name.
+#[test]
+fn step_outside_the_plan() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+    let repo = written();
+    let dir = repo.path();
+    set_plan(
+        dir,
+        "Route: full, auto.\n\n1. One.\n2. Two.\n3. Three.\n4. Four.",
+    );
+    confirm_all(dir);
+    commit(dir, &[], "initial");
+    let test = "#[test]\nfn five() {\n    assert!(true);\n}\n";
+    commit(
+        dir,
+        &[("crates/tiny/tests/five.rs", test)],
+        "ABC-1 step 5 RED: five",
+    );
+    assert!(facts(dir).contains(&"blocked: history has step 5, the Plan does not".to_string()));
+    assert_eq!(action(dir), format!("next: write-section Plan — {TICKET}"));
+}
+
+// AC-12: a history outcome that is a fault blocks the build.
+#[test]
+fn history_faults_block_the_build() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) -> String {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim()[..7].to_string()
+    }
+    fn ready() -> tempfile::TempDir {
+        let repo = written();
+        confirm_all(repo.path());
+        commit(repo.path(), &[], "initial");
+        repo
+    }
+    fn test_file(n: &str) -> (String, &'static str) {
+        (
+            format!("crates/tiny/tests/t{n}.rs"),
+            "#[test]\nfn t() {\n    assert!(true);\n}\n",
+        )
+    }
+    let fix = "next: fix-history step 1 — stapel check --history ABC-1".to_string();
+    let lib = |text: &str| ("crates/tiny/src/lib.rs".to_string(), text.to_string());
+
+    // A RED that changes code, with its GREEN after it.
+    let repo = ready();
+    let dir = repo.path();
+    let (path, text) = test_file("1");
+    let (lib_path, lib_text) = lib("// red\n");
+    let red = commit(
+        dir,
+        &[(&path, text), (&lib_path, &lib_text)],
+        "ABC-1 step 1 RED: test and code",
+    );
+    commit(
+        dir,
+        &[(&lib_path, "// green\n")],
+        "ABC-1 step 1 GREEN: code",
+    );
+    let lines = facts(dir);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].starts_with(&format!("blocked: step 1: red-changes-code at {red} — ")),
+        "{}",
+        lines[0]
+    );
+    assert_eq!(action(dir), fix);
+
+    // A GREEN without a RED.
+    let repo = ready();
+    let dir = repo.path();
+    let green = commit(
+        dir,
+        &[("crates/tiny/src/lib.rs", "// green\n")],
+        "ABC-1 step 1 GREEN: code",
+    );
+    assert_eq!(
+        facts(dir),
+        vec![format!(
+            "blocked: step 1: unpaired at {green} — no RED commit"
+        )]
+    );
+    assert_eq!(action(dir), fix);
+
+    // Two faults: two facts in history order, the action names the first.
+    let repo = ready();
+    let dir = repo.path();
+    let (path, text) = test_file("1");
+    let red = commit(
+        dir,
+        &[(&path, text), (&lib_path, &lib_text)],
+        "ABC-1 step 1 RED: test and code",
+    );
+    commit(
+        dir,
+        &[(&lib_path, "// green\n")],
+        "ABC-1 step 1 GREEN: code",
+    );
+    let green = commit(dir, &[(&lib_path, "// two\n")], "ABC-1 step 2 GREEN: code");
+    let lines = facts(dir);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(
+        lines[0].starts_with(&format!("blocked: step 1: red-changes-code at {red} — ")),
+        "{}",
+        lines[0]
+    );
+    assert_eq!(
+        lines[1],
+        format!("blocked: step 2: unpaired at {green} — no RED commit")
+    );
+    assert_eq!(action(dir), fix);
+
+    // Interleaved steps are `unverified`, which `next` leaves to the full check.
+    let repo = ready();
+    let dir = repo.path();
+    let (path1, text) = test_file("1");
+    commit(dir, &[(&path1, text)], "ABC-1 step 1 RED: one");
+    let (path2, text) = test_file("2");
+    commit(dir, &[(&path2, text)], "ABC-1 step 2 RED: two");
+    commit(dir, &[(&lib_path, "// one\n")], "ABC-1 step 1 GREEN: one");
+    commit(dir, &[(&lib_path, "// two\n")], "ABC-1 step 2 GREEN: two");
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+}
+
+// AC-12: an open RED is judged alone; its own `unpaired` is no fault.
+#[test]
+fn open_red_is_judged_alone() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) -> String {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim()[..7].to_string()
+    }
+    fn ready() -> tempfile::TempDir {
+        let repo = written();
+        confirm_all(repo.path());
+        commit(repo.path(), &[], "initial");
+        repo
+    }
+    let test = "#[test]\nfn t() {\n    assert!(true);\n}\n";
+    let fix = |label: &str| format!("next: fix-history {label} — stapel check --history ABC-1");
+
+    // Step 1 RED only, which changes code.
+    let repo = ready();
+    let dir = repo.path();
+    let red = commit(
+        dir,
+        &[
+            ("crates/tiny/tests/t1.rs", test),
+            ("crates/tiny/src/lib.rs", "// code\n"),
+        ],
+        "ABC-1 step 1 RED: test and code",
+    );
+    let lines = facts(dir);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].starts_with(&format!("blocked: step 1: red-changes-code at {red}")),
+        "{}",
+        lines[0]
+    );
+    assert_eq!(action(dir), fix("step 1"));
+
+    // Step 1 RED only, with no test.
+    let repo = ready();
+    let dir = repo.path();
+    let red = commit(dir, &[], "ABC-1 step 1 RED: no test");
+    assert!(
+        facts(dir)
+            .iter()
+            .any(|f| f.starts_with(&format!("blocked: step 1: no-tests at {red}"))),
+        "{:?}",
+        facts(dir)
+    );
+    assert_eq!(action(dir), fix("step 1"));
+
+    // Step 2 RED after step 1 RED with no GREEN: step 1 is a fault, step 2 is the open RED.
+    let repo = ready();
+    let dir = repo.path();
+    commit(
+        dir,
+        &[("crates/tiny/tests/t1.rs", test)],
+        "ABC-1 step 1 RED: one",
+    );
+    let second = commit(
+        dir,
+        &[("crates/tiny/tests/t2.rs", test)],
+        "ABC-1 step 2 RED: two",
+    );
+    assert_eq!(
+        facts(dir),
+        vec![format!(
+            "blocked: step 1: unpaired at {second} — no GREEN commit"
+        )]
+    );
+    assert_eq!(action(dir), fix("step 1"));
+
+    // Step 2 RED with no test while step 1 has no commit.
+    let repo = ready();
+    let dir = repo.path();
+    let red = commit(dir, &[], "ABC-1 step 2 RED: no test");
+    assert!(
+        facts(dir)
+            .iter()
+            .any(|f| f.starts_with(&format!("blocked: step 2: no-tests at {red}"))),
+        "{:?}",
+        facts(dir)
+    );
+    assert_eq!(action(dir), fix("step 2"));
+}
+
+// AC-13: a failing current check blocks the build.
+#[test]
+fn failing_check_blocks_the_build() {
+    fn commit(dir: &Path, subject: &str) -> String {
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    }
+    let repo = written();
+    let dir = repo.path();
+    let toml = dir.join(".stapel/stapel.toml");
+    let mut text = std::fs::read_to_string(&toml).unwrap();
+    text.push_str("\n[check]\nrunner = \"cargo\"\ntimeout_secs = 900\n");
+    std::fs::write(&toml, text).unwrap();
+    confirm_all(dir);
+    let head = commit(dir, "initial");
+    let record = serde_json::json!({
+        "v": 1, "kind": "check", "id": "c1", "at": "2026-10-19T10:00:00Z",
+        "ticket": "ABC-1", "head": head, "result": "fail", "steps": [],
+    });
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-1/runs.jsonl"),
+        format!("{record}\n"),
+    )
+    .unwrap();
+    assert_eq!(
+        facts(dir),
+        vec![format!("blocked: check fails at {}", &head[..7])]
+    );
+    assert_eq!(
+        action(dir),
+        "next: fix-check — .stapel/tickets/ABC-1/runs.jsonl"
+    );
+
+    // After a new commit the record is stale and does not block.
+    std::fs::write(dir.join("note.txt"), "a later change\n").unwrap();
+    commit(dir, "ABC-1: a later commit");
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    assert_eq!(action(dir), format!("next: build-step step 1 — {TICKET}"));
+}
+
+// AC-14: the first Plan step that is not done is the one to build.
+#[test]
+fn first_open_step() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+    fn ready() -> tempfile::TempDir {
+        let repo = written();
+        confirm_all(repo.path());
+        commit(repo.path(), &[], "initial");
+        repo
+    }
+    let test = "#[test]\nfn t() {\n    assert!(true);\n}\n";
+    let red = |dir: &Path, n: &str| {
+        commit(
+            dir,
+            &[(&format!("crates/tiny/tests/t{n}.rs"), test)],
+            &format!("ABC-1 step {n} RED: test"),
+        )
+    };
+    let green = |dir: &Path, n: &str| {
+        commit(
+            dir,
+            &[("crates/tiny/src/lib.rs", &format!("// {n}\n"))],
+            &format!("ABC-1 step {n} GREEN: code"),
+        )
+    };
+
+    let repo = ready();
+    assert_eq!(
+        action(repo.path()),
+        format!("next: build-step step 1 — {TICKET}")
+    );
+
+    let repo = ready();
+    red(repo.path(), "1");
+    assert_eq!(
+        action(repo.path()),
+        format!("next: green-step step 1 — {TICKET}")
+    );
+    assert!(facts(repo.path()).is_empty());
+
+    green(repo.path(), "1");
+    assert_eq!(
+        action(repo.path()),
+        format!("next: build-step step 2 — {TICKET}")
+    );
+
+    let repo = ready();
+    red(repo.path(), "2");
+    green(repo.path(), "2");
+    assert_eq!(
+        action(repo.path()),
+        format!("next: build-step step 1 — {TICKET}")
+    );
+}
+
+// AC-15: a coverage or cleanup commit marks a Plan step done.
+#[test]
+fn coverage_and_cleanup_steps_are_done() {
+    fn commit(dir: &Path, subject: &str) {
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+    // The action after `subject` is committed on a Plan with `steps`.
+    let after = |steps: &str, subject: &str| {
+        let repo = written();
+        let dir = repo.path();
+        set_plan(dir, &format!("Route: full, auto.\n\n{steps}"));
+        confirm_all(dir);
+        commit(dir, "initial");
+        commit(dir, subject);
+        action(dir)
+    };
+    let build = |label: &str| format!("next: build-step {label} — {TICKET}");
+
+    assert_eq!(
+        after("1c. A.\n2. B.", "ABC-1 step 1c coverage: more tests"),
+        build("step 2")
+    );
+    assert_eq!(
+        after("4. A.\n5. B.", "ABC-1 step 4 cleanup: dead code"),
+        build("step 5")
+    );
+    assert_eq!(
+        after("2. A.\n3. B.", "ABC-1 step 2 notes"),
+        build("step 2"),
+        "no colon"
+    );
+    assert_eq!(
+        after("2. A.\n3. B.", "ABC-1 step 2: notes"),
+        build("step 2"),
+        "no word"
+    );
+}
