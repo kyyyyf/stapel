@@ -1,0 +1,12 @@
+# Brief: ABC-1 step 2
+ticket: .stapel/tickets/ABC-1/ticket.md
+base: none
+
+## Frame
+**Problem.** The thing.
+
+**Promise.** One item.
+
+## Step
+2. Two. Names AC-2 and
+   AC-3 to AC-4.
