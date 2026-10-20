@@ -108,7 +108,7 @@ Terms:
 - **History**: the step commits of the ticket on the first-parent history of `HEAD` and their history
   outcomes, as `stapel check --history` reads them (`steps::step_commits`, `check::history_report`); a
   closed ticket is read up to its range end, as `check` does.
-- **Done step**: a Plan step whose label has a GREEN commit in history, or a commit on the first-parent
+- **Done step**: a Plan step whose label has a GREEN commit in history, or, when it has no RED, a commit on the first-parent
   history of `HEAD` whose subject starts with `<KEY> <label> ` followed by a word other than `RED:` or
   `GREEN:` that is at least one character and then `:` (`STP-19 step 3c coverage: …`; a bare `:` is no
   word).
@@ -131,7 +131,7 @@ Terms:
 | AC-9 | WHEN a confirmed section has no confirmation or a stale one and no rule of AC-6 to AC-8 applies THE command adds the fact `<id> not confirmed`, or `<id> confirmation is stale: <reason>` (`Reason::describe`) once per stale reason, in the configured order, and the action line is `next: confirm — stapel ok <KEY>`. | `next::confirm_names_each_section`, `next::stale_reasons_each_a_fact`, `next::folder_key_in_outputs`, `next::facts_wait_for_confirm` |
 | AC-10 | IF no rule of AC-5 to AC-9 applies and the history cannot be read (a shallow clone, a `base` off the first-parent history of `HEAD`, a git error) THEN the command prints `stapel: <the refusal of stapel check>` and exits 1; while one of those rules applies, the command does not read the history, so neither stops it. | `next::history_read_only_when_needed` |
 | AC-11 | WHEN a step commit of the ticket has a label that no Plan step has THE command adds the fact `history has <label>, the Plan does not` for each such label in history order, and the action line is `next: write-section Plan — <ticket path>`. | `next::step_outside_the_plan`, `next::history_order_of_facts` |
-| AC-12 | WHEN a step's history outcome is not passing, or is `unverified` for a reason other than `interleaved` (a build input changed), or an open RED gets `no-tests` or `red-changes-code` from `outcomes::open_red`, THE command adds the fact `<label>: <outcome> at <short sha> — <reason>` (the fault commit) per step in history order and the action line `next: fix-history <label> — stapel check --history <KEY>` for the first; an open RED's own `unpaired` and `interleaved` are no fault. | `next::history_faults_block_the_build`, `next::open_red_is_judged_alone`, `next::history_order_of_facts`, `next::unpaired_red_behind_a_green`, `next::build_input_change_is_a_fault` |
+| AC-12 | WHEN a step's history outcome is not passing, or is `unverified` for a reason other than `interleaved` (a build input changed), or an open RED gets `no-tests` or `red-changes-code` from `outcomes::open_red`, THE command adds the fact `<label>: <outcome> at <short sha> — <reason>` (the fault commit) per step in history order and the action line `next: fix-history <label> — stapel check --history <KEY>` for the first; an open RED's own `unpaired` and `interleaved` are no fault. | `next::history_faults_block_the_build`, `next::open_red_is_judged_alone`, `next::history_order_of_facts`, `next::unpaired_red_behind_a_green`, `next::build_input_change_is_a_fault`, `next::build_input_names_the_first_step` |
 | AC-13 | WHEN `[check]` is set and the newest check record is a current `fail` (`check: fail at <sha>` in `stapel status`) THE command adds the fact `check fails at <short sha>` and the action line is `next: fix-check — .stapel/tickets/<KEY>/runs.jsonl`. | `next::failing_check_blocks_the_build`, `next::rule_order_after_history`, `next::check_records_after_the_steps` |
 | AC-14 | WHEN history has an open RED without a fault THE action line is `next: green-step <its label> — <ticket path>`, wherever the step stands in the Plan; else, for the first Plan step in Plan order that is not done, `next: build-step <label> — <ticket path>`. | `next::first_open_step`, `next::open_red_out_of_plan_order` |
 | AC-15 | WHEN a Plan step has no RED and no GREEN but a commit `<KEY> <label> <word>: …` with another word (coverage, cleanup) THE step is done and AC-14 moves to the next Plan step. | `next::coverage_and_cleanup_steps_are_done`, `next::coverage_word_after_a_red` |
@@ -140,7 +140,7 @@ Terms:
 | AC-18 | WHEN the rules above do not apply and the section of id `summary` is configured and not written THE action line is `next: write-summary — <ticket path>`. | `next::code_review_then_summary`, `next::review_and_summary_edges` |
 | AC-19 | WHEN no rule of AC-5 to AC-18 and AC-20 applies THE action line is `next: close — stapel close <KEY>`. | `next::close_at_the_end` |
 | AC-20 | WHEN every Plan step is done and the working tree has changes outside the machine files (`worktree::dirty_paths`, which `stapel check` refuses) THE command adds the fact `uncommitted changes: <the first five paths of worktree::dirty_paths, joined by a comma and a space>` and the action line is `next: commit — git status`; this rule comes before AC-16. | `next::uncommitted_changes_before_the_check`, `next::uncommitted_paths_order` |
-| AC-21 | WHEN `stapel.toml` configures no section of id `plan` THE command reads no Plan step, AC-11, AC-14 and AC-15 do not apply, and after AC-12 and AC-13 the rules AC-20 and AC-16 to AC-19 follow. | `next::no_plan_section_configured` |
+| AC-21 | WHEN `stapel.toml` configures no section of id `plan` THE command reads no Plan step; AC-11, AC-15 and the `build-step` part of AC-14 do not apply, so after AC-12, AC-13 and an open RED's `green-step` the rules AC-20 and AC-16 to AC-19 follow. | `next::no_plan_section_configured`, `next::open_red_without_a_plan_section` |
 
 ### Guarantees
 
@@ -290,6 +290,8 @@ status`, `--test check_history` and `--test ticket_drift`.
 | Word after RED | `ABC-1 step 2 RED: …` then `ABC-1 step 2 wip: …`: step 2 is not done, `green-step step 2`; `ABC-1 step 1c RED` then `ABC-1 step 1c coverage:` the same (E-3, E-10) | `next::coverage_word_after_a_red` |
 | No Plan section | a `stapel.toml` without the `plan` section, Review and Summary written, a passing check: `close`; with a step commit in history: no `history has` fact (R-2, E-2) | `next::no_plan_section_configured` |
 | Coverage (step 4c) | a `findings.jsonl` line without `v` and with `stage` `spec-review` (the shape of every record of STP-19): `confirm`, not `spec-review` (R-4) | `next::findings_without_version` |
+| Coverage (step 4d) | no `plan` section and a clean open RED: `green-step <its label>` (D4-1) | `next::open_red_without_a_plan_section` |
+| Coverage (step 4d) | the Build input case: the exact facts in history order and the exact action `next: fix-history step 1 — stapel check --history ABC-1` (D4-3) | `next::build_input_names_the_first_step` |
 
 ### Inputs
 
@@ -368,6 +370,13 @@ names `stapel.toml` and the working tree (DR-2); AC-1 also keeps the git index (
 AC-12, AC-14, AC-15, AC-20 and the new AC-21 (no `plan` section; R-2, DR-4, E-2); Not promised gains E-5,
 E-7, DR-7, R-3; plan steps 4 and 4c. No change for E-6 and E-11 (documented in AC-8), E-10 (fixed by AC-15),
 the R-5 code quality notes. `stapel check` passed at 134973b (549 tests) before this change.
+2026-10-20, after the drift review of step 4: D4-1 to D4-9 (1 HIGH, 3 MEDIUM, 5 LOW). D4-1 (an open RED
+gives `green-step` without a `plan` section, which AC-21 excluded) is settled in the text: the open RED
+keeps its `green-step`, as a `run-check` on an unfinished step would loop; D4-6 the Done step term names
+the RED; plan step 4d with two coverage tests (D4-1, D4-3). No change for D4-2 (the build-input sha is
+taken only when no fixed outcome exists, so only for `unverified`), D4-4 and D4-5 (a defensive branch that
+AC-12 and AC-14 make unreachable), D4-7 (the interleaved case is tested), D4-8, D4-9. The builder of step 4
+appended its tests with `cat >>`, which the guard allowed (item 1.9).
 
 ## Proof
 
@@ -384,7 +393,7 @@ the R-5 code quality notes. `stapel check` passed at 134973b (549 tests) before 
 | AC-9 | `next::confirm_names_each_section`, `next::stale_reasons_each_a_fact`, `next::folder_key_in_outputs`, `next::facts_wait_for_confirm` |
 | AC-10 | `next::history_read_only_when_needed` |
 | AC-11 | `next::step_outside_the_plan`, `next::history_order_of_facts` |
-| AC-12 | `next::history_faults_block_the_build`, `next::open_red_is_judged_alone`, `next::history_order_of_facts`, `next::unpaired_red_behind_a_green`, `next::build_input_change_is_a_fault` |
+| AC-12 | `next::history_faults_block_the_build`, `next::open_red_is_judged_alone`, `next::history_order_of_facts`, `next::unpaired_red_behind_a_green`, `next::build_input_change_is_a_fault`, `next::build_input_names_the_first_step` |
 | AC-13 | `next::failing_check_blocks_the_build`, `next::rule_order_after_history`, `next::check_records_after_the_steps` |
 | AC-14 | `next::first_open_step`, `next::open_red_out_of_plan_order` |
 | AC-15 | `next::coverage_and_cleanup_steps_are_done`, `next::coverage_word_after_a_red` |
@@ -393,7 +402,7 @@ the R-5 code quality notes. `stapel check` passed at 134973b (549 tests) before 
 | AC-18 | `next::code_review_then_summary`, `next::review_and_summary_edges` |
 | AC-19 | `next::close_at_the_end` |
 | AC-20 | `next::uncommitted_changes_before_the_check`, `next::uncommitted_paths_order` |
-| AC-21 | `next::no_plan_section_configured` |
+| AC-21 | `next::no_plan_section_configured`, `next::open_red_without_a_plan_section` |
 
 ## Plan
 
@@ -422,6 +431,8 @@ Route: full (tag `interface`), auto.
    `History::check_pass` (D3-6). Must not change: `checkstate.rs`, `outcomes.rs`, the output and exit codes
    of `stapel check`.
 4c. Coverage after code review round 1 (R-4): one new `#[test]` function, its helpers nested inside it.
+4d. Coverage after the drift review of step 4 (D4-1, D4-3): two new `#[test]` functions, each helper nested
+   inside its function.
 
 ## Review
 
