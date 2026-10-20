@@ -6,7 +6,19 @@ use stapel_core::brief::assemble;
 use stapel_core::ticket::read;
 use stapel_core::tickets::{Status, resolve};
 
+/// `STEP` is digits followed by at most one lowercase ASCII letter (`2`, `2c`).
+fn step_is_well_formed(step: &str) -> bool {
+    let digits = step.trim_end_matches(|c: char| c.is_ascii_lowercase());
+    let letters = step.len() - digits.len();
+    letters <= 1 && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
 pub fn run(key: &str, step: &str) -> Result<(), Fail> {
+    if !step_is_well_formed(step) {
+        return Err(Fail::refused(format!(
+            "STEP must be digits followed by at most one lowercase letter, e.g. 2 or 2c: {step}"
+        )));
+    }
     let (root, config) = repo::open().map_err(Fail::failed)?;
     let ticket = resolve(&root, Some(key)).map_err(Fail::refused)?;
     let state = match &ticket.status {
