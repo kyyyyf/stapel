@@ -354,6 +354,20 @@ fn light_route_skips_spec_review() {
     }
 }
 
+// AC-8: a record without `v`, the shape of every record of STP-19, still counts as a spec review.
+#[test]
+fn findings_without_version() {
+    fn add_unversioned_finding(dir: &Path) {
+        let line = "{\"id\":\"SR1-1\",\"ticket\":\"ABC-1\",\"stage\":\"spec-review\",\"round\":1}\n";
+        std::fs::write(dir.join(".stapel/tickets/ABC-1/findings.jsonl"), line).unwrap();
+    }
+
+    let repo = written();
+    let dir = repo.path();
+    add_unversioned_finding(dir);
+    assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
+}
+
 // AC-9
 #[test]
 fn confirm_names_each_section() {
