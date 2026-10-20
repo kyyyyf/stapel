@@ -34,7 +34,13 @@ pub fn stapel_dir(root: &Path) -> Result<PathBuf, String> {
 pub fn dirty_paths(root: &Path) -> Result<Vec<String>, String> {
     let raw = git(
         root,
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        ],
     )?;
     let fields: Vec<String> = raw
         .split(|b| *b == 0)

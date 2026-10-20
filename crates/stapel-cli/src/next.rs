@@ -67,6 +67,7 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
     let report = history_report(root, key, &head, &steps, bounds).map_err(Fail::failed)?;
 
     let mut faults = Vec::new();
+    let mut open_red_label = None;
     for (step, s) in steps.iter().zip(&report.steps) {
         let a = &s.analysis;
         // An open RED is the only commit of its step and the newest step commit: it is judged by
@@ -78,14 +79,24 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
             _ => None,
         };
         let found = match open {
-            Some(red) => open_red(root, &red, &head)
-                .map_err(Fail::failed)?
-                .map(|(outcome, reason)| (outcome, reason, red)),
+            Some(red) => {
+                let judged = open_red(root, &red, &head).map_err(Fail::failed)?;
+                if judged.is_none() {
+                    open_red_label = Some(a.label.clone());
+                }
+                judged.map(|(outcome, reason)| (outcome, reason, red))
+            }
             None => match &s.outcome {
-                Some((outcome, reason)) if !passing(outcome) && outcome != "unverified" => {
+                // `unverified: interleaved: …` is no fault; a changed build input is (AC-12).
+                Some((outcome, reason))
+                    if !passing(outcome)
+                        && !(outcome == "unverified" && reason.starts_with("interleaved: ")) =>
+                {
+                    let changed = report.inputs.changed.as_ref().map(|c| c.sha.clone());
                     let sha = a
                         .fault
                         .clone()
+                        .or_else(|| if a.fixed.is_none() { changed } else { None })
                         .or_else(|| a.red.as_ref().map(|c| c.sha.clone()))
                         .or_else(|| a.green.as_ref().map(|c| c.sha.clone()))
                         .unwrap_or_default();
@@ -129,6 +140,7 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         check_fail,
         check_configured,
         check_pass,
+        open_red: open_red_label,
         dirty,
     })
 }

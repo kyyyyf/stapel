@@ -80,8 +80,12 @@ pub struct History {
     pub check_fail: Option<String>,
     /// Whether `[check]` is set in `stapel.toml`.
     pub check_configured: bool,
-    /// Whether the newest check record is a pass at `HEAD` with a clean tree.
+    /// Whether the newest check record is a pass that is still current: its commit is an ancestor
+    /// of `HEAD` and no file outside the machine files has changed since (`CheckLine::Pass`).
     pub check_pass: bool,
+    /// The label of an open RED without a fault: the only step commit of its step, the newest
+    /// step commit of the ticket.
+    pub open_red: Option<String>,
     /// The paths with uncommitted changes outside the machine files (`worktree::dirty_paths`).
     pub dirty: Vec<String>,
 }
@@ -177,10 +181,16 @@ fn plan_faults(plan: &str) -> Vec<String> {
 }
 
 /// The history facts of AC-11 to AC-13 and the action of AC-11 to AC-20.
-fn history_action(f: &Facts, h: &History, plan: &str, facts: &mut Vec<String>) -> Action {
+///
+/// `plan` is `None` when no section of id `plan` is configured: no Plan step is read (AC-21).
+fn history_action(f: &Facts, h: &History, plan: Option<&str>, facts: &mut Vec<String>) -> Action {
     let path = ticket_path(f.key);
-    let labels = plan_steps(plan);
-    let outside: Vec<&String> = h.labels.iter().filter(|l| !labels.contains(l)).collect();
+    let labels = plan.map(plan_steps).unwrap_or_default();
+    let outside: Vec<&String> = if plan.is_some() {
+        h.labels.iter().filter(|l| !labels.contains(l)).collect()
+    } else {
+        Vec::new()
+    };
     for label in &outside {
         facts.push(format!("history has {label}, the Plan does not"));
     }
@@ -221,9 +231,14 @@ fn history_action(f: &Facts, h: &History, plan: &str, facts: &mut Vec<String>) -
             ))),
         );
     }
-    let open = labels
-        .iter()
-        .find(|l| !h.greens.contains(l) && !h.subjects.iter().any(|s| closes_step(f.key, l, s)));
+    if let Some(label) = &h.open_red {
+        return Action::new("green-step", Some(label.clone()), Some(Target::Path(path)));
+    }
+    // A word commit closes a step that has no RED and no GREEN (AC-15).
+    let open = labels.iter().find(|l| {
+        !h.greens.contains(l)
+            && (h.labels.contains(l) || !h.subjects.iter().any(|s| closes_step(f.key, l, s)))
+    });
     match open {
         Some(label) if h.labels.contains(label) => {
             Action::new("green-step", Some(label.clone()), Some(Target::Path(path)))
@@ -302,25 +317,23 @@ pub fn decide(f: &Facts) -> Decision {
         }
     }
 
-    let mut unconfirmed = false;
+    // The confirmation facts (AC-9); they are printed only with the action `confirm`.
+    let mut confirm_facts = Vec::new();
     for def in &confirmed {
         match latest(f.state, &def.id) {
-            None => {
-                facts.push(format!("{} not confirmed", def.id));
-                unconfirmed = true;
-            }
+            None => confirm_facts.push(format!("{} not confirmed", def.id)),
             Some(c) => {
                 for reason in freshness(f.config, f.sections, c) {
-                    facts.push(format!(
+                    confirm_facts.push(format!(
                         "{} confirmation is stale: {}",
                         def.id,
                         reason.describe(c)
                     ));
-                    unconfirmed = true;
                 }
             }
         }
     }
+    let unconfirmed = !confirm_facts.is_empty();
 
     let plan = f
         .config
@@ -342,12 +355,13 @@ pub fn decide(f: &Facts) -> Decision {
     {
         Action::new("spec-review", None, Some(Target::Path(path)))
     } else if unconfirmed {
+        facts.extend(confirm_facts);
         Action::new(
             "confirm",
             None,
             Some(Target::Command(format!("stapel ok {}", f.key))),
         )
-    } else if let (Some(h), Some(plan)) = (f.history, plan) {
+    } else if let Some(h) = f.history {
         history_action(f, h, plan, &mut facts)
     } else {
         // The rules that read history come next; the caller reads it and decides again.
