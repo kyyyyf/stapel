@@ -1616,3 +1616,201 @@ fn close_at_the_end() {
     record(dir, &head, "pass");
     assert_eq!(action(dir), "next: close — stapel close ABC-1");
 }
+
+// AC-1: a run of the command changes nothing, at the `confirm`, `build-step` and `run-check` stages.
+#[test]
+fn writes_nothing() {
+    after_the_build!();
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8(out.stdout).unwrap()
+    }
+    let state = |dir: &Path| {
+        (
+            common::snapshot(dir),
+            git(dir, &["count-objects", "-v"]),
+            git(dir, &["for-each-ref"]),
+            git(dir, &["rev-parse", "HEAD"]),
+        )
+    };
+    let check = |dir: &Path, expected: &str| {
+        let before = state(dir);
+        assert_eq!(action(dir), expected);
+        let json = output(dir, &["--json"], 0);
+        assert!(json.contains(expected.split(' ').nth(1).unwrap()), "{json}");
+        assert!(
+            before == state(dir),
+            "a run of `next` changed the repository"
+        );
+    };
+
+    // `confirm`: the sections are written, a spec review is recorded, nothing is confirmed.
+    let repo = written();
+    let dir = repo.path();
+    add_finding(dir, "spec-review");
+    commit(dir, &[], "initial");
+    check(dir, "next: confirm — stapel ok ABC-1");
+
+    // `build-step`.
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    commit(dir, &[], "initial");
+    check(dir, &format!("next: build-step step 1 — {TICKET}"));
+
+    // `run-check`.
+    let (repo, _, _) = done(true);
+    check(repo.path(), "next: run-check — stapel check ABC-1");
+}
+
+// AC-17 and AC-18: sections that are not configured, and a Summary with an empty body.
+#[test]
+fn review_and_summary_edges() {
+    after_the_build!();
+
+    // No `review` and no `summary` section configured: `close`.
+    let (repo, _, _) = done(false);
+    let dir = repo.path();
+    let toml = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    let cut = text
+        .replace(
+            "[[sections]]\nid = \"review\"\ntitle = \"Review\"\nowner = \"generated\"\n\n",
+            "",
+        )
+        .replace(
+            "[[sections]]\nid = \"summary\"\ntitle = \"Summary\"\nowner = \"generated\"\n\n",
+            "",
+        );
+    assert_ne!(cut, text);
+    assert!(!cut.contains("id = \"review\"") && !cut.contains("id = \"summary\""));
+    std::fs::write(&toml, cut).unwrap();
+    commit(dir, &[], "ABC-1: config");
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    assert_eq!(action(dir), "next: close — stapel close ABC-1");
+
+    // Review `TODO` with Summary written.
+    let (repo, _, _) = done(false);
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Summary", "Done.");
+    commit(dir, &[], "ABC-1: summary");
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    assert_eq!(action(dir), format!("next: code-review — {TICKET}"));
+
+    // Review written, Summary with an empty body.
+    let (repo, _, _) = done(false);
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Review", "Reviewed: no findings.");
+    set_section(dir, "ABC-1", "Summary", "");
+    commit(dir, &[], "ABC-1: review");
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    assert_eq!(action(dir), format!("next: write-summary — {TICKET}"));
+}
+
+// AC-13 and AC-16: check records after the steps.
+#[test]
+fn check_records_after_the_steps() {
+    after_the_build!();
+    let run = "next: run-check — stapel check ABC-1";
+    let write = |dir: &Path, record: serde_json::Value| {
+        std::fs::write(
+            dir.join(".stapel/tickets/ABC-1/runs.jsonl"),
+            format!("{record}\n"),
+        )
+        .unwrap();
+    };
+
+    // A `fail` record at HEAD.
+    let (repo, _, green) = done(true);
+    let dir = repo.path();
+    record(dir, &green, "fail");
+    assert_eq!(
+        facts(dir),
+        vec![format!("blocked: check fails at {}", &green[..7])]
+    );
+    assert_eq!(
+        action(dir),
+        "next: fix-check — .stapel/tickets/ABC-1/runs.jsonl"
+    );
+
+    // A record without `head`.
+    let (repo, _, _) = done(true);
+    let dir = repo.path();
+    write(
+        dir,
+        serde_json::json!({
+            "v": 1, "kind": "check", "id": "c1", "at": "2026-10-19T10:00:00Z",
+            "ticket": "ABC-1", "result": "pass", "steps": [],
+        }),
+    );
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    assert_eq!(action(dir), run);
+
+    // A record with the result `unknown`.
+    let (repo, _, green) = done(true);
+    let dir = repo.path();
+    record(dir, &green, "unknown");
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    assert_eq!(action(dir), run);
+}
+
+// AC-20: the paths are in the order of `git status --porcelain`, the first five.
+#[test]
+fn uncommitted_paths_order() {
+    after_the_build!();
+    let (repo, _, _) = done(false);
+    let dir = repo.path();
+    std::fs::write(dir.join("crates/tiny/src/lib.rs"), "// changed\n").unwrap();
+    for rel in ["z.txt", "y.txt", "sub/m.txt", "b.txt", "a.txt"] {
+        let path = dir.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "x\n").unwrap();
+    }
+    assert_eq!(
+        facts(dir),
+        vec![
+            "blocked: uncommitted changes: crates/tiny/src/lib.rs, a.txt, b.txt, sub/m.txt, y.txt"
+                .to_string()
+        ]
+    );
+    assert_eq!(action(dir), "next: commit — git status");
+}
+
+// AC-2: the JSON line at `commit` and at `close`.
+#[test]
+fn json_after_the_build() {
+    after_the_build!();
+    let one_line = |dir: &Path| {
+        let text = output(dir, &["--json"], 0);
+        assert!(text.ends_with('\n'), "{text:?}");
+        assert_eq!(text.lines().count(), 1, "one line: {text:?}");
+        text
+    };
+
+    let (repo, _, _) = done(false);
+    let dir = repo.path();
+    std::fs::write(dir.join("f1.txt"), "x\n").unwrap();
+    assert_eq!(
+        one_line(dir),
+        "{\"v\":1,\"ticket\":\"ABC-1\",\"action\":\"commit\",\"subject\":null,\
+         \"command\":\"git status\",\"path\":null,\
+         \"facts\":[\"uncommitted changes: f1.txt\"]}\n"
+    );
+
+    let (repo, _, _) = done(false);
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Review", "Reviewed: no findings.");
+    set_section(dir, "ABC-1", "Summary", "Done.");
+    commit(dir, &[], "ABC-1: review and summary");
+    assert_eq!(
+        one_line(dir),
+        "{\"v\":1,\"ticket\":\"ABC-1\",\"action\":\"close\",\"subject\":null,\
+         \"command\":\"stapel close ABC-1\",\"path\":null,\"facts\":[]}\n"
+    );
+}
