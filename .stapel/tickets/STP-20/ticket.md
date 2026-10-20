@@ -2,7 +2,7 @@
 
 ## Description
 
-Source: `docs/PHASES.md`, plan item 1.1 (`docs/decisions/0004`); the next-session note
+Source: `docs/PHASES.md`, plan item 1.1 (`docs/decisions/0004-product-direction-and-interface.md`); the next-session note
 `.stapel/scratch/next/next-session.md`.
 
 ### Frame
@@ -13,7 +13,9 @@ orchestrator's context as the main cost. Every fact needed is already on disk or
 computes the action from them, so the skill of item 1.3 can be one rule: run `stapel next`, do what it says,
 run it again.
 
-**Plan item:** 1.1. **Risk tags:** `interface` (a new command; its `--json` output is what the skill reads).
+**Plan item:** 1.1.
+
+**Risk tags:** `interface` (a new command; its `--json` output is what the skill reads).
 
 **Non-goals.** Writing any file or record (the review record is item 1.5); the builder brief or its path (item
 1.2); the ticket lint (item 1.6); findings fates and triage (item 1.5: today no command sets a fate after the
@@ -191,6 +193,42 @@ Terms:
 - The JSON line is built with `serde_json::json!` under `preserve_order` (as `tokens add` does), so the key
   order of AC-2 holds.
 
+### Decisions (as built)
+
+- Step 1 (302cdcd, 77b9d28): `stapel_core::next::decide(&Facts) -> Decision` is pure; `plan_steps`, `is_light`,
+  `ticket_path` and `Action::line` sit next to it; the command is `crates/stapel-cli/src/next.rs`, routed in
+  `main.rs` through `fail::finish`. The facts of AC-7 and AC-9 are always gathered and printed whatever the
+  action (a closed ticket has none), AC-7 facts before AC-9 facts, one AC-9 fact per stale reason. An empty or
+  `TODO` Plan gives `write-section Plan` without the "has no steps" fact. The Route word is the first token
+  after `Route:` with trailing `, . ; :` trimmed, compared to `light` in any case. `ticket.md` is read before
+  the closed check, so an unreadable one exits 1 for a closed ticket too. Without `KEY`, `next` counts open
+  tickets itself (`tickets::list`) for `new-ticket`; `resolve` is unchanged. A legacy ticket exits 1 with
+  "ticket <KEY> is in the STP-1 format; it has no stage to compute". `findings.jsonl` stages count from V1
+  and Legacy lines; non-JSON lines are skipped; an unreadable file exits 1. Until step 2, the placeholder
+  after AC-9 is `build-step <first Plan label>`; until step 3, `--json` is parsed and ignored.
+- Step 1c (3097086): five coverage tests, all passing at once.
+- Step 2 (b1cfc37, ff25d51): `stapel_core::next` gains `History`, `Fault` and `closes_step` (the AC-15 subject
+  rule); `Facts.history` is `Option<&History>` and `Decision.needs_history` tells the CLI to gather it. The CLI
+  runs `decide` without history first; only on `needs_history` it reads `HEAD`, `shallow_refusal`, `base_of`
+  (now `pub(crate)` in `check.rs`), `step_commits`, `history_report`, `open_red`, the first-parent subjects and
+  `checkstate::current`, then runs `decide` again. An unborn `HEAD` is an empty history, not an AC-10
+  refusal; a folder that is not a git repository exits 1 with the git error. A fault without a fault commit
+  takes the step's RED sha, else its GREEN. Labels outside the Plan come from RED and GREEN commits only. An
+  `open_red` git error exits 1. A check stays current after an empty commit (`checkstate::current`), so the
+  stale case of the test changes a file. Until step 3, `run-check` is the placeholder after the steps.
+- Step 2c (8780e13): three coverage tests, all passing at once.
+- Step 3 (bfe6d56, a5332a2): `History` gains `check_configured`, `check_pass` and `dirty`, filled in `gather`
+  from `checkstate::current` and `worktree::dirty_paths` only when the history is needed; `after_the_steps`
+  applies `commit`, `run-check`, `code-review`, `write-summary`, `close` in that order. The uncommitted fact
+  joins the first five dirty paths, in git's sorted order, with `, `. `run-check` fires with `[check]` when the
+  newest record is none or stale (a current fail stops at `fix-check` before). `code-review` and
+  `write-summary` use the section ids `review` and `summary` and are skipped when those are not configured.
+  `--json` is `serde_json::json!` under `preserve_order`, one line, also for `new-ticket` and `closed`. The
+  tests after the build share their helpers through one top-level `macro_rules! after_the_build`.
+  `next::writes_nothing` passed before the code and moved to the coverage step 3c.
+- Step 3c (cc6d366): five coverage tests, all passing at once. In `review_and_summary_edges` the
+  `review` and `summary` sections are removed from `stapel.toml` after the confirmations, which stay fresh.
+
 ## Test plan
 
 CLI tests in a new file `crates/stapel-cli/tests/next.rs`, with `common::repo_with_ticket`,
@@ -244,7 +282,7 @@ status`, `--test check_history` and `--test ticket_drift`.
 |---|---|---|---|---|---|---|
 | `KEY` (positional of `next`) | ticket folder name, any case | one ticket | absent: the only open ticket, or `new-ticket` when none is open | no such folder, several open without key: exit 2; legacy or unreadable: exit 1 | ASCII case ignored | `next::refuses_a_wrong_call`, `next::closed_ticket` |
 | `--json` | flag | — | absent: text | an unknown option such as `--jsonx`: exit 2 (clap) | — | `next::json_has_the_same_action`, `next::refuses_a_wrong_call` |
-| `state.json` | JSON, `state::load` | — | no confirmations: AC-8 or AC-9 | not JSON, legacy: exit 1 | — | `next::refuses_an_unreadable_ticket`, `next::spec_review_until_a_fact` |
+| `state.json` | JSON, read by `load` of `state.rs` | — | no confirmations: AC-8 or AC-9 | not JSON, legacy: exit 1 | — | `next::refuses_an_unreadable_ticket`, `next::spec_review_until_a_fact` |
 | `runs.jsonl` check record | JSON line, newest well-formed (`checkstate::current`: full `head`, `result` `pass` or `fail`) | — | no file or no record: `run-check` | a record without `head` or with another `result`: skipped | short sha of 7 | `next::failing_check_blocks_the_build`, `next::run_check_after_the_steps` |
 | `[check]` of `stapel.toml` | table | — | absent: AC-13 and AC-16 do not apply | a broken `stapel.toml`: exit 1 | — | `next::run_check_after_the_steps`, `next::refuses_an_unreadable_ticket` |
 | `ticket.md` sections | Markdown, `## ` headings | — | missing, empty or `TODO`: not written | found twice: a fact | title case ignored (`ticket::find`) | `next::sections_in_order` |
@@ -305,6 +343,9 @@ plan should have made it a coverage step); D3-1 to D3-9 (4 MEDIUM, 5 LOW). One s
 path order of `git status --porcelain` (D3-4), plan step 3c with `writes_nothing` and four coverage tests
 (D3-1, D3-2, D3-4, D3-7). No change for D3-3 (`stapel-cli` enables `preserve_order`), D3-5 (`dirty_paths`
 runs on every history read), D3-6 (a doc comment, for the code review cleanup), D3-8, D3-9.
+2026-10-20, after step 3c: the drift test checks the built ticket in full and found a missing path, a
+risk tags line that did not start its line and a quoted name read as a test; all three corrected. Design as
+built moved into the ticket; Design is complete before code review.
 
 ## Proof
 
