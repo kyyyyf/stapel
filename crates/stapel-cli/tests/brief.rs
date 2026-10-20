@@ -320,3 +320,64 @@ fn refuses_an_unreadable_ticket() {
     .unwrap();
     refuses(dir, "ABC-1");
 }
+
+// AC-10: a wrong `STEP`, an unknown or ambiguous `KEY` and a missing argument exit 2.
+#[test]
+fn refuses_a_wrong_call() {
+    fn refuses(dir: &Path, args: &[&str], message: &str) {
+        let out = stapel(dir)
+            .arg("brief")
+            .args(args)
+            .assert()
+            .code(2)
+            .get_output()
+            .clone();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "", "{args:?}");
+        let err = String::from_utf8(out.stderr).unwrap();
+        if message.is_empty() {
+            assert!(!err.is_empty(), "{args:?}");
+        } else {
+            assert_eq!(err, format!("{message}\n"), "{args:?}");
+        }
+    }
+    let repo = fixture();
+    let dir = repo.path();
+
+    for step in ["x", "c2", "2cc", "2C", "step 2"] {
+        refuses(
+            dir,
+            &["ABC-1", step],
+            &format!(
+                "stapel: STEP must be digits followed by at most one lowercase letter, \
+                 e.g. 2 or 2c: {step}"
+            ),
+        );
+    }
+
+    refuses(
+        dir,
+        &["NOPE-1", "1"],
+        "stapel: no ticket NOPE-1 in .stapel/tickets",
+    );
+
+    // Two folders that differ only in case.
+    let tickets = dir.join(".stapel/tickets");
+    std::fs::create_dir_all(tickets.join("ABC-7")).unwrap();
+    std::fs::create_dir_all(tickets.join("abc-7")).unwrap();
+    let out = stapel(dir)
+        .args(["brief", "ABC-7", "1"])
+        .assert()
+        .code(2)
+        .get_output()
+        .clone();
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "");
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        err.starts_with("stapel: ABC-7 matches several folders that differ only in case: "),
+        "{err}"
+    );
+
+    // A missing argument is a clap usage error.
+    refuses(dir, &["ABC-1"], "");
+    refuses(dir, &[], "");
+}
