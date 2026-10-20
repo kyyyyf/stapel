@@ -128,3 +128,195 @@ fn frame_without_prior_art_and_size() {
     assert!(!text.contains("## Frame"), "{text}");
     assert!(text.contains("## Step\n1. One. Names AC-1.\n"), "{text}");
 }
+
+// AC-1: a lettered step, and a KEY in another case than the folder key.
+#[test]
+fn lettered_step_and_folder_key() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(
+        dir,
+        "ABC-1",
+        "Plan",
+        "1. One.\n2c. Two c. Names AC-1.\n3. Three.",
+    );
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "### Frame\n\n**Problem.** The thing.",
+    );
+    let out = stapel(dir)
+        .args(["brief", "abc-1", "2c"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).unwrap();
+    assert!(
+        text.starts_with(
+            "# Brief: ABC-1 step 2c\nticket: .stapel/tickets/ABC-1/ticket.md\nbase: none\n"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("## Step\n2c. Two c. Names AC-1.\n"), "{text}");
+    assert!(!text.contains("abc-1"), "{text}");
+}
+
+// AC-2: the base of state.json is printed as written.
+#[test]
+fn base_of_state_json() {
+    let repo = fixture();
+    let dir = repo.path();
+    let path = dir.join(".stapel/tickets/ABC-1/state.json");
+    let mut state = common::state_json(dir, "ABC-1");
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    state["base"] = serde_json::Value::String(sha.to_string());
+    std::fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+    let text = brief(dir, "2");
+    assert!(
+        text.starts_with(&format!(
+            "# Brief: ABC-1 step 2\nticket: .stapel/tickets/ABC-1/ticket.md\nbase: {sha}\n"
+        )),
+        "{text}"
+    );
+}
+
+// AC-4: the step item ends at a blank line.
+#[test]
+fn step_item_ends_at_a_blank_line() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(
+        dir,
+        "ABC-1",
+        "Plan",
+        "1. One. Names AC-1\n   and goes on.\n\nA paragraph after the blank line.\n\n2. Two.",
+    );
+    let text = brief(dir, "1");
+    assert!(
+        text.ends_with("## Step\n1. One. Names AC-1\n   and goes on.\n"),
+        "{text}"
+    );
+    assert!(!text.contains("paragraph"), "{text}");
+}
+
+// AC-3: a Frame that is empty after the drops, and a Frame with no heading after it.
+#[test]
+fn frame_edges() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Plan", "1. One.");
+    let only_dropped = "### Frame\n\n\
+        **Prior art.** Old tools.\n\n\
+        **Size.** About ten lines.\n\n\
+        ### Decisions\n\nNot in the brief.";
+    set_section(dir, "ABC-1", "Description", only_dropped);
+    let text = brief(dir, "1");
+    assert!(!text.contains("## Frame"), "{text}");
+    assert!(text.ends_with("\n## Step\n1. One.\n"), "{text}");
+
+    // No heading after the Frame: it runs to the end of the Description.
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "### Frame\n\n**Problem.** The thing.\n\n**Size.** Dropped.\n\n**Promise.** Last one.",
+    );
+    let text = brief(dir, "1");
+    assert!(
+        text.contains("## Frame\n**Problem.** The thing.\n\n**Promise.** Last one.\n\n## Step\n"),
+        "{text}"
+    );
+    assert!(!text.contains("Dropped"), "{text}");
+}
+
+// AC-11: a step that is not in the Plan, or is in it twice.
+#[test]
+fn step_not_in_the_plan() {
+    fn refuses(dir: &Path, step: &str, message: &str) {
+        let out = stapel(dir)
+            .args(["brief", "ABC-1", step])
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "");
+        assert_eq!(
+            String::from_utf8(out.stderr).unwrap(),
+            format!("{message}\n")
+        );
+    }
+    let no_step = "stapel: the Plan of ABC-1 has no step 3";
+
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Plan", "1. One.\n2. Two.");
+    refuses(dir, "3", no_step);
+
+    // A Plan that is `TODO`.
+    set_section(dir, "ABC-1", "Plan", "TODO");
+    refuses(dir, "3", no_step);
+
+    // Two lines `2.`.
+    set_section(dir, "ABC-1", "Plan", "1. One.\n2. Two.\n2. Two again.");
+    refuses(dir, "2", "stapel: the Plan of ABC-1 names step 2 twice");
+
+    // A `stapel.toml` without the `plan` section.
+    let config = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    let start = text
+        .find("[[sections]]\nid = \"plan\"")
+        .expect("no plan section");
+    let end = text[start + 1..]
+        .find("[[sections]]")
+        .map(|i| start + 1 + i)
+        .unwrap_or(text.len());
+    let without = format!("{}{}", &text[..start], &text[end..]);
+    assert!(!without.contains("id = \"plan\""));
+    std::fs::write(&config, without).unwrap();
+    refuses(dir, "3", no_step);
+}
+
+// AC-10: a legacy ticket, and unreadable `state.json` or `ticket.md`, exit 1.
+#[test]
+fn refuses_an_unreadable_ticket() {
+    fn refuses(dir: &Path, key: &str) {
+        let out = stapel(dir)
+            .args(["brief", key, "1"])
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "", "{key}");
+        let err = String::from_utf8(out.stderr).unwrap();
+        assert!(err.starts_with("stapel: "), "{key}: {err}");
+        assert_eq!(err.lines().count(), 1, "{key}: {err}");
+    }
+    let repo = fixture();
+    let dir = repo.path();
+    let tickets = dir.join(".stapel/tickets");
+
+    // `state.json` that is not JSON.
+    std::fs::create_dir_all(tickets.join("ABC-8")).unwrap();
+    std::fs::write(tickets.join("ABC-8/state.json"), "not json").unwrap();
+    refuses(dir, "ABC-8");
+
+    // A legacy ticket.
+    std::fs::create_dir_all(tickets.join("ABC-9")).unwrap();
+    std::fs::write(
+        tickets.join("ABC-9/state.json"),
+        r#"{"key":"ABC-9","build":{"allowed":false}}"#,
+    )
+    .unwrap();
+    refuses(dir, "ABC-9");
+
+    // `ticket.md` that is not UTF-8.
+    std::fs::write(
+        tickets.join("ABC-1/ticket.md"),
+        [0x23, 0x20, 0xff, 0xfe, 0x0a],
+    )
+    .unwrap();
+    refuses(dir, "ABC-1");
+}
