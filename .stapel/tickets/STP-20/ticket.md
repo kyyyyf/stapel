@@ -236,6 +236,15 @@ Terms:
   `next::writes_nothing` passed before the code and moved to the coverage step 3c.
 - Step 3c (cc6d366): five coverage tests, all passing at once. In `review_and_summary_edges` the
   `review` and `summary` sections are removed from `stapel.toml` after the confirmations, which stay fresh.
+- Step 4 (f8b52ee, ce74fc1): `dirty_paths` runs `git --no-optional-locks status`. `decide` keeps the AC-9
+  facts in their own list and prints them only with `confirm`. In `gather`, an `unverified` outcome is a
+  fault unless its reason starts with `interleaved: `; its fault commit is `Analysis.fault`, else the commit
+  that changed the build input when the step has no fixed outcome, else its RED or GREEN. `History` gains
+  `open_red`, set when `open_red()` finds no fault; `history_action` names it before the Plan order and takes
+  the Plan as `Option<&str>`, so with no `plan` section no label is read (AC-21). A step is open when it has
+  no GREEN and either a RED or no word commit; the branch that gives `green-step` to a RED-only step that is
+  not the open RED is kept and unreachable, as such a step is an `unpaired` fault first (D4-4, D4-5).
+- Steps 4c and 4d (4f065b9, 456bcf0): three coverage tests, all passing at once.
 
 ## Test plan
 
@@ -436,8 +445,48 @@ Route: full (tag `interface`), auto.
 
 ## Review
 
-TODO
+Spec review: two rounds by one external model (round 1: 11 findings, 1 HIGH, 4 MEDIUM; round 2: 6 findings,
+2 MEDIUM; all inside but SR1-10). Drift review after the GREEN of steps 1 to 4 (34 findings with D3-0, the
+`writes_nothing` test that passed before the code; 1 HIGH, D4-1, settled in the text of AC-21; 14 MEDIUM).
+Code review round 1 by three reviewers (reviewer, external, drift; 24 findings, no HIGH, 10 MEDIUM inside and
+one outside, E-2); the fixes were built as step 4 and checked by a drift review; no round 2, as no code
+review finding was HIGH. With the human: an `unverified` build-input outcome is a fault (E-4), and the
+confirmation facts wait until no earlier action applies (E-9). Every finding with its fate is in
+`findings.jsonl`. The builder of step 4 appended its tests with `cat >>`, and the builder of step 2 tried
+`sed -i` on `crates/`; the guard allowed the first and denied the second (plan item 1.9).
 
 ## Summary
 
-TODO
+**Measures after the build (2026-10-20), compared with STP-19.** Steps: RED/GREEN pairs 1 to 4; coverage
+commits 1c, 2c, 3c, 4c and 4d. `stapel check` passed at `134973b` (549 tests) before code review; the check
+before the close is recorded in `runs.jsonl`. Tokens are measured: the main transcript `cdf6f133` up to
+2026-10-20 08:13Z and the 20 subagent files; the main transcript also holds the STP-19 token import and a
+question on starting a new session per ticket (a `SessionStart` hook script under `.stapel/scratch/`).
+
+| Measure | STP-19 | STP-20 |
+|---|---|---|
+| Escaped defects found so far | 0 | 0 |
+| Findings before code (spec review, per-step drift) | 16 + 19 (HIGH and MEDIUM: 4 + 4) | 17 + 34 (HIGH and MEDIUM: 7 + 15); two spec review rounds |
+| Code review findings, all / HIGH and MEDIUM inside the promise | 20 / 1 (0 HIGH) | 24 / 10 (0 HIGH); 9 changed the code or the text, R-3 no change |
+| Code review HIGH and MEDIUM inside by `catchable_at` | test-plan 1 | spec 5, test-plan 3, design 1, code 1 |
+| HIGH and MEDIUM inside per 100 changed lines | 0.04 | 0.35 |
+| `ticket.md` | 52 KB | 47 KB |
+| Changed lines (frame estimate) | about 2 543: 544 source, 1 999 tests (350 and 1 000) | about 2 844: 617 source, 2 227 tests (450 and 1 500) |
+| Steps with RED/GREEN, coverage commits | 3 and 5, one cleanup commit | 4 and 5 |
+| Measured cache read (cache write) by role | orchestrator 39.5M (0.73M), builder 7.9M (0.50M), external 2.29M (0.37M), drift 1.31M (0.19M), reviewer 0.86M (0.07M) | orchestrator 34.1M (0.60M), builder 9.98M (0.82M), external 1.26M (0.33M), drift 0.37M (0.18M), reviewer 0.34M (0.06M) |
+| Orchestrator output | 148k | 136k |
+| `stapel ok` commands per confirmation | 8 for 7 | 12 for 10 (one in a pipe, one grant expired) |
+| `findings import` dialogs | 5 | 3 |
+| Local history rewrites | 0 | 2 (a builder's own RED; the author of 4d) |
+| Builders that wrote repository files through Bash | 0 of 7 | 1 of 10, and one attempt denied |
+| Full checks to the close | 3 during the build, one before the close | one before code review, one before the close |
+| Wall time | 2026-10-19 05:56Z to about 12:30Z | 2026-10-19 13:04Z to 2026-10-20 about 08:40Z, with a night |
+
+What improved: the orchestrator's output and cache read fell a little (34.1M against 39.5M; the phase 1
+target is under 19.75M); the drift reviewers cost a quarter of STP-19's; `ticket.md` is smaller; `stapel
+next` names the right action on this repository itself (`build-step step 3` during the build, `run-check`
+after it). What did not: code review found ten inside MEDIUM against one, five of them `catchable_at` spec
+(the open RED, a word commit after a RED, a build-input change, the inputs of the Frame, the path order), so
+the spec review missed how history outcomes combine; a test that passed before the code (`writes_nothing`)
+was planned into a RED again; the frame's source estimate was low again (617 against 450); a builder wrote
+through Bash and another set a made-up author email; two `stapel ok` runs failed (a pipe, an expired grant).
