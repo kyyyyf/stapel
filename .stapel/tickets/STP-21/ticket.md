@@ -116,10 +116,10 @@ Terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN the brief command runs on an open or closed ticket whose Plan has the step THE command prints the line `# Brief: <KEY> step <STEP>` (`<KEY>` the folder key, here and below), the header lines, then the parts of AC-3 to AC-9 in that order, each under its `## ` heading, leaving out a part with nothing in it; exit 0; it writes no file. Output: `golden/brief_text.txt`. | `brief::prints_the_brief`, `brief::writes_nothing`, `brief::closed_ticket`, `brief::runs_in_an_agent_shell` |
-| AC-2 | WHEN the brief is printed THE header lines are `ticket: .stapel/tickets/<KEY>/ticket.md` and `base: <base of state.json>` (or `base: none`), then the line of AC-18. | `brief::prints_the_brief` |
-| AC-3 | WHEN the Description has a `### Frame` subsection THE part `## Frame` holds its lines up to the next heading, without each paragraph that starts with `**Prior art.**` or `**Size.**`, trimmed. | `brief::frame_without_prior_art_and_size` |
-| AC-4 | WHEN the brief is printed THE part `## Step` holds the step item as written in the Plan. | `brief::prints_the_brief` |
+| AC-1 | WHEN the brief command runs on an open or closed ticket whose Plan has the step THE command prints the line `# Brief: <KEY> step <STEP>` (`<KEY>` the folder key, here and below), the header lines, then the parts of AC-3 to AC-9 in that order, each under its `## ` heading, leaving out a part with nothing in it; exit 0; it writes no file. Output: `golden/brief_text.txt`. | `brief::prints_the_brief`, `brief::writes_nothing`, `brief::closed_ticket`, `brief::runs_in_an_agent_shell`, `brief::lettered_step_and_folder_key` |
+| AC-2 | WHEN the brief is printed THE header lines are `ticket: .stapel/tickets/<KEY>/ticket.md` and `base: <base of state.json>` (or `base: none`), then the line of AC-18. | `brief::prints_the_brief`, `brief::base_of_state_json` |
+| AC-3 | WHEN the Description has a `### Frame` subsection THE part `## Frame` holds its lines up to the next heading, without each paragraph that starts with `**Prior art.**` or `**Size.**`, trimmed. | `brief::frame_without_prior_art_and_size`, `brief::frame_edges` |
+| AC-4 | WHEN the brief is printed THE part `## Step` holds the step item as written in the Plan. | `brief::prints_the_brief`, `brief::step_item_ends_at_a_blank_line` |
 | AC-5 | WHEN the step item has a named criterion THE part `## Criteria` holds the header row and separator of the Spec criteria table, then each criterion row of a named criterion in Spec order, once. | `brief::criteria_and_ranges` |
 | AC-6 | WHEN a printed criterion row uses a term THE part `## Terms` holds that term and each term a printed term uses, until none is added, in Spec order, once. | `brief::terms_used_and_their_terms` |
 | AC-7 | WHEN a row of the cases table names a test of the step, or its first cell holds `step <STEP>` as whole words, THE part `## Cases` holds the header row, separator and each such row. | `brief::cases_of_the_step` |
@@ -165,6 +165,10 @@ each GREEN `--test ticket_drift`.
 | Read-only | exit 0, a `# Brief:` line, and `common::snapshot` of the repository before and after the run is equal | `brief::writes_nothing` |
 | Closed | the same fixture after `stapel close`: exit 0 and the golden file | `brief::closed_ticket` |
 | Agent shell | `CLAUDECODE=1` set and the guard hook asked about `stapel brief ABC-1 2`: allowed, and the run prints the brief | `brief::runs_in_an_agent_shell` |
+| Lettered step | a Plan step `2c.` and `stapel brief abc-1 2c` on folder `ABC-1`: `# Brief: ABC-1 step 2c`, path with `ABC-1` (D1-7) | `brief::lettered_step_and_folder_key` |
+| Base | `state.json` with a base: `base: <that sha>` (D1-2) | `brief::base_of_state_json` |
+| Step end | a step item followed by a blank line and a paragraph: the paragraph is not printed (D1-1) | `brief::step_item_ends_at_a_blank_line` |
+| Frame edges | a Frame of only Prior art and Size paragraphs: no part; a Frame with no heading after it (D1-7) | `brief::frame_edges` |
 | Empty parts | a step that names one finding only: exit 0, `## Frame`, `## Step` and `## Findings` printed, no `tests:` line; no `## Criteria`, `## Terms`, `## Cases`, `## Inputs`, `## External states` | `brief::empty_parts_are_left_out` |
 | Frame | `**Prior art.**` and `**Size.**` paragraphs of two lines each are dropped; `**Prior art**` without the dot and a paragraph that only mentions `**Size.**` later are kept; no `### Frame`: no part | `brief::frame_without_prior_art_and_size` |
 | Criteria | `AC-1, AC-3 to AC-5`; `AC-3` named twice; Spec order kept when the step names `AC-5` before `AC-1`; `AC-10` is not `AC-1`; a range broken after `to` with an indented next line | `brief::criteria_and_ranges` |
@@ -230,6 +234,11 @@ AC-7 and AC-8 use the term Names a test (SR2-2); every non-refusal test asserts 
 brief (SR2-3); the `tests:` line moves to AC-18 in step 3 (SR2-4); the Step item is printed as written
 (SR2-5); AC-17 uses the plan section's title and the Guarantees name the new fact (SR2-7); `<KEY>` is the
 folder key (SR2-8); an unreadable `findings.jsonl` exits 1 (SR2-9); SR2-6 noted in Decisions.
+2026-10-20, after the drift review of step 1: D1-1 to D1-7 (3 MEDIUM, 4 LOW). One spec change: plan step
+1c with four coverage tests (D1-1, D1-2, D1-7) and the two refusal tests of AC-10 and AC-11 whose code
+step 1 built early (D1-3); step 2 keeps only the check of `STEP`. No change for D1-4 (the Description
+title is fixed, as in `next`), D1-5 (heading forms, Design as built), D1-6 (the guard half guards against
+a future guard rule).
 
 ## Design
 
@@ -257,10 +266,10 @@ folder key (SR2-8); an unreadable `findings.jsonl` exits 1 (SR2-9); SR2-6 noted 
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `brief::prints_the_brief`, `brief::writes_nothing`, `brief::closed_ticket`, `brief::runs_in_an_agent_shell` |
-| AC-2 | `brief::prints_the_brief` |
-| AC-3 | `brief::frame_without_prior_art_and_size` |
-| AC-4 | `brief::prints_the_brief` |
+| AC-1 | `brief::prints_the_brief`, `brief::writes_nothing`, `brief::closed_ticket`, `brief::runs_in_an_agent_shell`, `brief::lettered_step_and_folder_key` |
+| AC-2 | `brief::prints_the_brief`, `brief::base_of_state_json` |
+| AC-3 | `brief::frame_without_prior_art_and_size`, `brief::frame_edges` |
+| AC-4 | `brief::prints_the_brief`, `brief::step_item_ends_at_a_blank_line` |
 | AC-5 | `brief::criteria_and_ranges` |
 | AC-6 | `brief::terms_used_and_their_terms` |
 | AC-7 | `brief::cases_of_the_step` |
@@ -282,7 +291,13 @@ Route: full (tag `interface`), auto.
 
 1. The command prints the header without its `tests:` line, the Frame and the Step (AC-1 to AC-4). Must not change: `stapel next`,
    `stapel status`, `ticket::parse`, `tickets::resolve`.
-2. The refusals of the call and of the step (AC-10, AC-11). Must not change: the brief of step 1.
+1c. Coverage after the drift review of step 1 (D1-1, D1-2, D1-3, D1-7): four new `#[test]` functions
+   (`brief::lettered_step_and_folder_key`, `brief::base_of_state_json`,
+   `brief::step_item_ends_at_a_blank_line`, `brief::frame_edges`) and `brief::step_not_in_the_plan` and
+   `brief::refuses_an_unreadable_ticket` of AC-10 and AC-11, whose code step 1 already built. Tests only,
+   each helper nested inside its function.
+2. The check of `STEP` and the ticket choice (AC-10, test `brief::refuses_a_wrong_call` only). Must not
+   change: the brief of step 1 and the refusals tested in step 1c.
 3. Criteria, the `tests:` line and the unknown criterion (AC-5, AC-12, AC-18). Must not change: the parts
    of step 1.
 4. Terms and a step naming nothing (AC-6, AC-14). Must not change: the parts of steps 1 and 3.
