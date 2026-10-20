@@ -242,9 +242,11 @@ read per ticket is under half of STP-19 (39.5M).
   skill); the facts that block an action named first (stale, failed, unpaired, lint). First, because it
   replaces the orchestrator re-reading `CLAUDE.md` and a 50 KB ticket on every turn (ledger 2026-10-08: the
   orchestrator's context is the main cost).
-- 1.2 the builder brief as a command, `stapel brief KEY STEP`, 900 to 1 300 tokens, assembled from the
+- 1.2 (STP-21) the builder brief as a command, `stapel brief KEY STEP`, 900 to 1 300 tokens, assembled from the
   Frame, the step's criteria, its Inputs and External states rows, its "must not change" line and the step
-  (`docs/decisions/0003`; label STP-10); `next` prints its path.
+  (`docs/decisions/0003`; label STP-10); `next` prints its command. Changed on 2026-10-20 (ledger): the brief
+  goes to stdout; it also carries a header, the Spec terms its criteria use and the findings the step names;
+  over 1 600 tokens it refuses.
 - 1.3 the process as installed data: `stapel init` writes `.claude/skills/stapel/SKILL.md` (the spec
   process, today `CLAUDE.md` items 1 to 9, as the skill text), `.claude/agents/stapel-builder.md`,
   `stapel-drift.md`, `stapel-reviewer.md`, `stapel-spec-reviewer.md` (tools, `model` from `[models]`,
