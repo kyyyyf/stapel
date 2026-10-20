@@ -129,7 +129,7 @@ fn written(sections: &[Section], title: &str) -> bool {
 
 /// The label of a Plan step line: digits, at most one lowercase letter, `.` and a space, at the
 /// first column. `1c.` gives `step 1c`.
-fn step_label(line: &str) -> Option<String> {
+pub fn step_label(line: &str) -> Option<String> {
     let digits = line.bytes().take_while(u8::is_ascii_digit).count();
     if digits == 0 {
         return None;

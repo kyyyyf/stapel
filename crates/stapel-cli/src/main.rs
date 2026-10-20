@@ -1,5 +1,6 @@
 #[macro_use]
 mod out;
+mod brief;
 mod check;
 mod close;
 mod fail;
@@ -65,6 +66,13 @@ enum Command {
         /// Print the action as one JSON line.
         #[arg(long)]
         json: bool,
+    },
+    /// Print the brief of one Plan step to a builder. Writes nothing.
+    Brief {
+        /// The ticket key.
+        key: String,
+        /// The Plan step, such as `2` or `2c`.
+        step: String,
     },
     /// Close a ticket: its confirmations stop permitting code writes. Only a person closes.
     Close {
@@ -281,6 +289,7 @@ fn main() -> ExitCode {
         Command::Check { key, list, history } => {
             return check::run(key.as_deref(), list, history);
         }
+        Command::Brief { key, step } => return fail::finish(brief::run(&key, &step)),
         Command::Next { key, json } => return fail::finish(next::run(key.as_deref(), json)),
         Command::Status { key } => match status::run(key.as_deref()) {
             Ok(code) => return code,
