@@ -84,6 +84,11 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
 - 2026-10-20: Decision (`next` and a refusing brief, SR1-5, recommended): `next` assembles the brief with the
   same function, writes nothing, and on a refusal names the reason as a fact and `write-section Plan`.
   Rejected: always name the command and leave the refusal to the orchestrator (a loop).
+- 2026-10-20: Decision (after spec review round 2, recommended): the fixtures of the `next` tests gain a
+  criterion and steps that name it (SR2-1), so `next` blocks only real tickets whose step names nothing;
+  the size of this ticket's own steps is checked with `.stapel/scratch/stp21/estimate.py` before the
+  confirmation, as the command does not exist yet (SR2-6, step 1 about 1500 tokens). No third round: the
+  HIGH finding is settled in the text and the human decides by the confirmation (decision 0002: two rounds).
 
 ## Spec
 
@@ -91,8 +96,8 @@ Terms:
 
 - **Brief command**: `stapel brief KEY STEP`.
 - **Step item**: the Plan line whose label (`next::plan_steps`) is `step <STEP>`, and the lines after it up
-  to the next step line, a blank line or the end of the Plan, read as one text with every run of whitespace
-  (line breaks too) taken as one space.
+  to the next step line, a blank line or the end of the Plan; ids are read in it with every run of
+  whitespace (line breaks too) taken as one space, and it is printed as written.
 - **Named criterion**: `AC-<n>` in the step item, and every `AC-<i>` with n ≤ i ≤ m for `AC-<n> to AC-<m>`.
 - **Criterion row**: a Spec line that starts with `| AC-<n> |`; its tests are the backticked
   `<module>::<name>` names of its last cell.
@@ -104,36 +109,39 @@ Terms:
   text up to the next such name; a text uses it when `<name>` occurs in it as whole words, ASCII case
   ignored, the last word also with `s` or `es` added.
 - **Step test**: a test of a named criterion; the step tests are listed in Spec order, each once.
-- **Names a test**: a cell holds a backticked name equal to the test.
+- **Names a test**: a cell holds a backticked name equal to the test; a test of the step is a step test.
 - **Cases table**: the first table of the `## Test plan` section; **Inputs table** and **External states
   table**: the tables under `### Inputs` and `### External states` in it.
 - **Estimated tokens**: the bytes of a text divided by 4, rounded up.
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN the brief command runs on an open or closed ticket whose Plan has the step THE command prints the line `# Brief: <KEY> step <STEP>`, the header lines, then the parts of AC-3 to AC-9 in that order, each under its `## ` heading, leaving out a part with nothing in it; exit 0; it writes no file. Output: `golden/brief_text.txt`. | `brief::prints_the_brief`, `brief::writes_nothing`, `brief::closed_ticket`, `brief::runs_in_an_agent_shell` |
-| AC-2 | WHEN the brief is printed THE header lines are `ticket: .stapel/tickets/<KEY>/ticket.md`, `base: <base of state.json>` (or `base: none`) and `tests: <each step test, joined by ", ">`, the last left out when there is no step test. | `brief::prints_the_brief`, `brief::empty_parts_are_left_out` |
+| AC-1 | WHEN the brief command runs on an open or closed ticket whose Plan has the step THE command prints the line `# Brief: <KEY> step <STEP>` (`<KEY>` the folder key, here and below), the header lines, then the parts of AC-3 to AC-9 in that order, each under its `## ` heading, leaving out a part with nothing in it; exit 0; it writes no file. Output: `golden/brief_text.txt`. | `brief::prints_the_brief`, `brief::writes_nothing`, `brief::closed_ticket`, `brief::runs_in_an_agent_shell` |
+| AC-2 | WHEN the brief is printed THE header lines are `ticket: .stapel/tickets/<KEY>/ticket.md` and `base: <base of state.json>` (or `base: none`), then the line of AC-18. | `brief::prints_the_brief` |
 | AC-3 | WHEN the Description has a `### Frame` subsection THE part `## Frame` holds its lines up to the next heading, without each paragraph that starts with `**Prior art.**` or `**Size.**`, trimmed. | `brief::frame_without_prior_art_and_size` |
 | AC-4 | WHEN the brief is printed THE part `## Step` holds the step item as written in the Plan. | `brief::prints_the_brief` |
 | AC-5 | WHEN the step item has a named criterion THE part `## Criteria` holds the header row and separator of the Spec criteria table, then each criterion row of a named criterion in Spec order, once. | `brief::criteria_and_ranges` |
 | AC-6 | WHEN a printed criterion row uses a term THE part `## Terms` holds that term and each term a printed term uses, until none is added, in Spec order, once. | `brief::terms_used_and_their_terms` |
-| AC-7 | WHEN a row of the cases table names a step test, or its first cell holds `step <STEP>` as whole words, THE part `## Cases` holds the header row, separator and each such row. | `brief::cases_of_the_step` |
-| AC-8 | WHEN a row of the Inputs table or the External states table names a step test in its last cell THE parts `## Inputs` and `## External states` hold the header row, separator and each such row of their table. | `brief::rows_of_the_step_tests` |
+| AC-7 | WHEN a row of the cases table names a test of the step, or its first cell holds `step <STEP>` as whole words, THE part `## Cases` holds the header row, separator and each such row. | `brief::cases_of_the_step` |
+| AC-8 | WHEN the last cell of a row of the Inputs table or the External states table names a test of the step THE parts `## Inputs` and `## External states` hold the header row, separator and each such row of their table. | `brief::rows_of_the_step_tests` |
 | AC-9 | WHEN the step item has a named finding THE part `## Findings` holds one line per named finding in step order, once: `- <id> (<severity>): <claim> Fate: <fate>`, from the last well-formed record with that id, `none` for a missing field. | `brief::findings_last_record` |
-| AC-10 | IF `STEP` is not digits followed by at most one lowercase letter, or `KEY` names no ticket or several in case, THEN the command prints `stapel: <reason>` on stderr and exits 2; IF the ticket is legacy or its files cannot be read THEN it exits 1 with `stapel: <reason>`. | `brief::refuses_a_wrong_call`, `brief::refuses_an_unreadable_ticket` |
+| AC-10 | IF `STEP` is not digits followed by at most one lowercase letter, or `KEY` names no ticket or several in case, THEN the command prints `stapel: <reason>` on stderr and exits 2; IF the ticket is legacy, or `ticket.md`, `state.json` or an existing `findings.jsonl` cannot be read as a whole, THEN it exits 1 with `stapel: <reason>`. | `brief::refuses_a_wrong_call`, `brief::refuses_an_unreadable_ticket` |
 | AC-11 | IF the Plan has no step `step <STEP>`, or no `plan` section is configured, THEN the command prints `stapel: the Plan of <KEY> has no step <STEP>` and exits 1; IF it has the step twice THEN `stapel: the Plan of <KEY> names step <STEP> twice`, exit 1. | `brief::step_not_in_the_plan` |
 | AC-12 | IF a named criterion has no criterion row THEN the command prints `stapel: step <STEP> names AC-<n>, which the Spec does not have` for the first such id and exits 1; IF a range has n > m THEN `stapel: step <STEP> names AC-<n> to AC-<m>, which is not a range`, exit 1. | `brief::unknown_criterion` |
 | AC-13 | IF a named finding has no well-formed record THEN the command prints `stapel: step <STEP> names <id>, which findings.jsonl does not have` for the first such id and exits 1. | `brief::unknown_finding` |
 | AC-14 | IF the step item has no named criterion and no named finding THEN the command prints `stapel: step <STEP> names no criterion and no finding` and exits 1. | `brief::step_names_nothing` |
 | AC-15 | IF the brief has more than 1600 estimated tokens THEN stdout is empty, the command prints `stapel: the brief of step <STEP> has <n> tokens, more than 1600: <part> <n>, …` (header and every printed part, in print order) and exits 1. | `brief::too_large` |
 | AC-16 | WHEN `stapel next` names `build-step` or `green-step` for a label that is a Plan step and its brief assembles THE target is the command `stapel brief <KEY> <STEP>` (text after ` — `; `command` in `--json`, `path` `null`); without a `plan` section it stays the ticket path. | `next::build_step_names_the_brief` |
-| AC-17 | IF that brief refuses with exit 1 (AC-11 to AC-15) THEN `stapel next` adds the fact `brief of step <STEP>: <the refusal without stapel: >` and the action line is `next: write-section Plan — <ticket path>`; exit 0. | `next::brief_refusal_blocks_the_step` |
+| AC-17 | IF that brief refuses with exit 1 (AC-11 to AC-15) THEN `stapel next` adds the fact `brief of step <STEP>: <the refusal without stapel: >` and the action line is `next: write-section <title of the plan section> — <ticket path>`; exit 0. | `next::brief_refusal_blocks_the_step` |
+| AC-18 | WHEN the step has a step test THE header ends with the line `tests: <each step test, joined by ", ">`; with none the line is left out. | `brief::prints_the_brief`, `brief::empty_parts_are_left_out` |
 
 ### Guarantees
 
-- **Promised:** the Frame's promise, by AC-1 to AC-17; the guard lets the brief command run in an agent's
-  shell; `stapel next` keeps every other action and target; in `--json`, `path` is `null` for a
-  `build-step` or `green-step` that names the brief.
+- **Promised:** the Frame's promise, by AC-1 to AC-18; the guard lets the brief command run in an agent's
+  shell; `stapel next` keeps every other action and target for a step whose brief assembles; in `--json`,
+  `path` is `null` for a `build-step` or `green-step` that names the brief; the facts of `next` (AC-1 of
+  STP-20) gain the kind `brief of step <STEP>: …`, so a step of an open ticket that names no criterion and
+  no finding now stops `next` (AC-14, AC-17).
 - **Not promised:** the Frame's list; a typo in a finding prefix (`DX-1`); other range forms (`AC-3–AC-5`,
   `AC-3..AC-5`, `AC-3 to 5`); an exclusion in the step (`AC-1 without <test>`: every test of AC-1 is a step
   test); other inflections of a term (`criteria` for `criterion`, `is done` for `Done step`); a term or step
@@ -146,17 +154,18 @@ CLI tests in a new file `crates/stapel-cli/tests/brief.rs`, with `common::repo_w
 `common::set_section` and a fixture ticket written by the test. Golden file
 `crates/stapel-cli/tests/golden/brief_text.txt`; it grows in the RED of each step that adds a part.
 Every refusal test asserts its own stderr text, so it fails while the command does not exist (clap's
-unknown subcommand also exits 2). Light tests:
+unknown subcommand also exits 2); every other test asserts exit 0 and a printed `# Brief:` line, so an
+equality or an absence is never its only assertion. Light tests:
 `cargo test -j 4 -p stapel-cli --test brief -- --test-threads=3`; for step 8 also `--test next`, and before
 each GREEN `--test ticket_drift`.
 
 | Category | Cases | Tests |
 |---|---|---|
 | Main path | a fixture with Frame, Plan steps `1.` and `2.`, criteria, terms, all three tables and findings; `stapel brief ABC-1 2`: the golden file | `brief::prints_the_brief` |
-| Read-only | `common::snapshot` of the repository before and after a run is equal | `brief::writes_nothing` |
-| Closed | the same fixture after `stapel close`: the same stdout | `brief::closed_ticket` |
+| Read-only | exit 0, a `# Brief:` line, and `common::snapshot` of the repository before and after the run is equal | `brief::writes_nothing` |
+| Closed | the same fixture after `stapel close`: exit 0 and the golden file | `brief::closed_ticket` |
 | Agent shell | `CLAUDECODE=1` set and the guard hook asked about `stapel brief ABC-1 2`: allowed, and the run prints the brief | `brief::runs_in_an_agent_shell` |
-| Empty parts | a step that names one finding only: no `tests:` line; no `## Criteria`, `## Terms`, `## Cases`, `## Inputs`, `## External states` | `brief::empty_parts_are_left_out` |
+| Empty parts | a step that names one finding only: exit 0, `## Frame`, `## Step` and `## Findings` printed, no `tests:` line; no `## Criteria`, `## Terms`, `## Cases`, `## Inputs`, `## External states` | `brief::empty_parts_are_left_out` |
 | Frame | `**Prior art.**` and `**Size.**` paragraphs of two lines each are dropped; `**Prior art**` without the dot and a paragraph that only mentions `**Size.**` later are kept; no `### Frame`: no part | `brief::frame_without_prior_art_and_size` |
 | Criteria | `AC-1, AC-3 to AC-5`; `AC-3` named twice; Spec order kept when the step names `AC-5` before `AC-1`; `AC-10` is not `AC-1`; a range broken after `to` with an indented next line | `brief::criteria_and_ranges` |
 | Terms | a term used in upper case; a term used with `s` and with `es` added; a term used only by another term; a name that is a prefix of a longer word (`Step` in `Stepping`) is not used; two terms on one line; a `- **Promised:**` line after the table is no term | `brief::terms_used_and_their_terms` |
@@ -164,14 +173,14 @@ each GREEN `--test ticket_drift`.
 | Tables | a row naming a step test with another test; a row naming only another step's test; a row with `—`; a Test plan without the tables | `brief::rows_of_the_step_tests` |
 | Findings | two records of `D1-2`, the last counts; a record without `fate`; an unreadable line; `D1-5 to D1-6`; `UTF-8` and `STP-22` in the step are no findings | `brief::findings_last_record` |
 | Wrong call | `STEP` `x`, `c2`, `2cc`, `2C`, `step 2`; `KEY` `NOPE-1`; two folders differing in case; a missing argument: exit 2, stderr text, empty stdout | `brief::refuses_a_wrong_call` |
-| Unreadable | `state.json` not JSON; a legacy ticket; `ticket.md` not UTF-8: exit 1 | `brief::refuses_an_unreadable_ticket` |
+| Unreadable | `state.json` not JSON; a legacy ticket; `ticket.md` not UTF-8; `findings.jsonl` a directory or not UTF-8: exit 1 | `brief::refuses_an_unreadable_ticket` |
 | No step | `STEP` `3` with steps `1.` and `2.`; a `stapel.toml` without the `plan` section; a Plan that is `TODO`; two lines `2.` | `brief::step_not_in_the_plan` |
 | Unknown criterion | `AC-9` with no row; `AC-5 to AC-3` with both rows present | `brief::unknown_criterion` |
 | Unknown finding | `D1-9` with records `D1-1` and `D1-2`; the only `D1-9` line unreadable while `D1-1` exists | `brief::unknown_finding` |
 | Names nothing | a step with no `AC-` and no recorded prefix (no `findings.jsonl`, the words `D1-1` and `UTF-8`) | `brief::step_names_nothing` |
 | Size | a Frame of 6 000 bytes: exit 1, the part sizes, empty stdout; a brief of exactly 1600 tokens passes, 1601 refuses | `brief::too_large` |
 | Next | `build-step` and `green-step` name `stapel brief ABC-1 <n>` in text and JSON; without a `plan` section the open RED keeps the ticket path; the golden files of `next` change only on those lines | `next::build_step_names_the_brief` |
-| Next refusal | the first open step names `AC-9` with no row: the fact and `write-section Plan`; a too large brief: the fact with the sizes; exit 0; `next` writes nothing | `next::brief_refusal_blocks_the_step` |
+| Next refusal | the first open step names `AC-9` with no row: the fact and `write-section Plan`; a step naming nothing: its fact; a too large brief: the fact with the sizes; exit 0; `next` writes nothing | `next::brief_refusal_blocks_the_step` |
 
 ### Inputs
 
@@ -182,7 +191,7 @@ each GREEN `--test ticket_drift`.
 | `ticket.md` parts | Markdown | — | a missing Frame, table or term list: no part | not UTF-8: exit 1 | title case of sections ignored (`ticket::find`) | `brief::empty_parts_are_left_out`, `brief::refuses_an_unreadable_ticket` |
 | criterion ids in the step | `AC-<digits>`, `AC-<n> to AC-<m>` | `AC-1` | none: no part | no row, n > m: exit 1 | whole word: `AC-10` is not `AC-1` | `brief::criteria_and_ranges`, `brief::unknown_criterion` |
 | finding ids in the step | `<prefix>-<digits>`, ranges with one prefix | — | none: no part; neither ids: exit 1 | a recorded prefix, no record: exit 1 | exact id | `brief::findings_last_record`, `brief::unknown_finding`, `brief::step_names_nothing` |
-| `findings.jsonl` | JSON lines with a string `id` | — | no file: no finding prefix | a line that is not JSON or has no string `id`: skipped | last record wins | `brief::findings_last_record` |
+| `findings.jsonl` | JSON lines with a string `id` | — | no file: no finding prefix | a line that is not JSON or has no string `id`: skipped; a file not readable as a whole: exit 1 | last record wins | `brief::findings_last_record`, `brief::refuses_an_unreadable_ticket` |
 | `state.json` `base` | string | — | absent: `base: none` | not JSON, legacy: exit 1 | as written | `brief::empty_parts_are_left_out`, `brief::refuses_an_unreadable_ticket` |
 | brief size | estimated tokens | 1600 passes | — | 1601 or more: exit 1 | bytes / 4, rounded up | `brief::too_large` |
 
@@ -215,6 +224,12 @@ the brief and blocks on its refusal (SR1-5, AC-17); exclusions and other range f
 SR1-10); the part `## Cases` (SR1-7, AC-7); a step naming nothing refuses (SR1-8, AC-14); `STEP` wording,
 equal test names, a label twice, the range text (SR1-9, SR1-12 to SR1-14); SR1-15 accepted in the size
 decision. Round 2 runs, as SR1-1 to SR1-3 are HIGH.
+2026-10-20, after spec review round 2 (external): SR1-1 to SR1-15 settled, SR1-3 partly (SR2-2); 1 HIGH,
+3 MEDIUM, 5 LOW, all inside. One change: step 8's RED gives the `next` fixtures a criterion (SR2-1);
+AC-7 and AC-8 use the term Names a test (SR2-2); every non-refusal test asserts exit 0 and a printed
+brief (SR2-3); the `tests:` line moves to AC-18 in step 3 (SR2-4); the Step item is printed as written
+(SR2-5); AC-17 uses the plan section's title and the Guarantees name the new fact (SR2-7); `<KEY>` is the
+folder key (SR2-8); an unreadable `findings.jsonl` exits 1 (SR2-9); SR2-6 noted in Decisions.
 
 ## Design
 
@@ -243,7 +258,7 @@ decision. Round 2 runs, as SR1-1 to SR1-3 are HIGH.
 | Criterion | Test |
 |---|---|
 | AC-1 | `brief::prints_the_brief`, `brief::writes_nothing`, `brief::closed_ticket`, `brief::runs_in_an_agent_shell` |
-| AC-2 | `brief::prints_the_brief`, `brief::empty_parts_are_left_out` |
+| AC-2 | `brief::prints_the_brief` |
 | AC-3 | `brief::frame_without_prior_art_and_size` |
 | AC-4 | `brief::prints_the_brief` |
 | AC-5 | `brief::criteria_and_ranges` |
@@ -259,23 +274,26 @@ decision. Round 2 runs, as SR1-1 to SR1-3 are HIGH.
 | AC-15 | `brief::too_large` |
 | AC-16 | `next::build_step_names_the_brief` |
 | AC-17 | `next::brief_refusal_blocks_the_step` |
+| AC-18 | `brief::prints_the_brief`, `brief::empty_parts_are_left_out` |
 
 ## Plan
 
 Route: full (tag `interface`), auto.
 
-1. The command prints the header, the Frame and the Step (AC-1 to AC-4). Must not change: `stapel next`,
+1. The command prints the header without its `tests:` line, the Frame and the Step (AC-1 to AC-4). Must not change: `stapel next`,
    `stapel status`, `ticket::parse`, `tickets::resolve`.
 2. The refusals of the call and of the step (AC-10, AC-11). Must not change: the brief of step 1.
-3. Criteria, the unknown criterion and a step naming nothing (AC-5, AC-12, AC-14). Must not change: the
-   header and the parts of step 1.
-4. Terms (AC-6). Must not change: the parts of steps 1 and 3.
+3. Criteria, the `tests:` line and the unknown criterion (AC-5, AC-12, AC-18). Must not change: the parts
+   of step 1.
+4. Terms and a step naming nothing (AC-6, AC-14). Must not change: the parts of steps 1 and 3.
 5. Cases, Inputs and External states rows (AC-7, AC-8). Must not change: the parts of steps 1, 3 and 4.
 6. Findings and the unknown finding (AC-9, AC-13). Must not change: the format of `findings.jsonl` and
    `stapel findings`.
 7. The size limit (AC-15). Must not change: the text of a brief within the limit.
-8. `stapel next` names the brief and blocks on its refusal (AC-16, AC-17). Must not change: every other
-   action and target of `next`, and the exit codes of `next`.
+8. `stapel next` names the brief and blocks on its refusal (AC-16, AC-17). The RED gives the shared
+   fixtures of `tests/next.rs` (`written`, `ready` and the Plans `1. One.`) a criterion row `AC-1` and steps
+   that name it, and changes the expected `build-step` and `green-step` targets. Must not change: every
+   other action of `next`, its facts for a step whose brief assembles, and its exit codes.
 
 ## Review
 
