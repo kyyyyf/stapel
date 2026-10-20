@@ -384,9 +384,9 @@ the R-5 code quality notes. `stapel check` passed at 134973b (549 tests) before 
 | AC-9 | `next::confirm_names_each_section`, `next::stale_reasons_each_a_fact`, `next::folder_key_in_outputs`, `next::facts_wait_for_confirm` |
 | AC-10 | `next::history_read_only_when_needed` |
 | AC-11 | `next::step_outside_the_plan`, `next::history_order_of_facts` |
-| AC-12 | `next::history_faults_block_the_build`, `next::open_red_is_judged_alone`, `next::history_order_of_facts`, `next::unpaired_red_behind_a_green` |
+| AC-12 | `next::history_faults_block_the_build`, `next::open_red_is_judged_alone`, `next::history_order_of_facts`, `next::unpaired_red_behind_a_green`, `next::build_input_change_is_a_fault` |
 | AC-13 | `next::failing_check_blocks_the_build`, `next::rule_order_after_history`, `next::check_records_after_the_steps` |
-| AC-14 | `next::first_open_step` |
+| AC-14 | `next::first_open_step`, `next::open_red_out_of_plan_order` |
 | AC-15 | `next::coverage_and_cleanup_steps_are_done`, `next::coverage_word_after_a_red` |
 | AC-16 | `next::run_check_after_the_steps`, `next::check_records_after_the_steps` |
 | AC-17 | `next::code_review_then_summary`, `next::review_and_summary_edges` |
