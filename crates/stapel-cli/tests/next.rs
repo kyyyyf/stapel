@@ -1,4 +1,5 @@
-//! STP-20 AC-1, AC-3 to AC-9: `stapel next`, the ticket choice and the rules before the build.
+//! STP-20 AC-1 to AC-21: `stapel next`, the ticket choice, the rules before the build, the rules that
+//! read history and the rules after the build.
 
 mod common;
 
@@ -1813,4 +1814,266 @@ fn json_after_the_build() {
         "{\"v\":1,\"ticket\":\"ABC-1\",\"action\":\"close\",\"subject\":null,\
          \"command\":\"stapel close ABC-1\",\"path\":null,\"facts\":[]}\n"
     );
+}
+
+// AC-1: `next` does not rewrite `.git/index`, even when a tracked file has a new mtime.
+#[test]
+fn index_untouched() {
+    after_the_build!();
+    let (repo, _, _) = done(false);
+    let dir = repo.path();
+    // The same content with an old mtime: a plain `git status` would refresh and rewrite the index.
+    let lib = dir.join("crates/tiny/src/lib.rs");
+    std::fs::File::options()
+        .write(true)
+        .open(&lib)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000))
+        .unwrap();
+    let index = dir.join(".git/index");
+    let before = std::fs::read(&index).unwrap();
+    assert_eq!(action(dir), format!("next: code-review — {TICKET}"));
+    assert!(
+        before == std::fs::read(&index).unwrap(),
+        "`next` rewrote .git/index"
+    );
+}
+
+// AC-9: the confirmation facts wait until no rule of AC-6 to AC-8 applies.
+#[test]
+fn facts_wait_for_confirm() {
+    // Description `TODO`: only the action line.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    assert_eq!(action(dir), format!("next: write-frame — {TICKET}"));
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+
+    // Spec `TODO`.
+    let repo = written();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Spec", "TODO");
+    assert_eq!(action(dir), format!("next: write-section Spec — {TICKET}"));
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+
+    // Every section written, no spec review yet.
+    let repo = written();
+    let dir = repo.path();
+    assert_eq!(action(dir), format!("next: spec-review — {TICKET}"));
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+
+    // At `confirm`: the facts.
+    add_finding(dir, "spec-review");
+    assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
+    assert!(
+        facts(dir).contains(&"blocked: spec not confirmed".to_string()),
+        "{:?}",
+        facts(dir)
+    );
+}
+
+// AC-12: an `unverified` outcome of a changed build input is a fault at the commit that changed it.
+#[test]
+fn build_input_change_is_a_fault() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) -> String {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim()[..7].to_string()
+    }
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    commit(dir, &[], "initial");
+    let test = |n: &str| {
+        (
+            format!("crates/tiny/tests/t{n}.rs"),
+            "#[test]\nfn t() {\n    assert!(true);\n}\n",
+        )
+    };
+    let (path, text) = test("1");
+    commit(dir, &[(&path, text)], "ABC-1 step 1 RED: one");
+    commit(
+        dir,
+        &[("crates/tiny/src/lib.rs", "// one\n")],
+        "ABC-1 step 1 GREEN: one",
+    );
+    let deps = commit(
+        dir,
+        &[(
+            "crates/tiny/Cargo.toml",
+            "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n",
+        )],
+        "ABC-1 deps: add a dependency",
+    );
+    let (path, text) = test("2");
+    commit(dir, &[(&path, text)], "ABC-1 step 2 RED: two");
+    commit(
+        dir,
+        &[("crates/tiny/src/lib.rs", "// two\n")],
+        "ABC-1 step 2 GREEN: two",
+    );
+    let want = format!("blocked: step 2: unverified at {deps} — build-input-changed: ");
+    let lines = facts(dir);
+    assert!(
+        lines.iter().any(|l| l.starts_with(&want)),
+        "{want}\n{lines:?}"
+    );
+    assert!(
+        action(dir).starts_with("next: fix-history step "),
+        "{}",
+        action(dir)
+    );
+}
+
+// AC-14: an open RED without a fault is the step to turn green, wherever it stands in the Plan.
+#[test]
+fn open_red_out_of_plan_order() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    commit(dir, &[], "initial");
+    commit(
+        dir,
+        &[(
+            "crates/tiny/tests/t2.rs",
+            "#[test]\nfn t() {\n    assert!(true);\n}\n",
+        )],
+        "ABC-1 step 2 RED: two",
+    );
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    assert_eq!(action(dir), format!("next: green-step step 2 — {TICKET}"));
+}
+
+// AC-15: a word commit closes a step only when the step has no RED and no GREEN.
+#[test]
+fn coverage_word_after_a_red() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+    // The action after a RED of `label` and then a commit with `subject`, on a Plan of `steps`.
+    let after = |steps: &str, label: &str, subject: &str| {
+        let repo = written();
+        let dir = repo.path();
+        set_plan(dir, &format!("Route: full, auto.\n\n{steps}"));
+        confirm_all(dir);
+        commit(dir, &[], "initial");
+        commit(
+            dir,
+            &[(
+                &format!("crates/tiny/tests/t{}.rs", label.replace(' ', "_")),
+                "#[test]\nfn t() {\n    assert!(true);\n}\n",
+            )],
+            &format!("ABC-1 {label} RED: test"),
+        );
+        commit(dir, &[], subject);
+        action(dir)
+    };
+    assert_eq!(
+        after("1. A.\n2. B.", "step 2", "ABC-1 step 2 wip: more"),
+        format!("next: green-step step 2 — {TICKET}")
+    );
+    assert_eq!(
+        after("1c. A.", "step 1c", "ABC-1 step 1c coverage: more"),
+        format!("next: green-step step 1c — {TICKET}")
+    );
+}
+
+// AC-21: with no `plan` section configured, no Plan step is read.
+#[test]
+fn no_plan_section_configured() {
+    after_the_build!();
+    let (repo, _, _) = done(true);
+    let dir = repo.path();
+    let toml = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    let cut = text.replace(
+        "[[sections]]\nid = \"plan\"\ntitle = \"Plan\"\nowner = \"engineer\"\ndepends_on = [\"spec\", \"design\"]\n\n",
+        "",
+    );
+    assert_ne!(cut, text);
+    std::fs::write(&toml, cut).unwrap();
+    set_section(dir, "ABC-1", "Review", "Reviewed: no findings.");
+    set_section(dir, "ABC-1", "Summary", "Done.");
+    let head = commit(dir, &[], "ABC-1: config, review and summary");
+    record(dir, &head, "pass");
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    assert_eq!(action(dir), "next: close — stapel close ABC-1");
 }
