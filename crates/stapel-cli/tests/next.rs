@@ -2091,3 +2091,132 @@ fn no_plan_section_configured() {
     assert!(facts(dir).is_empty(), "{:?}", facts(dir));
     assert_eq!(action(dir), "next: close — stapel close ABC-1");
 }
+
+// AC-21 and AC-14: an open RED gives `green-step` although no `plan` section is configured.
+#[test]
+fn open_red_without_a_plan_section() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    let toml = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    let cut = text.replace(
+        "[[sections]]\nid = \"plan\"\ntitle = \"Plan\"\nowner = \"engineer\"\ndepends_on = [\"spec\", \"design\"]\n\n",
+        "",
+    );
+    assert_ne!(cut, text);
+    std::fs::write(&toml, cut).unwrap();
+    commit(dir, &[], "initial");
+    commit(
+        dir,
+        &[(
+            "crates/tiny/tests/t1.rs",
+            "#[test]\nfn t() {\n    assert!(true);\n}\n",
+        )],
+        "ABC-1 step 1 RED: one",
+    );
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    assert_eq!(action(dir), format!("next: green-step step 1 — {TICKET}"));
+}
+
+// AC-12: the build-input fault names the steps in history order and the first step in the action.
+#[test]
+fn build_input_names_the_first_step() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) -> String {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim()[..7].to_string()
+    }
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    commit(dir, &[], "initial");
+    let test = "#[test]\nfn t() {\n    assert!(true);\n}\n";
+    commit(dir, &[("crates/tiny/tests/t1.rs", test)], "ABC-1 step 1 RED: one");
+    commit(
+        dir,
+        &[("crates/tiny/src/lib.rs", "// one\n")],
+        "ABC-1 step 1 GREEN: one",
+    );
+    let deps = commit(
+        dir,
+        &[(
+            "crates/tiny/Cargo.toml",
+            "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n",
+        )],
+        "ABC-1 deps: add a dependency",
+    );
+    commit(dir, &[("crates/tiny/tests/t2.rs", test)], "ABC-1 step 2 RED: two");
+    commit(
+        dir,
+        &[("crates/tiny/src/lib.rs", "// two\n")],
+        "ABC-1 step 2 GREEN: two",
+    );
+    let reason = format!("build-input-changed: crates/tiny/Cargo.toml at {deps}");
+    assert_eq!(
+        facts(dir),
+        vec![
+            format!("blocked: step 1: unverified at {deps} — {reason}"),
+            format!("blocked: step 2: unverified at {deps} — {reason}"),
+        ]
+    );
+    assert_eq!(
+        action(dir),
+        "next: fix-history step 1 — stapel check --history ABC-1"
+    );
+}
