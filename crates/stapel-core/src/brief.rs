@@ -36,7 +36,12 @@ pub fn assemble(
     }
 
     let findings_part = findings_part(&item, findings, step)?;
-    let tests = explicit_tests(&item).unwrap_or_else(|| criteria.tests.clone());
+    let test_plan = match find(&sections, "Test plan") {
+        Lookup::Found(body) => body,
+        _ => "",
+    };
+    let known = known_tests(spec, test_plan);
+    let tests = explicit_tests(&item, &known).unwrap_or_else(|| criteria.tests.clone());
 
     let mut out = format!("# Brief: {key} step {step}\n");
     out.push_str(&format!("ticket: .stapel/tickets/{key}/ticket.md\n"));
@@ -97,15 +102,36 @@ pub fn assemble(
     Ok(out)
 }
 
-/// The backticked `<module>::<name>` names of the step item, in step order, each once; `None`
-/// when it holds none (the step tests are then those of the named criteria).
-fn explicit_tests(item: &str) -> Option<Vec<String>> {
+/// The backticked names of `text`, trimmed.
+fn backticked(text: &str) -> impl Iterator<Item = &str> {
+    text.split('`')
+        .enumerate()
+        .filter_map(|(k, part)| (k % 2 == 1).then_some(part.trim()))
+}
+
+/// The test names a criterion row (its last cell) or a row of the cases table names.
+fn known_tests(spec: &str, test_plan: &str) -> Vec<String> {
+    let mut known: Vec<String> = Vec::new();
+    for line in spec.lines().filter(|l| l.starts_with('|')) {
+        if let Some(last) = cells(line).last() {
+            known.extend(backticked(last).map(str::to_string));
+        }
+    }
+    let lines: Vec<&str> = test_plan.lines().collect();
+    let table = table_part(&lines, 0, true, |_| true);
+    known.extend(backticked(&table).map(str::to_string));
+    known
+}
+
+/// The backticked `<module>::<name>` names of the step item that a criterion row or the cases
+/// table names (`known`), in step order, each once; `None` when it holds none (the step tests are
+/// then those of the named criteria).
+fn explicit_tests(item: &str, known: &[String]) -> Option<Vec<String>> {
     let mut tests: Vec<String> = Vec::new();
-    for (k, part) in item.split('`').enumerate() {
-        let name = part.trim();
-        if k % 2 == 1
-            && name.contains("::")
+    for name in backticked(item) {
+        if name.contains("::")
             && !name.contains(char::is_whitespace)
+            && known.iter().any(|k| k == name)
             && !tests.iter().any(|t| t == name)
         {
             tests.push(name.to_string());
@@ -279,7 +305,7 @@ fn table_part(
     out.join("\n")
 }
 
-/// The Cases part: the first table of the Test plan, the rows that name a step test or whose first
+/// The Cases part: the first table of the Test plan before its first `###` heading, the rows that name a step test or whose first
 /// cell has `step <step>` as whole words.
 fn cases_part(lines: &[&str], step: &str, tests: &[String]) -> String {
     table_part(lines, 0, true, |row| {
