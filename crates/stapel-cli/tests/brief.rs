@@ -1664,3 +1664,55 @@ fn terms_on_a_chain_of_lines() {
          **Gamma**: g uses delta.\n- **Delta**: d.\n"
     );
 }
+
+// AC-18, AC-7 (D10-2): a backticked `<module>::<name>` is a step test only when a criterion row or
+// a row of the cases table names it.
+#[test]
+fn explicit_tests_are_known_tests() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | One. | `brief::a` |",
+    );
+    let chead = "| Category | Cases | Tests |\n|---|---|---|\n";
+    set_test_plan(
+        dir,
+        &format!(
+            "{chead}| Main | x | `brief::a` |\n| Extra | x | `brief::extra` |\n\
+             | Skip | x | `brief::skip` |"
+        ),
+    );
+
+    // Names no row has: the tests of AC-1 and their cases rows.
+    set_section(
+        dir,
+        "ABC-1",
+        "Plan",
+        "1. One. AC-1, as in `steps::parse_subject`, with `Vec::new`.",
+    );
+    let text = brief(dir, "1");
+    assert!(text.contains("\ntests: brief::a\n"), "{text}");
+    assert!(
+        text.contains(&format!("\n## Cases\n{chead}| Main | x | `brief::a` |\n")),
+        "{text}"
+    );
+
+    // A name only a cases row has is a step test; an unknown name beside it is not.
+    set_section(
+        dir,
+        "ABC-1",
+        "Plan",
+        "1. One. AC-1, with `brief::extra` and `Vec::new`.",
+    );
+    let text = brief(dir, "1");
+    assert!(text.contains("\ntests: brief::extra\n"), "{text}");
+    assert!(
+        text.contains(&format!(
+            "\n## Cases\n{chead}| Extra | x | `brief::extra` |\n"
+        )),
+        "{text}"
+    );
+}
