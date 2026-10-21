@@ -23,3 +23,4 @@
 {"v":1,"id":"d-9b665bd7b255","at":"2026-10-21T14:31:42Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:6c968e90fa204419c62b022d3aad5b7dfaa96412c4266f2d5534e752e1d5bb81","via":"grant"}
 {"v":1,"id":"d-037ff11ce8d4","at":"2026-10-21T14:31:42Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:aa5ee706b295b1afa4dc21de720990617118c9656e47456ba3e731fcc33f8e7c","via":"grant"}
 {"v":1,"id":"d-67a9c1db576e","at":"2026-10-21T14:31:42Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:b19f14dded7121ea194197146392672809c353ed8eb80adf20a36029f07ec09b","via":"grant"}
+{"v":1,"id":"d-5233f0282c72","at":"2026-10-21T15:30:25Z","by":"kyyyyf","action":"close","reason":"built, reviewed, check passes"}
