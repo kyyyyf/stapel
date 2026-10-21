@@ -175,12 +175,22 @@ fn terms_part(spec: &str, rows: &str) -> String {
     let lines: Vec<&str> = spec.lines().collect();
     let terms = spec_terms(&lines);
     let mut used = vec![false; terms.len()];
-    let mut texts = vec![normal(rows)];
+    let row_lines: Vec<&str> = rows.lines().filter(|l| row_number(l).is_some()).collect();
+    let mut texts = vec![normal(&row_lines.join("\n"))];
     while let Some(text) = texts.pop() {
-        for (i, term) in terms.iter().enumerate() {
-            if !used[i] && uses(&text, &term.name) {
-                used[i] = true;
-                texts.push(term.text.clone());
+        for i in 0..terms.len() {
+            if used[i] || !uses(&text, &terms[i].name) {
+                continue;
+            }
+            // Each term on a line that is printed counts as printed.
+            for (j, other) in terms.iter().enumerate() {
+                if !used[j]
+                    && other.first_line <= terms[i].last_line
+                    && terms[i].first_line <= other.last_line
+                {
+                    used[j] = true;
+                    texts.push(other.text.clone());
+                }
             }
         }
     }
