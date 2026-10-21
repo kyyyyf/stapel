@@ -10,7 +10,7 @@ tests: brief::t2, brief::t3, brief::t4
 
 ## Step
 2. Two. Names AC-2 and
-   AC-3 to AC-4.
+   AC-3 to AC-4. Reads R1-1.
 
 ## Criteria
 | № | Criterion | Test |
@@ -38,3 +38,6 @@ tests: brief::t2, brief::t3, brief::t4
 | System | Handling | Test |
 |---|---|---|
 | os | x | `brief::t4` |
+
+## Findings
+- R1-1 (HIGH): A claim. Fate: fixed

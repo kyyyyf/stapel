@@ -17,7 +17,7 @@ const FRAME: &str = "### Frame\n\n\
 
 const PLAN: &str = "Route: full, auto.\n\n\
     1. One. Names AC-1.\n\
-    2. Two. Names AC-2 and\n   AC-3 to AC-4.\n\
+    2. Two. Names AC-2 and\n   AC-3 to AC-4. Reads R1-1.\n\
     3. Three.";
 
 const SPEC: &str = "Terms:\n\n\
@@ -70,6 +70,11 @@ fn fixture() -> tempfile::TempDir {
     set_section(repo.path(), "ABC-1", "Plan", PLAN);
     set_section(repo.path(), "ABC-1", "Spec", SPEC);
     set_test_plan(repo.path(), TEST_PLAN);
+    std::fs::write(
+        repo.path().join(".stapel/tickets/ABC-1/findings.jsonl"),
+        "{\"id\":\"R1-1\",\"severity\":\"HIGH\",\"claim\":\"A claim.\",\"fate\":\"fixed\"}\n",
+    )
+    .unwrap();
     repo
 }
 
@@ -611,6 +616,16 @@ fn refuses_an_unreadable_ticket() {
     .unwrap();
     refuses(dir, "ABC-9");
 
+    // `findings.jsonl` that is a directory, and one that is not UTF-8.
+    let findings = tickets.join("ABC-1/findings.jsonl");
+    std::fs::remove_file(&findings).unwrap();
+    std::fs::create_dir(&findings).unwrap();
+    refuses(dir, "ABC-1");
+    std::fs::remove_dir(&findings).unwrap();
+    std::fs::write(&findings, [0x7b, 0xff, 0xfe, 0x0a]).unwrap();
+    refuses(dir, "ABC-1");
+    std::fs::remove_file(&findings).unwrap();
+
     // `ticket.md` that is not UTF-8.
     std::fs::write(
         tickets.join("ABC-1/ticket.md"),
@@ -848,6 +863,107 @@ fn step_names_nothing() {
     set_section(dir, "ABC-1", "Plan", "1. One. Reads D2-1.");
     let text = brief(dir, "1");
     assert!(text.contains("\n## Step\n1. One. Reads D2-1.\n"), "{text}");
+}
+
+/// Writes `findings.jsonl` of ABC-1 and the Plan `1. <item>`, and gives the brief of step 1.
+fn findings_brief(dir: &Path, records: &str, item: &str) -> String {
+    std::fs::write(dir.join(".stapel/tickets/ABC-1/findings.jsonl"), records).unwrap();
+    set_section(dir, "ABC-1", "Plan", &format!("1. {item}"));
+    brief(dir, "1")
+}
+
+// AC-9: the last record of an id, `none` for a missing field, a range, words that are no findings.
+#[test]
+fn findings_last_record() {
+    let repo = fixture();
+    let dir = repo.path();
+    let records = "{\"id\":\"D1-2\",\"severity\":\"LOW\",\"claim\":\"old.\",\"fate\":\"open\"}\n\
+        not json\n\
+        {\"id\":\"D1-5\",\"severity\":\"HIGH\",\"claim\":\"five.\",\"fate\":\"fixed\"}\n\
+        {\"x\":\"D1-6\"}\n\
+        {\"id\":\"D1-6\",\"severity\":\"MEDIUM\",\"claim\":\"six.\"}\n\
+        {\"id\":\"D1-2\",\"severity\":\"HIGH\",\"claim\":\"new.\",\"fate\":\"fixed\"}\n\
+        {\"id\":\"D1-7\",\"claim\":\"seven.\",\"fate\":\"open\"}\n";
+
+    // Step order, each finding once, the last record, `none` for a missing field, a range.
+    let text = findings_brief(
+        dir,
+        records,
+        "One. Reads D1-2, then D1-5 to D1-6, D1-2 again, UTF-8 and STP-22, then D1-7.",
+    );
+    assert!(
+        text.ends_with(
+            "\n## Findings\n\
+             - D1-2 (HIGH): new. Fate: fixed\n\
+             - D1-5 (HIGH): five. Fate: fixed\n\
+             - D1-6 (MEDIUM): six. Fate: none\n\
+             - D1-7 (none): seven. Fate: open\n"
+        ),
+        "{text}"
+    );
+    assert_eq!(text.matches("D1-2 (").count(), 1, "{text}");
+    assert!(!text.contains("UTF-8 ("), "{text}");
+    assert!(!text.contains("STP-22 ("), "{text}");
+
+    // The part follows `## External states`, the last part.
+    let text = findings_brief(dir, records, "One. AC-4. Reads D1-5.");
+    let at = |h: &str| text.find(h).unwrap_or_else(|| panic!("no {h} in {text}"));
+    assert!(
+        at("\n## External states\n") < at("\n## Findings\n"),
+        "{text}"
+    );
+}
+
+// AC-13: the first named finding without a well-formed record refuses.
+#[test]
+fn unknown_finding() {
+    fn refuses(dir: &Path, records: &str, item: &str, id: &str) {
+        std::fs::write(dir.join(".stapel/tickets/ABC-1/findings.jsonl"), records).unwrap();
+        set_section(dir, "ABC-1", "Plan", &format!("1. {item}"));
+        let out = stapel(dir)
+            .args(["brief", "ABC-1", "1"])
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "", "{item}");
+        assert_eq!(
+            String::from_utf8(out.stderr).unwrap(),
+            format!("stapel: step 1 names {id}, which findings.jsonl does not have\n"),
+            "{item}"
+        );
+    }
+    let repo = fixture();
+    let dir = repo.path();
+
+    // A recorded prefix without the record; the first missing id in step order.
+    let records = "{\"id\":\"D1-1\"}\n{\"id\":\"D1-2\"}\n";
+    refuses(dir, records, "One. Reads D1-9.", "D1-9");
+    refuses(dir, records, "One. Reads D1-2, D1-8 and D1-9.", "D1-8");
+    refuses(dir, records, "One. Reads D1-1 to D1-3.", "D1-3");
+
+    // The only line of the id is unreadable.
+    let records = "{\"id\":\"D1-1\"}\n{\"id\":\"D1-9\"\n";
+    refuses(dir, records, "One. Reads D1-9.", "D1-9");
+}
+
+// AC-18, AC-9: a step that names one finding only leaves out every other part.
+#[test]
+fn empty_parts_are_left_out() {
+    let repo = fixture();
+    let dir = repo.path();
+    let text = findings_brief(
+        dir,
+        "{\"id\":\"D1-1\",\"severity\":\"LOW\",\"claim\":\"c.\",\"fate\":\"open\"}\n",
+        "One. Reads D1-1.",
+    );
+    for part in ["Frame", "Step", "Findings"] {
+        assert!(text.contains(&format!("\n## {part}\n")), "{text}");
+    }
+    assert!(!text.contains("\ntests:"), "{text}");
+    for part in ["Criteria", "Terms", "Cases", "Inputs", "External states"] {
+        assert!(!text.contains(&format!("## {part}")), "{text}");
+    }
 }
 
 // AC-6: the Terms list ends at the criteria table.
