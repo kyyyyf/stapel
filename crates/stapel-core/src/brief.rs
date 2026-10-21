@@ -61,8 +61,8 @@ fn row_number(line: &str) -> Option<u64> {
 }
 
 /// The named criteria of a step item as inclusive ranges in the order of the item. Every run of
-/// whitespace counts as one space. `Err` holds a range with n > m.
-fn named_criteria(item: &str, step: &str) -> Result<Vec<(u64, u64)>, String> {
+/// whitespace counts as one space. A range with n > m is kept as it is.
+fn named_criteria(item: &str) -> Vec<(u64, u64)> {
     let text = item.split_whitespace().collect::<Vec<_>>().join(" ");
     let bytes = text.as_bytes();
     let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'-';
@@ -91,11 +91,6 @@ fn named_criteria(item: &str, step: &str) -> Result<Vec<(u64, u64)>, String> {
                 None
             };
             if let Some((m, end2)) = upper {
-                if n > m {
-                    return Err(format!(
-                        "step {step} names AC-{n} to AC-{m}, which is not a range"
-                    ));
-                }
                 range = (n, m);
                 next = end2;
             }
@@ -105,12 +100,12 @@ fn named_criteria(item: &str, step: &str) -> Result<Vec<(u64, u64)>, String> {
             at += 1;
         }
     }
-    Ok(named)
+    named
 }
 
 /// The Criteria part and the step tests for the criteria the step item names; empty when none.
 fn criteria_part(item: &str, spec: &str, step: &str) -> Result<Criteria, String> {
-    let named = named_criteria(item, step)?;
+    let named = named_criteria(item);
     if named.is_empty() {
         return Ok(Criteria {
             text: String::new(),
@@ -123,6 +118,11 @@ fn criteria_part(item: &str, spec: &str, step: &str) -> Result<Criteria, String>
         .filter_map(|l| row_number(l).map(|n| (n, *l)))
         .collect();
     for &(n, m) in &named {
+        if n > m {
+            return Err(format!(
+                "step {step} names AC-{n} to AC-{m}, which is not a range"
+            ));
+        }
         let mut i = n;
         while i <= m {
             if !rows.iter().any(|(r, _)| *r == i) {
@@ -139,11 +139,18 @@ fn criteria_part(item: &str, spec: &str, step: &str) -> Result<Criteria, String>
             && l.chars().all(|c| matches!(c, '|' | '-' | ':' | ' '))
     };
     let mut out: Vec<&str> = Vec::new();
-    if let Some(sep) = lines.iter().position(|l| is_separator(l)) {
-        if sep > 0 {
-            out.push(lines[sep - 1]);
+    // The table that holds the criterion rows: the block of `|` lines around the first row.
+    if let Some(first) = lines.iter().position(|l| row_number(l).is_some()) {
+        let mut top = first;
+        while top > 0 && lines[top - 1].starts_with('|') {
+            top -= 1;
         }
-        out.push(lines[sep]);
+        if let Some(sep) = (top..first).find(|&i| is_separator(lines[i])) {
+            if sep > top {
+                out.push(lines[sep - 1]);
+            }
+            out.push(lines[sep]);
+        }
     }
     let mut seen: Vec<u64> = Vec::new();
     let mut tests: Vec<String> = Vec::new();
