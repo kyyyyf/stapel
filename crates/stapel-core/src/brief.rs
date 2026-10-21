@@ -36,12 +36,13 @@ pub fn assemble(
     }
 
     let findings_part = findings_part(&item, findings, step)?;
+    let tests = explicit_tests(&item).unwrap_or_else(|| criteria.tests.clone());
 
     let mut out = format!("# Brief: {key} step {step}\n");
     out.push_str(&format!("ticket: .stapel/tickets/{key}/ticket.md\n"));
     out.push_str(&format!("base: {}\n", base.unwrap_or("none")));
-    if !criteria.tests.is_empty() {
-        out.push_str(&format!("tests: {}\n", criteria.tests.join(", ")));
+    if !tests.is_empty() {
+        out.push_str(&format!("tests: {}\n", tests.join(", ")));
     }
     let mut sizes = vec![("header".to_string(), out.len())];
     let mut part = |out: &mut String, title: &str, body: &str| {
@@ -66,11 +67,11 @@ pub fn assemble(
     if let Lookup::Found(test_plan) = find(&sections, "Test plan") {
         let lines: Vec<&str> = test_plan.lines().collect();
         let parts = [
-            ("Cases", cases_part(&lines, step, &criteria.tests)),
-            ("Inputs", subsection_part(&lines, "Inputs", &criteria.tests)),
+            ("Cases", cases_part(&lines, step, &tests)),
+            ("Inputs", subsection_part(&lines, "Inputs", &tests)),
             (
                 "External states",
-                subsection_part(&lines, "External states", &criteria.tests),
+                subsection_part(&lines, "External states", &tests),
             ),
         ];
         for (title, body) in parts {
@@ -96,6 +97,23 @@ pub fn assemble(
     Ok(out)
 }
 
+/// The backticked `<module>::<name>` names of the step item, in step order, each once; `None`
+/// when it holds none (the step tests are then those of the named criteria).
+fn explicit_tests(item: &str) -> Option<Vec<String>> {
+    let mut tests: Vec<String> = Vec::new();
+    for (k, part) in item.split('`').enumerate() {
+        let name = part.trim();
+        if k % 2 == 1
+            && name.contains("::")
+            && !name.contains(char::is_whitespace)
+            && !tests.iter().any(|t| t == name)
+        {
+            tests.push(name.to_string());
+        }
+    }
+    (!tests.is_empty()).then_some(tests)
+}
+
 /// The most estimated tokens a brief may have.
 const MAX_TOKENS: usize = 1600;
 
@@ -117,9 +135,13 @@ fn records(findings: &str) -> Vec<(String, serde_json::Value)> {
 }
 
 /// The ids the step item names, in step order: words `<prefix>-<digits>` (not `AC`) of a recorded
-/// prefix, and the ids of a range `<prefix>-<n> to <prefix>-<m>` (a range with n > m names none).
-/// Each id is taken lazily, so a huge range costs nothing until it is walked.
-fn named_findings<'a>(item: &'a str, prefixes: &'a [String]) -> impl Iterator<Item = String> + 'a {
+/// prefix, and the ids of a range `<prefix>-<n> to <prefix>-<m>`; a range with n > m is one `Err`
+/// that holds its text `<id> to <id>`. Each id is taken lazily, so a huge range costs nothing until
+/// it is walked.
+fn named_findings<'a>(
+    item: &'a str,
+    prefixes: &'a [String],
+) -> impl Iterator<Item = Result<String, String>> + 'a {
     let words: Vec<&str> = item
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
         .filter(|w| !w.is_empty())
@@ -127,7 +149,7 @@ fn named_findings<'a>(item: &'a str, prefixes: &'a [String]) -> impl Iterator<It
     fn recorded<'w>(w: &'w str, prefixes: &[String]) -> Option<(&'w str, &'w str)> {
         finding_split(w).filter(|(p, _)| *p != "AC" && prefixes.iter().any(|q| q == p))
     }
-    let mut ids: Vec<Box<dyn Iterator<Item = String> + 'a>> = Vec::new();
+    let mut ids: Vec<Box<dyn Iterator<Item = Result<String, String>> + 'a>> = Vec::new();
     let mut k = 0;
     while k < words.len() {
         let Some((prefix, digits)) = recorded(words[k], prefixes) else {
@@ -143,12 +165,17 @@ fn named_findings<'a>(item: &'a str, prefixes: &'a [String]) -> impl Iterator<It
             None
         };
         match (digits.parse::<u64>(), upper.map(|(_, m)| m.parse::<u64>())) {
+            (Ok(n), Some(Ok(m))) if n > m => {
+                let text = format!("{} to {}", words[k], words[k + 2]);
+                ids.push(Box::new(std::iter::once(Err(text))));
+                k += 3;
+            }
             (Ok(n), Some(Ok(m))) => {
-                ids.push(Box::new((n..=m).map(move |i| format!("{prefix}-{i}"))));
+                ids.push(Box::new((n..=m).map(move |i| Ok(format!("{prefix}-{i}")))));
                 k += 3;
             }
             _ => {
-                ids.push(Box::new(std::iter::once(words[k].to_string())));
+                ids.push(Box::new(std::iter::once(Ok(words[k].to_string()))));
                 k += 1;
             }
         }
@@ -167,6 +194,7 @@ fn findings_part(item: &str, findings: &str, step: &str) -> Result<String, Strin
     let mut seen: Vec<String> = Vec::new();
     let mut lines: Vec<String> = Vec::new();
     for id in named_findings(item, &prefixes) {
+        let id = id.map_err(|range| format!("step {step} names {range}, which is not a range"))?;
         if seen.contains(&id) {
             continue;
         }
@@ -175,7 +203,11 @@ fn findings_part(item: &str, findings: &str, step: &str) -> Result<String, Strin
                 "step {step} names {id}, which findings.jsonl does not have"
             ));
         };
-        let field = |name: &str| record.get(name).and_then(|v| v.as_str()).unwrap_or("none");
+        // Every run of whitespace is one space; a missing or non-string field is `none`.
+        let field = |name: &str| match record.get(name).and_then(|v| v.as_str()) {
+            Some(text) => text.split_whitespace().collect::<Vec<_>>().join(" "),
+            None => "none".to_string(),
+        };
         lines.push(format!(
             "- {id} ({}): {} Fate: {}",
             field("severity"),
@@ -250,7 +282,7 @@ fn table_part(
 /// The Cases part: the first table of the Test plan, the rows that name a step test or whose first
 /// cell has `step <step>` as whole words.
 fn cases_part(lines: &[&str], step: &str, tests: &[String]) -> String {
-    table_part(lines, 0, false, |row| {
+    table_part(lines, 0, true, |row| {
         let cells = cells(row);
         cells.iter().any(|c| names_a_test(c, tests))
             || cells.first().is_some_and(|c| has_step_label(c, step))
@@ -363,8 +395,22 @@ fn spec_terms(lines: &[&str]) -> Vec<Term> {
     let mut terms = Vec::new();
     for (k, (line, name, text_from, _)) in marks.iter().enumerate() {
         let mut text = String::new();
+        // The text ends where the next name starts; the term holds that line too when some text
+        // of it comes before the name (not only a list marker), so it shares the line (AC-6).
         let (last_line, text_to_line, text_to) = match marks.get(k + 1) {
-            Some((l, _, _, open)) => (if l == line { *line } else { l - 1 }, *l, *open),
+            Some((l, _, _, open)) => {
+                let before = lines[*l][..*open].trim();
+                let shared = before.trim_start_matches(['-', '*', '+']).trim();
+                (
+                    if l == line || !shared.is_empty() {
+                        *l
+                    } else {
+                        l - 1
+                    },
+                    *l,
+                    *open,
+                )
+            }
             None => (end - 1, end - 1, lines[end - 1].len()),
         };
         for (i, l) in lines.iter().enumerate().take(text_to_line + 1).skip(*line) {
@@ -395,20 +441,28 @@ fn terms_part(spec: &str, rows: &str) -> String {
     let mut used = vec![false; terms.len()];
     let row_lines: Vec<&str> = rows.lines().filter(|l| row_number(l).is_some()).collect();
     let mut texts = vec![normal(&row_lines.join("\n"))];
-    while let Some(text) = texts.pop() {
-        for i in 0..terms.len() {
-            if used[i] || !uses(&text, &terms[i].name) {
-                continue;
-            }
-            // Each term on a line that is printed counts as printed.
-            for (j, other) in terms.iter().enumerate() {
-                if !used[j]
-                    && other.first_line <= terms[i].last_line
-                    && terms[i].first_line <= other.last_line
-                {
-                    used[j] = true;
-                    texts.push(other.text.clone());
+    // Terms that count as printed whose text and lines are not followed yet.
+    let mut pending: Vec<usize> = Vec::new();
+    loop {
+        if let Some(text) = texts.pop() {
+            for i in 0..terms.len() {
+                if !used[i] && uses(&text, &terms[i].name) {
+                    used[i] = true;
+                    pending.push(i);
                 }
+            }
+            continue;
+        }
+        let Some(i) = pending.pop() else { break };
+        texts.push(terms[i].text.clone());
+        // Each term on a line that is printed counts as printed, along a chain of lines.
+        for (j, other) in terms.iter().enumerate() {
+            if !used[j]
+                && other.first_line <= terms[i].last_line
+                && terms[i].first_line <= other.last_line
+            {
+                used[j] = true;
+                pending.push(j);
             }
         }
     }
