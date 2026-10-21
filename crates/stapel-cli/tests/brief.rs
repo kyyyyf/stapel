@@ -20,9 +20,13 @@ const PLAN: &str = "Route: full, auto.\n\n\
     2. Two. Names AC-2 and\n   AC-3 to AC-4.\n\
     3. Three.";
 
-const SPEC: &str = "| № | Criterion | Test |\n|---|---|---|\n\
+const SPEC: &str = "Terms:\n\n\
+    - **Widget**: a part that holds a gear.\n\
+    - **Gear**: a wheel.\n\
+    - **Unused**: named by no row.\n\n\
+    | № | Criterion | Test |\n|---|---|---|\n\
     | AC-1 | One. | `brief::t1` |\n\
-    | AC-2 | Two. | `brief::t2`, `brief::t3` |\n\
+    | AC-2 | Two uses a widget. | `brief::t2`, `brief::t3` |\n\
     | AC-3 | Three. | `brief::t3` |\n\
     | AC-4 | Four. | `brief::t4` |";
 
@@ -458,7 +462,14 @@ fn step_item_ends_at_a_blank_line() {
 fn frame_edges() {
     let repo = repo_with_ticket();
     let dir = repo.path();
-    set_section(dir, "ABC-1", "Plan", "1. One.");
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1.");
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "Terms:\n\n- **Widget**: a part.\n\n\
+         | № | Criterion | Test |\n|---|---|---|\n| AC-1 | A widget. | `brief::a` |",
+    );
     let only_dropped = "### Frame\n\n\
         **Prior art.** Old tools.\n\n\
         **Size.** About ten lines.\n\n\
@@ -466,7 +477,14 @@ fn frame_edges() {
     set_section(dir, "ABC-1", "Description", only_dropped);
     let text = brief(dir, "1");
     assert!(!text.contains("## Frame"), "{text}");
-    assert!(text.ends_with("\n## Step\n1. One.\n"), "{text}");
+    assert!(
+        text.starts_with("# Brief: ABC-1 step 1\nticket: .stapel/tickets/ABC-1/ticket.md\nbase: none\ntests: brief::a\n\n## Step\n1. One. AC-1.\n\n## Criteria\n"),
+        "{text}"
+    );
+    assert!(
+        text.ends_with("\n## Terms\n- **Widget**: a part.\n"),
+        "{text}"
+    );
 
     // No heading after the Frame: it runs to the end of the Description.
     set_section(
@@ -631,4 +649,131 @@ fn refuses_a_wrong_call() {
     // A missing argument is a clap usage error.
     refuses(dir, &["ABC-1"], "");
     refuses(dir, &[], "");
+}
+
+// AC-6: the terms the criteria use, and the terms those terms use.
+#[test]
+fn terms_used_and_their_terms() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1.");
+    /// The part `## Terms` of step 1 over a Spec of `list` (the Terms list), a row of `row` and
+    /// `after` (lines after the table); `None` when the brief has no such part.
+    fn terms(dir: &Path, list: &str, row: &str, after: &str) -> Option<String> {
+        let spec = format!(
+            "Terms:\n\n{list}\n\n| № | Criterion | Test |\n|---|---|---|\n\
+             | AC-1 | {row} | `brief::a` |\n\n{after}"
+        );
+        set_section(dir, "ABC-1", "Spec", spec.trim_end());
+        let text = brief(dir, "1");
+        let (_, rest) = text.split_once("\n## Terms\n")?;
+        Some(rest.split("\n## ").next().unwrap().to_string())
+    }
+
+    // Upper case in the row.
+    assert_eq!(
+        terms(dir, "- **Alpha**: a.\n- **Beta**: b.", "uses ALPHA", "").as_deref(),
+        Some("- **Alpha**: a.\n")
+    );
+
+    // A plural with `s`, one with `es`; a term that no row uses stays out.
+    assert_eq!(
+        terms(
+            dir,
+            "- **Delta item**: d.\n- **Box**: b.\n- **Other**: o.",
+            "uses delta items and boxes",
+            ""
+        )
+        .as_deref(),
+        Some("- **Delta item**: d.\n- **Box**: b.\n")
+    );
+
+    // A term used only by another term, two levels deep; Spec order, not the order of use.
+    assert_eq!(
+        terms(
+            dir,
+            "- **Deep**: d.\n- **Leaf**: needs a deep one.\n- **Top**: uses a leaf.",
+            "uses top",
+            ""
+        )
+        .as_deref(),
+        Some("- **Deep**: d.\n- **Leaf**: needs a deep one.\n- **Top**: uses a leaf.\n")
+    );
+
+    // A name that starts a longer word is not used.
+    assert_eq!(terms(dir, "- **Step**: s.", "Stepping on", ""), None);
+
+    // Two terms on one line: the text of the first ends at the second name.
+    assert_eq!(
+        terms(
+            dir,
+            "- **Alpha**: a. **Beta**: uses gamma.\n- **Gamma**: g.",
+            "uses alpha",
+            ""
+        )
+        .as_deref(),
+        Some("- **Alpha**: a. **Beta**: uses gamma.\n")
+    );
+    // Both on one line used: the line is printed once.
+    assert_eq!(
+        terms(
+            dir,
+            "- **Alpha**: a. **Beta**: b.\n- **Gamma**: g.",
+            "uses alpha and beta",
+            ""
+        )
+        .as_deref(),
+        Some("- **Alpha**: a. **Beta**: b.\n")
+    );
+
+    // A `- **Promised:**` line after the table is no term.
+    assert_eq!(
+        terms(
+            dir,
+            "- **Alpha**: a.",
+            "uses promised",
+            "- **Promised:** promised things."
+        ),
+        None
+    );
+}
+
+// AC-14: a step that names no criterion and no finding.
+#[test]
+fn step_names_nothing() {
+    fn refuses(dir: &Path, plan: &str) {
+        set_section(dir, "ABC-1", "Plan", plan);
+        let out = stapel(dir)
+            .args(["brief", "ABC-1", "1"])
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "", "{plan}");
+        assert_eq!(
+            String::from_utf8(out.stderr).unwrap(),
+            "stapel: step 1 names no criterion and no finding\n",
+            "{plan}"
+        );
+    }
+    let repo = fixture();
+    let dir = repo.path();
+
+    // No id, and ids that are not criteria and have no recorded prefix (no `findings.jsonl`).
+    refuses(dir, "1. One.");
+    refuses(dir, "1. One. Reads D1-1 and UTF-8.");
+
+    // A recorded prefix that is not the prefix of the word; lines that are no records.
+    let file = dir.join(".stapel/tickets/ABC-1/findings.jsonl");
+    std::fs::write(
+        &file,
+        "{\"id\":\"D2-1\"}\nnot json\n{\"x\":\"D1-1\"}\n{\"id\":5}\n",
+    )
+    .unwrap();
+    refuses(dir, "1. One. Reads D1-1 and UTF-8.");
+
+    // A named finding is enough: the step is not refused.
+    set_section(dir, "ABC-1", "Plan", "1. One. Reads D2-1.");
+    let text = brief(dir, "1");
+    assert!(text.contains("\n## Step\n1. One. Reads D2-1.\n"), "{text}");
 }

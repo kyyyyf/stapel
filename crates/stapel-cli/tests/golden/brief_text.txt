@@ -15,6 +15,10 @@ tests: brief::t2, brief::t3, brief::t4
 ## Criteria
 | № | Criterion | Test |
 |---|---|---|
-| AC-2 | Two. | `brief::t2`, `brief::t3` |
+| AC-2 | Two uses a widget. | `brief::t2`, `brief::t3` |
 | AC-3 | Three. | `brief::t3` |
 | AC-4 | Four. | `brief::t4` |
+
+## Terms
+- **Widget**: a part that holds a gear.
+- **Gear**: a wheel.
