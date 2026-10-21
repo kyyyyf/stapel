@@ -20,6 +20,12 @@ const PLAN: &str = "Route: full, auto.\n\n\
     2. Two. Names AC-2 and\n   AC-3 to AC-4.\n\
     3. Three.";
 
+const SPEC: &str = "| № | Criterion | Test |\n|---|---|---|\n\
+    | AC-1 | One. | `brief::t1` |\n\
+    | AC-2 | Two. | `brief::t2`, `brief::t3` |\n\
+    | AC-3 | Three. | `brief::t3` |\n\
+    | AC-4 | Four. | `brief::t4` |";
+
 fn golden() -> String {
     std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN)).unwrap()
 }
@@ -29,6 +35,7 @@ fn fixture() -> tempfile::TempDir {
     let repo = repo_with_ticket();
     set_section(repo.path(), "ABC-1", "Description", FRAME);
     set_section(repo.path(), "ABC-1", "Plan", PLAN);
+    set_section(repo.path(), "ABC-1", "Spec", SPEC);
     repo
 }
 
@@ -55,6 +62,116 @@ fn prints_the_brief() {
     let repo = fixture();
     let text = brief(repo.path(), "2");
     assert_eq!(text, golden());
+}
+
+// AC-5, AC-18: named criteria, ranges, order, whole words, and the `tests:` line.
+#[test]
+fn criteria_and_ranges() {
+    /// The brief of step 1 of a Plan `plan` over a Spec of five rows and `AC-10`.
+    fn with_plan(dir: &Path, plan: &str) -> String {
+        let spec = "| № | Criterion | Test |\n|---|---|---|\n\
+            | AC-1 | One. | `brief::a` |\n\
+            | AC-2 | Two. | `brief::b`, `brief::c` |\n\
+            | AC-3 | Three. | `brief::c` |\n\
+            | AC-4 | Four. | `brief::d` |\n\
+            | AC-5 | Five. | `brief::e` |\n\
+            | AC-10 | Ten. | `brief::j` |";
+        set_section(dir, "ABC-1", "Spec", spec);
+        set_section(dir, "ABC-1", "Plan", plan);
+        brief(dir, "1")
+    }
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let head = "| № | Criterion | Test |\n|---|---|---|\n";
+
+    // A name and a range.
+    let text = with_plan(dir, "1. One. AC-1, AC-3 to AC-5.");
+    assert!(
+        text.contains(&format!(
+            "\n## Criteria\n{head}| AC-1 | One. | `brief::a` |\n\
+             | AC-3 | Three. | `brief::c` |\n| AC-4 | Four. | `brief::d` |\n\
+             | AC-5 | Five. | `brief::e` |\n"
+        )),
+        "{text}"
+    );
+    assert!(!text.contains("| AC-2 |"), "{text}");
+    assert!(
+        text.contains("base: none\ntests: brief::a, brief::c, brief::d, brief::e\n"),
+        "{text}"
+    );
+
+    // A name twice: one row. A step test of two rows: listed once.
+    let text = with_plan(dir, "1. One. AC-3 and AC-2 and AC-3 again.");
+    assert_eq!(text.matches("| AC-3 |").count(), 1, "{text}");
+    assert!(
+        text.contains("| AC-2 | Two. | `brief::b`, `brief::c` |\n| AC-3 | Three. | `brief::c` |\n"),
+        "{text}"
+    );
+    assert!(text.contains("\ntests: brief::b, brief::c\n"), "{text}");
+
+    // Spec order, not the order of the step.
+    let text = with_plan(dir, "1. One. AC-5 then AC-1.");
+    let one = text.find("| AC-1 |").expect("no AC-1");
+    let five = text.find("| AC-5 |").expect("no AC-5");
+    assert!(one < five, "{text}");
+    assert!(text.contains("\ntests: brief::a, brief::e\n"), "{text}");
+
+    // `AC-10` is not `AC-1`.
+    let text = with_plan(dir, "1. One. AC-10.");
+    assert!(text.contains("| AC-10 |"), "{text}");
+    assert!(!text.contains("| AC-1 |"), "{text}");
+    assert!(text.contains("\ntests: brief::j\n"), "{text}");
+
+    // A range broken after `to` with an indented next line.
+    let text = with_plan(dir, "1. One. AC-2 to\n   AC-3.");
+    assert!(
+        text.contains("| AC-2 | Two. | `brief::b`, `brief::c` |\n| AC-3 | Three. | `brief::c` |\n"),
+        "{text}"
+    );
+    assert!(!text.contains("| AC-4 |"), "{text}");
+
+    // The part comes after the Step.
+    let step = text.find("\n## Step\n").expect("no Step");
+    let criteria = text.find("\n## Criteria\n").expect("no Criteria");
+    assert!(step < criteria, "{text}");
+}
+
+// AC-12: a named criterion without a row, and a range with n > m.
+#[test]
+fn unknown_criterion() {
+    fn refuses(dir: &Path, plan: &str, message: &str) {
+        set_section(dir, "ABC-1", "Plan", plan);
+        let out = stapel(dir)
+            .args(["brief", "ABC-1", "1"])
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "", "{plan}");
+        assert_eq!(
+            String::from_utf8(out.stderr).unwrap(),
+            format!("{message}\n"),
+            "{plan}"
+        );
+    }
+    let repo = fixture();
+    let dir = repo.path();
+    refuses(
+        dir,
+        "1. One. AC-1 and AC-9.",
+        "stapel: step 1 names AC-9, which the Spec does not have",
+    );
+    // The first id with no row, in the order of the step.
+    refuses(
+        dir,
+        "1. One. AC-8 and AC-9.",
+        "stapel: step 1 names AC-8, which the Spec does not have",
+    );
+    refuses(
+        dir,
+        "1. One. AC-4 to AC-3.",
+        "stapel: step 1 names AC-4 to AC-3, which is not a range",
+    );
 }
 
 // AC-1: the command writes no file.
@@ -104,6 +221,7 @@ fn frame_without_prior_art_and_size() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     set_section(dir, "ABC-1", "Plan", PLAN);
+    set_section(dir, "ABC-1", "Spec", SPEC);
     let frame = "### Frame\n\n\
         **Prior art** without the dot.\n\n\
         **Prior art.** Dropped.\nSecond line.\n\n\
@@ -119,6 +237,11 @@ fn frame_without_prior_art_and_size() {
         **Last.** Kept.\n\n\
         ## Step\n";
     assert!(text.contains(expected), "{text}");
+    // The Spec of this test holds AC-1, so the Criteria part follows the Step.
+    assert!(
+        text.contains("\n## Criteria\n| № | Criterion | Test |\n"),
+        "{text}"
+    );
     assert!(!text.contains("Dropped"), "{text}");
     assert!(!text.contains("After the Frame"), "{text}");
 
@@ -140,6 +263,7 @@ fn lettered_step_and_folder_key() {
         "Plan",
         "1. One.\n2c. Two c. Names AC-1.\n3. Three.",
     );
+    set_section(dir, "ABC-1", "Spec", SPEC);
     set_section(
         dir,
         "ABC-1",
@@ -162,6 +286,7 @@ fn lettered_step_and_folder_key() {
     );
     assert!(text.contains("## Step\n2c. Two c. Names AC-1.\n"), "{text}");
     assert!(!text.contains("abc-1"), "{text}");
+    assert!(text.contains("\ntests: brief::t1\n"), "{text}");
 }
 
 // AC-2: the base of state.json is printed as written.
@@ -194,9 +319,10 @@ fn step_item_ends_at_a_blank_line() {
         "Plan",
         "1. One. Names AC-1\n   and goes on.\n\nA paragraph after the blank line.\n\n2. Two.",
     );
+    set_section(dir, "ABC-1", "Spec", SPEC);
     let text = brief(dir, "1");
     assert!(
-        text.ends_with("## Step\n1. One. Names AC-1\n   and goes on.\n"),
+        text.contains("## Step\n1. One. Names AC-1\n   and goes on.\n\n## Criteria\n"),
         "{text}"
     );
     assert!(!text.contains("paragraph"), "{text}");
