@@ -41,8 +41,17 @@ pub fn run(key: &str, step: &str) -> Result<(), Fail> {
             )));
         }
     };
-    let brief = assemble(&text, &ticket.key, step, state.base.as_deref(), &plan_title)
-        .map_err(Fail::failed)?;
+    // A missing or unreadable `findings.jsonl` gives no finding prefix (its refusal is step 6).
+    let findings = std::fs::read_to_string(ticket.dir.join("findings.jsonl")).unwrap_or_default();
+    let brief = assemble(
+        &text,
+        &ticket.key,
+        step,
+        state.base.as_deref(),
+        &plan_title,
+        &findings,
+    )
+    .map_err(Fail::failed)?;
     say_raw!("{brief}");
     Ok(())
 }

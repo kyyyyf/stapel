@@ -11,6 +11,7 @@ pub fn assemble(
     step: &str,
     base: Option<&str>,
     plan_title: &str,
+    findings: &str,
 ) -> Result<String, String> {
     let sections = parse(text);
     let plan = match find(&sections, plan_title) {
@@ -24,6 +25,9 @@ pub fn assemble(
         _ => "",
     };
     let criteria = criteria_part(&item, spec, step)?;
+    if named_criteria(&item).is_empty() && !names_a_finding(&item, findings) {
+        return Err(format!("step {step} names no criterion and no finding"));
+    }
 
     let mut out = format!("# Brief: {key} step {step}\n");
     out.push_str(&format!("ticket: .stapel/tickets/{key}/ticket.md\n"));
@@ -40,8 +44,159 @@ pub fn assemble(
     out.push_str(&format!("\n## Step\n{item}\n"));
     if !criteria.text.is_empty() {
         out.push_str(&format!("\n## Criteria\n{}\n", criteria.text));
+        let terms = terms_part(spec, &criteria.text);
+        if !terms.is_empty() {
+            out.push_str(&format!("\n## Terms\n{terms}\n"));
+        }
     }
     Ok(out)
+}
+
+/// The finding prefix of an id: the part before its last `-<digits>`.
+fn finding_split(word: &str) -> Option<(&str, &str)> {
+    let (prefix, digits) = word.rsplit_once('-')?;
+    (!prefix.is_empty() && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+        .then_some((prefix, digits))
+}
+
+/// Whether the step item has a word `<prefix>-<digits>` (not `AC`) whose prefix is the finding
+/// prefix of a well-formed record (a JSON line with a string `id`) of `findings`.
+fn names_a_finding(item: &str, findings: &str) -> bool {
+    let prefixes: Vec<String> = findings
+        .lines()
+        .filter_map(|l| {
+            let value: serde_json::Value = serde_json::from_str(l).ok()?;
+            let id = value.get("id")?.as_str()?;
+            finding_split(id).map(|(p, _)| p.to_string())
+        })
+        .collect();
+    item.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        .filter_map(finding_split)
+        .any(|(p, _)| p != "AC" && prefixes.iter().any(|q| q == p))
+}
+
+/// One term of the Spec: its lines, and its name and text in the normal form of a match.
+struct Term {
+    first_line: usize,
+    last_line: usize,
+    name: String,
+    text: String,
+}
+
+/// The text with every run of whitespace as one space and ASCII letters in lower case.
+fn normal(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+/// Whether `name` occurs in `text` as whole words, the last word also with `s` or `es` added.
+fn uses(text: &str, name: &str) -> bool {
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let bytes = text.as_bytes();
+    let mut from = 0;
+    while let Some(i) = text[from..].find(name) {
+        let at = from + i;
+        let end = at + name.len();
+        if (at == 0 || !word(bytes[at - 1])) && !name.is_empty() {
+            let boundary = |e: usize| bytes.get(e).is_none_or(|b| !word(*b));
+            if boundary(end)
+                || (text[end..].starts_with('s') && boundary(end + 1))
+                || (text[end..].starts_with("es") && boundary(end + 2))
+            {
+                return true;
+            }
+        }
+        from = at + 1;
+        while !text.is_char_boundary(from) {
+            from += 1;
+        }
+    }
+    false
+}
+
+/// The terms of the Spec: each `**<name>**:` of the list between the line `Terms:` and the first
+/// table line, with its text up to the next such name.
+fn spec_terms(lines: &[&str]) -> Vec<Term> {
+    let Some(start) = lines.iter().position(|l| l.trim() == "Terms:") else {
+        return Vec::new();
+    };
+    let end = (start + 1..lines.len())
+        .find(|&i| lines[i].starts_with('|'))
+        .unwrap_or(lines.len());
+    // Each name with its line, the start of its text and the start of its mark.
+    let mut marks: Vec<(usize, String, usize, usize)> = Vec::new();
+    for (i, line) in lines.iter().enumerate().take(end).skip(start + 1) {
+        let mut at = 0;
+        while let Some(open) = line[at..].find("**").map(|p| at + p) {
+            let Some(close) = line[open + 2..].find("**").map(|p| open + 2 + p) else {
+                break;
+            };
+            let name = &line[open + 2..close];
+            if line[close + 2..].starts_with(':') && !name.trim().is_empty() {
+                marks.push((i, normal(name), close + 3, open));
+                at = close + 3;
+            } else {
+                at = close + 2;
+            }
+        }
+    }
+    let mut terms = Vec::new();
+    for (k, (line, name, text_from, _)) in marks.iter().enumerate() {
+        let mut text = String::new();
+        let (last_line, text_to_line, text_to) = match marks.get(k + 1) {
+            Some((l, _, _, open)) => (if l == line { *line } else { l - 1 }, *l, *open),
+            None => (end - 1, end - 1, lines[end - 1].len()),
+        };
+        for (i, l) in lines.iter().enumerate().take(text_to_line + 1).skip(*line) {
+            let from = if i == *line { *text_from } else { 0 };
+            let to = if i == text_to_line { text_to } else { l.len() };
+            text.push_str(&l[from.min(to)..to]);
+            text.push(' ');
+        }
+        let mut last = last_line;
+        while last > *line && lines[last].trim().is_empty() {
+            last -= 1;
+        }
+        terms.push(Term {
+            first_line: *line,
+            last_line: last,
+            name: name.clone(),
+            text: normal(&text),
+        });
+    }
+    terms
+}
+
+/// The Terms part: the terms the printed criterion rows use, and the terms those terms use,
+/// printed as written in the Spec, in Spec order, each line once; empty when no term is used.
+fn terms_part(spec: &str, rows: &str) -> String {
+    let lines: Vec<&str> = spec.lines().collect();
+    let terms = spec_terms(&lines);
+    let mut used = vec![false; terms.len()];
+    let mut texts = vec![normal(rows)];
+    while let Some(text) = texts.pop() {
+        for (i, term) in terms.iter().enumerate() {
+            if !used[i] && uses(&text, &term.name) {
+                used[i] = true;
+                texts.push(term.text.clone());
+            }
+        }
+    }
+    let mut printed = vec![false; lines.len()];
+    for (term, _) in terms.iter().zip(&used).filter(|(_, u)| **u) {
+        for flag in &mut printed[term.first_line..=term.last_line] {
+            *flag = true;
+        }
+    }
+    let kept: Vec<&str> = lines
+        .iter()
+        .zip(&printed)
+        .filter(|(_, p)| **p)
+        .map(|(l, _)| *l)
+        .collect();
+    kept.join("\n")
 }
 
 /// The `## Criteria` text of a step and its step tests.
