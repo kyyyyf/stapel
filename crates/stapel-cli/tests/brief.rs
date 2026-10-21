@@ -1091,3 +1091,93 @@ fn rows_of_the_step_tests() {
     let text = plan_brief(plan, "1");
     assert!(!text.contains("## Inputs"), "{text}");
 }
+
+// AC-15: more than 1600 estimated tokens (bytes / 4, rounded up) refuses and names the part sizes.
+#[test]
+fn too_large() {
+    /// The parts of a brief in print order: the lower-case name and the bytes of each. The header
+    /// ends at its last line; each other part starts at its blank line.
+    fn parts(text: &str) -> Vec<(String, usize)> {
+        let mut starts = vec![0];
+        starts.extend(text.match_indices("\n\n## ").map(|(i, _)| i + 1));
+        starts.push(text.len());
+        starts
+            .windows(2)
+            .enumerate()
+            .map(|(k, w)| {
+                let name = if k == 0 {
+                    "header".to_string()
+                } else {
+                    text[w[0]..].lines().nth(1).unwrap()[3..].to_lowercase()
+                };
+                (name, w[1] - w[0])
+            })
+            .collect()
+    }
+    fn tokens(bytes: usize) -> usize {
+        bytes.div_ceil(4)
+    }
+    fn run(dir: &Path) -> std::process::Output {
+        stapel(dir)
+            .args(["brief", "ABC-1", "2"])
+            .assert()
+            .get_output()
+            .clone()
+    }
+    fn with_frame(dir: &Path, frame: &str) {
+        set_section(
+            dir,
+            "ABC-1",
+            "Description",
+            &format!("### Frame\n\n{frame}"),
+        );
+    }
+
+    let repo = fixture();
+    let dir = repo.path();
+
+    // A small run gives the parts and the total of the rest of the brief.
+    with_frame(dir, "x");
+    let small = String::from_utf8(run(dir).stdout).unwrap();
+    let small_parts = parts(&small);
+    assert_eq!(small_parts[1].0, "frame");
+
+    // A Frame of 6 000 bytes: refused, with the size of every printed part.
+    with_frame(dir, &"a".repeat(6000));
+    let out = run(dir);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "");
+    let mut big_parts = small_parts.clone();
+    big_parts[1].1 = "\n## Frame\n".len() + 6000 + 1;
+    let total: usize = big_parts.iter().map(|(_, n)| n).sum();
+    let list: Vec<String> = big_parts
+        .iter()
+        .map(|(name, n)| format!("{name} {}", tokens(*n)))
+        .collect();
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap(),
+        format!(
+            "stapel: the brief of step 2 has {} tokens, more than 1600: {}\n",
+            tokens(total),
+            list.join(", ")
+        )
+    );
+    assert!(tokens(total) > 1600);
+
+    // Exactly 1600 estimated tokens (6400 bytes) passes; 1601 (6401 bytes) refuses.
+    let pad = 1 + 6400 - small.len();
+    with_frame(dir, &"b".repeat(pad));
+    let out = run(dir);
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!((text.len(), tokens(text.len())), (6400, 1600));
+    with_frame(dir, &"b".repeat(pad + 1));
+    let out = run(dir);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.starts_with("stapel: the brief of step 2 has 1601 tokens, more than 1600: header "),
+        "{stderr}"
+    );
+}
