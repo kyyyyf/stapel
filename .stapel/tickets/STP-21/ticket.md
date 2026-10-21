@@ -239,6 +239,10 @@ folder key (SR2-8); an unreadable `findings.jsonl` exits 1 (SR2-9); SR2-6 noted 
 step 1 built early (D1-3); step 2 keeps only the check of `STEP`. No change for D1-4 (the Description
 title is fixed, as in `next`), D1-5 (heading forms, Design as built), D1-6 (the guard half guards against
 a future guard rule).
+2026-10-21, before step 3: `brief::empty_parts_are_left_out` (AC-18) needs the Findings part, so it is
+written in step 6, not step 3; step 6 also adds the `findings.jsonl` cases of the unreadable test, left out
+of step 1c (findings were not read yet). Drift review of step 2: D2-1 to D2-4 (1 MEDIUM, 3 LOW), no change
+(D2-1: `2c` is accepted in `brief::lettered_step_and_folder_key`).
 
 ## Design
 
@@ -298,11 +302,12 @@ Route: full (tag `interface`), auto.
    each helper nested inside its function.
 2. The check of `STEP` and the ticket choice (AC-10, test `brief::refuses_a_wrong_call` only). Must not
    change: the brief of step 1 and the refusals tested in step 1c.
-3. Criteria, the `tests:` line and the unknown criterion (AC-5, AC-12, AC-18). Must not change: the parts
-   of step 1.
+3. Criteria, the `tests:` line and the unknown criterion (AC-5, AC-12, AC-18; the golden file holds the
+   `tests:` line). Must not change: the parts of step 1.
 4. Terms and a step naming nothing (AC-6, AC-14). Must not change: the parts of steps 1 and 3.
 5. Cases, Inputs and External states rows (AC-7, AC-8). Must not change: the parts of steps 1, 3 and 4.
-6. Findings and the unknown finding (AC-9, AC-13). Must not change: the format of `findings.jsonl` and
+6. Findings and the unknown finding (AC-9, AC-13), with `brief::empty_parts_are_left_out` of AC-18 (it
+   needs the Findings part) and the `findings.jsonl` cases of `brief::refuses_an_unreadable_ticket`. Must not change: the format of `findings.jsonl` and
    `stapel findings`.
 7. The size limit (AC-15). Must not change: the text of a brief within the limit.
 8. `stapel next` names the brief and blocks on its refusal (AC-16, AC-17). The RED gives the shared
