@@ -114,8 +114,8 @@ Terms:
 - **Term**: each `**<name>**:` of the list between the Spec line `Terms:` and the criteria table, with the
   text up to the next such name; a text uses it when `<name>` occurs in it as whole words, ASCII case
   ignored, the last word also with `s` or `es` added.
-- **Step test**: when the step item holds backticked `<module>::<name>` names, exactly those, in step
-  order; else a test of a named criterion, in Spec order; each once.
+- **Step test**: when the step item holds backticked `<module>::<name>` names that a criterion row or the
+  cases table names, exactly those, in step order; else a test of a named criterion, in Spec order; each once.
 - **Names a test**: a cell holds a backticked name equal to the test; a test of the step is a step test.
 - **Cases table**: the first table of the `## Test plan` section before its first `###` heading; **Inputs table** and **External states
   table**: the tables under `### Inputs` and `### External states` in it.
@@ -128,7 +128,7 @@ Terms:
 | AC-3 | WHEN the Description has a `### Frame` subsection THE part `## Frame` holds its lines up to the next heading, without each paragraph that starts with `**Prior art.**` or `**Size.**`, trimmed. | `brief::frame_without_prior_art_and_size`, `brief::frame_edges` |
 | AC-4 | WHEN the brief is printed THE part `## Step` holds the step item as written in the Plan. | `brief::prints_the_brief`, `brief::step_item_ends_at_a_blank_line` |
 | AC-5 | WHEN the step item has a named criterion THE part `## Criteria` holds the header row and separator of the Spec criteria table, then each criterion row of a named criterion in Spec order, once. | `brief::criteria_and_ranges`, `brief::tests_from_the_last_cell`, `brief::header_of_the_criteria_table` |
-| AC-6 | WHEN a printed criterion row (not the header row or separator) uses a term THE part `## Terms` holds that term and each term a printed term uses, until none is added, in Spec order, once; a line shared by two terms is printed once, and each term on it counts as printed, also along a chain of shared lines. | `brief::terms_used_and_their_terms`, `brief::terms_list_ends_at_the_table`, `brief::terms_from_the_rows_only`, `brief::terms_on_a_shared_line`, `brief::terms_on_a_chain_of_lines`, `brief::term_text_ends_at_the_next_name` |
+| AC-6 | WHEN a printed criterion row (not the header row or separator) uses a term THE part `## Terms` holds that term and each term a printed term uses, until none is added, in Spec order, once; a line shared by two terms is printed once, and each term on it counts as printed, also along a chain of shared lines. | `brief::terms_used_and_their_terms`, `brief::terms_list_ends_at_the_table`, `brief::terms_from_the_rows_only`, `brief::terms_on_a_shared_line`, `brief::terms_on_a_chain_of_lines`, `brief::term_text_ends_at_the_next_name`, `brief::term_text_ends_on_its_own_line` |
 | AC-7 | WHEN a row of the cases table names a test of the step, or its first cell holds `step <STEP>` as whole words, THE part `## Cases` holds the header row, separator and each such row. | `brief::cases_of_the_step`, `brief::cases_table_before_the_subsections`, `brief::cases_of_a_step_without_criteria` |
 | AC-8 | WHEN the last cell of a row of the Inputs table or the External states table names a test of the step THE parts `## Inputs` and `## External states` hold the header row, separator and each such row of their table. | `brief::rows_of_the_step_tests` |
 | AC-9 | WHEN the step item has a named finding THE part `## Findings` holds one line per named finding in step order, once: `- <id> (<severity>): <claim> Fate: <fate>`, from the last well-formed record with that id, `none` for a missing field or one that is not a string, every run of whitespace in a field printed as one space. | `brief::findings_last_record`, `brief::finding_fields_on_one_line`, `brief::finding_prefixes_exact`, `brief::finding_fields_not_strings`, `brief::no_findings_file` |
@@ -140,7 +140,7 @@ Terms:
 | AC-15 | IF the brief has more than 1600 estimated tokens THEN stdout is empty, the command prints `stapel: the brief of step <STEP> has <n> tokens, more than 1600: <part> <n>, …` (header and every printed part, in print order, each rounded up on its own, so they may sum to more than the total) and exits 1. | `brief::too_large`, `brief::size_counts_bytes` |
 | AC-16 | WHEN `stapel next` names `build-step` or `green-step` for a label that is a Plan step and its brief assembles THE target is the command `stapel brief <KEY> <STEP>` (text after ` — `; `command` in `--json`, `path` `null`); without a `plan` section it stays the ticket path. | `next::build_step_names_the_brief` |
 | AC-17 | IF that brief refuses with exit 1 (AC-11 to AC-15) THEN `stapel next` adds the fact `brief of step <STEP>: <the refusal without stapel: >` and the action line is `next: write-section <title of the plan section> — <ticket path>`; exit 0; an existing `findings.jsonl` that cannot be read as a whole exits 1, as `next` did before. | `next::brief_refusal_blocks_the_step`, `next::brief_refusal_names_sizes_and_title`, `next::unreadable_findings_file` |
-| AC-18 | WHEN the step has a step test THE header ends with the line `tests: <each step test, joined by ", ">`; with none the line is left out. | `brief::prints_the_brief`, `brief::empty_parts_are_left_out`, `brief::explicit_step_tests` |
+| AC-18 | WHEN the step has a step test THE header ends with the line `tests: <each step test, joined by ", ">`; with none the line is left out. | `brief::prints_the_brief`, `brief::empty_parts_are_left_out`, `brief::explicit_step_tests`, `brief::explicit_tests_are_known_tests` |
 
 ### Guarantees
 
@@ -149,7 +149,7 @@ Terms:
   `path` is `null` for a `build-step` or `green-step` that names the brief; the facts of `next` (AC-1 of
   STP-20) gain the kind `brief of step <STEP>: …`, so a step of an open ticket that names no criterion and
   no finding now stops `next` (AC-14, AC-17).
-- **Not promised:** the Frame's list; a criterion that refers to other criteria by id (they are not pulled in; E-2); a `**<name>**:` inside inline code in the Terms list counts as a term (E-3); a typo in a finding prefix (`DX-1`); leading zeros (`AC-01` reads as `AC-1`); a Spec with two tables of criterion rows, or a criteria table without a separator (D3D-1, D3D-2); other range forms (`AC-3–AC-5`,
+- **Not promised:** the Frame's list; a Terms list in another form than `- **<name>**:` items (D10-1); a criterion that refers to other criteria by id (they are not pulled in; E-2); a `**<name>**:` inside inline code in the Terms list counts as a term (E-3); a typo in a finding prefix (`DX-1`); leading zeros (`AC-01` reads as `AC-1`); a Spec with two tables of criterion rows, or a criteria table without a separator (D3D-1, D3D-2); other range forms (`AC-3–AC-5`,
   `AC-3..AC-5`, `AC-3 to 5`); an exclusion in the step (`AC-1 without <test>`: every test of AC-1 is a step
   test); other inflections of a term (`criteria` for `criterion`, `is done` for `Done step`); a term or step
   line inside a code fence; a Frame paragraph that starts `**Prior art**` without the dot; ids in other
@@ -196,6 +196,8 @@ each GREEN `--test ticket_drift`.
 | Size bytes | a Frame of 2 000 `é` counts 4 000 bytes (D7-1) | `brief::size_counts_bytes` |
 | Next sizes | the too-large fact holds the part sizes; a plan section titled `Steps` gives `write-section Steps` (D8-2) | `next::brief_refusal_names_sizes_and_title` |
 | Next findings | `findings.jsonl` a directory: exit 1, as before the ticket; missing: the brief command (D8-1) | `next::unreadable_findings_file` |
+| Known tests | a step naming `AC-1`, `steps::parse_subject` and `Vec::new`, which no row names: the tests of AC-1 (D10-2) | `brief::explicit_tests_are_known_tests` |
+| Term own line | the next name starts its own line: a used first term does not bring the second term's names (D10-3) | `brief::term_text_ends_on_its_own_line` |
 | Explicit tests | a step naming `AC-1` and the test `x::a` only: the `tests:` line, Cases and Inputs rows hold `x::a` only (E-1, E-8, SR1-6) | `brief::explicit_step_tests` |
 | Cases | a row naming a step test with another test; a row `Coverage (step 2)`; a row `Coverage (step 2c)` for step 2 is not taken; a row naming `x::a_b` for the step test `x::a` is not taken | `brief::cases_of_the_step` |
 | Tables | a row naming a step test with another test; a row naming only another step's test; a row with `—`; a Test plan without the tables | `brief::rows_of_the_step_tests` |
@@ -287,6 +289,10 @@ finding range refuses (AC-13); finding fields on one line and non-string fields 
 ends at the first `###` heading; the term chain (AC-6); the part sizes may sum to more (AC-15); `next`
 exits 1 on an unreadable `findings.jsonl` (AC-17); Not promised gains E-2 and E-3; Design and Size
 corrected (DR-1, DR-2); plan steps 9 and 10. No second review round: no HIGH.
+2026-10-21, after step 10 and its drift review: D10-1 to D10-5 (4 MEDIUM, 1 LOW); the review limit of two
+rounds reached, the human chose to fix now. One change: a backticked name counts as a step test only when
+a row names it (D10-2, step 11); a coverage case for the end of a term's text (D10-3, step 11c); Terms
+lists in other forms not promised (D10-1); the step 10 text names its exceptions (D10-4).
 
 ## Design
 
@@ -353,7 +359,7 @@ corrected (DR-1, DR-2); plan steps 9 and 10. No second review round: no HIGH.
 | AC-3 | `brief::frame_without_prior_art_and_size`, `brief::frame_edges` |
 | AC-4 | `brief::prints_the_brief`, `brief::step_item_ends_at_a_blank_line` |
 | AC-5 | `brief::criteria_and_ranges`, `brief::tests_from_the_last_cell`, `brief::header_of_the_criteria_table` |
-| AC-6 | `brief::terms_used_and_their_terms`, `brief::terms_list_ends_at_the_table`, `brief::terms_from_the_rows_only`, `brief::terms_on_a_shared_line`, `brief::terms_on_a_chain_of_lines`, `brief::term_text_ends_at_the_next_name` |
+| AC-6 | `brief::terms_used_and_their_terms`, `brief::terms_list_ends_at_the_table`, `brief::terms_from_the_rows_only`, `brief::terms_on_a_shared_line`, `brief::terms_on_a_chain_of_lines`, `brief::term_text_ends_at_the_next_name`, `brief::term_text_ends_on_its_own_line` |
 | AC-7 | `brief::cases_of_the_step`, `brief::cases_table_before_the_subsections`, `brief::cases_of_a_step_without_criteria` |
 | AC-8 | `brief::rows_of_the_step_tests` |
 | AC-9 | `brief::findings_last_record`, `brief::finding_fields_on_one_line`, `brief::finding_prefixes_exact`, `brief::finding_fields_not_strings`, `brief::no_findings_file` |
@@ -365,7 +371,7 @@ corrected (DR-1, DR-2); plan steps 9 and 10. No second review round: no HIGH.
 | AC-15 | `brief::too_large`, `brief::size_counts_bytes` |
 | AC-16 | `next::build_step_names_the_brief` |
 | AC-17 | `next::brief_refusal_blocks_the_step`, `next::brief_refusal_names_sizes_and_title`, `next::unreadable_findings_file` |
-| AC-18 | `brief::prints_the_brief`, `brief::empty_parts_are_left_out`, `brief::explicit_step_tests` |
+| AC-18 | `brief::prints_the_brief`, `brief::empty_parts_are_left_out`, `brief::explicit_step_tests`, `brief::explicit_tests_are_known_tests` |
 
 ## Plan
 
@@ -411,7 +417,13 @@ Route: full (tag `interface`), auto.
 10. Fixes after code review round 1 (D4D-1, D5-1, D6-4, R-1, E-1): tests
    `brief::explicit_step_tests`, `brief::finding_range_not_a_range`, `brief::finding_fields_on_one_line`,
    `brief::cases_table_before_the_subsections`, `brief::terms_on_a_chain_of_lines`. Must not change: the
-   briefs and refusals of steps 1 to 9 for a step whose text names no backticked test.
+   briefs and refusals of steps 1 to 9 for a step whose text names no backticked test, except where (b) to
+   (e) of this step change them (D10-4).
+11. Fix after the drift review of step 10 (D10-2): a backticked name is a step test only when a criterion row or
+   the cases table names it (test `brief::explicit_tests_are_known_tests`); the GREEN also corrects the
+   comment of `cases_part` (D10-5). Must not change: the briefs of steps 1 to 10.
+11c. Coverage after the drift review of step 10 (D10-3): one new `#[test]` function
+   (`brief::term_text_ends_on_its_own_line`). Tests only, its helpers nested inside it.
 
 ## Review
 
