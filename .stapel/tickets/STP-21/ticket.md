@@ -427,8 +427,48 @@ Route: full (tag `interface`), auto.
 
 ## Review
 
-TODO
+Spec review: two rounds by one external model (round 1: 15 findings, 3 HIGH, 5 MEDIUM; round 2: 9 findings,
+1 HIGH, 3 MEDIUM); round 2's HIGH (SR2-1, the `next` fixtures) was settled in the text. Drift review after
+every GREEN step and after the code review fixes (steps 1 to 11: 61 findings, no HIGH, 29 MEDIUM); the
+MEDIUM ones became coverage steps (1c, 3c, 4c, 9, 11c) and fix steps (3d, 4d, 10, 11), or were deferred to
+the code review change. Code review round 1 by three reviewers (reviewer, external, drift; 11 records, no
+HIGH, 8 MEDIUM: 5 inside, 3 outside); the human decided the step tests rule (explicit tests in the step,
+E-1), referenced criteria not promised (E-2), and fixing in this ticket (DR-2); the fixes were built as
+steps 9 and 10, a drift review of step 10 found D10-2 (a code path in backticks taken as a test), fixed in
+step 11. No round 2 of code review: no HIGH. Steps 3 and 8 had their RED rewritten with the human after a
+`no-red` (a test changed in a RED that passed there). Builders broke the Edit-or-Write rule four times
+(`cat >>`, `sed -i`) and one builder ran cargo while `stapel check` ran. Every finding with its fate is in
+`findings.jsonl`.
 
 ## Summary
 
-TODO
+`stapel brief KEY STEP` prints the builder brief of one Plan step (header with the step tests, Frame,
+step, criteria, terms, cases, Inputs and External states rows, findings) and refuses a wrong call, a
+missing or doubled step, an unknown id, a step that names nothing and a brief over 1600 estimated tokens;
+`stapel next` names it for `build-step` and `green-step` and blocks on its refusal. Builders of steps 8 to
+11 worked from the brief alone.
+
+Measures against STP-20 (CLAUDE.md item 8):
+
+- Escaped defects of STP-20 found after its close: none known.
+- Code review HIGH and MEDIUM inside the promise: 5 (STP-20: 10). Drift MEDIUM per step stayed high (29
+  over 15 steps), most of them verification gaps that became coverage steps.
+- `ticket.md`: 43.8 KB (STP-20: 51.9 KB).
+- Size: about 770 source and 1 420 test lines against an estimate of 400 and 1 200 (DR-2); the split point
+  was passed and the human kept the fixes in the ticket.
+- Tokens, measured: orchestrator output 215k, cache read 62.2M (STP-20: 143k / 41.2M) — worse, and far
+  from the phase 1 target of under 19.75M; builder 83k / 13.0M (STP-20: 62k / 10.4M); drift 9k / 0.9M;
+  external 3k / 1.7M; reviewer 0.4k / 0.9M. The orchestrator still read many reports and ticket diffs;
+  the brief removes the builder's ticket reads, not the orchestrator's.
+- Wall time: 2026-10-20 11:35 UTC (frame) to 2026-10-21 about 15:00 UTC, with the human's pauses.
+
+Approval dialogs, counted from the session transcript as the human asked (questions in the chat not
+counted): 27 in all — `stapel findings import` 17, `stapel ok` 8, `stapel ledger add` 2; 5 of the 27 were
+repeats after a grant expired (findings 3, ok 1, ledger 1). Proposed to the human and liked, to be decided
+in the ledger: findings and `catches` records without a dialog (item 1.5, minus 17); spec changes inside
+the promise during the build confirmed once before code review (rule 5, minus about 5); a grant bound to
+the hash of the text shown instead of a time limit (item 1.8, minus the 5 repeats).
+
+What improved: the brief works on its own ticket from step 8 on; findings were batched into fewer imports
+late in the build. What did not: the orchestrator's tokens; two `no-red` history rewrites, both from
+changing existing tests in a RED; the size estimate; builders still broke the edit rule (item 1.9).
