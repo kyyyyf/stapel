@@ -121,7 +121,7 @@ Terms:
 | AC-3 | WHEN the Description has a `### Frame` subsection THE part `## Frame` holds its lines up to the next heading, without each paragraph that starts with `**Prior art.**` or `**Size.**`, trimmed. | `brief::frame_without_prior_art_and_size`, `brief::frame_edges` |
 | AC-4 | WHEN the brief is printed THE part `## Step` holds the step item as written in the Plan. | `brief::prints_the_brief`, `brief::step_item_ends_at_a_blank_line` |
 | AC-5 | WHEN the step item has a named criterion THE part `## Criteria` holds the header row and separator of the Spec criteria table, then each criterion row of a named criterion in Spec order, once. | `brief::criteria_and_ranges`, `brief::tests_from_the_last_cell`, `brief::header_of_the_criteria_table` |
-| AC-6 | WHEN a printed criterion row uses a term THE part `## Terms` holds that term and each term a printed term uses, until none is added, in Spec order, once. | `brief::terms_used_and_their_terms` |
+| AC-6 | WHEN a printed criterion row (not the header row or separator) uses a term THE part `## Terms` holds that term and each term a printed term uses, until none is added, in Spec order, once; a line shared by two terms is printed once, and each term on it counts as printed. | `brief::terms_used_and_their_terms`, `brief::terms_list_ends_at_the_table`, `brief::terms_from_the_rows_only`, `brief::terms_on_a_shared_line` |
 | AC-7 | WHEN a row of the cases table names a test of the step, or its first cell holds `step <STEP>` as whole words, THE part `## Cases` holds the header row, separator and each such row. | `brief::cases_of_the_step` |
 | AC-8 | WHEN the last cell of a row of the Inputs table or the External states table names a test of the step THE parts `## Inputs` and `## External states` hold the header row, separator and each such row of their table. | `brief::rows_of_the_step_tests` |
 | AC-9 | WHEN the step item has a named finding THE part `## Findings` holds one line per named finding in step order, once: `- <id> (<severity>): <claim> Fate: <fate>`, from the last well-formed record with that id, `none` for a missing field. | `brief::findings_last_record` |
@@ -142,7 +142,7 @@ Terms:
   `path` is `null` for a `build-step` or `green-step` that names the brief; the facts of `next` (AC-1 of
   STP-20) gain the kind `brief of step <STEP>: …`, so a step of an open ticket that names no criterion and
   no finding now stops `next` (AC-14, AC-17).
-- **Not promised:** the Frame's list; a typo in a finding prefix (`DX-1`); leading zeros (`AC-01` reads as `AC-1`); other range forms (`AC-3–AC-5`,
+- **Not promised:** the Frame's list; a typo in a finding prefix (`DX-1`); leading zeros (`AC-01` reads as `AC-1`); a Spec with two tables of criterion rows, or a criteria table without a separator (D3D-1, D3D-2); other range forms (`AC-3–AC-5`,
   `AC-3..AC-5`, `AC-3 to 5`); an exclusion in the step (`AC-1 without <test>`: every test of AC-1 is a step
   test); other inflections of a term (`criteria` for `criterion`, `is done` for `Done step`); a term or step
   line inside a code fence; a Frame paragraph that starts `**Prior art**` without the dot; ids in other
@@ -173,6 +173,9 @@ each GREEN `--test ticket_drift`.
 | Frame | `**Prior art.**` and `**Size.**` paragraphs of two lines each are dropped; `**Prior art**` without the dot and a paragraph that only mentions `**Size.**` later are kept; no `### Frame`: no part | `brief::frame_without_prior_art_and_size` |
 | Criteria | `AC-1, AC-3 to AC-5`; `AC-3` named twice; Spec order kept when the step names `AC-5` before `AC-1`; `AC-10` is not `AC-1`; a range broken after `to` with an indented next line | `brief::criteria_and_ranges` |
 | Terms | a term used in upper case; a term used with `s` and with `es` added; a term used only by another term; a name that is a prefix of a longer word (`Step` in `Stepping`) is not used; two terms on one line; a `- **Promised:**` line after the table is no term | `brief::terms_used_and_their_terms` |
+| Terms end | a `- **Late**: x` line after the criteria table that a row uses is no term; a term `Step` used by a row as `step` is printed (D4-3) | `brief::terms_list_ends_at_the_table` |
+| Terms rows | a term `Criterion` that only the header row holds is not printed (D4-1) | `brief::terms_from_the_rows_only` |
+| Shared line | a row uses Alpha; the line `**Alpha**: a. **Beta**: uses gamma.` prints once, and Gamma is added (D4-2) | `brief::terms_on_a_shared_line` |
 | Cases | a row naming a step test with another test; a row `Coverage (step 2)`; a row `Coverage (step 2c)` for step 2 is not taken; a row naming `x::a_b` for the step test `x::a` is not taken | `brief::cases_of_the_step` |
 | Tables | a row naming a step test with another test; a row naming only another step's test; a row with `—`; a Test plan without the tables | `brief::rows_of_the_step_tests` |
 | Findings | two records of `D1-2`, the last counts; a record without `fate`; an unreadable line; `D1-5 to D1-6`; `UTF-8` and `STP-22` in the step are no findings | `brief::findings_last_record` |
@@ -252,6 +255,11 @@ history was rewritten with the human and both tests now assert the new behaviour
 D3-1 to D3-9 (4 MEDIUM, 5 LOW). One spec change: AC-12 names the first refusal in step order (D3-4); plan
 step 3c with two coverage tests (D3-2, D3-5) and step 3d with two fixes (D3-1, D3-3, D3-4); leading zeros
 not promised (D3-6). No change for D3-7, D3-8 (Design as built), D3-9.
+2026-10-21, after the drift reviews of steps 3d and 4: D3D-1 to D3D-5 and D4-1 to D4-7 (4 MEDIUM, 8 LOW).
+One spec change: AC-6 reads terms from the criterion rows only and counts each term of a shared line as
+printed (D4-1, D4-2); plan step 4c with one coverage test (D4-3) and step 4d with two fixes; Not promised
+gains two tables of criterion rows and a criteria table without a separator (D3D-1, D3D-2). No change for
+D3D-3 to D3D-5, D4-4 to D4-7 (D4-5 is settled by step 6; D4-6 goes to Design as built).
 
 ## Design
 
@@ -284,7 +292,7 @@ not promised (D3-6). No change for D3-7, D3-8 (Design as built), D3-9.
 | AC-3 | `brief::frame_without_prior_art_and_size`, `brief::frame_edges` |
 | AC-4 | `brief::prints_the_brief`, `brief::step_item_ends_at_a_blank_line` |
 | AC-5 | `brief::criteria_and_ranges`, `brief::tests_from_the_last_cell`, `brief::header_of_the_criteria_table` |
-| AC-6 | `brief::terms_used_and_their_terms` |
+| AC-6 | `brief::terms_used_and_their_terms`, `brief::terms_list_ends_at_the_table`, `brief::terms_from_the_rows_only`, `brief::terms_on_a_shared_line` |
 | AC-7 | `brief::cases_of_the_step` |
 | AC-8 | `brief::rows_of_the_step_tests` |
 | AC-9 | `brief::findings_last_record` |
@@ -320,6 +328,11 @@ Route: full (tag `interface`), auto.
    criterion rows, and refusals in step order (AC-5, AC-12; tests `brief::header_of_the_criteria_table`,
    `brief::refusals_in_step_order` only). Must not change: the parts and refusals tested in steps 1 to 3c.
 4. Terms and a step naming nothing (AC-6, AC-14). Must not change: the parts of steps 1 and 3.
+4c. Coverage after the drift review of step 4 (D4-3): one new `#[test]` function
+   (`brief::terms_list_ends_at_the_table`). Tests only, its helpers nested inside it.
+4d. Fixes after the drift review of step 4 (D4-1, D4-2): terms from the criterion rows only, and a shared
+   term line (AC-6; tests `brief::terms_from_the_rows_only`, `brief::terms_on_a_shared_line` only). Must
+   not change: the parts and refusals tested in steps 1 to 4c.
 5. Cases, Inputs and External states rows (AC-7, AC-8). Must not change: the parts of steps 1, 3 and 4.
 6. Findings and the unknown finding (AC-9, AC-13), with `brief::empty_parts_are_left_out` of AC-18 (it
    needs the Findings part) and the `findings.jsonl` cases of `brief::refuses_an_unreadable_ticket`. Must not change: the format of `findings.jsonl` and
