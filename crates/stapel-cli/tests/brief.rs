@@ -1665,6 +1665,29 @@ fn terms_on_a_chain_of_lines() {
     );
 }
 
+// AC-6 (D10-3): the text of a term ends on its own line; a used first term does not bring the
+// names of the second term.
+#[test]
+fn term_text_ends_on_its_own_line() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1.");
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "Terms:\n\n- **Alpha**: a, names delta.\n- **Beta**: b, names gamma.\n\
+         - **Gamma**: g.\n- **Delta**: d.\n\n\
+         | № | Criterion | Test |\n|---|---|---|\n| AC-1 | uses alpha | `brief::a` |",
+    );
+    let text = brief(dir, "1");
+    let (_, rest) = text.split_once("\n## Terms\n").expect(&text);
+    assert_eq!(
+        rest.split("\n## ").next().unwrap(),
+        "- **Alpha**: a, names delta.\n- **Delta**: d.\n"
+    );
+}
+
 // AC-18, AC-7 (D10-2): a backticked `<module>::<name>` is a step test only when a criterion row or
 // a row of the cases table names it.
 #[test]
