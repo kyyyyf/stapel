@@ -49,7 +49,106 @@ pub fn assemble(
             out.push_str(&format!("\n## Terms\n{terms}\n"));
         }
     }
+    if let Lookup::Found(test_plan) = find(&sections, "Test plan") {
+        let lines: Vec<&str> = test_plan.lines().collect();
+        let parts = [
+            ("Cases", cases_part(&lines, step, &criteria.tests)),
+            ("Inputs", subsection_part(&lines, "Inputs", &criteria.tests)),
+            (
+                "External states",
+                subsection_part(&lines, "External states", &criteria.tests),
+            ),
+        ];
+        for (title, part) in parts {
+            if !part.is_empty() {
+                out.push_str(&format!("\n## {title}\n{part}\n"));
+            }
+        }
+    }
     Ok(out)
+}
+
+/// The cells of a table row, trimmed.
+fn cells(line: &str) -> Vec<&str> {
+    let line = line.trim();
+    let line = line.strip_prefix('|').unwrap_or(line);
+    let line = line.strip_suffix('|').unwrap_or(line);
+    line.split('|').map(str::trim).collect()
+}
+
+/// Whether the cell holds a backticked name equal to one of `tests`.
+fn names_a_test(cell: &str, tests: &[String]) -> bool {
+    cell.split('`')
+        .enumerate()
+        .any(|(k, part)| k % 2 == 1 && tests.iter().any(|t| t == part.trim()))
+}
+
+/// Whether `text` has `step <step>` as whole words.
+fn has_step_label(text: &str, step: &str) -> bool {
+    let label = format!("step {step}");
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let bytes = text.as_bytes();
+    text.match_indices(&label).any(|(at, _)| {
+        (at == 0 || !word(bytes[at - 1])) && bytes.get(at + label.len()).is_none_or(|b| !word(*b))
+    })
+}
+
+/// The table that starts at the first `|` line from `from` (before a heading when
+/// `stop_at_heading`): its header row, its
+/// separator and the rows that `take` accepts; empty when there is no table or no row is taken.
+fn table_part(
+    lines: &[&str],
+    from: usize,
+    stop_at_heading: bool,
+    take: impl Fn(&str) -> bool,
+) -> String {
+    let Some(first) = (from..lines.len())
+        .take_while(|&i| !(stop_at_heading && lines[i].starts_with('#')))
+        .find(|&i| lines[i].starts_with('|'))
+    else {
+        return String::new();
+    };
+    let block: Vec<&str> = lines[first..]
+        .iter()
+        .copied()
+        .take_while(|l| l.starts_with('|'))
+        .collect();
+    let separator = block
+        .get(1)
+        .is_some_and(|l| l.contains('-') && l.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ')));
+    if !separator {
+        return String::new();
+    }
+    let rows: Vec<&str> = block[2..].iter().copied().filter(|l| take(l)).collect();
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut out = vec![block[0], block[1]];
+    out.extend(rows);
+    out.join("\n")
+}
+
+/// The Cases part: the first table of the Test plan, the rows that name a step test or whose first
+/// cell has `step <step>` as whole words.
+fn cases_part(lines: &[&str], step: &str, tests: &[String]) -> String {
+    table_part(lines, 0, false, |row| {
+        let cells = cells(row);
+        cells.iter().any(|c| names_a_test(c, tests))
+            || cells.first().is_some_and(|c| has_step_label(c, step))
+    })
+}
+
+/// The part of the table under the heading `### <title>`: the rows whose last cell names a step test.
+fn subsection_part(lines: &[&str], title: &str, tests: &[String]) -> String {
+    let Some(heading) = lines.iter().position(|l| {
+        l.strip_prefix("### ")
+            .is_some_and(|t| t.trim().eq_ignore_ascii_case(title))
+    }) else {
+        return String::new();
+    };
+    table_part(lines, heading + 1, true, |row| {
+        cells(row).last().is_some_and(|c| names_a_test(c, tests))
+    })
 }
 
 /// The finding prefix of an id: the part before its last `-<digits>`.
