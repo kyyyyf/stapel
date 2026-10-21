@@ -88,6 +88,9 @@ pub struct History {
     pub open_red: Option<String>,
     /// The paths with uncommitted changes outside the machine files (`worktree::dirty_paths`).
     pub dirty: Vec<String>,
+    /// The brief of the step the action names, when the caller has assembled it (STP-21 AC-16):
+    /// the label and the refusal text, `None` when the brief assembles.
+    pub brief: Option<(String, Option<String>)>,
 }
 
 /// Whether `subject` is `<KEY> <label> <word>: …` with a word other than `RED:` and `GREEN:`
@@ -231,8 +234,34 @@ fn history_action(f: &Facts, h: &History, plan: Option<&str>, facts: &mut Vec<St
             ))),
         );
     }
+    // The target of a step action: the brief command once the caller has assembled the brief of a
+    // Plan step; a refusing brief is a fact and the action is `write-section` of the Plan.
+    let step_action = |name: &'static str, label: &String, facts: &mut Vec<String>| {
+        let brief = h.brief.as_ref().filter(|(l, _)| l == label);
+        let step = label.strip_prefix("step ");
+        match (plan.is_some() && labels.contains(label), brief, step) {
+            (true, Some((_, Some(refusal))), _) => {
+                facts.push(format!("brief of {label}: {refusal}"));
+                let title = f
+                    .config
+                    .section("plan")
+                    .map_or("Plan", |d| d.title.as_str());
+                Action::new(
+                    "write-section",
+                    Some(title.to_string()),
+                    Some(Target::Path(path.clone())),
+                )
+            }
+            (true, Some((_, None)), Some(step)) => Action::new(
+                name,
+                Some(label.clone()),
+                Some(Target::Command(format!("stapel brief {} {step}", f.key))),
+            ),
+            _ => Action::new(name, Some(label.clone()), Some(Target::Path(path.clone()))),
+        }
+    };
     if let Some(label) = &h.open_red {
-        return Action::new("green-step", Some(label.clone()), Some(Target::Path(path)));
+        return step_action("green-step", label, facts);
     }
     // A word commit closes a step that has no RED and no GREEN (AC-15).
     let open = labels.iter().find(|l| {
@@ -240,10 +269,8 @@ fn history_action(f: &Facts, h: &History, plan: Option<&str>, facts: &mut Vec<St
             && (h.labels.contains(l) || !h.subjects.iter().any(|s| closes_step(f.key, l, s)))
     });
     match open {
-        Some(label) if h.labels.contains(label) => {
-            Action::new("green-step", Some(label.clone()), Some(Target::Path(path)))
-        }
-        Some(label) => Action::new("build-step", Some(label.clone()), Some(Target::Path(path))),
+        Some(label) if h.labels.contains(label) => step_action("green-step", label, facts),
+        Some(label) => step_action("build-step", label, facts),
         None => after_the_steps(f, h, facts),
     }
 }

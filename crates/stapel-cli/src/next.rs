@@ -3,6 +3,7 @@
 use crate::check::{base_of, history_report, read_head, shallow_refusal};
 use crate::fail::Fail;
 use crate::repo;
+use stapel_core::brief::assemble;
 use stapel_core::build_inputs::Bounds;
 use stapel_core::checkstate::{self, CheckLine};
 use stapel_core::config::Config;
@@ -142,6 +143,7 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         check_pass,
         open_red: open_red_label,
         dirty,
+        brief: None,
     })
 }
 
@@ -196,11 +198,41 @@ pub fn run(key: Option<&str>, json: bool) -> Result<(), Fail> {
     };
     let mut decision = decide(&facts);
     // The history is read only when no rule before the build applies (AC-10).
-    let history;
+    let (gathered, with_brief);
     if decision.needs_history {
-        history = gather(&root, &config, &ticket)?;
-        facts.history = Some(&history);
+        gathered = gather(&root, &config, &ticket)?;
+        facts.history = Some(&gathered);
         decision = decide(&facts);
+        // The brief of the step the action names, and only of that step (STP-21 AC-16, AC-17).
+        let label = match (decision.action.name, &decision.action.subject) {
+            ("build-step" | "green-step", Some(label)) => label.strip_prefix("step "),
+            _ => None,
+        };
+        if let (Some(step), Some(def)) = (label, config.section("plan")) {
+            let path = ticket.dir.join("findings.jsonl");
+            let findings = match std::fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(e) => {
+                    return Err(Fail::failed(format!("cannot read {}: {e}", path.display())));
+                }
+            };
+            let refusal = assemble(
+                &text,
+                &ticket.key,
+                step,
+                state.base.as_deref(),
+                &def.title,
+                &findings,
+            )
+            .err();
+            with_brief = History {
+                brief: Some((format!("step {step}"), refusal)),
+                ..gathered.clone()
+            };
+            facts.history = Some(&with_brief);
+            decision = decide(&facts);
+        }
     }
     if json {
         say!(
