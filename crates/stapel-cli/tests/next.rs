@@ -59,11 +59,28 @@ fn set_plan(dir: &Path, body: &str) {
     set_section(dir, "ABC-1", "Plan", body);
 }
 
+/// A Spec with one criterion row, `AC-1`, that the steps of the fixtures name (STP-21).
+const SPEC_AC1: &str = "| № | Criterion | Test |\n|---|---|---|\n\
+                        | AC-1 | WHEN a thing happens THE command does it. | `next::t_one` |";
+
+fn set_spec(dir: &Path) {
+    set_section(dir, "ABC-1", "Spec", SPEC_AC1);
+}
+
+/// The Plan of the shared fixtures: two steps that name `AC-1`.
+const PLAN_AC1: &str = "Route: full, auto.\n\n1. One (AC-1).\n2. Two (AC-1).";
+
+/// The target of `build-step` and `green-step` when the brief assembles (STP-21 AC-16).
+fn brief_of(n: &str) -> String {
+    format!("stapel brief ABC-1 {n}")
+}
+
 /// A ticket whose Description has a Frame and whose five sections are written; nothing is confirmed.
 fn written() -> tempfile::TempDir {
     let repo = repo_with_ticket();
     set_frame(repo.path());
-    set_plan(repo.path(), "Route: full, auto.\n\n1. One.\n2. Two.");
+    set_spec(repo.path());
+    set_plan(repo.path(), PLAN_AC1);
     repo
 }
 
@@ -426,7 +443,10 @@ fn generated_sections_wait() {
     let text = std::fs::read_to_string(dir.join(TICKET)).unwrap();
     assert!(text.contains("## Review\n\nTODO"));
     assert!(text.contains("## Summary\n\nTODO"));
-    assert_eq!(action(dir), format!("next: build-step step 1 — {TICKET}"));
+    assert_eq!(
+        action(dir),
+        format!("next: build-step step 1 — {}", brief_of("1"))
+    );
     assert!(facts(dir).is_empty());
 }
 
@@ -938,7 +958,10 @@ fn failing_check_blocks_the_build() {
     std::fs::write(dir.join("note.txt"), "a later change\n").unwrap();
     commit(dir, "ABC-1: a later commit");
     assert!(facts(dir).is_empty(), "{:?}", facts(dir));
-    assert_eq!(action(dir), format!("next: build-step step 1 — {TICKET}"));
+    assert_eq!(
+        action(dir),
+        format!("next: build-step step 1 — {}", brief_of("1"))
+    );
 }
 
 // AC-14: the first Plan step that is not done is the one to build.
@@ -996,21 +1019,21 @@ fn first_open_step() {
     let repo = ready();
     assert_eq!(
         action(repo.path()),
-        format!("next: build-step step 1 — {TICKET}")
+        format!("next: build-step step 1 — {}", brief_of("1"))
     );
 
     let repo = ready();
     red(repo.path(), "1");
     assert_eq!(
         action(repo.path()),
-        format!("next: green-step step 1 — {TICKET}")
+        format!("next: green-step step 1 — {}", brief_of("1"))
     );
     assert!(facts(repo.path()).is_empty());
 
     green(repo.path(), "1");
     assert_eq!(
         action(repo.path()),
-        format!("next: build-step step 2 — {TICKET}")
+        format!("next: build-step step 2 — {}", brief_of("2"))
     );
 
     let repo = ready();
@@ -1018,7 +1041,7 @@ fn first_open_step() {
     green(repo.path(), "2");
     assert_eq!(
         action(repo.path()),
-        format!("next: build-step step 1 — {TICKET}")
+        format!("next: build-step step 1 — {}", brief_of("1"))
     );
 }
 
@@ -1057,24 +1080,30 @@ fn coverage_and_cleanup_steps_are_done() {
         commit(dir, subject);
         action(dir)
     };
-    let build = |label: &str| format!("next: build-step {label} — {TICKET}");
+    let build = |label: &str| format!("next: build-step step {label} — {}", brief_of(label));
 
     assert_eq!(
-        after("1c. A.\n2. B.", "ABC-1 step 1c coverage: more tests"),
-        build("step 2")
+        after(
+            "1c. A (AC-1).\n2. B (AC-1).",
+            "ABC-1 step 1c coverage: more tests"
+        ),
+        build("2")
     );
     assert_eq!(
-        after("4. A.\n5. B.", "ABC-1 step 4 cleanup: dead code"),
-        build("step 5")
+        after(
+            "4. A (AC-1).\n5. B (AC-1).",
+            "ABC-1 step 4 cleanup: dead code"
+        ),
+        build("5")
     );
     assert_eq!(
-        after("2. A.\n3. B.", "ABC-1 step 2 notes"),
-        build("step 2"),
+        after("2. A (AC-1).\n3. B (AC-1).", "ABC-1 step 2 notes"),
+        build("2"),
         "no colon"
     );
     assert_eq!(
-        after("2. A.\n3. B.", "ABC-1 step 2: notes"),
-        build("step 2"),
+        after("2. A (AC-1).\n3. B (AC-1).", "ABC-1 step 2: notes"),
+        build("2"),
         "no word"
     );
 }
@@ -1358,7 +1387,10 @@ fn rule_order_after_history() {
     let head = commit(dir, &[], "ABC-1: a later commit");
     fail_record(dir, &head);
     assert!(facts(dir).is_empty(), "{:?}", facts(dir));
-    assert_eq!(action(dir), format!("next: build-step step 1 — {TICKET}"));
+    assert_eq!(
+        action(dir),
+        format!("next: build-step step 1 — {}", brief_of("1"))
+    );
 }
 
 // AC-2: the same action as one JSON line, keys in the stated order.
@@ -1410,17 +1442,15 @@ fn json_has_the_same_action() {
     // The flag may come before the key.
     assert_eq!(one_line(dir, &["--json", "abc-1"]), golden);
 
-    // A build step: a subject and a path, no command, no facts.
+    // A build step: a subject and the brief command, no path, no facts.
     let repo = written();
     let dir = repo.path();
     confirm_all(dir);
     commit(dir, "initial");
     assert_eq!(
         one_line(dir, &["--json"]),
-        format!(
-            "{{\"v\":1,\"ticket\":\"ABC-1\",\"action\":\"build-step\",\"subject\":\"step 1\",\
-             \"command\":null,\"path\":\"{TICKET}\",\"facts\":[]}}\n"
-        )
+        "{\"v\":1,\"ticket\":\"ABC-1\",\"action\":\"build-step\",\"subject\":\"step 1\",\
+         \"command\":\"stapel brief ABC-1 1\",\"path\":null,\"facts\":[]}\n"
     );
 
     // A closed ticket and no open ticket.
@@ -1677,7 +1707,7 @@ fn writes_nothing() {
     let dir = repo.path();
     confirm_all(dir);
     commit(dir, &[], "initial");
-    check(dir, &format!("next: build-step step 1 — {TICKET}"));
+    check(dir, &format!("next: build-step step 1 — {}", brief_of("1")));
 
     // `run-check`.
     let (repo, _, _) = done(true);
@@ -2009,7 +2039,10 @@ fn open_red_out_of_plan_order() {
         "ABC-1 step 2 RED: two",
     );
     assert!(facts(dir).is_empty(), "{:?}", facts(dir));
-    assert_eq!(action(dir), format!("next: green-step step 2 — {TICKET}"));
+    assert_eq!(
+        action(dir),
+        format!("next: green-step step 2 — {}", brief_of("2"))
+    );
 }
 
 // AC-15: a word commit closes a step only when the step has no RED and no GREEN.
@@ -2061,12 +2094,16 @@ fn coverage_word_after_a_red() {
         action(dir)
     };
     assert_eq!(
-        after("1. A.\n2. B.", "step 2", "ABC-1 step 2 wip: more"),
-        format!("next: green-step step 2 — {TICKET}")
+        after(
+            "1. A (AC-1).\n2. B (AC-1).",
+            "step 2",
+            "ABC-1 step 2 wip: more"
+        ),
+        format!("next: green-step step 2 — {}", brief_of("2"))
     );
     assert_eq!(
-        after("1c. A.", "step 1c", "ABC-1 step 1c coverage: more"),
-        format!("next: green-step step 1c — {TICKET}")
+        after("1c. A (AC-1).", "step 1c", "ABC-1 step 1c coverage: more"),
+        format!("next: green-step step 1c — {}", brief_of("1c"))
     );
 }
 
@@ -2218,5 +2255,176 @@ fn build_input_names_the_first_step() {
     assert_eq!(
         action(dir),
         "next: fix-history step 1 — stapel check --history ABC-1"
+    );
+}
+
+/// Commits everything under `dir` with `subject` and `--allow-empty`.
+fn commit_all(dir: &Path, files: &[(&str, &str)], subject: &str) {
+    for (rel, text) in files {
+        let path = dir.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    for args in [
+        vec!["add", "-A"],
+        vec!["commit", "-q", "--allow-empty", "-m", subject],
+    ] {
+        let out = std::process::Command::new("git")
+            .args(&args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "test-user")
+            .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+            .env("GIT_COMMITTER_NAME", "test-user")
+            .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+// STP-21 AC-16: `build-step` and `green-step` name the brief command when it assembles.
+#[test]
+fn build_step_names_the_brief() {
+    let test = "#[test]\nfn t() {\n    assert!(true);\n}\n";
+
+    // `build-step`, text and JSON: the command after ` — `, `path` null.
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    commit_all(dir, &[], "initial");
+    assert_eq!(
+        action(dir),
+        "next: build-step step 1 — stapel brief ABC-1 1"
+    );
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    let json: serde_json::Value =
+        serde_json::from_str(output(dir, &["--json"], 0).trim_end()).unwrap();
+    assert_eq!(json["action"], "build-step");
+    assert_eq!(json["command"], "stapel brief ABC-1 1");
+    assert!(json["path"].is_null());
+
+    // `green-step` of a lettered step, text and JSON.
+    let repo = written();
+    let dir = repo.path();
+    set_plan(dir, "Route: full, auto.\n\n1c. One (AC-1).");
+    confirm_all(dir);
+    commit_all(dir, &[], "initial");
+    commit_all(
+        dir,
+        &[("crates/tiny/tests/t1c.rs", test)],
+        "ABC-1 step 1c RED: test",
+    );
+    assert_eq!(
+        action(dir),
+        "next: green-step step 1c — stapel brief ABC-1 1c"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(output(dir, &["--json"], 0).trim_end()).unwrap();
+    assert_eq!(json["action"], "green-step");
+    assert_eq!(json["command"], "stapel brief ABC-1 1c");
+    assert!(json["path"].is_null());
+
+    // The folder key is used when the key is given in lower case.
+    assert_eq!(
+        action_of(dir, &["abc-1"]),
+        "next: green-step step 1c — stapel brief ABC-1 1c"
+    );
+
+    // Without a `plan` section the open RED keeps the ticket path.
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    let toml = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    let cut = text.replace(
+        "[[sections]]\nid = \"plan\"\ntitle = \"Plan\"\nowner = \"engineer\"\ndepends_on = [\"spec\", \"design\"]\n\n",
+        "",
+    );
+    assert_ne!(cut, text);
+    std::fs::write(&toml, cut).unwrap();
+    commit_all(dir, &[], "initial");
+    commit_all(
+        dir,
+        &[("crates/tiny/tests/t1.rs", test)],
+        "ABC-1 step 1 RED: one",
+    );
+    assert_eq!(action(dir), format!("next: green-step step 1 — {TICKET}"));
+    let json: serde_json::Value =
+        serde_json::from_str(output(dir, &["--json"], 0).trim_end()).unwrap();
+    assert!(json["command"].is_null());
+    assert_eq!(json["path"], TICKET);
+}
+
+// STP-21 AC-17: a refusing brief is a fact, and the action is `write-section Plan`.
+#[test]
+fn brief_refusal_blocks_the_step() {
+    let state = common::snapshot;
+    // A confirmed ticket with the Plan `plan`, one commit, no step done.
+    let ready = |plan: &str| {
+        let repo = written();
+        let dir = repo.path();
+        set_plan(dir, plan);
+        confirm_all(dir);
+        commit_all(dir, &[], "initial");
+        repo
+    };
+    let write_plan = format!("next: write-section Plan — {TICKET}");
+
+    // A criterion with no row.
+    let repo = ready("Route: full, auto.\n\n1. One (AC-9).\n2. Two (AC-1).");
+    let dir = repo.path();
+    let before = state(dir);
+    assert_eq!(
+        facts(dir),
+        vec!["blocked: brief of step 1: step 1 names AC-9, which the Spec does not have"]
+    );
+    assert_eq!(action(dir), write_plan);
+    assert_eq!(before, state(dir), "`next` wrote a file");
+    let json: serde_json::Value =
+        serde_json::from_str(output(dir, &["--json"], 0).trim_end()).unwrap();
+    assert_eq!(json["action"], "write-section");
+    assert_eq!(json["subject"], "Plan");
+    assert_eq!(json["path"], TICKET);
+    assert_eq!(
+        json["facts"][0],
+        "brief of step 1: step 1 names AC-9, which the Spec does not have"
+    );
+
+    // A step that names no criterion and no finding.
+    let repo = ready("Route: full, auto.\n\n1. One.\n2. Two (AC-1).");
+    let dir = repo.path();
+    assert_eq!(
+        facts(dir),
+        vec!["blocked: brief of step 1: step 1 names no criterion and no finding"]
+    );
+    assert_eq!(action(dir), write_plan);
+
+    // A brief that is too large: the fact names the sizes.
+    let long = format!("1. One (AC-1). {}", "word ".repeat(1500));
+    let repo = ready(&format!("Route: full, auto.\n\n{long}\n2. Two (AC-1)."));
+    let dir = repo.path();
+    let lines = facts(dir);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].starts_with("blocked: brief of step 1: the brief of step 1 has "),
+        "{}",
+        lines[0]
+    );
+    assert!(lines[0].contains("more than 1600"), "{}", lines[0]);
+    assert!(lines[0].contains("step "), "{}", lines[0]);
+    assert_eq!(action(dir), write_plan);
+
+    // Only the brief of the step `next` names is assembled: step 2 refuses, step 1 builds.
+    let repo = ready("Route: full, auto.\n\n1. One (AC-1).\n2. Two (AC-9).");
+    let dir = repo.path();
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    assert_eq!(
+        action(dir),
+        "next: build-step step 1 — stapel brief ABC-1 1"
     );
 }
