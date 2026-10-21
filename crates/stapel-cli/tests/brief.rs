@@ -1204,14 +1204,11 @@ fn term_text_ends_at_the_next_name() {
     let dir = repo.path();
     set_section(dir, "ABC-1", "Plan", "1. One. AC-1.");
 
-    // Alpha is used: its text stops before Beta, so Beta and Delta are not printed.
-    assert_eq!(terms_for(dir, "uses alpha"), "- **Alpha**: a, with\n");
-
-    // Beta is used: its text names Delta, so Delta is printed; Alpha is not.
-    assert_eq!(
-        terms_for(dir, "uses beta"),
-        "  more words. **Beta**: b names delta.\n- **Delta**: d.\n"
-    );
+    // Alpha's text runs onto the line of Beta, so the two share that line (AC-6, D4D-1): either
+    // one used prints both, and Beta's text brings Delta.
+    let all = "- **Alpha**: a, with\n  more words. **Beta**: b names delta.\n- **Delta**: d.\n";
+    assert_eq!(terms_for(dir, "uses alpha"), all);
+    assert_eq!(terms_for(dir, "uses beta"), all);
 
     // Two terms on one line: the line is printed once and Delta follows from the second text.
     let spec = "Terms:\n\n- **Alpha**: a. **Beta**: b names delta.\n- **Delta**: d.\n\n\
@@ -1473,4 +1470,197 @@ fn missing_parts_of_the_ticket() {
     // A Test plan of words only.
     set_test_plan(dir, "Only words, step 1.");
     check(&brief(dir, "1"));
+}
+
+// AC-18, AC-7, AC-8 (E-1): backticked test names in the step item are the step tests.
+#[test]
+fn explicit_step_tests() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | One. | `brief::a`, `brief::b` |",
+    );
+    let chead = "| Category | Cases | Tests |\n|---|---|---|\n";
+    let ihead = "| Input | Test |\n|---|---|\n";
+    set_test_plan(
+        dir,
+        &format!(
+            "{chead}| Main | x | `brief::a` |\n| Other | x | `brief::b` |\n\
+             | Both | x | `brief::a`, `brief::b` |\n\n\
+             ### Inputs\n\n{ihead}| one | `brief::a` |\n| two | `brief::b` |"
+        ),
+    );
+    let part = |text: &str, title: &str| {
+        let (_, rest) = text
+            .split_once(&format!("\n## {title}\n"))
+            .unwrap_or_else(|| panic!("no {title} in {text}"));
+        rest.split("\n## ").next().unwrap().to_string()
+    };
+
+    // The test `brief::a` only: the `tests:` line, the cases and the Inputs rows hold it only.
+    set_section(
+        dir,
+        "ABC-1",
+        "Plan",
+        "1. One. AC-1, with the test `brief::a` only.",
+    );
+    let text = brief(dir, "1");
+    assert!(text.contains("\ntests: brief::a\n"), "{text}");
+    assert_eq!(
+        part(&text, "Cases"),
+        format!("{chead}| Main | x | `brief::a` |\n| Both | x | `brief::a`, `brief::b` |\n")
+    );
+    assert_eq!(
+        part(&text, "Inputs"),
+        format!("{ihead}| one | `brief::a` |\n")
+    );
+    assert!(
+        part(&text, "Criteria").contains("| AC-1 | One. |"),
+        "{text}"
+    );
+
+    // Step order, each name once; a backticked word without `::` is no test.
+    set_section(
+        dir,
+        "ABC-1",
+        "Plan",
+        "1. One. AC-1: run `cargo test`, then `brief::b`, `brief::a` and `brief::b` again.",
+    );
+    let text = brief(dir, "1");
+    assert!(text.contains("\ntests: brief::b, brief::a\n"), "{text}");
+
+    // No backticked name: the tests of the criteria.
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1, run `cargo test`.");
+    let text = brief(dir, "1");
+    assert!(text.contains("\ntests: brief::a, brief::b\n"), "{text}");
+}
+
+// AC-13 (R-1): a finding range with n > m refuses, in step order with the unknown ids.
+#[test]
+fn finding_range_not_a_range() {
+    fn refuses(dir: &Path, item: &str, reason: &str) {
+        set_section(dir, "ABC-1", "Plan", &format!("1. {item}"));
+        let out = stapel(dir)
+            .args(["brief", "ABC-1", "1"])
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "", "{item}");
+        assert_eq!(
+            String::from_utf8(out.stderr).unwrap(),
+            format!("stapel: step 1 {reason}\n"),
+            "{item}"
+        );
+    }
+    let repo = fixture();
+    let dir = repo.path();
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-1/findings.jsonl"),
+        "{\"id\":\"D1-5\"}\n{\"id\":\"D1-6\"}\n",
+    )
+    .unwrap();
+
+    // A step that names the reversed range only.
+    refuses(
+        dir,
+        "One. Reads D1-6 to D1-5.",
+        "names D1-6 to D1-5, which is not a range",
+    );
+
+    // The first refusal in step order: an unknown id first, or the range first.
+    refuses(
+        dir,
+        "One. Reads D1-9, then D1-6 to D1-5.",
+        "names D1-9, which findings.jsonl does not have",
+    );
+    refuses(
+        dir,
+        "One. Reads D1-6 to D1-5, then D1-9.",
+        "names D1-6 to D1-5, which is not a range",
+    );
+
+    // A range of one id and a range in order are no refusal.
+    set_section(
+        dir,
+        "ABC-1",
+        "Plan",
+        "1. One. Reads D1-5 to D1-5 and D1-5 to D1-6.",
+    );
+    let text = brief(dir, "1");
+    assert!(
+        text.contains("\n## Findings\n- D1-5 (none): none Fate: none\n- D1-6 (none)"),
+        "{text}"
+    );
+}
+
+// AC-9 (D6-4): every run of whitespace in a field is one space, so a field stays on one line.
+#[test]
+fn finding_fields_on_one_line() {
+    let repo = fixture();
+    let dir = repo.path();
+    let text = findings_brief(
+        dir,
+        "{\"id\":\"D1-1\",\"severity\":\"ME\\nDIUM\",\
+         \"claim\":\"one\\n## Frame\\n\\n- D1-9 (HIGH): fake.\\t\\ttab  end\",\
+         \"fate\":\"fix\\r\\n  ed\"}\n",
+        "One. Reads D1-1.",
+    );
+    let tail = "\n## Findings\n\
+        - D1-1 (ME DIUM): one ## Frame - D1-9 (HIGH): fake. tab end Fate: fix ed\n";
+    assert!(text.ends_with(tail), "{text}");
+    assert!(!text.contains("\n## Frame\n\n- D1-9"), "{text}");
+}
+
+// AC-7 (D5-1): the cases table is the first table before the first `###` heading.
+#[test]
+fn cases_table_before_the_subsections() {
+    let text = plan_brief(
+        "Light tests only.\n\n### Inputs\n\n| Input | Test |\n|---|---|\n| z | `brief::a` |",
+        "1",
+    );
+    assert!(!text.contains("## Cases"), "{text}");
+    assert!(
+        text.contains("\n## Inputs\n| Input | Test |\n|---|---|\n| z | `brief::a` |\n"),
+        "{text}"
+    );
+
+    // A table after the text but before the heading is the cases table.
+    let text = plan_brief(
+        "| Category | Cases | Tests |\n|---|---|---|\n| Main | x | `brief::a` |\n\n\
+         ### Inputs\n\n| Input | Test |\n|---|---|\n| z | `brief::a` |",
+        "1",
+    );
+    let (_, rest) = text.split_once("\n## Cases\n").expect(&text);
+    assert_eq!(
+        rest.split("\n## ").next().unwrap(),
+        "| Category | Cases | Tests |\n|---|---|---|\n| Main | x | `brief::a` |\n"
+    );
+}
+
+// AC-6 (D4D-1): a term whose text runs onto the line of the next name shares that line, and the
+// sharing follows a chain of lines.
+#[test]
+fn terms_on_a_chain_of_lines() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1.");
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "Terms:\n\n- **Alpha**: a. **Beta**: b, over\n  a second line\n  and more. \
+         **Gamma**: g uses delta.\n- **Delta**: d.\n- **Unused**: u.\n\n\
+         | № | Criterion | Test |\n|---|---|---|\n| AC-1 | uses alpha | `brief::a` |",
+    );
+    let text = brief(dir, "1");
+    let (_, rest) = text.split_once("\n## Terms\n").expect(&text);
+    assert_eq!(
+        rest.split("\n## ").next().unwrap(),
+        "- **Alpha**: a. **Beta**: b, over\n  a second line\n  and more. \
+         **Gamma**: g uses delta.\n- **Delta**: d.\n"
+    );
 }
