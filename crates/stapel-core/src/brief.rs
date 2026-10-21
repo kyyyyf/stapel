@@ -5,6 +5,12 @@ use crate::ticket::{Lookup, find, parse};
 
 /// The brief of step `step` (`2`, `2c`) of ticket `key`, from the text of its `ticket.md`.
 /// `plan_title` is the title of the configured `plan` section; `base` is the base of `state.json`.
+///
+/// The size limit (AC-15): a brief of more than 1600 estimated tokens is an error that lists the
+/// size of each part. The parts, in print order, split the bytes of the brief without a rest:
+/// `header` is the `# Brief:` line and the header lines (each with its newline); every other part
+/// is its blank separator line, its `## <Title>` line and its body with the final newline, and is
+/// named by its title in lower case. Parts left out are not listed.
 pub fn assemble(
     text: &str,
     key: &str,
@@ -37,18 +43,24 @@ pub fn assemble(
     if !criteria.tests.is_empty() {
         out.push_str(&format!("tests: {}\n", criteria.tests.join(", ")));
     }
+    let mut sizes = vec![("header".to_string(), out.len())];
+    let mut part = |out: &mut String, title: &str, body: &str| {
+        let before = out.len();
+        out.push_str(&format!("\n## {title}\n{body}\n"));
+        sizes.push((title.to_lowercase(), out.len() - before));
+    };
     if let Lookup::Found(description) = find(&sections, "Description") {
         let frame = frame_of(description);
         if !frame.is_empty() {
-            out.push_str(&format!("\n## Frame\n{frame}\n"));
+            part(&mut out, "Frame", &frame);
         }
     }
-    out.push_str(&format!("\n## Step\n{item}\n"));
+    part(&mut out, "Step", &item);
     if !criteria.text.is_empty() {
-        out.push_str(&format!("\n## Criteria\n{}\n", criteria.text));
+        part(&mut out, "Criteria", &criteria.text);
         let terms = terms_part(spec, &criteria.text);
         if !terms.is_empty() {
-            out.push_str(&format!("\n## Terms\n{terms}\n"));
+            part(&mut out, "Terms", &terms);
         }
     }
     if let Lookup::Found(test_plan) = find(&sections, "Test plan") {
@@ -61,16 +73,35 @@ pub fn assemble(
                 subsection_part(&lines, "External states", &criteria.tests),
             ),
         ];
-        for (title, part) in parts {
-            if !part.is_empty() {
-                out.push_str(&format!("\n## {title}\n{part}\n"));
+        for (title, body) in parts {
+            if !body.is_empty() {
+                part(&mut out, title, &body);
             }
         }
     }
     if !findings_part.is_empty() {
-        out.push_str(&format!("\n## Findings\n{findings_part}\n"));
+        part(&mut out, "Findings", &findings_part);
+    }
+    let tokens = estimated_tokens(out.len());
+    if tokens > MAX_TOKENS {
+        let list: Vec<String> = sizes
+            .iter()
+            .map(|(name, bytes)| format!("{name} {}", estimated_tokens(*bytes)))
+            .collect();
+        return Err(format!(
+            "the brief of step {step} has {tokens} tokens, more than {MAX_TOKENS}: {}",
+            list.join(", ")
+        ));
     }
     Ok(out)
+}
+
+/// The most estimated tokens a brief may have.
+const MAX_TOKENS: usize = 1600;
+
+/// The estimated tokens of a text of `bytes` bytes: bytes divided by 4, rounded up.
+fn estimated_tokens(bytes: usize) -> usize {
+    bytes.div_ceil(4)
 }
 
 /// The well-formed records (a JSON line with a string `id`) of `findings`, in file order.
