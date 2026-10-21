@@ -235,7 +235,8 @@ written by hand; the orchestrator's tokens per ticket fall by half against STP-1
 dialog each and without manual intervention in the machine files, and the orchestrator's measured cache
 read per ticket is under half of STP-19 (39.5M).
 
-**Items, in order.**
+**Items, in order.** Order changed on 2026-10-21 (ledger): 1.3, 1.5, 1.8, 1.4, 1.6, 1.7, 1.9 to 1.12, so
+that the items that cut the person's approval dialogs come first; the numbers stay as labels.
 
 - 1.1 (STP-20) `stapel next [KEY]`: the next action computed from `state.json`, the Plan steps, `check --history`,
   `runs.jsonl` and `findings.jsonl`; one line of action plus the command or the path (`--json` for the
