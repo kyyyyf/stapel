@@ -30,6 +30,35 @@ const SPEC: &str = "Terms:\n\n\
     | AC-3 | Three. | `brief::t3` |\n\
     | AC-4 | Four. | `brief::t4` |";
 
+const TEST_PLAN: &str = "Light tests.\n\n\
+    | Category | Cases | Tests |\n|---|---|---|\n\
+    | Main | one | `brief::t1` |\n\
+    | Two | a case | `brief::t2` |\n\
+    | Coverage (step 2) | more | `brief::zz` |\n\n\
+    ### Inputs\n\n\
+    | Input | Test |\n|---|---|\n\
+    | a | `brief::t3` |\n\
+    | b | `brief::t1` |\n\n\
+    ### External states\n\n\
+    | System | Handling | Test |\n|---|---|---|\n\
+    | os | x | `brief::t4` |\n\
+    | git | y | — |";
+
+/// Adds a `## Test plan` section with `body` before the Design of ticket ABC-1.
+fn set_test_plan(dir: &Path, body: &str) {
+    let path = dir.join(".stapel/tickets/ABC-1/ticket.md");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let text = match text.find("## Test plan\n") {
+        Some(_) => panic!("a Test plan exists"),
+        None => text.replacen(
+            "## Design\n",
+            &format!("## Test plan\n\n{body}\n\n## Design\n"),
+            1,
+        ),
+    };
+    std::fs::write(&path, text).unwrap();
+}
+
 fn golden() -> String {
     std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN)).unwrap()
 }
@@ -40,6 +69,7 @@ fn fixture() -> tempfile::TempDir {
     set_section(repo.path(), "ABC-1", "Description", FRAME);
     set_section(repo.path(), "ABC-1", "Plan", PLAN);
     set_section(repo.path(), "ABC-1", "Spec", SPEC);
+    set_test_plan(repo.path(), TEST_PLAN);
     repo
 }
 
@@ -844,4 +874,104 @@ fn terms_list_ends_at_the_table() {
     // A positive control: a term `Step` used as `step` is printed.
     let text = brief_of(dir, "- **Step**: s.", "does a step", "");
     assert!(text.contains("\n## Terms\n- **Step**: s.\n"), "{text}");
+}
+
+/// The brief of step `step` of a ticket whose Spec has one criterion with the test `brief::a`
+/// and whose Test plan is `test_plan`.
+fn plan_brief(test_plan: &str, step: &str) -> String {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | One. | `brief::a` |",
+    );
+    set_section(dir, "ABC-1", "Plan", &format!("{step}. One. AC-1."));
+    set_test_plan(dir, test_plan);
+    brief(dir, step)
+}
+
+// AC-7: rows of the cases table that name a step test or the step.
+#[test]
+fn cases_of_the_step() {
+    let head = "| Category | Cases | Tests |\n|---|---|---|\n";
+    let plan = format!(
+        "{head}\
+         | Both | x | `brief::a`, `brief::other` |\n\
+         | Other | x | `brief::other` |\n\
+         | Coverage (step 1) | x | — |\n\
+         | Coverage (step 1c) | x | — |\n\
+         | Coverage (step 11) | x | — |\n\
+         | Longer | x | `brief::a_b` |\n\n\
+         ### Inputs\n\n\
+         | Input | Test |\n|---|---|\n| z | `brief::a` |"
+    );
+    let text = plan_brief(&plan, "1");
+    let (_, rest) = text.split_once("\n## Cases\n").expect(&text);
+    assert_eq!(
+        rest.split("\n## ").next().unwrap(),
+        format!(
+            "{head}| Both | x | `brief::a`, `brief::other` |\n\
+             | Coverage (step 1) | x | — |\n"
+        )
+    );
+    // After the Criteria; the Inputs row is not in the cases table.
+    let criteria = text.find("\n## Criteria\n").expect("no Criteria");
+    assert!(criteria < text.find("\n## Cases\n").unwrap(), "{text}");
+    assert!(!text.contains("| Input | Test |\n|---|---|\n| z | `brief::a` |\n\n## Cases"));
+
+    // A lettered step takes its own label only.
+    let text = plan_brief(&plan, "1c");
+    let (_, rest) = text.split_once("\n## Cases\n").expect(&text);
+    assert!(rest.contains("| Coverage (step 1c) | x | — |\n"), "{text}");
+    assert!(!rest.contains("| Coverage (step 1) |"), "{text}");
+
+    // Without a table: no part.
+    let text = plan_brief("No tables here, step 1.", "1");
+    assert!(!text.contains("## Cases"), "{text}");
+}
+
+// AC-8: rows of the Inputs and External states tables whose last cell names a step test.
+#[test]
+fn rows_of_the_step_tests() {
+    let plan = "| Category | Cases | Tests |\n|---|---|---|\n| Main | x | `brief::a` |\n\n\
+        ### Inputs\n\n\
+        | Input | Note | Test |\n|---|---|---|\n\
+        | one | x | `brief::a`, `brief::other` |\n\
+        | two | x | `brief::other` |\n\
+        | three | `brief::a` | `brief::other` |\n\
+        | four | x | — |\n\
+        | five | x | `brief::a_b` |\n\n\
+        ### External states\n\n\
+        | System | Test |\n|---|---|\n\
+        | os | `brief::a` |\n\
+        | git | — |\n\
+        | cargo | `brief::other` |";
+    let text = plan_brief(plan, "1");
+    let part = |title: &str| {
+        let (_, rest) = text.split_once(&format!("\n## {title}\n")).expect(&text);
+        rest.split("\n## ").next().unwrap().to_string()
+    };
+    assert_eq!(
+        part("Inputs"),
+        "| Input | Note | Test |\n|---|---|---|\n| one | x | `brief::a`, `brief::other` |\n"
+    );
+    assert_eq!(
+        part("External states"),
+        "| System | Test |\n|---|---|\n| os | `brief::a` |\n"
+    );
+    // The order: Cases, Inputs, External states.
+    let at = |title: &str| text.find(&format!("\n## {title}\n")).unwrap();
+    assert!(at("Cases") < at("Inputs") && at("Inputs") < at("External states"));
+
+    // A Test plan without the tables: no part.
+    let text = plan_brief("Only words.", "1");
+    assert!(!text.contains("## Inputs"), "{text}");
+    assert!(!text.contains("## External states"), "{text}");
+
+    // Tables with no row of the step: no part.
+    let plan = "### Inputs\n\n| Input | Test |\n|---|---|\n| z | `brief::other` |";
+    let text = plan_brief(plan, "1");
+    assert!(!text.contains("## Inputs"), "{text}");
 }

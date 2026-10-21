@@ -22,3 +22,19 @@ tests: brief::t2, brief::t3, brief::t4
 ## Terms
 - **Widget**: a part that holds a gear.
 - **Gear**: a wheel.
+
+## Cases
+| Category | Cases | Tests |
+|---|---|---|
+| Two | a case | `brief::t2` |
+| Coverage (step 2) | more | `brief::zz` |
+
+## Inputs
+| Input | Test |
+|---|---|
+| a | `brief::t3` |
+
+## External states
+| System | Handling | Test |
+|---|---|---|
+| os | x | `brief::t4` |
