@@ -247,6 +247,58 @@ fn unknown_ids_in_step_order() {
     );
 }
 
+// AC-5: the header row and separator come from the table that holds the criterion rows.
+#[test]
+fn header_of_the_criteria_table() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let spec = "| a | b |\n|---|---|\n| 1 | 2 |\n\n\
+        | № | Criterion | Test |\n|---|---|---|\n\
+        | AC-1 | One. | `brief::a` |";
+    set_section(dir, "ABC-1", "Spec", spec);
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1.");
+    let text = brief(dir, "1");
+    assert!(
+        text.contains(
+            "\n## Criteria\n| № | Criterion | Test |\n|---|---|---|\n| AC-1 | One. | `brief::a` |\n"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("| a | b |"), "{text}");
+}
+
+// AC-12: with an unknown id and a bad range, the refusal is for the first in the step.
+#[test]
+fn refusals_in_step_order() {
+    fn refuses(dir: &Path, plan: &str, message: &str) {
+        set_section(dir, "ABC-1", "Plan", plan);
+        let out = stapel(dir)
+            .args(["brief", "ABC-1", "1"])
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "", "{plan}");
+        assert_eq!(
+            String::from_utf8(out.stderr).unwrap(),
+            format!("{message}\n"),
+            "{plan}"
+        );
+    }
+    let repo = fixture();
+    let dir = repo.path();
+    refuses(
+        dir,
+        "1. One. AC-9 and AC-4 to AC-3.",
+        "stapel: step 1 names AC-9, which the Spec does not have",
+    );
+    refuses(
+        dir,
+        "1. One. AC-4 to AC-3 and AC-9.",
+        "stapel: step 1 names AC-4 to AC-3, which is not a range",
+    );
+}
+
 // AC-1: the command writes no file.
 #[test]
 fn writes_nothing() {
