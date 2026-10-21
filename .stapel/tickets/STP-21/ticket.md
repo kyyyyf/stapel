@@ -196,7 +196,7 @@ each GREEN `--test ticket_drift`.
 | Size bytes | a Frame of 2 000 `é` counts 4 000 bytes (D7-1) | `brief::size_counts_bytes` |
 | Next sizes | the too-large fact holds the part sizes; a plan section titled `Steps` gives `write-section Steps` (D8-2) | `next::brief_refusal_names_sizes_and_title` |
 | Next findings | `findings.jsonl` a directory: exit 1, as before the ticket; missing: the brief command (D8-1) | `next::unreadable_findings_file` |
-| Explicit tests | a step naming `AC-1` and the test `brief::a` only: the `tests:` line, Cases and Inputs rows hold `brief::a` only (E-1, E-8, SR1-6) | `brief::explicit_step_tests` |
+| Explicit tests | a step naming `AC-1` and the test `x::a` only: the `tests:` line, Cases and Inputs rows hold `x::a` only (E-1, E-8, SR1-6) | `brief::explicit_step_tests` |
 | Cases | a row naming a step test with another test; a row `Coverage (step 2)`; a row `Coverage (step 2c)` for step 2 is not taken; a row naming `x::a_b` for the step test `x::a` is not taken | `brief::cases_of_the_step` |
 | Tables | a row naming a step test with another test; a row naming only another step's test; a row with `—`; a Test plan without the tables | `brief::rows_of_the_step_tests` |
 | Findings | two records of `D1-2`, the last counts; a record without `fate`; an unreadable line; `D1-5 to D1-6`; `UTF-8` and `STP-22` in the step are no findings | `brief::findings_last_record` |
@@ -324,11 +324,16 @@ corrected (DR-1, DR-2); plan steps 9 and 10. No second review round: no HIGH.
   are the backticked names with `::` in the last cell.
 - Terms: read between `Terms:` and the first `|` line; matched only against criterion rows; a word is
   ASCII alphanumerics and `_`; a term prints as its Spec lines from its name to the line before the next
-  term, and every term whose lines overlap a printed term counts as printed (one hop, D4D-1).
-- Cases, Inputs, External states: the first `|` block of the Test plan section; the first table under each
-  `###` heading; also printed for a step without criteria.
-- Findings: `findings_part` is built before any output; ranges expand lazily; `names_a_finding` keeps its
-  own record parsing.
+  name, and also that line when text comes before the next name on it; every term whose lines overlap a
+  printed term counts as printed, followed to a fixed point (step 10, D4D-1).
+- Step tests: the backticked `<module>::<name>` names of the step item when it has any, else the tests of
+  the named criteria (step 10).
+- Cases, Inputs, External states: the first `|` block of the Test plan section before its first heading;
+  the first table under each `###` heading; also printed for a step without criteria.
+- Findings: `findings_part` is built before any output; ranges expand lazily, and a reversed range
+  refuses in step order; each field prints with whitespace runs as one space, a non-string field as
+  `none`; `names_a_finding` keeps its own record parsing. `next` gives an unreadable `findings.jsonl` as
+  `stapel: <path>: <os error>`, exit 1.
 - Size: `MAX_TOKENS` 1600, `estimated_tokens` = `bytes.div_ceil(4)`; the parts split the brief's bytes
   with no rest, each rounded up on its own.
 - `next`: `History` carries `brief: Option<(label, Option<refusal>)>`; the CLI decides, assembles the
