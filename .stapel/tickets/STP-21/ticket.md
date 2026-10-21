@@ -120,14 +120,14 @@ Terms:
 | AC-2 | WHEN the brief is printed THE header lines are `ticket: .stapel/tickets/<KEY>/ticket.md` and `base: <base of state.json>` (or `base: none`), then the line of AC-18. | `brief::prints_the_brief`, `brief::base_of_state_json` |
 | AC-3 | WHEN the Description has a `### Frame` subsection THE part `## Frame` holds its lines up to the next heading, without each paragraph that starts with `**Prior art.**` or `**Size.**`, trimmed. | `brief::frame_without_prior_art_and_size`, `brief::frame_edges` |
 | AC-4 | WHEN the brief is printed THE part `## Step` holds the step item as written in the Plan. | `brief::prints_the_brief`, `brief::step_item_ends_at_a_blank_line` |
-| AC-5 | WHEN the step item has a named criterion THE part `## Criteria` holds the header row and separator of the Spec criteria table, then each criterion row of a named criterion in Spec order, once. | `brief::criteria_and_ranges` |
+| AC-5 | WHEN the step item has a named criterion THE part `## Criteria` holds the header row and separator of the Spec criteria table, then each criterion row of a named criterion in Spec order, once. | `brief::criteria_and_ranges`, `brief::tests_from_the_last_cell`, `brief::header_of_the_criteria_table` |
 | AC-6 | WHEN a printed criterion row uses a term THE part `## Terms` holds that term and each term a printed term uses, until none is added, in Spec order, once. | `brief::terms_used_and_their_terms` |
 | AC-7 | WHEN a row of the cases table names a test of the step, or its first cell holds `step <STEP>` as whole words, THE part `## Cases` holds the header row, separator and each such row. | `brief::cases_of_the_step` |
 | AC-8 | WHEN the last cell of a row of the Inputs table or the External states table names a test of the step THE parts `## Inputs` and `## External states` hold the header row, separator and each such row of their table. | `brief::rows_of_the_step_tests` |
 | AC-9 | WHEN the step item has a named finding THE part `## Findings` holds one line per named finding in step order, once: `- <id> (<severity>): <claim> Fate: <fate>`, from the last well-formed record with that id, `none` for a missing field. | `brief::findings_last_record` |
 | AC-10 | IF `STEP` is not digits followed by at most one lowercase letter, or `KEY` names no ticket or several in case, THEN the command prints `stapel: <reason>` on stderr and exits 2; IF the ticket is legacy, or `ticket.md`, `state.json` or an existing `findings.jsonl` cannot be read as a whole, THEN it exits 1 with `stapel: <reason>`. | `brief::refuses_a_wrong_call`, `brief::refuses_an_unreadable_ticket` |
 | AC-11 | IF the Plan has no step `step <STEP>`, or no `plan` section is configured, THEN the command prints `stapel: the Plan of <KEY> has no step <STEP>` and exits 1; IF it has the step twice THEN `stapel: the Plan of <KEY> names step <STEP> twice`, exit 1. | `brief::step_not_in_the_plan` |
-| AC-12 | IF a named criterion has no criterion row THEN the command prints `stapel: step <STEP> names AC-<n>, which the Spec does not have` for the first such id and exits 1; IF a range has n > m THEN `stapel: step <STEP> names AC-<n> to AC-<m>, which is not a range`, exit 1. | `brief::unknown_criterion` |
+| AC-12 | IF a named criterion has no criterion row THEN the command prints `stapel: step <STEP> names AC-<n>, which the Spec does not have`, and IF a range has n > m THEN `stapel: step <STEP> names AC-<n> to AC-<m>, which is not a range`, for the first such id or range in step order; exit 1. | `brief::unknown_criterion`, `brief::unknown_ids_in_step_order`, `brief::refusals_in_step_order` |
 | AC-13 | IF a named finding has no well-formed record THEN the command prints `stapel: step <STEP> names <id>, which findings.jsonl does not have` for the first such id and exits 1. | `brief::unknown_finding` |
 | AC-14 | IF the step item has no named criterion and no named finding THEN the command prints `stapel: step <STEP> names no criterion and no finding` and exits 1. | `brief::step_names_nothing` |
 | AC-15 | IF the brief has more than 1600 estimated tokens THEN stdout is empty, the command prints `stapel: the brief of step <STEP> has <n> tokens, more than 1600: <part> <n>, …` (header and every printed part, in print order) and exits 1. | `brief::too_large` |
@@ -142,7 +142,7 @@ Terms:
   `path` is `null` for a `build-step` or `green-step` that names the brief; the facts of `next` (AC-1 of
   STP-20) gain the kind `brief of step <STEP>: …`, so a step of an open ticket that names no criterion and
   no finding now stops `next` (AC-14, AC-17).
-- **Not promised:** the Frame's list; a typo in a finding prefix (`DX-1`); other range forms (`AC-3–AC-5`,
+- **Not promised:** the Frame's list; a typo in a finding prefix (`DX-1`); leading zeros (`AC-01` reads as `AC-1`); other range forms (`AC-3–AC-5`,
   `AC-3..AC-5`, `AC-3 to 5`); an exclusion in the step (`AC-1 without <test>`: every test of AC-1 is a step
   test); other inflections of a term (`criteria` for `criterion`, `is done` for `Done step`); a term or step
   line inside a code fence; a Frame paragraph that starts `**Prior art**` without the dot; ids in other
@@ -179,6 +179,10 @@ each GREEN `--test ticket_drift`.
 | Wrong call | `STEP` `x`, `c2`, `2cc`, `2C`, `step 2`; `KEY` `NOPE-1`; two folders differing in case; a missing argument: exit 2, stderr text, empty stdout | `brief::refuses_a_wrong_call` |
 | Unreadable | `state.json` not JSON; a legacy ticket; `ticket.md` not UTF-8; `findings.jsonl` a directory or not UTF-8: exit 1 | `brief::refuses_an_unreadable_ticket` |
 | No step | `STEP` `3` with steps `1.` and `2.`; a `stapel.toml` without the `plan` section; a Plan that is `TODO`; two lines `2.` | `brief::step_not_in_the_plan` |
+| Last cell | a row with a backticked `x::y` in its middle cell: not a step test (D3-2) | `brief::tests_from_the_last_cell` |
+| Criteria header | a Spec with another table before the criteria table: the header row and separator of the criteria table (D3-1) | `brief::header_of_the_criteria_table` |
+| Unknown order | `AC-9 and AC-8` without both rows: AC-9; `AC-1 to AC-9` with no AC-6 row: AC-6; `AC-10` without a row (D3-5) | `brief::unknown_ids_in_step_order` |
+| Refusal order | `AC-9 and AC-4 to AC-3` without an AC-9 row: AC-9; `AC-4 to AC-3 and AC-9`: the range (D3-4) | `brief::refusals_in_step_order` |
 | Unknown criterion | `AC-9` with no row; `AC-5 to AC-3` with both rows present | `brief::unknown_criterion` |
 | Unknown finding | `D1-9` with records `D1-1` and `D1-2`; the only `D1-9` line unreadable while `D1-1` exists | `brief::unknown_finding` |
 | Names nothing | a step with no `AC-` and no recorded prefix (no `findings.jsonl`, the words `D1-1` and `UTF-8`) | `brief::step_names_nothing` |
@@ -243,6 +247,11 @@ a future guard rule).
 written in step 6, not step 3; step 6 also adds the `findings.jsonl` cases of the unreadable test, left out
 of step 1c (findings were not read yet). Drift review of step 2: D2-1 to D2-4 (1 MEDIUM, 3 LOW), no change
 (D2-1: `2c` is accepted in `brief::lettered_step_and_folder_key`).
+2026-10-21, after step 3: its RED gave two step-1 tests a Spec row only, so they passed at RED; the
+history was rewritten with the human and both tests now assert the new behaviour. Drift review of step 3:
+D3-1 to D3-9 (4 MEDIUM, 5 LOW). One spec change: AC-12 names the first refusal in step order (D3-4); plan
+step 3c with two coverage tests (D3-2, D3-5) and step 3d with two fixes (D3-1, D3-3, D3-4); leading zeros
+not promised (D3-6). No change for D3-7, D3-8 (Design as built), D3-9.
 
 ## Design
 
@@ -274,14 +283,14 @@ of step 1c (findings were not read yet). Drift review of step 2: D2-1 to D2-4 (1
 | AC-2 | `brief::prints_the_brief`, `brief::base_of_state_json` |
 | AC-3 | `brief::frame_without_prior_art_and_size`, `brief::frame_edges` |
 | AC-4 | `brief::prints_the_brief`, `brief::step_item_ends_at_a_blank_line` |
-| AC-5 | `brief::criteria_and_ranges` |
+| AC-5 | `brief::criteria_and_ranges`, `brief::tests_from_the_last_cell`, `brief::header_of_the_criteria_table` |
 | AC-6 | `brief::terms_used_and_their_terms` |
 | AC-7 | `brief::cases_of_the_step` |
 | AC-8 | `brief::rows_of_the_step_tests` |
 | AC-9 | `brief::findings_last_record` |
 | AC-10 | `brief::refuses_a_wrong_call`, `brief::refuses_an_unreadable_ticket` |
 | AC-11 | `brief::step_not_in_the_plan` |
-| AC-12 | `brief::unknown_criterion` |
+| AC-12 | `brief::unknown_criterion`, `brief::unknown_ids_in_step_order`, `brief::refusals_in_step_order` |
 | AC-13 | `brief::unknown_finding` |
 | AC-14 | `brief::step_names_nothing` |
 | AC-15 | `brief::too_large` |
@@ -304,6 +313,12 @@ Route: full (tag `interface`), auto.
    change: the brief of step 1 and the refusals tested in step 1c.
 3. Criteria, the `tests:` line and the unknown criterion (AC-5, AC-12, AC-18; the golden file holds the
    `tests:` line). Must not change: the parts of step 1.
+3c. Coverage after the drift review of step 3 (D3-2, D3-5): two new `#[test]` functions
+   (`brief::tests_from_the_last_cell`, `brief::unknown_ids_in_step_order`). Tests only, each helper nested
+   inside its function.
+3d. Fixes after the drift review of step 3 (D3-1, D3-3, D3-4): the header of the table that holds the
+   criterion rows, and refusals in step order (AC-5, AC-12; tests `brief::header_of_the_criteria_table`,
+   `brief::refusals_in_step_order` only). Must not change: the parts and refusals tested in steps 1 to 3c.
 4. Terms and a step naming nothing (AC-6, AC-14). Must not change: the parts of steps 1 and 3.
 5. Cases, Inputs and External states rows (AC-7, AC-8). Must not change: the parts of steps 1, 3 and 4.
 6. Findings and the unknown finding (AC-9, AC-13), with `brief::empty_parts_are_left_out` of AC-18 (it
