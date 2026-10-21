@@ -174,6 +174,79 @@ fn unknown_criterion() {
     );
 }
 
+// AC-5: the step tests come from the last cell of a row only.
+#[test]
+fn tests_from_the_last_cell() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let spec = "| № | Criterion | Test |\n|---|---|---|\n\
+        | AC-1 | Calls `x::y` first. | `brief::a` |";
+    set_section(dir, "ABC-1", "Spec", spec);
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1.");
+    let text = brief(dir, "1");
+    assert!(text.contains("\ntests: brief::a\n"), "{text}");
+    assert!(
+        text.contains("| AC-1 | Calls `x::y` first. | `brief::a` |\n"),
+        "{text}"
+    );
+    assert!(!text.contains("tests: x::y"), "{text}");
+    assert!(!text.contains("brief::a, x::y"), "{text}");
+}
+
+// AC-12: the refusal names the first unknown id in the order of the step.
+#[test]
+fn unknown_ids_in_step_order() {
+    fn refuses(dir: &Path, plan: &str, message: &str) {
+        set_section(dir, "ABC-1", "Plan", plan);
+        let out = stapel(dir)
+            .args(["brief", "ABC-1", "1"])
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "", "{plan}");
+        assert_eq!(
+            String::from_utf8(out.stderr).unwrap(),
+            format!("{message}\n"),
+            "{plan}"
+        );
+    }
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+
+    // Neither row exists: the first in the step, not the smallest.
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | One. | `brief::a` |",
+    );
+    refuses(
+        dir,
+        "1. One. AC-9 and AC-8.",
+        "stapel: step 1 names AC-9, which the Spec does not have",
+    );
+
+    // A row missing inside a range.
+    let mut spec = String::from("| № | Criterion | Test |\n|---|---|---|\n");
+    for n in (1..=9).filter(|n| *n != 6) {
+        spec.push_str(&format!("| AC-{n} | Row. | `brief::t{n}` |\n"));
+    }
+    set_section(dir, "ABC-1", "Spec", spec.trim_end());
+    refuses(
+        dir,
+        "1. One. AC-1 to AC-9.",
+        "stapel: step 1 names AC-6, which the Spec does not have",
+    );
+
+    // `AC-10` is not `AC-1`: the row of AC-1 does not stand for it.
+    refuses(
+        dir,
+        "1. One. AC-10.",
+        "stapel: step 1 names AC-10, which the Spec does not have",
+    );
+}
+
 // AC-1: the command writes no file.
 #[test]
 fn writes_nothing() {
