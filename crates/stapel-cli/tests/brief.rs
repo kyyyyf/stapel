@@ -703,7 +703,8 @@ fn terms_used_and_their_terms() {
     // A name that starts a longer word is not used.
     assert_eq!(terms(dir, "- **Step**: s.", "Stepping on", ""), None);
 
-    // Two terms on one line: the text of the first ends at the second name.
+    // Two terms on one line: the text of the first ends at the second name; each term of the
+    // printed line counts as printed, so Gamma, which Beta uses, is added.
     assert_eq!(
         terms(
             dir,
@@ -712,7 +713,7 @@ fn terms_used_and_their_terms() {
             ""
         )
         .as_deref(),
-        Some("- **Alpha**: a. **Beta**: uses gamma.\n")
+        Some("- **Alpha**: a. **Beta**: uses gamma.\n- **Gamma**: g.\n")
     );
     // Both on one line used: the line is printed once.
     assert_eq!(
@@ -736,6 +737,47 @@ fn terms_used_and_their_terms() {
         ),
         None
     );
+}
+
+// AC-6: terms are matched against the criterion rows only.
+#[test]
+fn terms_from_the_rows_only() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1.");
+    // Only the header row `| № | Criterion | Test |` holds the word `criterion`.
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "Terms:\n\n- **Criterion**: c.\n\n| № | Criterion | Test |\n|---|---|---|\n\
+         | AC-1 | does a thing | `brief::a` |",
+    );
+    let text = brief(dir, "1");
+    assert!(!text.contains("Criterion**"), "{text}");
+    assert!(!text.contains("\n## Terms\n"), "{text}");
+}
+
+// AC-6: each term on a printed term line counts as printed.
+#[test]
+fn terms_on_a_shared_line() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1.");
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "Terms:\n\n- **Alpha**: a. **Beta**: uses gamma.\n- **Gamma**: g.\n\n\
+         | № | Criterion | Test |\n|---|---|---|\n| AC-1 | uses alpha | `brief::a` |",
+    );
+    let text = brief(dir, "1");
+    let (_, rest) = text.split_once("\n## Terms\n").expect(&text);
+    assert_eq!(
+        rest.split("\n## ").next().unwrap(),
+        "- **Alpha**: a. **Beta**: uses gamma.\n- **Gamma**: g.\n"
+    );
+    assert_eq!(text.matches("**Beta**").count(), 1, "{text}");
 }
 
 // AC-14: a step that names no criterion and no finding.
