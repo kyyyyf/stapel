@@ -283,6 +283,34 @@ D3D-3 to D3D-5, D4-4 to D4-7 (D4-5 is settled by step 6; D4-6 goes to Design as 
 - `next` calls `assemble` only for the step it names, so its other actions read nothing new; it builds the
   brief command only when the label is a Plan step, so the no-`plan` case of AC-21 of STP-20 keeps its path.
 
+### Decisions (as built)
+
+- `stapel_core::brief::assemble(text, key, step, base, findings)` is pure; `crates/stapel-cli/src/brief.rs`
+  checks `STEP` before it opens the repository (a bad `STEP` wins over a bad `KEY`), reads `findings.jsonl`
+  (missing: `""`; any other read error: exit 1, `stapel: cannot read <path>: <err>`) and prints.
+- Layout: each part is a blank line, `## <part>` and its text, with no blank line after the heading.
+- Frame: the Description section (fixed title, as in `next`), from a `Frame` heading of any level to the
+  next ATX heading; an empty Frame after the drop is left out.
+- Criteria: named items are checked in step order, so the first bad range or unknown id is reported; the
+  header row and separator come from the `|` block above the first criterion row (walked upward); tests
+  are the backticked names with `::` in the last cell.
+- Terms: read between `Terms:` and the first `|` line; matched only against criterion rows; a word is
+  ASCII alphanumerics and `_`; a term prints as its Spec lines from its name to the line before the next
+  term, and every term whose lines overlap a printed term counts as printed (one hop, D4D-1).
+- Cases, Inputs, External states: the first `|` block of the Test plan section; the first table under each
+  `###` heading; also printed for a step without criteria.
+- Findings: `findings_part` is built before any output; ranges expand lazily; `names_a_finding` keeps its
+  own record parsing.
+- Size: `MAX_TOKENS` 1600, `estimated_tokens` = `bytes.div_ceil(4)`; the parts split the brief's bytes
+  with no rest, each rounded up on its own.
+- `next`: `History` carries `brief: Option<(label, Option<refusal>)>`; the CLI decides, assembles the
+  brief of the step the decision names when a `plan` section is configured, and decides again;
+  `step_action` gives the brief command, or the fact and `write-section` on a refusal.
+- Build notes: steps 3 and 8 had their RED rewritten with the human, because a test changed in a RED
+  passed there (`no-red`; in step 8 only `rustfmt` reflow of an untouched test). Builders broke the
+  Edit-or-Write rule four times (`cat >>`, `sed -i`); the guard does not deny it yet (item 1.9). The first
+  use of the command on this ticket refused step 3 (1653 tokens) after a script had estimated 1348.
+
 ## Proof
 
 | Criterion | Test |
