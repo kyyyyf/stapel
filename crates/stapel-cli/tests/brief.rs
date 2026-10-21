@@ -777,3 +777,29 @@ fn step_names_nothing() {
     let text = brief(dir, "1");
     assert!(text.contains("\n## Step\n1. One. Reads D2-1.\n"), "{text}");
 }
+
+// AC-6: the Terms list ends at the criteria table.
+#[test]
+fn terms_list_ends_at_the_table() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1.");
+    /// The brief of step 1 over a Spec of `list`, a row of `row` and `after`.
+    fn brief_of(dir: &Path, list: &str, row: &str, after: &str) -> String {
+        let spec = format!(
+            "Terms:\n\n{list}\n\n| № | Criterion | Test |\n|---|---|---|\n\
+             | AC-1 | {row} | `brief::a` |\n\n{after}"
+        );
+        set_section(dir, "ABC-1", "Spec", spec.trim_end());
+        brief(dir, "1")
+    }
+
+    // A `- **Late**: x` line after the table holds no term, though a row uses `late`.
+    let text = brief_of(dir, "- **Early**: e.", "uses late", "- **Late**: x");
+    assert!(!text.contains("Late"), "{text}");
+    assert!(!text.contains("\n## Terms\n"), "{text}");
+
+    // A positive control: a term `Step` used as `step` is printed.
+    let text = brief_of(dir, "- **Step**: s.", "does a step", "");
+    assert!(text.contains("\n## Terms\n- **Step**: s.\n"), "{text}");
+}
