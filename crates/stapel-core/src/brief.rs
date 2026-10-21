@@ -29,6 +29,8 @@ pub fn assemble(
         return Err(format!("step {step} names no criterion and no finding"));
     }
 
+    let findings_part = findings_part(&item, findings, step)?;
+
     let mut out = format!("# Brief: {key} step {step}\n");
     out.push_str(&format!("ticket: .stapel/tickets/{key}/ticket.md\n"));
     out.push_str(&format!("base: {}\n", base.unwrap_or("none")));
@@ -65,7 +67,93 @@ pub fn assemble(
             }
         }
     }
+    if !findings_part.is_empty() {
+        out.push_str(&format!("\n## Findings\n{findings_part}\n"));
+    }
     Ok(out)
+}
+
+/// The well-formed records (a JSON line with a string `id`) of `findings`, in file order.
+fn records(findings: &str) -> Vec<(String, serde_json::Value)> {
+    findings
+        .lines()
+        .filter_map(|l| {
+            let value: serde_json::Value = serde_json::from_str(l).ok()?;
+            let id = value.get("id")?.as_str()?.to_string();
+            Some((id, value))
+        })
+        .collect()
+}
+
+/// The ids the step item names, in step order: words `<prefix>-<digits>` (not `AC`) of a recorded
+/// prefix, and the ids of a range `<prefix>-<n> to <prefix>-<m>` (a range with n > m names none).
+/// Each id is taken lazily, so a huge range costs nothing until it is walked.
+fn named_findings<'a>(item: &'a str, prefixes: &'a [String]) -> impl Iterator<Item = String> + 'a {
+    let words: Vec<&str> = item
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    fn recorded<'w>(w: &'w str, prefixes: &[String]) -> Option<(&'w str, &'w str)> {
+        finding_split(w).filter(|(p, _)| *p != "AC" && prefixes.iter().any(|q| q == p))
+    }
+    let mut ids: Vec<Box<dyn Iterator<Item = String> + 'a>> = Vec::new();
+    let mut k = 0;
+    while k < words.len() {
+        let Some((prefix, digits)) = recorded(words[k], prefixes) else {
+            k += 1;
+            continue;
+        };
+        let upper = if words.get(k + 1) == Some(&"to") {
+            words
+                .get(k + 2)
+                .and_then(|w| recorded(w, prefixes))
+                .filter(|(q, _)| *q == prefix)
+        } else {
+            None
+        };
+        match (digits.parse::<u64>(), upper.map(|(_, m)| m.parse::<u64>())) {
+            (Ok(n), Some(Ok(m))) => {
+                ids.push(Box::new((n..=m).map(move |i| format!("{prefix}-{i}"))));
+                k += 3;
+            }
+            _ => {
+                ids.push(Box::new(std::iter::once(words[k].to_string())));
+                k += 1;
+            }
+        }
+    }
+    ids.into_iter().flatten()
+}
+
+/// The Findings part: one line per named finding in step order, each once, from the last
+/// well-formed record of the id; an error for the first named finding without a record.
+fn findings_part(item: &str, findings: &str, step: &str) -> Result<String, String> {
+    let records = records(findings);
+    let prefixes: Vec<String> = records
+        .iter()
+        .filter_map(|(id, _)| finding_split(id).map(|(p, _)| p.to_string()))
+        .collect();
+    let mut seen: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
+    for id in named_findings(item, &prefixes) {
+        if seen.contains(&id) {
+            continue;
+        }
+        let Some((_, record)) = records.iter().rev().find(|(r, _)| *r == id) else {
+            return Err(format!(
+                "step {step} names {id}, which findings.jsonl does not have"
+            ));
+        };
+        let field = |name: &str| record.get(name).and_then(|v| v.as_str()).unwrap_or("none");
+        lines.push(format!(
+            "- {id} ({}): {} Fate: {}",
+            field("severity"),
+            field("claim"),
+            field("fate")
+        ));
+        seen.push(id);
+    }
+    Ok(lines.join("\n"))
 }
 
 /// The cells of a table row, trimmed.

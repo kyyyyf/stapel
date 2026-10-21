@@ -41,8 +41,15 @@ pub fn run(key: &str, step: &str) -> Result<(), Fail> {
             )));
         }
     };
-    // A missing or unreadable `findings.jsonl` gives no finding prefix (its refusal is step 6).
-    let findings = std::fs::read_to_string(ticket.dir.join("findings.jsonl")).unwrap_or_default();
+    // A missing `findings.jsonl` gives no finding prefix; one that cannot be read as a whole refuses.
+    let path = ticket.dir.join("findings.jsonl");
+    let findings = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return Err(Fail::failed(format!("cannot read {}: {e}", path.display())));
+        }
+    };
     let brief = assemble(
         &text,
         &ticket.key,
