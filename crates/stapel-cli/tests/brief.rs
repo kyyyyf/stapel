@@ -1181,3 +1181,296 @@ fn too_large() {
         "{stderr}"
     );
 }
+
+// AC-6 (D4D-2): the text of a term ends at the next name, also when that name is on the next line.
+#[test]
+fn term_text_ends_at_the_next_name() {
+    /// The Terms part of step 1 for a row that `row` describes, over a list where Alpha's text
+    /// runs onto the line of Beta, and only Beta's text names Delta.
+    fn terms_for(dir: &Path, row: &str) -> String {
+        let spec = format!(
+            "Terms:\n\n- **Alpha**: a, with\n  more words. **Beta**: b names delta.\n\
+             - **Delta**: d.\n\n| № | Criterion | Test |\n|---|---|---|\n\
+             | AC-1 | {row} | `brief::a` |"
+        );
+        set_section(dir, "ABC-1", "Spec", &spec);
+        let text = brief(dir, "1");
+        match text.split_once("\n## Terms\n") {
+            Some((_, rest)) => rest.split("\n## ").next().unwrap().to_string(),
+            None => String::new(),
+        }
+    }
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1.");
+
+    // Alpha is used: its text stops before Beta, so Beta and Delta are not printed.
+    assert_eq!(terms_for(dir, "uses alpha"), "- **Alpha**: a, with\n");
+
+    // Beta is used: its text names Delta, so Delta is printed; Alpha is not.
+    assert_eq!(
+        terms_for(dir, "uses beta"),
+        "  more words. **Beta**: b names delta.\n- **Delta**: d.\n"
+    );
+
+    // Two terms on one line: the line is printed once and Delta follows from the second text.
+    let spec = "Terms:\n\n- **Alpha**: a. **Beta**: b names delta.\n- **Delta**: d.\n\n\
+        | № | Criterion | Test |\n|---|---|---|\n| AC-1 | uses alpha | `brief::a` |";
+    set_section(dir, "ABC-1", "Spec", spec);
+    let text = brief(dir, "1");
+    assert!(
+        text.contains("\n## Terms\n- **Alpha**: a. **Beta**: b names delta.\n- **Delta**: d.\n"),
+        "{text}"
+    );
+}
+
+// AC-7 (D5-2): a step without criteria takes the cases rows of its label.
+#[test]
+fn cases_of_a_step_without_criteria() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let head = "| Category | Cases | Tests |\n|---|---|---|\n";
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-1/findings.jsonl"),
+        "{\"id\":\"D1-1\",\"severity\":\"LOW\",\"claim\":\"c.\",\"fate\":\"open\"}\n",
+    )
+    .unwrap();
+    set_section(dir, "ABC-1", "Plan", "1. One. Reads D1-1.");
+    set_test_plan(
+        dir,
+        &format!(
+            "{head}| Main | x | `brief::a` |\n| Coverage (step 1) | y | — |\n\
+             | Coverage (step 2) | z | — |"
+        ),
+    );
+    let text = brief(dir, "1");
+    assert!(!text.contains("\ntests:"), "{text}");
+    assert!(!text.contains("## Criteria"), "{text}");
+    let (_, rest) = text.split_once("\n## Cases\n").expect(&text);
+    assert_eq!(
+        rest.split("\n## ").next().unwrap(),
+        format!("{head}| Coverage (step 1) | y | — |\n")
+    );
+}
+
+// AC-9, AC-14 (D6-1): without `findings.jsonl` there is no finding prefix.
+#[test]
+fn no_findings_file() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let file = dir.join(".stapel/tickets/ABC-1/findings.jsonl");
+    assert!(!file.exists());
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | One. | `brief::a` |",
+    );
+
+    // A step with a criterion prints, and `D1-1` is no finding.
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1, reads D1-1.");
+    let text = brief(dir, "1");
+    assert!(text.contains("\n## Criteria\n"), "{text}");
+    assert!(!text.contains("## Findings"), "{text}");
+
+    // A step that names `D1-1` only refuses as a step that names nothing.
+    set_section(dir, "ABC-1", "Plan", "1. One. Reads D1-1.");
+    let out = stapel(dir)
+        .args(["brief", "ABC-1", "1"])
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "");
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap(),
+        "stapel: step 1 names no criterion and no finding\n"
+    );
+    assert!(!file.exists());
+}
+
+// AC-9 (D6-2): a finding prefix matches as a whole; `AC` is never a finding prefix.
+#[test]
+fn finding_prefixes_exact() {
+    fn refuses_as_nothing(dir: &Path, records: &str, item: &str) {
+        std::fs::write(dir.join(".stapel/tickets/ABC-1/findings.jsonl"), records).unwrap();
+        set_section(dir, "ABC-1", "Plan", &format!("1. {item}"));
+        let out = stapel(dir)
+            .args(["brief", "ABC-1", "1"])
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "", "{item}");
+        assert_eq!(
+            String::from_utf8(out.stderr).unwrap(),
+            "stapel: step 1 names no criterion and no finding\n",
+            "{item}"
+        );
+    }
+    let repo = fixture();
+    let dir = repo.path();
+    let record = |id: &str| {
+        format!("{{\"id\":\"{id}\",\"severity\":\"HIGH\",\"claim\":\"c.\",\"fate\":\"open\"}}\n")
+    };
+
+    // Only `R1-1` is recorded: `SR1-1` and `R-1` are no findings.
+    refuses_as_nothing(dir, &record("R1-1"), "One. Reads SR1-1 and R-1.");
+    let text = findings_brief(dir, &record("R1-1"), "One. Reads SR1-1, R-1 and R1-1.");
+    assert!(
+        text.ends_with("\n## Findings\n- R1-1 (HIGH): c. Fate: open\n"),
+        "{text}"
+    );
+    assert_eq!(text.matches("(HIGH)").count(), 1, "{text}");
+
+    // A word in brackets is named.
+    let text = findings_brief(dir, &record("D1-2"), "One. See (D1-2, and more.");
+    assert!(
+        text.ends_with("\n## Findings\n- D1-2 (HIGH): c. Fate: open\n"),
+        "{text}"
+    );
+
+    // A record `AC-1` does not make `AC-1` a finding: the Spec row is printed, no Findings part.
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | One. | `brief::a` |",
+    );
+    let text = findings_brief(dir, &record("AC-1"), "One. AC-1.");
+    assert!(text.contains("\n## Criteria\n"), "{text}");
+    assert!(!text.contains("## Findings"), "{text}");
+}
+
+// AC-9 (D6-3): a field that is not a string prints `none`; the last well-formed record counts.
+#[test]
+fn finding_fields_not_strings() {
+    let repo = fixture();
+    let dir = repo.path();
+
+    // Numbers, null, arrays and objects are no strings.
+    let text = findings_brief(
+        dir,
+        "{\"id\":\"D1-1\",\"severity\":3,\"claim\":\"c.\",\"fate\":\"open\"}\n\
+         {\"id\":\"D1-2\",\"severity\":\"LOW\",\"claim\":null,\"fate\":[\"x\"]}\n\
+         {\"id\":\"D1-3\",\"severity\":{\"a\":1},\"claim\":true,\"fate\":7}\n",
+        "One. Reads D1-1 to D1-3.",
+    );
+    assert!(
+        text.ends_with(
+            "\n## Findings\n\
+             - D1-1 (none): c. Fate: open\n\
+             - D1-2 (LOW): none Fate: none\n\
+             - D1-3 (none): none Fate: none\n"
+        ),
+        "{text}"
+    );
+
+    // An unreadable line after the last well-formed record of an id does not replace it.
+    let text = findings_brief(
+        dir,
+        "{\"id\":\"D1-2\",\"severity\":\"LOW\",\"claim\":\"old.\",\"fate\":\"open\"}\n\
+         {\"id\":\"D1-2\",\"severity\":\"HIGH\",\"claim\":\"new.\",\"fate\":\"fixed\"}\n\
+         {\"id\":\"D1-2\",\"severity\":\"MEDIUM\",\"claim\":\"cut.\"\n",
+        "One. Reads D1-2.",
+    );
+    assert!(
+        text.ends_with("\n## Findings\n- D1-2 (HIGH): new. Fate: fixed\n"),
+        "{text}"
+    );
+}
+
+// AC-15 (D7-1): the size counts bytes, not characters.
+#[test]
+fn size_counts_bytes() {
+    fn tokens(bytes: usize) -> usize {
+        bytes.div_ceil(4)
+    }
+    fn run(dir: &Path) -> std::process::Output {
+        stapel(dir)
+            .args(["brief", "ABC-1", "2"])
+            .assert()
+            .get_output()
+            .clone()
+    }
+    fn with_frame(dir: &Path, frame: &str) {
+        set_section(
+            dir,
+            "ABC-1",
+            "Description",
+            &format!("### Frame\n\n{frame}"),
+        );
+    }
+    let repo = fixture();
+    let dir = repo.path();
+    with_frame(dir, "x");
+    let small = String::from_utf8(run(dir).stdout).unwrap();
+
+    // 2 000 `é` and padding: exactly 6 400 bytes, 1600 tokens, though far fewer characters.
+    let pad = 6400 + 1 - small.len() - 4000;
+    let frame = format!("{}{}", "é".repeat(2000), "a".repeat(pad));
+    with_frame(dir, &frame);
+    let out = run(dir);
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!((text.len(), tokens(text.len())), (6400, 1600));
+    assert!(text.chars().count() < 6000);
+
+    // One more `é` is two bytes: 6 402 bytes, 1601 tokens, refused with the size of the Frame.
+    with_frame(dir, &format!("é{frame}"));
+    let out = run(dir);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.starts_with("stapel: the brief of step 2 has 1601 tokens, more than 1600: header "),
+        "{stderr}"
+    );
+    let frame_bytes = "\n## Frame\n".len() + frame.len() + 2 + 1;
+    assert!(
+        stderr.contains(&format!(", frame {},", tokens(frame_bytes))),
+        "{stderr}"
+    );
+}
+
+// AC-1, AC-2, AC-18 (DR-3): a ticket without a Frame, a Terms list or Test plan tables.
+#[test]
+fn missing_parts_of_the_ticket() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Plan", "1. One. AC-1.");
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | does a step | `brief::a` |",
+    );
+    let check = |text: &str| {
+        assert!(
+            text.starts_with(
+                "# Brief: ABC-1 step 1\nticket: .stapel/tickets/ABC-1/ticket.md\nbase: none\n\
+                 tests: brief::a\n"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("\n## Step\n1. One. AC-1.\n"), "{text}");
+        assert!(text.contains("\n## Criteria\n"), "{text}");
+        for part in [
+            "Frame",
+            "Terms",
+            "Cases",
+            "Inputs",
+            "External states",
+            "Findings",
+        ] {
+            assert!(!text.contains(&format!("## {part}")), "{text}");
+        }
+    };
+
+    // No Test plan section at all.
+    check(&brief(dir, "1"));
+
+    // A Test plan of words only.
+    set_test_plan(dir, "Only words, step 1.");
+    check(&brief(dir, "1"));
+}

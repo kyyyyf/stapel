@@ -2428,3 +2428,89 @@ fn brief_refusal_blocks_the_step() {
         "next: build-step step 1 — stapel brief ABC-1 1"
     );
 }
+
+// STP-21 AC-17 (D8-1): an unreadable `findings.jsonl` exits 1; a missing one names the brief.
+#[test]
+fn unreadable_findings_file() {
+    let repo = written();
+    let dir = repo.path();
+    confirm_all(dir);
+    commit_all(dir, &[], "initial");
+    let file = dir.join(".stapel/tickets/ABC-1/findings.jsonl");
+
+    // Missing: the brief command.
+    assert!(!file.exists());
+    assert_eq!(
+        action(dir),
+        "next: build-step step 1 — stapel brief ABC-1 1"
+    );
+
+    // A directory: exit 1, the reason on stderr, nothing on stdout.
+    std::fs::create_dir(&file).unwrap();
+    let out = stapel(dir)
+        .arg("next")
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.starts_with("stapel: "), "{stderr}");
+    assert!(stderr.contains("findings.jsonl"), "{stderr}");
+    std::fs::remove_dir(&file).unwrap();
+
+    // Not UTF-8: exit 1 as well.
+    std::fs::write(&file, [0xff, 0xfe, b'\n']).unwrap();
+    let out = stapel(dir)
+        .arg("next")
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.starts_with("stapel: "), "{stderr}");
+}
+
+// STP-21 AC-17 (D8-2): the fact of a too large brief holds the part sizes; the action names the
+// configured title of the plan section.
+#[test]
+fn brief_refusal_names_sizes_and_title() {
+    let long = format!("1. One (AC-1). {}", "word ".repeat(1500));
+    let repo = written();
+    let dir = repo.path();
+    set_plan(dir, &format!("Route: full, auto.\n\n{long}\n2. Two (AC-1)."));
+
+    // The plan section is titled `Steps`, in the configuration and in the ticket.
+    let toml = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    let renamed = text.replace(
+        "id = \"plan\"\ntitle = \"Plan\"",
+        "id = \"plan\"\ntitle = \"Steps\"",
+    );
+    assert_ne!(renamed, text);
+    std::fs::write(&toml, renamed).unwrap();
+    let ticket = dir.join(TICKET);
+    let text = std::fs::read_to_string(&ticket).unwrap();
+    let renamed = text.replacen("\n## Plan\n", "\n## Steps\n", 1);
+    assert_ne!(renamed, text);
+    std::fs::write(&ticket, renamed).unwrap();
+    confirm_all(dir);
+    commit_all(dir, &[], "initial");
+
+    let lines = facts(dir);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let head = "blocked: brief of step 1: the brief of step 1 has ";
+    let rest = lines[0].strip_prefix(head).expect(&lines[0]);
+    let (total, sizes) = rest.split_once(" tokens, more than 1600: ").expect(rest);
+    assert!(total.parse::<usize>().unwrap() > 1600, "{rest}");
+    let names: Vec<&str> = sizes
+        .split(", ")
+        .map(|part| part.rsplit_once(' ').expect(part).0)
+        .collect();
+    assert_eq!(names, ["header", "frame", "step", "criteria"], "{rest}");
+    for part in sizes.split(", ") {
+        assert!(part.rsplit_once(' ').unwrap().1.parse::<usize>().is_ok(), "{part}");
+    }
+    assert_eq!(action(dir), format!("next: write-section Steps — {TICKET}"));
+}
