@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "key": "STP-22",
+  "title": "stapel init installs the process: skill, agent definitions, hooks",
+  "base": "5d05ccc03153bb46bd6158e1173b64cc7787f09d",
+  "confirmations": []
+}

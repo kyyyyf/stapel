@@ -248,7 +248,7 @@ that the items that cut the person's approval dialogs come first; the numbers st
   (`docs/decisions/0003`; label STP-10); `next` prints its command. Changed on 2026-10-20 (ledger): the brief
   goes to stdout; it also carries a header, the Spec terms its criteria use and the findings the step names;
   over 1 600 tokens it refuses.
-- 1.3 the process as installed data: `stapel init` writes `.claude/skills/stapel/SKILL.md` (the spec
+- 1.3 (STP-22) the process as installed data: `stapel init` writes `.claude/skills/stapel/SKILL.md` (the spec
   process, today `CLAUDE.md` items 1 to 9, as the skill text), `.claude/agents/stapel-builder.md`,
   `stapel-drift.md`, `stapel-reviewer.md`, `stapel-spec-reviewer.md` (tools, `model` from `[models]`,
   `permissionMode`; reviewers read-only; builders with Edit, Write and Bash under the guard), and the hooks;
