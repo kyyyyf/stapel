@@ -838,3 +838,41 @@ fn agent_texts_hold_their_rules() {
         }
     }
 }
+
+fn repo_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+}
+
+// AC-18: a new repository with this repository's config gets process files equal to this repository's.
+#[test]
+fn this_repository_has_the_current_files() {
+    let root = repo_root();
+    let repo = git_repo();
+    let dir = repo.path();
+    std::fs::create_dir_all(dir.join(".stapel")).unwrap();
+    std::fs::copy(
+        root.join(".stapel/stapel.toml"),
+        dir.join(".stapel/stapel.toml"),
+    )
+    .unwrap();
+    stapel(dir).arg("init").assert().success();
+    for rel in std::iter::once(SKILL).chain(AGENTS) {
+        let ours = std::fs::read(root.join(rel))
+            .unwrap_or_else(|e| panic!("this repository has no {rel}: {e}"));
+        let fresh = std::fs::read(dir.join(rel)).unwrap();
+        assert!(ours == fresh, "{rel} differs from what init writes");
+    }
+}
+
+// AC-19: CLAUDE.md keeps only its own rules and names the skill.
+#[test]
+fn claude_md_names_the_skill() {
+    let text = std::fs::read_to_string(repo_root().join("CLAUDE.md")).unwrap();
+    assert!(!text.lines().any(|l| l == "## The spec process"));
+    assert!(!text.lines().any(|l| l == "## Build and review"));
+    assert!(text.contains(".claude/skills/stapel/SKILL.md"));
+}
