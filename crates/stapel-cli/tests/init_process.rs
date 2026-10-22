@@ -158,13 +158,13 @@ fn model_from_the_role() {
     for rel in [AGENTS[2], AGENTS[3]] {
         assert_eq!(
             line_of(dir, rel, "model:").as_deref(),
-            Some("model: claude-opus-5-5[1m]"),
+            Some("model: \"claude-opus-5-5[1m]\""),
             "{rel}"
         );
     }
     assert_eq!(
         line_of(dir, AGENTS[0], "model:").as_deref(),
-        Some("model: claude-sonnet-5-5")
+        Some("model: \"claude-sonnet-5-5\"")
     );
     assert_eq!(line_of(dir, AGENTS[1], "model:"), None);
     check_marker(dir, AGENTS[1]);
@@ -233,7 +233,11 @@ fn skill_frontmatter() {
     assert_eq!(fm.len(), 5, "{fm:?}");
     assert_eq!(fm[0], "---");
     assert_eq!(fm[1], "name: stapel");
-    assert!(fm[2].starts_with("description: ") && fm[2].len() > "description: ".len());
+    assert!(
+        fm[2].starts_with("description: \"") && fm[2].ends_with('"') && fm[2].len() > 15,
+        "{}",
+        fm[2]
+    );
     assert!(fm[3].starts_with("# stapel: "));
     assert_eq!(fm[4], "---");
 }
@@ -897,6 +901,38 @@ fn this_repository_has_the_current_files() {
         let fresh = std::fs::read(dir.join(rel)).unwrap();
         assert!(ours == fresh, "{rel} differs from what init writes");
     }
+}
+
+// AC-22: both catalogues are created equal to this repository's files; an edited one stays, with no
+// label.
+#[test]
+fn installs_the_catalogues() {
+    const CATALOGUES: [&str; 2] = [
+        ".stapel/config/coverage-taxonomy.yml",
+        ".stapel/config/external-states.yml",
+    ];
+    let repo = git_repo();
+    let dir = repo.path();
+    let mut assert = stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    for rel in CATALOGUES {
+        assert = assert.stdout(contains(format!("created: {rel}")));
+        assert_eq!(
+            std::fs::read(dir.join(rel)).unwrap(),
+            std::fs::read(repo_root().join(rel)).unwrap(),
+            "{rel}"
+        );
+    }
+
+    std::fs::write(dir.join(CATALOGUES[0]), "edited\n").unwrap();
+    let out = stapel(dir).arg("init").assert().success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    for rel in CATALOGUES {
+        assert!(!stdout.contains(rel), "{stdout}");
+    }
+    assert_eq!(read(dir, CATALOGUES[0]), "edited\n");
 }
 
 // AC-19: CLAUDE.md keeps only its own rules and names the skill.

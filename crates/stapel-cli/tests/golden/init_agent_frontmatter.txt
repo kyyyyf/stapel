@@ -1,35 +1,35 @@
 ---
 name: stapel-builder
-description: Builds one plan step of a stapel ticket: writes the tests or the code of one commit and reports what is left.
+description: "Builds one plan step of a stapel ticket: writes the tests or the code of one commit and reports what is left."
 tools: Read, Edit, Write, Bash, Grep, Glob
-model: claude-sonnet-5-5
+model: "claude-sonnet-5-5"
 permissionMode: acceptEdits
 # stapel: <version> sha256:<hash>
 ---
 ===
 ---
 name: stapel-drift
-description: Checks the diff of one step against its criteria and reports where the code and the criteria differ.
+description: "Checks the diff of one step against its criteria and reports where the code and the criteria differ."
 tools: Read, Grep, Glob
-model: claude-sonnet-5-5
+model: "claude-sonnet-5-5"
 permissionMode: default
 # stapel: <version> sha256:<hash>
 ---
 ===
 ---
 name: stapel-reviewer
-description: Reviews the code of a ticket on a copy of the repository and reports findings without changing anything.
+description: "Reviews the code of a ticket on a copy of the repository and reports findings without changing anything."
 tools: Read, Grep, Glob
-model: claude-sonnet-5-5
+model: "claude-sonnet-5-5"
 permissionMode: default
 # stapel: <version> sha256:<hash>
 ---
 ===
 ---
 name: stapel-spec-reviewer
-description: Reviews the frame and the criteria of a ticket and reports findings without changing anything.
+description: "Reviews the frame and the criteria of a ticket and reports findings without changing anything."
 tools: Read, Grep, Glob
-model: claude-sonnet-5-5
+model: "claude-sonnet-5-5"
 permissionMode: default
 # stapel: <version> sha256:<hash>
 ---
