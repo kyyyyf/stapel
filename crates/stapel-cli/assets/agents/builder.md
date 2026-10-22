@@ -13,8 +13,11 @@ Work as two commits:
 2. GREEN: code only. GREEN never changes files under tests/ (tests, fixtures, golden files). If a test
    looks wrong, stop and report an `intent_gap`; do not commit.
 
+Commit subjects, which stapel reads: `<KEY> step <STEP> RED: <short>`, `<KEY> step <STEP> GREEN: <short>`,
+and for a coverage step `<KEY> step <STEP> coverage: <short>`.
+
 A coverage step only adds new test functions to a file that already holds step tests, with every helper
-nested inside its function.
+nested inside its function. Before its commit run the whole test file, not a filter.
 
 Rules:
 
@@ -25,7 +28,9 @@ Rules:
   `stapel ledger`. Do not edit `ticket.md`.
 - Run only the test command of the ticket's Test plan, one at a time, with its thread limits; leave nothing
   running in the background.
-- Amend only your own last commit.
+- Amend only your own last commit. Never run git reset --hard, git stash or git checkout -- <file>.
+- Before each commit also run the repository's fixture and ticket lint tests, if the Test plan names them;
+  commit only when every test you ran passes.
 - When the brief leaves out something the person would notice, stop and report an `intent_gap` instead of
   guessing.
 

@@ -1,7 +1,7 @@
 ---
 name: stapel
 description: Carries a development ticket from description to merge with the stapel process.
-# stapel: 0.1.0 sha256:582771665fa0cd29eb01564d24b7641c5984c550e6a9ba38322415c2053a107d
+# stapel: 0.1.0 sha256:0d11cb6cf238a97ccbb10ebf256672b9ac008be2b54dc0b137170b4e8b47b380
 ---
 # The stapel process
 
@@ -19,7 +19,8 @@ the file to use; the facts that block an action come first. Do not re-read the w
 - `new-ticket`: `stapel new "<title>"`, then write the Frame (rule 1).
 - `write-section`: write that section of `ticket.md`.
 - `build-step` and `green-step`: start the agent `stapel-builder` with the ticket path, the step and the
-  base commit only; it runs `stapel brief KEY STEP` itself. You do not read the brief.
+  base commit only; it runs `stapel brief KEY STEP` itself. During the build you do not read the brief;
+  before the spec review you run stapel brief only to check each step's size.
 - `run-check`: `stapel check KEY`; no other cargo or test run while it runs.
 - Start a new session for each ticket; do not read briefs or reviewer reports yourself beyond their
   findings.
@@ -32,14 +33,14 @@ the file to use; the facts that block an action come first. Do not re-read the w
 - Every acceptance criterion has a test that fails first. Commits come in pairs: RED (tests only), then
   GREEN (code). One plan step is one pair. A test that passes before any code is a coverage test and goes
   in a commit of its own.
-- Review before merge: a fresh code reviewer, an external reviewer and the drift reviewer. Reviewers work
-  on a copy (`git archive`), with no write access to git or to the working tree, and run no builds.
+- Review before merge, by risk (see Build and review). Reviewers work on a copy (`git archive`), with no
+  write access to git or to the working tree, and run no builds.
 - Every model call is recorded in the ticket's token journal with its role and the mark `measured` or
   `estimate`.
 - Agents do not `git push` and do not switch branches in the working tree. The person, or the orchestrator
   after review, pushes. Agents do not write files the guard denies by other means (a script, Bash); they
   hand such changes to the person as a short command.
-- Agents never run `stapel ok` or `stapel close` on their own initiative: these are the person's answers.
+- stapel ok runs only as one plain command whose permission dialog the person answers; stapel close is run by the person.
 
 ## The spec process
 
@@ -65,6 +66,7 @@ list must not only grow.
    blank row is an error. After the test plan, a **Review Focus** line lists up to five input classes or
    failure modes no planned test exercises, each with a test or a refusal. Name the step's tests in
    backticks in every Plan step. Before the spec review, run stapel brief on every Plan step and split the steps it refuses.
+   A ticket tagged guard or security has an Abuse table: each attempt of a careless agent and its outcome.
 4. **One spec review, in order.** The agent `stapel-spec-reviewer` first reads only the Frame and the
    criteria and writes its own list of inputs, external states and bypass attempts; then it reads Design,
    the tables and the promise and compares. It returns a Clear/Partial/Missing map over the coverage
@@ -101,8 +103,8 @@ list must not only grow.
   is left. It stops when the request leaves out something the person would notice; that is an
   `intent_gap`, which you ask the person about in the chat. Its tokens are journaled with the role
   `builder`.
-- Review by risk: an untagged ticket gets the drift check and one `stapel-reviewer`; a tagged one gets
-  three reviewers. The ticket records the reviewers that ran and the round.
+- Review by risk. An untagged ticket gets the ticket lint and one stapel-reviewer; a tagged ticket gets stapel-reviewer, an external reviewer, and stapel-drift after each GREEN step that touches a criterion.
+  The ticket records the reviewers that ran and the round.
 - Every code reviewer also does the deletion check, the claims check (falsify each claim of the criteria
   and of Design "as built" against the code) and the verification gap (would an existing test fail if a
   behaviour change were wrong). A test that did not run counts as missing.
