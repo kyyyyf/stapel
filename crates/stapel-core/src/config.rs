@@ -105,6 +105,9 @@ pub struct ModelBinding {
     /// When false, a missing key or subscription is reported and the role is skipped.
     #[serde(default = "required_by_default")]
     pub required: bool,
+    /// The `permissionMode` of the role's agent file; absent means the default of the role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
 }
 
 fn required_by_default() -> bool {

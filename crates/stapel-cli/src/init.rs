@@ -49,7 +49,7 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
     // Read and check everything first, so a refusal leaves the repository untouched.
     let mut plan = Vec::new();
     let config_path = root.join(CONFIG);
-    if config_path.exists() {
+    let config = if config_path.exists() {
         let text = std::fs::read_to_string(&config_path).map_err(|e| format!("{CONFIG}: {e}"))?;
         let config =
             Config::parse_at(&text, &root).map_err(|e| format!("{CONFIG} cannot be read: {e}"))?;
@@ -59,6 +59,7 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
                 config.tickets.key
             );
         }
+        config
     } else {
         let prefix = match prefix {
             Some(p) => p,
@@ -66,13 +67,18 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
         };
         validate_prefix(&prefix)?;
         let cargo = root.join("Cargo.toml").is_file();
-        plan_create(&root, CONFIG, starter_toml(&prefix, cargo), &mut plan);
-    }
+        let text = starter_toml(&prefix, cargo);
+        let config = Config::parse_at(&text, &root)
+            .map_err(|e| format!("the starter configuration cannot be read: {e}"))?;
+        plan_create(&root, CONFIG, text, &mut plan);
+        config
+    };
     plan_create(&root, ".stapel/allowlist.toml", ALLOWLIST.into(), &mut plan);
     plan_create(&root, ".stapel/tickets/.gitkeep", String::new(), &mut plan);
     plan_ignore_index(&root, &mut plan)?;
     plan_hooks(&root, &mut plan)?;
     plan_pre_push(&root, &mut plan)?;
+    plan_process_files(&root, &config, &mut plan);
 
     for step in &plan {
         let path = root.join(&step.rel);
@@ -98,6 +104,125 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
         say!("{}", step.label);
     }
     Ok(())
+}
+
+const SKILL_PATH: &str = ".claude/skills/stapel/SKILL.md";
+const SKILL_DESCRIPTION: &str =
+    "Carries a development ticket from description to merge with the stapel process.";
+
+/// One agent file: its name, role in `[models]`, text, tools and default permission mode.
+struct AgentFile {
+    name: &'static str,
+    role: &'static str,
+    description: &'static str,
+    tools: &'static str,
+    default_mode: &'static str,
+    body: &'static str,
+}
+
+const READ_ONLY_TOOLS: &str = "Read, Grep, Glob";
+
+const AGENT_FILES: [AgentFile; 4] = [
+    AgentFile {
+        name: "builder",
+        role: "builder",
+        description: "Builds one plan step of a stapel ticket: writes the tests or the code of one commit and reports what is left.",
+        tools: "Read, Edit, Write, Bash, Grep, Glob",
+        default_mode: "acceptEdits",
+        body: include_str!("../assets/agents/builder.md"),
+    },
+    AgentFile {
+        name: "drift",
+        role: "drift",
+        description: "Checks the diff of one step against its criteria and reports where the code and the criteria differ.",
+        tools: READ_ONLY_TOOLS,
+        default_mode: "default",
+        body: include_str!("../assets/agents/drift.md"),
+    },
+    AgentFile {
+        name: "reviewer",
+        role: "reviewer",
+        description: "Reviews the code of a ticket on a copy of the repository and reports findings without changing anything.",
+        tools: READ_ONLY_TOOLS,
+        default_mode: "default",
+        body: include_str!("../assets/agents/reviewer.md"),
+    },
+    AgentFile {
+        name: "spec-reviewer",
+        role: "reviewer",
+        description: "Reviews the frame and the criteria of a ticket and reports findings without changing anything.",
+        tools: READ_ONLY_TOOLS,
+        default_mode: "default",
+        body: include_str!("../assets/agents/spec-reviewer.md"),
+    },
+];
+
+/// Stapel's text of a process file: the frontmatter lines (without the marker), the marker line
+/// with the hash of everything else, and the body.
+fn process_text(lines: &[String], body: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut rest = String::from("---\n");
+    for line in lines {
+        rest.push_str(line);
+        rest.push('\n');
+    }
+    rest.push_str("---\n");
+    rest.push_str(body);
+    let hash: String = Sha256::digest(rest.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let marker = format!("# stapel: {} sha256:{hash}\n", env!("CARGO_PKG_VERSION"));
+    // The marker is the last frontmatter line; the hash is over the file without it.
+    let at = rest.len() - body.len() - "---\n".len();
+    rest.insert_str(at, &marker);
+    rest
+}
+
+/// Plans the skill and the agent files that are missing.
+fn plan_process_files(root: &Path, config: &Config, plan: &mut Vec<Step>) {
+    let skill = process_text(
+        &[
+            "name: stapel".to_string(),
+            format!("description: {SKILL_DESCRIPTION}"),
+        ],
+        include_str!("../assets/skill.md"),
+    );
+    plan_create_text(root, SKILL_PATH.to_string(), skill, plan);
+    for agent in AGENT_FILES {
+        let binding = config.models.get(agent.role);
+        let mut lines = vec![
+            format!("name: stapel-{}", agent.name),
+            format!("description: {}", agent.description),
+            format!("tools: {}", agent.tools),
+        ];
+        if let Some(b) = binding {
+            lines.push(format!("model: {}", b.model));
+        }
+        let mode = binding
+            .and_then(|b| b.permission_mode.as_deref())
+            .unwrap_or(agent.default_mode);
+        lines.push(format!("permissionMode: {mode}"));
+        let text = process_text(&lines, agent.body);
+        plan_create_text(
+            root,
+            format!(".claude/agents/stapel-{}.md", agent.name),
+            text,
+            plan,
+        );
+    }
+}
+
+/// Plans `rel` when nothing is at its path, not even a symlink.
+fn plan_create_text(root: &Path, rel: String, content: String, plan: &mut Vec<Step>) {
+    if std::fs::symlink_metadata(root.join(&rel)).is_err() {
+        plan.push(Step {
+            label: format!("created: {rel}"),
+            rel,
+            content,
+            executable: false,
+        });
+    }
 }
 
 /// One file `init` is about to write.
