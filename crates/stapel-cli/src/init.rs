@@ -81,7 +81,8 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
     plan_ignore_index(&root, &mut plan)?;
     plan_hooks(&root, &mut plan)?;
     plan_pre_push(&root, &mut plan)?;
-    plan_process_files(&root, &config, &mut plan)?;
+    let mut kept = false;
+    plan_process_files(&root, &config, &mut plan, &mut kept)?;
 
     for step in &plan {
         let path = root.join(&step.rel);
@@ -100,7 +101,7 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
              checks"
         );
     }
-    if plan.is_empty() {
+    if plan.is_empty() && !kept {
         say!("already set up: nothing changed");
     }
     for step in plan {
@@ -234,7 +235,12 @@ fn check_bindings(config: &Config) -> Result<(), String> {
 }
 
 /// Plans the skill and the agent files that are missing.
-fn plan_process_files(root: &Path, config: &Config, plan: &mut Vec<Step>) -> Result<(), String> {
+fn plan_process_files(
+    root: &Path,
+    config: &Config,
+    plan: &mut Vec<Step>,
+    kept: &mut bool,
+) -> Result<(), String> {
     check_bindings(config)?;
     let paths = std::iter::once(SKILL_PATH.to_string()).chain(
         AGENT_FILES
@@ -253,7 +259,7 @@ fn plan_process_files(root: &Path, config: &Config, plan: &mut Vec<Step>) -> Res
         ],
         include_str!("../assets/skill.md"),
     );
-    plan_create_text(root, SKILL_PATH.to_string(), skill, plan);
+    plan_create_text(root, SKILL_PATH.to_string(), skill, plan, kept);
     for agent in AGENT_FILES {
         let binding = config.models.get(agent.role);
         let mut lines = vec![
@@ -274,6 +280,7 @@ fn plan_process_files(root: &Path, config: &Config, plan: &mut Vec<Step>) -> Res
             format!(".claude/agents/stapel-{}.md", agent.name),
             text,
             plan,
+            kept,
         );
     }
     Ok(())
@@ -281,25 +288,52 @@ fn plan_process_files(root: &Path, config: &Config, plan: &mut Vec<Step>) -> Res
 
 /// Plans `rel` when nothing is at its path, not even a symlink; plans an update when the file is
 /// an unchanged file of a version not greater than the binary's whose text differs.
-fn plan_create_text(root: &Path, rel: String, content: String, plan: &mut Vec<Step>) {
+/// Warns and sets `kept` for a file that is left alone with a warning.
+fn plan_create_text(
+    root: &Path,
+    rel: String,
+    content: String,
+    plan: &mut Vec<Step>,
+    kept: &mut bool,
+) {
     let path = root.join(&rel);
+    let not_stapels = |kept: &mut bool| {
+        *kept = true;
+        warn!(
+            "warning: {rel} is not the file stapel wrote; kept. Delete it and run stapel init to \
+             take stapel's text"
+        );
+    };
     let label = match std::fs::symlink_metadata(&path) {
         Err(_) => format!("created: {rel}"),
         Ok(meta) if meta.is_file() => {
-            let Ok(old) = std::fs::read_to_string(&path) else {
+            let Some(version) = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|old| unchanged_version(&old).map(|v| (old, v)))
+            else {
+                not_stapels(kept);
                 return;
             };
-            let Some(version) = unchanged_version(&old) else {
+            let (old, version) = version;
+            let own = env!("CARGO_PKG_VERSION");
+            if version > parse_version(own).unwrap_or_default() {
+                *kept = true;
+                warn!(
+                    "warning: {rel} was written by stapel {}.{}.{}, newer than this stapel {own}; \
+                     kept",
+                    version.0, version.1, version.2
+                );
                 return;
-            };
-            if version > parse_version(env!("CARGO_PKG_VERSION")).unwrap_or_default()
-                || old == content
-            {
+            }
+            if old == content {
                 return;
             }
             format!("updated: {rel}")
         }
-        Ok(_) => return,
+        Ok(_) => {
+            not_stapels(kept);
+            return;
+        }
     };
     plan.push(Step {
         label,
