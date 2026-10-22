@@ -839,6 +839,37 @@ fn agent_texts_hold_their_rules() {
     }
 }
 
+// AC-20: the skill agrees with the process it describes.
+#[test]
+fn skill_text_is_consistent() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let flat = collapsed(&body_of(dir, SKILL));
+    for sentence in [
+        "An untagged ticket gets the ticket lint and one stapel-reviewer; a tagged ticket gets stapel-reviewer, an external reviewer, and stapel-drift after each GREEN step that touches a criterion.",
+        "stapel ok runs only as one plain command whose permission dialog the person answers; stapel close is run by the person.",
+        "During the build you do not read the brief; before the spec review you run stapel brief only to check each step's size.",
+        "A ticket tagged guard or security has an Abuse table: each attempt of a careless agent and its outcome.",
+    ] {
+        assert!(flat.contains(sentence), "missing {sentence:?}");
+    }
+    assert!(!flat.contains("Review before merge:"));
+}
+
+// AC-21: the builder never rewrites history or drops work.
+#[test]
+fn builder_text_forbids_history_rewrites() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let flat = collapsed(&body_of(dir, AGENTS[0]));
+    assert!(
+        flat.contains("Never run git reset --hard, git stash or git checkout -- <file>."),
+        "missing sentence"
+    );
+}
+
 fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
