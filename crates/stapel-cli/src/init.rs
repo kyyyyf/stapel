@@ -84,6 +84,18 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
     };
     plan_create(&root, ".stapel/allowlist.toml", ALLOWLIST.into(), &mut plan);
     plan_create(&root, ".stapel/tickets/.gitkeep", String::new(), &mut plan);
+    plan_create(
+        &root,
+        ".stapel/config/coverage-taxonomy.yml",
+        include_str!("../assets/config/coverage-taxonomy.yml").into(),
+        &mut plan,
+    );
+    plan_create(
+        &root,
+        ".stapel/config/external-states.yml",
+        include_str!("../assets/config/external-states.yml").into(),
+        &mut plan,
+    );
     plan_ignore_index(&root, &mut plan)?;
     plan_hooks(&root, &mut plan)?;
     plan_pre_push(&root, &mut plan)?;
@@ -240,7 +252,8 @@ fn check_bindings(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-/// Plans the skill and the agent files that are missing.
+/// Plans the skill and the four agent files: each is created when missing, updated when it is an
+/// unchanged file of stapel, and kept with a warning otherwise.
 fn plan_process_files(
     root: &Path,
     config: &Config,
@@ -261,7 +274,7 @@ fn plan_process_files(
     let skill = process_text(
         &[
             "name: stapel".to_string(),
-            format!("description: {SKILL_DESCRIPTION}"),
+            format!("description: \"{SKILL_DESCRIPTION}\""),
         ],
         include_str!("../assets/skill.md"),
     );
@@ -270,11 +283,11 @@ fn plan_process_files(
         let binding = config.models.get(agent.role);
         let mut lines = vec![
             format!("name: stapel-{}", agent.name),
-            format!("description: {}", agent.description),
+            format!("description: \"{}\"", agent.description),
             format!("tools: {}", agent.tools),
         ];
         if let Some(b) = binding {
-            lines.push(format!("model: {}", b.model));
+            lines.push(format!("model: \"{}\"", b.model));
         }
         let mode = binding
             .and_then(|b| b.permission_mode.as_deref())
@@ -480,7 +493,7 @@ fn plan_ignore_index(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     Ok(())
 }
 
-/// Plans the stapel PreToolUse, PostToolUse and PostToolUseFailure hooks in
+/// Plans the stapel PreToolUse, PostToolUse, PostToolUseFailure and SessionStart hooks in
 /// `.claude/settings.json` as one write, keeping every other key and hook.
 fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
     let path = root.join(SETTINGS);
@@ -500,7 +513,7 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         .or_insert_with(|| json!({}))
         .as_object_mut()
         .ok_or(format!("{SETTINGS}: the hooks field must be an object"))?;
-    // Check all three arrays before changing anything, so a refusal leaves the value as read.
+    // Check all four arrays before changing anything, so a refusal leaves the value as read.
     for event in [
         "PreToolUse",
         "PostToolUse",

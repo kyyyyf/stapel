@@ -1,0 +1,25 @@
+# The coverage map of the spec process (CLAUDE.md, "The spec process", items 2 and 4). Ten categories, taken
+# as data from klc's config/coverage-taxonomy.yml, which took them from Spec Kit's /clarify. The author asks
+# questions per category; the spec reviewer marks each Clear, Partial or Missing. Changed only by a decision
+# recorded in .stapel/process-ledger.jsonl.
+categories:
+  - id: functional-scope
+    ask: Core goals, success criteria, non-goals, who acts.
+  - id: domain-data-model
+    ask: Entities, identity (what counts as the same thing), lifecycle, repeats and double entries, scale.
+  - id: interaction-ux
+    ask: What a person or agent runs and sees, error and empty states, exit codes.
+  - id: nfr
+    ask: Time, memory and size bounds; safety of the person's files; measurable targets.
+  - id: integration-external
+    ask: Every external system read or run; what each field taken from it means; its states (external-states.yml).
+  - id: edge-failure
+    ask: Boundaries, errors, recovery after a crash; bypass attempts inside the promise.
+  - id: constraints-tradeoffs
+    ask: Constraints that rule options out, trade-offs taken, load-bearing assumptions.
+  - id: terminology
+    ask: Defined terms used the same way in every section.
+  - id: completion-signals
+    ask: When the work is done; which tests prove each criterion.
+  - id: misc-placeholders
+    ask: Open questions and placeholders left; each answered, deferred with a reason, or removed.

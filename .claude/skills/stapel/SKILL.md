@@ -1,7 +1,7 @@
 ---
 name: stapel
-description: Carries a development ticket from description to merge with the stapel process.
-# stapel: 0.1.0 sha256:0d11cb6cf238a97ccbb10ebf256672b9ac008be2b54dc0b137170b4e8b47b380
+description: "Carries a development ticket from description to merge with the stapel process."
+# stapel: 0.1.0 sha256:d8da7c922d97ae574941207e8b472fe76903fab27d7ba1367145078d35f62eae
 ---
 # The stapel process
 
