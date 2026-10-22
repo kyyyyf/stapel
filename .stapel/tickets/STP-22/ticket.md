@@ -473,8 +473,47 @@ Route: full (tags `interface`, `guard`, `migration`), auto.
 
 ## Review
 
-TODO
+Spec review: one round by an external model (15 findings, 0 HIGH, 6 MEDIUM; 13 inside, 2 outside, both
+decided by the human). Drift review after every GREEN step of the tagged ticket (steps 1 to 9d: 54 records,
+0 HIGH); verification gaps became the coverage steps 7, 7b, 7c and 9c, text contradictions the fix steps 8,
+9b and 9d. After step 6 `ticket_drift` found the missing Abuse table (B-3). Code review round 1 by three
+reviewers (stapel-reviewer, an external model, stapel-drift on the whole ticket): 20 records, 0 HIGH, 9
+MEDIUM (7 inside, 2 outside); the human widened the promise to install the catalogues (E-3) and kept the
+ticket whole (DR-1); fixes in steps 9 to 9d. Code review round 2 by one stapel-reviewer on the diff since
+round 1: every patch fate done, one MEDIUM (R2-1, deferred to item 1.6). Deferred: D9D-1 (the builder's
+commit rule against a RED, to items 1.9 and 1.10), R2-1, B-2 (the Test plan is in no confirmed hash, to
+item 1.8), B-4 (builders' heredocs and scripts, to items 1.9 and 1.10). From step 7 on the steps were built
+by the installed `stapel-builder` and reviewed by `stapel-drift`; their text gaps (commit subjects, the
+whole-file rule) were found that way and fixed in steps 8 and 9b. Every finding with its fate is in
+`findings.jsonl`.
 
 ## Summary
 
-TODO
+`stapel init` installs the process as data: the skill `.claude/skills/stapel/SKILL.md`, the agents
+`stapel-builder`, `stapel-drift`, `stapel-reviewer` and `stapel-spec-reviewer` with their tools, model and
+permission mode, the two catalogues of `.stapel/config/`, and a SessionStart hook that names the skill and
+prints `stapel next`. Each file carries a marker with a hash; a re-run updates stapel's unchanged files and
+keeps edited, unmarked or newer ones with a warning. This repository runs on the installed files, and
+`CLAUDE.md` keeps only its own rules.
+
+Measures against STP-21 (the skill, rule 8):
+
+- Escaped defects of STP-21 found after its close: none known.
+- Code review HIGH and MEDIUM inside the promise: 8 over two rounds (STP-21: 5).
+- `ticket.md`: 51.7 KB (STP-21: 47.3 KB).
+- Size: about 416 source, 1 647 test and 277 text lines against an estimate of 350, 700 and 250 (DR-1); kept
+  whole by the human.
+- Tokens, measured: orchestrator output 208k, cache read 76.9M (STP-21: 82M) — far from the phase 1 target
+  of under 19.75M; builder 66k / 6.6M (STP-21: 83k / 13.0M); drift 12k / 0.3M; external 8k / 1.9M;
+  reviewer 5k / 0.2M. A `stapel-builder` run took about 20k to 40k tokens against about 60k for a
+  builder with a hand brief.
+- Wall time: 2026-10-21 about 15:20 UTC (`stapel new`) to 2026-10-22 about 11:30 UTC, with a night.
+
+Approval dialogs: about 14 (STP-21: 27) — `stapel ok` 5, `stapel findings import` 6 (one dialog shows at
+most 30 records, so 65 records took three), `stapel ledger add` 3, two scripts the human ran for
+`CLAUDE.md`. Two were avoidable: a ledger record withdrawn the same day, and a `stapel ok` for a brief that
+grew after the findings import.
+
+What improved: the installed agents work with a three-line request; the builder's tokens halved; dialogs
+fell by about half. What did not: the orchestrator's context stays the main cost; builders still wrote
+files through heredocs or scripts (four times); text reviews looped on wording for three rounds.
