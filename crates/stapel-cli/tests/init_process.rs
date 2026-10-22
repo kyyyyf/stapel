@@ -1018,6 +1018,38 @@ fn reviewer_mode_reaches_both_reviewers() {
     }
 }
 
+// AC-3, E-4: a changed `reviewer` model updates both reviewer files at the next init.
+#[test]
+fn model_change_updates_both_reviewers() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let text = replace_line(
+        read(dir, ".stapel/stapel.toml"),
+        "reviewer",
+        "reviewer = { provider = \"claude-code\", model = \"claude-opus-5-5[1m]\" }",
+    );
+    std::fs::write(dir.join(".stapel/stapel.toml"), text).unwrap();
+
+    let (stdout, _) = run_init(dir);
+    for rel in [AGENTS[2], AGENTS[3]] {
+        assert!(
+            stdout.lines().any(|l| l == format!("updated: {rel}")),
+            "{stdout}"
+        );
+        assert_eq!(
+            line_of(dir, rel, "model:").as_deref(),
+            Some("model: \"claude-opus-5-5[1m]\""),
+            "{rel}"
+        );
+        check_marker(dir, rel);
+    }
+    assert_eq!(stdout.matches("updated:").count(), 2, "{stdout}");
+}
+
 // AC-4, AC-5, D2-1: the refusals hold on `drift` and on `reviewer`, not only on `builder`.
 #[test]
 fn refusals_on_every_checked_role() {
