@@ -22,7 +22,8 @@ removing files; agents other than Claude Code; making the model follow the text.
 
 1. `init` writes the skill `.claude/skills/stapel/SKILL.md` and the agents `stapel-builder`,
    `stapel-drift`, `stapel-reviewer`, `stapel-spec-reviewer` under `.claude/agents/`, each with a marker
-   `# stapel: <version> sha256:<hash>` in its frontmatter.
+   `# stapel: <version> sha256:<hash>` in its frontmatter; when missing, it also writes the two catalogues
+   `.stapel/config/coverage-taxonomy.yml` and `external-states.yml` that the skill reads.
 2. Agents get `model` from `[models]`, `permissionMode` from a default or `permission_mode` (bypass and
    unknown values refuse, exit 1); reviewers are read-only, the builder has Edit, Write and Bash.
 3. A re-run creates missing files, updates stapel's unchanged ones, keeps edited, unmarked or newer ones
@@ -105,6 +106,12 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
 - 2026-10-22: Decision (the local hook, SR1-12, the human): in step 6 the orchestrator gives the human a
   command that removes this repository's local SessionStart hook from `.claude/settings.local.json`, so the
   context is not printed twice. Rejected: keep both hooks.
+- 2026-10-22: Decision (after code review round 1, the human): `init` also creates the two catalogues of
+  `.stapel/config/` when they are missing, since the skill and the spec reviewer read them (E-3; the promise
+  widens, Frame item 1). The ticket stays one ticket although its tests grew to about 1 500 lines against 700;
+  the source stays at about 400 lines, under the split point (DR-1). Recommended and taken: quoted YAML values
+  (R-1), the dropped rules back in the skill (R-2, R-3, E-1, E-2), the text contradictions fixed (D5-2, D8-2,
+  D8-3, E-6). Not promised: a symlinked parent folder (R-6), CRLF (E-9), files left after a failed write (E-5).
 
 ## Spec
 
@@ -130,11 +137,11 @@ Terms:
 | № | Criterion | Test |
 |---|---|---|
 | AC-1 | WHEN `stapel init` runs and no file and no symlink is at a process file's path THE command writes stapel's text to it, creating its folders, and prints `created: <path>`. | `init_process::creates_the_process_files` |
-| AC-2 | WHEN `init` writes an agent file THE frontmatter holds, in this order, `name: stapel-<agent>`, `description: <its text>`, `tools: <list>`, `model: <model of the role binding>` (left out when the role has no binding), `permissionMode: <mode>` and the marker line; the tools are `Read, Edit, Write, Bash, Grep, Glob` for the builder and `Read, Grep, Glob` for the others. Output: `golden/init_agent_frontmatter.txt`. | `init_process::agent_frontmatter`, `init_process::model_from_the_role`, `init_process::marker_holds_the_binary_version` |
-| AC-3 | WHEN the role binding has no `permission_mode` THE mode is `acceptEdits` for the builder and `default` for the other agents; WHEN it holds an allowed mode THE mode is that value. | `init_process::permission_mode_of_the_role`, `init_process::reviewer_mode_reaches_both_reviewers` |
+| AC-2 | WHEN `init` writes an agent file THE frontmatter holds, in this order, `name: stapel-<agent>`, `description: "<its text>"`, `tools: <list>`, `model: "<model of the role binding>"` (left out when the role has no binding; both values as double-quoted YAML strings), `permissionMode: <mode>` and the marker line; the tools are `Read, Edit, Write, Bash, Grep, Glob` for the builder and `Read, Grep, Glob` for the others. Output: `golden/init_agent_frontmatter.txt`. | `init_process::agent_frontmatter`, `init_process::model_from_the_role`, `init_process::marker_holds_the_binary_version` |
+| AC-3 | WHEN the role binding has no `permission_mode` THE mode is `acceptEdits` for the builder and `default` for the other agents; WHEN it holds an allowed mode THE mode is that value. | `init_process::permission_mode_of_the_role`, `init_process::reviewer_mode_reaches_both_reviewers`, `init_process::model_change_updates_both_reviewers` |
 | AC-4 | IF the binding of `builder`, `drift` or `reviewer` has `permission_mode` `bypassPermissions` THEN `init` prints `stapel: [models] <role>: permission_mode bypassPermissions is not allowed: it turns off the permission dialog for every call the guard lets through`; IF another value that is not an allowed mode THEN `stapel: [models] <role>: permission_mode "<value>" is not one of default, acceptEdits, auto, dontAsk, plan, manual`; exit 1, nothing written. | `init_process::refuses_a_bad_permission_mode`, `init_process::refusals_on_every_checked_role` |
 | AC-5 | IF the `model` of such a binding is empty, does not start with an ASCII letter or digit, or holds a character other than ASCII letters, digits, `.`, `_`, `-`, `:`, `/`, `[`, `]` THEN `init` prints `stapel: [models] <role>: model "<value>" cannot be written to an agent file`, exits 1 and writes nothing. | `init_process::refuses_a_bad_model` |
-| AC-6 | WHEN `init` writes the skill THE frontmatter holds `name: stapel`, `description: <its text>` and the marker line, in this order. | `init_process::skill_frontmatter` |
+| AC-6 | WHEN `init` writes the skill THE frontmatter holds `name: stapel`, `description: "<its text>"` and the marker line, in this order. | `init_process::skill_frontmatter` |
 | AC-7 | WHEN a process file is an unchanged file whose version is not greater than the binary's and its text differs from stapel's text THE command writes stapel's text and prints `updated: <path>`; WHEN the texts are equal it leaves the file and prints nothing for it. | `init_process::updates_an_unchanged_file`, `init_process::second_run_changes_nothing`, `init_process::hash_computed_by_hand` |
 | AC-8 | IF an existing process file is not an unchanged file (no marker line, a marker that is not valid, a hash that does not match, a symlink, dangling or not, not UTF-8) THEN `init` leaves it as it is and prints on stderr `warning: <path> is not the file stapel wrote; kept. Delete it and run stapel init to take stapel's text`; after such a warning the line `already set up: nothing changed` is not printed. | `init_process::keeps_an_edited_file`, `init_process::keeps_a_file_without_a_valid_marker`, `init_process::keeps_a_symlink_and_non_utf8`, `init_process::newer_file_with_a_wrong_hash` |
 | AC-9 | IF a process file is an unchanged file whose version is greater than the binary's THEN `init` leaves it and prints on stderr `warning: <path> was written by stapel <version>, newer than this stapel <own version>; kept`; after it the line `already set up: nothing changed` is not printed. | `init_process::keeps_a_newer_file`, `init_process::newer_file_alone`, `init_process::versions_compare_by_numbers` |
@@ -147,13 +154,16 @@ Terms:
 | AC-16 | WHEN the skill is written THE body holds `Spec changes inside the promise during the build are collected and confirmed by one stapel ok before code review; a change that widens the promise or changes a criterion's meaning stops the build until it is confirmed.` | `init_process::skill_text_holds_the_process` |
 | AC-17 | WHEN an agent file is written THE body holds the role lines of the cases table (row "Agent texts"). | `init_process::agent_texts_hold_their_rules`, `init_process::read_only_agents_say_so` |
 | AC-18 | WHEN `stapel init` runs in a new repository with this repository's `.stapel/stapel.toml` THE five process files it writes equal byte for byte the process files of this repository. | `init_process::this_repository_has_the_current_files` |
-| AC-19 | WHEN this repository's `CLAUDE.md` is read THE file has no heading `## The spec process` and no heading `## Build and review`, and holds `.claude/skills/stapel/SKILL.md`. | `init_process::claude_md_names_the_skill` |
+| AC-19 | WHEN this repository's `CLAUDE.md` is read THE file has no heading `## The spec process` and no heading `## Build and review`, and holds `.claude/skills/stapel/SKILL.md` and `crates/stapel-cli/tests/ticket_drift.rs`. | `init_process::claude_md_names_the_skill`, `init_process::claude_md_names_the_ticket_lint` |
 | AC-20 | WHEN the skill is written THE body holds `An untagged ticket gets the ticket lint and one stapel-reviewer; a tagged ticket gets stapel-reviewer, an external reviewer, and stapel-drift after each GREEN step that touches a criterion.`, `stapel ok runs only as one plain command whose permission dialog the person answers; stapel close is run by the person.`, `During the build you do not read the brief; before the spec review you run stapel brief only to check each step's size.` and `A ticket tagged guard or security has an Abuse table: each attempt of a careless agent and its outcome.`, and no longer holds `Review before merge:`. | `init_process::skill_text_is_consistent` |
 | AC-21 | WHEN the builder agent file is written THE body holds `Never run git reset --hard, git stash or git checkout -- <file>.` | `init_process::builder_text_forbids_history_rewrites` |
+| AC-22 | WHEN `stapel init` runs and `.stapel/config/coverage-taxonomy.yml` or `.stapel/config/external-states.yml` does not exist THE command writes stapel's copy of that catalogue (equal to this repository's file) and prints `created: <path>`; an existing catalogue is never changed. | `init_process::installs_the_catalogues` |
+| AC-23 | WHEN the skill is written THE body holds `A GREEN commit that changes a criterion's meaning says spec change: AC-<n>, <reason> in its message; stapel check reads it.`, `For a tagged ticket, study the prior art (earlier tickets, other tools) before the questions.`, `stapel check runs the tests with the lock file as it is, so a stale lock file fails the check.`, `The other actions of stapel next name their own command or file; do what they name.` and a sentence that starts `The ticket lint fails when`. | `init_process::skill_text_keeps_the_old_rules` |
+| AC-24 | WHEN the builder agent file is written THE body holds `For green-step the RED exists: make only the GREEN.` and no longer holds `Run only the test command`. | `init_process::builder_text_for_green_step` |
 
 ### Guarantees
 
-- **Promised:** the Frame's promise, by AC-1 to AC-21; every file `init` wrote before this ticket, and its
+- **Promised:** the Frame's promise, by AC-1 to AC-24; every file `init` wrote before this ticket, and its
   labels, stay as they were (STP-14 labels included); a second run with nothing to change and no warning
   prints `already set up: nothing changed`; a new stapel version changes every marker, so this repository
   needs `stapel init` after a version bump, which AC-18 enforces; `permission_mode` is read only by `init`, so no other command reads or
@@ -218,6 +228,12 @@ starter configuration, each marker version written as `<version>` and each hash 
 | Read-only texts | the drift and spec reviewer bodies hold `no write access` and `run no builds`; the reviewer body too (D5-5) | `init_process::read_only_agents_say_so` |
 | Consistent skill | the four sentences of AC-20 are present and `Review before merge:` is absent (D5-1, D5-2) | `init_process::skill_text_is_consistent` |
 | Builder history | the sentence of AC-21 in the builder body (D5-3) | `init_process::builder_text_forbids_history_rewrites` |
+| Quoted values | the golden file holds `description: "…"` and `model: "…"`; a description with `: ` stays one string (R-1) | `init_process::agent_frontmatter` |
+| Catalogues | an empty repository: both catalogues created, equal to this repository's files; a second run with an edited catalogue: unchanged, no label (E-3) | `init_process::installs_the_catalogues` |
+| Model change | `init`, then the `reviewer` model changed in `stapel.toml`, `init` again: `updated:` for both reviewer files, the new model in each (E-4) | `init_process::model_change_updates_both_reviewers` |
+| Old rules | the sentences of AC-23 in the skill body (R-2, R-3, R-4, E-1, E-2) | `init_process::skill_text_keeps_the_old_rules` |
+| Green step | the sentences of AC-24 in the builder body (E-6, D8-2) | `init_process::builder_text_for_green_step` |
+| Ticket lint | this repository's `CLAUDE.md` names `crates/stapel-cli/tests/ticket_drift.rs` (E-2) | `init_process::claude_md_names_the_ticket_lint` |
 | CLAUDE.md | this repository's `CLAUDE.md`: no `## The spec process`, no `## Build and review`, the skill path present | `init_process::claude_md_names_the_skill` |
 
 ### Inputs
@@ -285,6 +301,9 @@ when the human applies `CLAUDE.md` (SR1-5) and removes the local hook (SR1-12); 
 one change: the Abuse table, which a `guard` ticket needs and the spec missed (`ticket_drift` found it after
 step 6); AC-9 suppresses `already set up` too (D3B-1); coverage steps 7, 7b and 7c; text fixes in step 8 with
 AC-20 and AC-21 (D5-1 to D5-3).
+2026-10-22, after code review round 1 (reviewer, external, drift): 0 HIGH, 9 MEDIUM, 17 LOW; one change: AC-2
+and AC-6 quote their values, AC-22 installs the catalogues, AC-23 and AC-24 put the dropped rules back and
+fix the builder text, AC-19 names the lint file; steps 9, 9b and 9c; Design as built moved in.
 
 ## Design
 
@@ -320,7 +339,31 @@ AC-20 and AC-21 (D5-1 to D5-3).
 
 ### Decisions (as built)
 
-TODO
+- `crates/stapel-cli/src/init.rs`: `plan_process_files` plans the five files after the pre-push hook, in
+  the order of the term **Process file**; `check_bindings` checks `builder`, `drift` and `reviewer` (mode
+  first, then model) before any write; a directory at any process path refuses before any write.
+- The frontmatter is built in code; the marker is the last frontmatter line; its hash is the SHA-256 of the
+  text without the marker line and its `\n`; the version is `CARGO_PKG_VERSION`.
+- `plan_create_text` decides per file with `symlink_metadata`: nothing at the path, created; a symlink,
+  dangling or not, kept with the AC-8 warning; a regular file read as UTF-8 with a valid marker and a
+  matching hash, updated when its version is not greater and its text differs; greater, kept with the
+  AC-9 warning; any other file, kept with the AC-8 warning. A warning sets `kept`, and `run` prints
+  `already set up: nothing changed` only when the plan is empty and nothing was kept.
+- `unchanged_version` and `parse_version` read the marker; versions compare as numbers, and the newer
+  warning prints the parsed version (a marker `0.09.0` prints `0.9.0`).
+- The restart note is printed last when `.claude/agents` or `.claude/skills` was missing before planning.
+- `plan_hooks` adds the SessionStart entry in the same read and write as the other stapel hooks; a command
+  that contains `stapel hook session-start` counts as installed; the label
+  `appended: .claude/settings.json (stapel session hook)` only when the settings file existed and the
+  session hook is its only change.
+- `hook::session_start` takes the start folder from a non-empty `CLAUDE_PROJECT_DIR`, else the working
+  folder (an empty value counts as unset, D4B-1), finds the root with `stapel_root`, prints the first line
+  when `.stapel/stapel.toml` is a file there, then `stapel next:` and `next::text_at(root)` when that
+  succeeds; stdin is not read; a panic is caught; exit 0 always.
+- `next::run` prints the lines of a new `lines()`; `next::text_at(root)` serves the hook; `repo::load(root)`
+  is shared by `repo::open`. `next.rs` has one print site.
+- The bodies are `crates/stapel-cli/assets/skill.md` and `assets/agents/*.md`, taken in with
+  `include_str!`; this repository's installed copies are kept equal by AC-18.
 
 ## Proof
 
@@ -328,7 +371,7 @@ TODO
 |---|---|
 | AC-1 | `init_process::creates_the_process_files` |
 | AC-2 | `init_process::agent_frontmatter`, `init_process::model_from_the_role`, `init_process::marker_holds_the_binary_version` |
-| AC-3 | `init_process::permission_mode_of_the_role`, `init_process::reviewer_mode_reaches_both_reviewers` |
+| AC-3 | `init_process::permission_mode_of_the_role`, `init_process::reviewer_mode_reaches_both_reviewers`, `init_process::model_change_updates_both_reviewers` |
 | AC-4 | `init_process::refuses_a_bad_permission_mode`, `init_process::refusals_on_every_checked_role` |
 | AC-5 | `init_process::refuses_a_bad_model` |
 | AC-6 | `init_process::skill_frontmatter` |
@@ -344,9 +387,12 @@ TODO
 | AC-16 | `init_process::skill_text_holds_the_process` |
 | AC-17 | `init_process::agent_texts_hold_their_rules`, `init_process::read_only_agents_say_so` |
 | AC-18 | `init_process::this_repository_has_the_current_files` |
-| AC-19 | `init_process::claude_md_names_the_skill` |
+| AC-19 | `init_process::claude_md_names_the_skill`, `init_process::claude_md_names_the_ticket_lint` |
 | AC-20 | `init_process::skill_text_is_consistent` |
 | AC-21 | `init_process::builder_text_forbids_history_rewrites` |
+| AC-22 | `init_process::installs_the_catalogues` |
+| AC-23 | `init_process::skill_text_keeps_the_old_rules` |
+| AC-24 | `init_process::builder_text_for_green_step` |
 
 ## Plan
 
@@ -401,6 +447,18 @@ Route: full (tags `interface`, `guard`, `migration`), auto.
    `init_process::skill_text_is_consistent`, `init_process::builder_text_forbids_history_rewrites`): the assets
    change, and the GREEN runs the built `stapel init` here so that AC-18 holds. Must not change: the
    frontmatter, the sentences of AC-15 to AC-17.
+9. Fixes after code review round 1 in code (R-1, E-3, E-7, E-10; AC-2, AC-6, AC-22; tests
+   `init_process::agent_frontmatter`, `init_process::skill_frontmatter`, `init_process::installs_the_catalogues`): quoted
+   `description` and `model`, the two catalogues as assets under `crates/stapel-cli/assets/config/`, the stale
+   comments of `init.rs`; the RED changes the golden file; the GREEN runs the built `stapel init` here so that
+   AC-18 holds. Must not change: the marker rule and every other label.
+9b. Fixes after code review round 1 in the texts (R-2, R-3, R-4, R-7, E-1, E-2, E-6, D5-2, D8-2, D8-3; AC-19,
+   AC-23, AC-24; tests `init_process::skill_text_keeps_the_old_rules`, `init_process::builder_text_for_green_step`,
+   `init_process::claude_md_names_the_ticket_lint`): the drafts in `.stapel/scratch/stp22/texts/`; after the RED
+   the human applies the `CLAUDE.md` line with a script; the GREEN runs the built `stapel init` here. Must not
+   change: the sentences of AC-15, AC-16, AC-20 and AC-21.
+9c. Coverage after code review round 1 (E-4; AC-3): new `#[test]` function
+   `init_process::model_change_updates_both_reviewers`. Tests only, each helper nested inside its function.
 
 ## Review
 
