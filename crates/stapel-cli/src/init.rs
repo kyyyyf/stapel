@@ -78,7 +78,7 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
     plan_ignore_index(&root, &mut plan)?;
     plan_hooks(&root, &mut plan)?;
     plan_pre_push(&root, &mut plan)?;
-    plan_process_files(&root, &config, &mut plan);
+    plan_process_files(&root, &config, &mut plan)?;
 
     for step in &plan {
         let path = root.join(&step.rel);
@@ -179,8 +179,67 @@ fn process_text(lines: &[String], body: &str) -> String {
     rest
 }
 
+const ALLOWED_MODES: [&str; 6] = [
+    "default",
+    "acceptEdits",
+    "auto",
+    "dontAsk",
+    "plan",
+    "manual",
+];
+const AGENT_ROLES: [&str; 3] = ["builder", "drift", "reviewer"];
+
+/// Refuses a binding of an agent role whose mode or model cannot go into an agent file.
+fn check_bindings(config: &Config) -> Result<(), String> {
+    for role in AGENT_ROLES {
+        let Some(binding) = config.models.get(role) else {
+            continue;
+        };
+        match binding.permission_mode.as_deref() {
+            Some("bypassPermissions") => {
+                return Err(format!(
+                    "[models] {role}: permission_mode bypassPermissions is not allowed: it turns \
+                     off the permission dialog for every call the guard lets through"
+                ));
+            }
+            Some(mode) if !ALLOWED_MODES.contains(&mode) => {
+                return Err(format!(
+                    "[models] {role}: permission_mode \"{mode}\" is not one of {}",
+                    ALLOWED_MODES.join(", ")
+                ));
+            }
+            _ => {}
+        }
+        let model = &binding.model;
+        let first_ok = model
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric());
+        let rest_ok = model
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || ".:_-/[]".contains(c));
+        if !first_ok || !rest_ok {
+            return Err(format!(
+                "[models] {role}: model \"{model}\" cannot be written to an agent file"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Plans the skill and the agent files that are missing.
-fn plan_process_files(root: &Path, config: &Config, plan: &mut Vec<Step>) {
+fn plan_process_files(root: &Path, config: &Config, plan: &mut Vec<Step>) -> Result<(), String> {
+    check_bindings(config)?;
+    let paths = std::iter::once(SKILL_PATH.to_string()).chain(
+        AGENT_FILES
+            .iter()
+            .map(|a| format!(".claude/agents/stapel-{}.md", a.name)),
+    );
+    for rel in paths {
+        if std::fs::symlink_metadata(root.join(&rel)).is_ok_and(|m| m.is_dir()) {
+            return Err(format!("{rel} is a directory; nothing was written"));
+        }
+    }
     let skill = process_text(
         &[
             "name: stapel".to_string(),
@@ -211,6 +270,7 @@ fn plan_process_files(root: &Path, config: &Config, plan: &mut Vec<Step>) {
             plan,
         );
     }
+    Ok(())
 }
 
 /// Plans `rel` when nothing is at its path, not even a symlink.
