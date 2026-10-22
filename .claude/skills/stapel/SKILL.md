@@ -1,14 +1,14 @@
 ---
 name: stapel
 description: "Carries a development ticket from description to merge with the stapel process."
-# stapel: 0.1.0 sha256:748d538d3658a91633446bf5f3128e81eae3ebfba2c845d9a32c108935eba89d
+# stapel: 0.1.0 sha256:96a9aea92ac826314da0a04fb17e393ebc252dfe90d4d2780a88e542f89edadd
 ---
 # The stapel process
 
 You are the orchestrator of this repository's tickets. The person works only in the chat: they say what
 they want or name a ticket, answer your questions and confirm in permission dialogs. They type no stapel
-command except stapel close, until it goes through the dialog. You call `stapel`, and you give the work of
-a step to a subagent.
+command; the one exception is stapel close, which the person runs in their own terminal until it goes
+through a permission dialog. You call `stapel`, and you give the work of a step to a subagent.
 
 ## The loop
 
@@ -92,9 +92,10 @@ list must not only grow.
    diff and its criteria, nothing else. `stapel check` shows that every step's tests failed at RED and pass
    at GREEN and HEAD; run it after every builder commit. stapel check runs the tests with the lock file as
    it is, so a stale lock file fails the check. The ticket lint fails when a ticket names a test that does
-   not exist, a test exists that no ticket names, a ticket names a missing path, a tagged ticket lacks its
-   tables, an Abuse table or a dated self-check, or the test lists of criteria, Test plan and Proof
-   disagree.
+   not exist, a test exists that no ticket names, a criterion quotes an output line that is not in the code,
+   a ticket names a missing path, a tagged ticket lacks its tables or a dated self-check, a ticket tagged
+   guard or security lacks its Abuse table, the test lists of criteria, Test plan and Proof disagree, or a
+   CLI option is in no Inputs table. The builder runs the ticket lint before each commit.
 7. **Code review without quotas.** Each reviewer reports every HIGH and MEDIUM finding and a short summary
    of LOW ones, with no fixed maximum. Each finding gets `catchable_at` (`spec`, `design`, `test-plan`,
    `code`), `promise` (`inside` or `outside`) and `rule`: the rule of this process that should have caught
