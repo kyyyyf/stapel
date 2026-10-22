@@ -736,3 +736,105 @@ fn session_hook_line_without_stapel() {
     assert!(out.stdout.is_empty(), "{:?}", out.stdout);
     assert!(out.stderr.is_empty(), "{:?}", out.stderr);
 }
+
+/// The body of a process file: the text after its frontmatter, whitespace collapsed to single spaces.
+fn body_of(dir: &Path, rel: &str) -> String {
+    let text = read(dir, rel);
+    let fm = frontmatter(&text);
+    let rest: Vec<&str> = text.lines().skip(fm.len()).collect();
+    rest.join("\n")
+}
+
+fn collapsed(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+// AC-15, AC-16: the skill body has the four headings, nine numbered rules under the spec process and
+// the two exact sentences.
+#[test]
+fn skill_text_holds_the_process() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let body = body_of(dir, SKILL);
+
+    for heading in [
+        "## The loop",
+        "## How work is done",
+        "## The spec process",
+        "## Build and review",
+    ] {
+        assert!(body.lines().any(|l| l == heading), "no heading {heading:?}");
+    }
+
+    let mut numbers = Vec::new();
+    let mut inside = false;
+    for line in body.lines() {
+        if line.starts_with("## ") {
+            inside = line == "## The spec process";
+        } else if inside {
+            if let Some((n, _)) = line.split_once(". ") {
+                if let Ok(n) = n.parse::<u32>() {
+                    numbers.push(n);
+                }
+            }
+        }
+    }
+    assert_eq!(numbers, (1..=9).collect::<Vec<u32>>());
+
+    let flat = collapsed(&body);
+    for sentence in [
+        "Before the spec review, run stapel brief on every Plan step and split the steps it refuses.",
+        "Spec changes inside the promise during the build are collected and confirmed by one stapel ok before code review; a change that widens the promise or changes a criterion's meaning stops the build until it is confirmed.",
+    ] {
+        assert!(flat.contains(sentence), "missing {sentence:?}");
+    }
+}
+
+// AC-17: each agent body holds the role lines.
+#[test]
+fn agent_texts_hold_their_rules() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let roles: [(&str, &[&str]); 4] = [
+        (
+            AGENTS[0],
+            &[
+                "stapel brief",
+                "GREEN never changes files under tests/",
+                "Write files with Edit or Write, never with sed, cat or a redirection",
+                "Never git push",
+                "never switch branches",
+                "never run stapel ok or stapel close",
+            ],
+        ),
+        (AGENTS[1], &["only the step's diff and its criteria"]),
+        (
+            AGENTS[2],
+            &[
+                "You work on a copy",
+                "run no builds",
+                "catchable_at",
+                "deletion check",
+                "claims check",
+                "verification gap",
+            ],
+        ),
+        (
+            AGENTS[3],
+            &[
+                "first read only the Frame and the criteria",
+                "Clear, Partial or Missing",
+                "inside",
+                "outside",
+            ],
+        ),
+    ];
+    for (rel, phrases) in roles {
+        let flat = collapsed(&body_of(dir, rel));
+        for phrase in phrases {
+            assert!(flat.contains(phrase), "{rel}: missing {phrase:?}");
+        }
+    }
+}
