@@ -81,6 +81,33 @@ fn next_fails() {
     assert_eq!(String::from_utf8(out).unwrap(), LINE);
 }
 
+// AC-13 (D4B-3): a stapel.toml that cannot be read gives only the first line.
+#[test]
+fn unreadable_config() {
+    let repo = stapel_repo();
+    let dir = repo.path();
+    let toml = dir.join(".stapel/stapel.toml");
+    let run = || {
+        let out = stapel(dir)
+            .args(["hook", "session-start"])
+            .assert()
+            .code(0)
+            .get_output()
+            .stdout
+            .clone();
+        String::from_utf8(out).unwrap()
+    };
+
+    // A file that is not UTF-8: only the first line.
+    std::fs::write(&toml, b"[ticket]\nprefix = \"\xff\"\n").unwrap();
+    assert_eq!(run(), LINE);
+
+    // A folder at that path is no file: the hook is silent (AC-14).
+    std::fs::remove_file(&toml).unwrap();
+    std::fs::create_dir(&toml).unwrap();
+    assert_eq!(run(), "");
+}
+
 // AC-14
 #[test]
 fn silent_outside_a_stapel_repository() {

@@ -1131,3 +1131,179 @@ fn newer_file_with_a_wrong_hash() {
     assert!(!stdout.contains("already set up"), "{stdout}");
     assert_eq!(read(dir, AGENTS[3]), edited);
 }
+
+// AC-12 (D4-2): a foreign SessionStart command that contains the session command counts as installed.
+#[test]
+fn session_hook_inside_a_wrapper() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+
+    let mut s = settings_json(dir);
+    s["hooks"]["SessionStart"] = serde_json::json!([{
+        "matcher": "startup",
+        "hooks": [{ "type": "command", "command": "my-wrapper; stapel hook session-start" }]
+    }]);
+    let text = serde_json::to_string_pretty(&s).unwrap() + "\n";
+    std::fs::write(dir.join(SETTINGS), &text).unwrap();
+
+    let stdout = init_in(dir);
+    assert!(!stdout.contains("session hook"), "{stdout}");
+    assert!(!stdout.contains(".claude/settings.json"), "{stdout}");
+    assert_eq!(read(dir, SETTINGS), text);
+}
+
+// AC-12 (D4-3): the session hook label is only for a run that changes nothing else in the file.
+#[test]
+fn session_hook_labels_with_other_changes() {
+    let repo = git_repo();
+    let dir = repo.path();
+    let stdout = init_in(dir);
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l == "created: .claude/settings.json"),
+        "{stdout}"
+    );
+
+    // The bare PreToolUse line of an earlier version, and no SessionStart at all.
+    let mut s = settings_json(dir);
+    s["hooks"]["PreToolUse"][0]["hooks"][0]["command"] =
+        serde_json::json!("stapel hook pre-tool-use");
+    s["hooks"].as_object_mut().unwrap().remove("SessionStart");
+    std::fs::write(
+        dir.join(SETTINGS),
+        serde_json::to_string_pretty(&s).unwrap(),
+    )
+    .unwrap();
+
+    let stdout = init_in(dir);
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l == "updated: .claude/settings.json (stapel hook line)"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("session hook"), "{stdout}");
+    let after = settings_json(dir);
+    assert_eq!(
+        after["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+        SESSION_LINE
+    );
+    assert_ne!(
+        after["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+        "stapel hook pre-tool-use"
+    );
+}
+
+// AC-12 (D4-4, D4-6): a foreign entry in each of the four events stays in place; the local settings
+// file is not touched.
+#[test]
+fn session_hook_keeps_every_event() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+
+    let events = [
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "SessionStart",
+    ];
+    let mut s = settings_json(dir);
+    let mut foreign = Vec::new();
+    for event in events {
+        let entry = serde_json::json!({
+            "matcher": "Bash",
+            "hooks": [{ "type": "command", "command": format!("echo foreign {event}") }]
+        });
+        s["hooks"][event]
+            .as_array_mut()
+            .unwrap()
+            .insert(0, entry.clone());
+        foreign.push(entry);
+    }
+    // The stapel session entry is missing, so the run has one thing to add.
+    s["hooks"]["SessionStart"]
+        .as_array_mut()
+        .unwrap()
+        .truncate(1);
+    std::fs::write(
+        dir.join(SETTINGS),
+        serde_json::to_string_pretty(&s).unwrap(),
+    )
+    .unwrap();
+    let local = b"{ \"permissions\": {\"allow\": [ \"Bash(ls)\" ]},\n  \"x\":1 }";
+    std::fs::write(dir.join(".claude/settings.local.json"), local).unwrap();
+
+    let stdout = init_in(dir);
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l == "appended: .claude/settings.json (stapel session hook)"),
+        "{stdout}"
+    );
+    let after = settings_json(dir);
+    for (event, entry) in events.iter().zip(&foreign) {
+        assert_eq!(&after["hooks"][event][0], entry, "{event}");
+    }
+    assert_eq!(after["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
+    assert_eq!(after["hooks"]["PostToolUse"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        after["hooks"]["PostToolUseFailure"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let session = after["hooks"]["SessionStart"].as_array().unwrap();
+    assert_eq!(session.len(), 2, "{session:?}");
+    assert_eq!(session[1]["hooks"][0]["command"], SESSION_LINE);
+    assert_eq!(
+        std::fs::read(dir.join(".claude/settings.local.json")).unwrap(),
+        local
+    );
+}
+
+// AC-14 (D4-7): the installed line hides a failing stapel: empty stdout and stderr, exit 0.
+#[test]
+fn session_hook_line_with_a_failing_stapel() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let line = settings_json(dir)["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("the installed session line")
+        .to_string();
+
+    let bin = tempfile::tempdir().unwrap();
+    let fake = bin.path().join("stapel");
+    std::fs::write(&fake, "#!/bin/sh\necho boom >&2\nexit 3\n").unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let out = std::process::Command::new("/bin/sh")
+        .args(["-c", &line])
+        .env("PATH", bin.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{:?}", out.status);
+    assert!(out.stdout.is_empty(), "{:?}", out.stdout);
+    assert!(out.stderr.is_empty(), "{:?}", out.stderr);
+}
+
+// AC-17 (D5-5): the three read-only roles say they have no write access and run no builds.
+#[test]
+fn read_only_agents_say_so() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    for rel in [AGENTS[1], AGENTS[2], AGENTS[3]] {
+        let flat = collapsed(&body_of(dir, rel));
+        for phrase in ["no write access", "run no builds"] {
+            assert!(flat.contains(phrase), "{rel}: missing {phrase:?}");
+        }
+    }
+}
