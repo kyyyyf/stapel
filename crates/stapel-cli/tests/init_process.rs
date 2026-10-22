@@ -391,6 +391,214 @@ fn restart_note() {
     assert!(!stdout.contains("restart Claude Code"), "{stdout}");
 }
 
+const KEPT: &str =
+    "is not the file stapel wrote; kept. Delete it and run stapel init to take stapel's text";
+
+fn kept_warning(rel: &str) -> String {
+    format!("warning: {rel} {KEPT}")
+}
+
+fn run_init(dir: &Path) -> (String, String) {
+    let out = stapel(dir).arg("init").assert().success();
+    let out = out.get_output();
+    (
+        String::from_utf8(out.stdout.clone()).unwrap(),
+        String::from_utf8(out.stderr.clone()).unwrap(),
+    )
+}
+
+/// `rel` with its marker line replaced by `marker` (removed when `None`).
+fn with_marker(dir: &Path, rel: &str, marker: Option<&str>) -> String {
+    let text = read(dir, rel);
+    let line = frontmatter(&text)
+        .into_iter()
+        .find(|l| l.starts_with("# stapel:"))
+        .expect("marker");
+    let new = marker.map(|m| format!("{m}\n")).unwrap_or_default();
+    text.replacen(&format!("{line}\n"), &new, 1)
+}
+
+/// Rewrites `rel` as an unchanged file of `version` whose body has an extra line.
+fn make_version(dir: &Path, rel: &str, version: &str) {
+    let without = with_marker(dir, rel, None) + "A hand-made extra line.\n";
+    let digest: String = Sha256::digest(without.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let at = without.find("\n---\n").expect("frontmatter end") + 1;
+    let mut text = without;
+    text.insert_str(at, &format!("# stapel: {version} sha256:{digest}\n"));
+    std::fs::write(dir.join(rel), text).unwrap();
+}
+
+// AC-8: an edited file is kept with the warning; the other files are written; a run that has only
+// the warning does not say that nothing changed.
+#[test]
+fn keeps_an_edited_file() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let mut text = read(dir, AGENTS[0]);
+    text.push_str("one more line\n");
+    std::fs::write(dir.join(AGENTS[0]), &text).unwrap();
+    std::fs::remove_file(dir.join(AGENTS[1])).unwrap();
+
+    let (stdout, stderr) = run_init(dir);
+    assert!(
+        stderr.lines().any(|l| l == kept_warning(AGENTS[0])),
+        "{stderr}"
+    );
+    assert_eq!(read(dir, AGENTS[0]), text);
+    assert!(
+        stdout.contains(&format!("created: {}", AGENTS[1])),
+        "{stdout}"
+    );
+    assert!(dir.join(AGENTS[1]).is_file());
+
+    let (stdout, stderr) = run_init(dir);
+    assert!(
+        stderr.lines().any(|l| l == kept_warning(AGENTS[0])),
+        "{stderr}"
+    );
+    assert!(!stdout.contains("already set up"), "{stdout}");
+    assert_eq!(read(dir, AGENTS[0]), text);
+}
+
+// AC-8: no marker line, a marker that is not valid, two markers, a marker in the body only.
+#[test]
+fn keeps_a_file_without_a_valid_marker() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let line = frontmatter(&read(dir, AGENTS[0]))
+        .into_iter()
+        .find(|l| l.starts_with("# stapel:"))
+        .unwrap();
+    let hash = line.split_once("sha256:").unwrap().1.to_string();
+    let valid = format!("# stapel: 0.0.1 sha256:{hash}");
+    let cases: Vec<(&str, String)> = vec![
+        (SKILL, with_marker(dir, SKILL, None)),
+        (
+            AGENTS[0],
+            with_marker(
+                dir,
+                AGENTS[0],
+                Some(&format!("# stapel: 0.1 sha256:{hash}")),
+            ),
+        ),
+        (
+            AGENTS[1],
+            with_marker(
+                dir,
+                AGENTS[1],
+                Some(&format!("# stapel: 0.0.1 sha256:{}", hash.to_uppercase())),
+            ),
+        ),
+        (
+            AGENTS[2],
+            with_marker(dir, AGENTS[2], Some(&format!("{line}\n{valid}"))),
+        ),
+        (
+            AGENTS[3],
+            with_marker(dir, AGENTS[3], None) + &format!("{valid}\n"),
+        ),
+    ];
+    for (rel, text) in &cases {
+        std::fs::write(dir.join(rel), text).unwrap();
+    }
+
+    let (stdout, stderr) = run_init(dir);
+    for (rel, text) in &cases {
+        assert!(
+            stderr.lines().any(|l| l == kept_warning(rel)),
+            "{rel}: {stderr}"
+        );
+        assert_eq!(&read(dir, rel), text, "{rel}");
+    }
+    assert!(!stdout.contains("already set up"), "{stdout}");
+}
+
+// AC-8: a symlink (to a copy of stapel's text, or dangling) and a file that is not UTF-8.
+#[test]
+fn keeps_a_symlink_and_non_utf8() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let outside = tempfile::tempdir().unwrap();
+    let copy = outside.path().join("copy.md");
+    std::fs::write(&copy, read(dir, AGENTS[0])).unwrap();
+    let dangling = outside.path().join("missing.md");
+    let mut bytes = read(dir, AGENTS[2]).into_bytes();
+    bytes.push(0xff);
+
+    std::fs::remove_file(dir.join(AGENTS[0])).unwrap();
+    std::os::unix::fs::symlink(&copy, dir.join(AGENTS[0])).unwrap();
+    std::fs::remove_file(dir.join(AGENTS[1])).unwrap();
+    std::os::unix::fs::symlink(&dangling, dir.join(AGENTS[1])).unwrap();
+    std::fs::write(dir.join(AGENTS[2]), &bytes).unwrap();
+
+    let (stdout, stderr) = run_init(dir);
+    for rel in [AGENTS[0], AGENTS[1], AGENTS[2]] {
+        assert!(
+            stderr.lines().any(|l| l == kept_warning(rel)),
+            "{rel}: {stderr}"
+        );
+    }
+    assert!(!stdout.contains("already set up"), "{stdout}");
+    assert!(
+        std::fs::symlink_metadata(dir.join(AGENTS[0]))
+            .unwrap()
+            .is_symlink()
+    );
+    assert!(
+        std::fs::symlink_metadata(dir.join(AGENTS[1]))
+            .unwrap()
+            .is_symlink()
+    );
+    assert!(!dangling.exists(), "written through a dangling symlink");
+    assert_eq!(std::fs::read(dir.join(AGENTS[2])).unwrap(), bytes);
+}
+
+// AC-9: an unchanged file of a greater version is kept with a warning; a version that is smaller
+// by its numbers (0.0.10 against 0.1.x) is updated.
+#[test]
+fn keeps_a_newer_file() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    make_version(dir, AGENTS[0], "999.0.0");
+    make_version(dir, AGENTS[1], "0.0.10");
+    let newer = read(dir, AGENTS[0]);
+
+    let (stdout, stderr) = run_init(dir);
+    let own = env!("CARGO_PKG_VERSION");
+    let warning = format!(
+        "warning: {} was written by stapel 999.0.0, newer than this stapel {own}; kept",
+        AGENTS[0]
+    );
+    assert!(stderr.lines().any(|l| l == warning), "{stderr}");
+    assert_eq!(read(dir, AGENTS[0]), newer);
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l == format!("updated: {}", AGENTS[1])),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("already set up"), "{stdout}");
+}
+
 // AC-10: a directory at a process file's path refuses before any write.
 #[test]
 fn refuses_a_directory() {
