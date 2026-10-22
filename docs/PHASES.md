@@ -236,7 +236,9 @@ dialog each and without manual intervention in the machine files, and the orches
 read per ticket is under half of STP-19 (39.5M).
 
 **Items, in order.** Order changed on 2026-10-21 (ledger): 1.3, 1.5, 1.8, 1.4, 1.6, 1.7, 1.9 to 1.12, so
-that the items that cut the person's approval dialogs come first; the numbers stay as labels.
+that the items that cut the person's approval dialogs come first; the numbers stay as labels. Changed on
+2026-10-22 (ledger): 1.9 and 1.10 are one ticket; 1.11 takes the light route or joins 1.12; the frame and
+spec of the next item may be written in a second worktree while the current ticket builds.
 
 - 1.1 (STP-20) `stapel next [KEY]`: the next action computed from `state.json`, the Plan steps, `check --history`,
   `runs.jsonl` and `findings.jsonl`; one line of action plus the command or the path (`--json` for the
@@ -283,9 +285,11 @@ that the items that cut the person's approval dialogs come first; the numbers st
   the dialog with its grant, as `ok` (today it needs the person's terminal).
 - 1.9 the guard denies Bash commands that write into `crates/` (label STP-20, text in the phase-0 list).
 - 1.10 the guard denies a compound command, a pipe or a redirection that holds a confirm or record command
-  (label STP-21).
+  (label STP-21). Taken with 1.9 as one guard ticket (ledger 2026-10-22).
 - 1.11 `stapel check` and the commit hook walk only `base..HEAD` (label STP-22; the pilot repository has a
-  long history).
+  long history); a commit that touches only `docs/`, the process ledger or a ticket's `tokens.jsonl` does
+  not make a check stale (ledger 2026-10-22). Light route when its investigation shows about 100 mechanical
+  lines and no risk tag; else taken with 1.12.
 - 1.12 the `junit` runner: `[check] runner = "junit"`, `command` (a template with `{tests}`), `report`
   (the XML path), a timeout; test identity `<file>::<name>`; the outcomes of STP-4 and STP-14 unchanged;
   `lint` finds TypeScript tests by name.
@@ -401,7 +405,9 @@ repository; the level-3 page produced for one ticket and read by a person who re
 **Items.** 3.1 `context.md` and the question option "holds for the repository"; 3.2 the guards folder, the
 ratchet and `check` running them; 3.3 the dependency dialog and the API snapshot; 3.4 autonomy levels 1 and
 2; 3.5 level 3, the human page; 3.6 `bug` and `spike`. Details are fixed at the end of phase 2 from the
-pilot's findings.
+pilot's findings. Changed on 2026-10-22 (ledger): phase 3 starts when the third pilot ticket merges, while
+the four-week count of escaped defects runs; the items are taken as three tickets: 3.1 with 3.6, 3.2 with
+3.3, 3.4 with 3.5.
 
 ---
 
@@ -411,7 +417,11 @@ Unchanged in content from the earlier phase 2, moved after the pilot: the pilot'
 where the index pays. Included: `stapel-index` with adapters for TypeScript and Rust; `stapel q` (`symbol`,
 `refs`, `callers`, `tests`, `impact`); blast radius, which also feeds the review map of `ship`; selective
 test runs per step with a full run before `ship`; the MCP server with the same queries; context packs
-assembled within a budget. Acceptance criteria as before: `impact` matches a manual sample, imprecise
+assembled within a budget. Taken as three tickets (ledger 2026-10-22): the index with `stapel q` first,
+then `impact` with selective runs, then MCP with context packs. The selective-runs ticket also decides the
+frequency of the full `stapel check` (ledger 2026-10-22: the builder runs the whole suite before GREEN; a
+full check after a step only when it changes existing tests or shared test helpers; otherwise before code
+review and before the close). Acceptance criteria as before: `impact` matches a manual sample, imprecise
 answers marked, incremental re-indexing, selective and full runs in `runs.jsonl`, savings measured on three
 tickets.
 
