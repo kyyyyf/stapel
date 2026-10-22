@@ -554,16 +554,12 @@ fn keeps_a_symlink_and_non_utf8() {
         );
     }
     assert!(!stdout.contains("already set up"), "{stdout}");
-    assert!(
-        std::fs::symlink_metadata(dir.join(AGENTS[0]))
-            .unwrap()
-            .is_symlink()
-    );
-    assert!(
-        std::fs::symlink_metadata(dir.join(AGENTS[1]))
-            .unwrap()
-            .is_symlink()
-    );
+    assert!(std::fs::symlink_metadata(dir.join(AGENTS[0]))
+        .unwrap()
+        .is_symlink());
+    assert!(std::fs::symlink_metadata(dir.join(AGENTS[1]))
+        .unwrap()
+        .is_symlink());
     assert!(!dangling.exists(), "written through a dangling symlink");
     assert_eq!(std::fs::read(dir.join(AGENTS[2])).unwrap(), bytes);
 }
@@ -619,4 +615,124 @@ fn refuses_a_directory() {
     for rel in std::iter::once(SKILL).chain(AGENTS) {
         assert!(!dir.join(rel).is_file(), "{rel}");
     }
+}
+
+const SETTINGS: &str = ".claude/settings.json";
+const SESSION_LINE: &str =
+    "command -v stapel >/dev/null 2>&1 || exit 0; stapel hook session-start 2>/dev/null || exit 0";
+
+fn settings_json(dir: &Path) -> serde_json::Value {
+    serde_json::from_str(&read(dir, SETTINGS)).unwrap()
+}
+
+fn init_in(dir: &Path) -> String {
+    let out = stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    String::from_utf8(out.get_output().stdout.clone()).unwrap()
+}
+
+// AC-12: a fresh install adds the SessionStart entry; a second run adds none.
+#[test]
+fn installs_the_session_hook() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+
+    let s = settings_json(dir);
+    let entries = s["hooks"]["SessionStart"].as_array().expect("SessionStart");
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0]["matcher"], "startup|clear|compact");
+    let hooks = entries[0]["hooks"].as_array().unwrap();
+    assert_eq!(hooks.len(), 1);
+    assert_eq!(hooks[0]["type"], "command");
+    assert_eq!(hooks[0]["command"], SESSION_LINE);
+    assert_eq!(hooks[0]["timeout"], 10);
+
+    let before = read(dir, SETTINGS);
+    init_in(dir);
+    assert_eq!(read(dir, SETTINGS), before);
+    assert_eq!(
+        settings_json(dir)["hooks"]["SessionStart"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+// AC-12: a foreign SessionStart entry stays; the session hook alone gets its own label; a
+// SessionStart that is not an array refuses and leaves the file as it was.
+#[test]
+fn session_hook_next_to_others() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+
+    let mut s = settings_json(dir);
+    let foreign = serde_json::json!({
+        "matcher": "startup",
+        "hooks": [{ "type": "command", "command": "echo foreign" }]
+    });
+    s["hooks"]["SessionStart"] = serde_json::json!([foreign]);
+    s["theme"] = serde_json::json!("dark");
+    std::fs::write(
+        dir.join(SETTINGS),
+        serde_json::to_string_pretty(&s).unwrap(),
+    )
+    .unwrap();
+
+    let stdout = init_in(dir);
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l == "appended: .claude/settings.json (stapel session hook)"),
+        "{stdout}"
+    );
+    let after = settings_json(dir);
+    let entries = after["hooks"]["SessionStart"].as_array().unwrap();
+    assert_eq!(entries.len(), 2, "{entries:?}");
+    assert_eq!(entries[0], foreign);
+    assert_eq!(entries[1]["hooks"][0]["command"], SESSION_LINE);
+    assert_eq!(after["theme"], "dark");
+    assert_eq!(after["hooks"]["PreToolUse"], s["hooks"]["PreToolUse"]);
+    assert_eq!(after["hooks"]["PostToolUse"], s["hooks"]["PostToolUse"]);
+
+    let mut bad = after.clone();
+    bad["hooks"]["SessionStart"] = serde_json::json!({ "matcher": "x", "hooks": [] });
+    let start = serde_json::to_string_pretty(&bad).unwrap();
+    std::fs::write(dir.join(SETTINGS), &start).unwrap();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .code(1)
+        .stderr(contains(
+            "stapel: .claude/settings.json: the hooks.SessionStart field must be an array",
+        ));
+    assert_eq!(read(dir, SETTINGS), start);
+}
+
+// AC-14: the installed session line prints nothing and exits 0 when `stapel` is not on PATH.
+#[test]
+fn session_hook_line_without_stapel() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+
+    let s = settings_json(dir);
+    let line = s["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        .as_str()
+        .expect("the installed session line")
+        .to_string();
+    let empty = tempfile::tempdir().unwrap();
+    let out = std::process::Command::new("/bin/sh")
+        .args(["-c", &line])
+        .env("PATH", empty.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{:?}", out.status);
+    assert!(out.stdout.is_empty(), "{:?}", out.stdout);
+    assert!(out.stderr.is_empty(), "{:?}", out.stderr);
 }
