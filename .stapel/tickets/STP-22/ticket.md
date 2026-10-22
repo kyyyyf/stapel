@@ -7,8 +7,8 @@ of the spec process moves into the skill text).
 
 ### Frame
 
-**Problem.** The process lives in this repository's `CLAUDE.md` and in hand-written briefs, so a foreign
-repository gets the guard from `stapel init` but no process. `init` installs it as data.
+**Problem.** The process lives in `CLAUDE.md` and hand-written briefs; a foreign repository gets the
+guard from `stapel init` but no process. `init` installs it as data.
 
 **Plan item:** 1.3.
 
@@ -55,8 +55,8 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   stapel's unchanged file, which a re-run updates; a mismatch or no marker means the person's file, which
   is kept. Rejected: a version alone (a hand edit is lost on update); never overwrite (a new stapel never
   updates its files).
-- 2026-10-22: Decision (loading the skill, the human, recommended): a SessionStart hook prints one line
-  that names the skill and `stapel next`, because Claude Code cannot be made to load a skill and `init`
+- 2026-10-22: Decision (loading the skill, the human, recommended; its output refined by the hook output
+  decision below): a SessionStart hook prints one line that names the skill and `stapel next`, because Claude Code cannot be made to load a skill and `init`
   does not touch the person's `CLAUDE.md`. Rejected: a marked block in `CLAUDE.md`; the skill description
   alone.
 - 2026-10-22: Decision (model and permission mode, the human, recommended): `model` from the role in
@@ -95,15 +95,24 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
 - 2026-10-22: Decision (restart, the human, recommended): when `init` creates `.claude/agents/` or
   `.claude/skills/`, it prints one line asking for a restart of Claude Code, since Claude Code does not
   see a new folder of agents until then. Rejected: no line.
+- 2026-10-22: Decision (after spec review round 1, recommended): 13 inside findings are patched or kept
+  with a reason (`.stapel/scratch/stp22/findings-sr1.jsonl`); no HIGH finding, so no second round. The
+  restart note stays keyed to `.claude/agents/` and `.claude/skills/`, because Claude Code picks up a new
+  skill in a skills folder it already watches (SR1-2); the STP-14 labels stay when the session hook is
+  added with another stapel hook (SR1-7).
+- 2026-10-22: Decision (provider, SR1-11, the human): the model of a role is written whatever its
+  provider. Rejected: only `claude-code` bindings; a refusal.
+- 2026-10-22: Decision (the local hook, SR1-12, the human): in step 6 the orchestrator gives the human a
+  command that removes this repository's local SessionStart hook from `.claude/settings.local.json`, so the
+  context is not printed twice. Rejected: keep both hooks.
 
 ## Spec
 
 Terms:
 
-- **Process file**: each of `.claude/skills/stapel/SKILL.md`, `.claude/agents/stapel-builder.md`,
-  `.claude/agents/stapel-drift.md`, `.claude/agents/stapel-reviewer.md` and
-  `.claude/agents/stapel-spec-reviewer.md`, paths relative to the repository root.
-- **Agent file**: a process file under `.claude/agents/`; its **agent** is the name after `stapel-`.
+- **Process file**: `.claude/skills/stapel/SKILL.md`, then `.claude/agents/stapel-<agent>.md` for the
+  agents `builder`, `drift`, `reviewer`, `spec-reviewer`, in this order, under the repository root.
+- **Agent file**: a process file under `.claude/agents/`.
 - **Frontmatter**: the lines after a first line `---` up to the next line `---`.
 - **Marker line**: a frontmatter line that starts with `# stapel:`.
 - **Valid marker**: exactly one marker line, of the form `# stapel: <a>.<b>.<c> sha256:<h>` with `a`, `b`,
@@ -112,28 +121,28 @@ Terms:
   SHA-256 of the file's bytes without the marker line and its `\n`.
 - **Stapel's text**: the text this binary writes to a process file: its frontmatter, the marker line of
   the binary's version (`CARGO_PKG_VERSION`) with the hash of the rest, and its body.
-- **Role binding**: the `[models]` entry of an agent's role in `.stapel/stapel.toml` (the starter text when
-  `init` creates it): `builder` for the builder, `drift` for the drift reviewer, `reviewer` for the
-  reviewer and the spec reviewer.
+- **Role binding**: the `[models]` entry of the agent's role (`builder`, `drift`, or `reviewer` for both
+  reviewers) in `.stapel/stapel.toml`, or in the starter text when `init` creates it.
 - **Allowed mode**: one of `default`, `acceptEdits`, `auto`, `dontAsk`, `plan`, `manual`.
+- **Session hook matcher**: startup|clear|compact (the literal value, no quotes).
 - **Session hook line**: `command -v stapel >/dev/null 2>&1 || exit 0; stapel hook session-start 2>/dev/null || exit 0`.
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN `stapel init` runs and a process file does not exist THE command writes stapel's text to it, creating its folders, and prints `created: <path>`. | `init_process::creates_the_process_files` |
+| AC-1 | WHEN `stapel init` runs and no file and no symlink is at a process file's path THE command writes stapel's text to it, creating its folders, and prints `created: <path>`. | `init_process::creates_the_process_files` |
 | AC-2 | WHEN `init` writes an agent file THE frontmatter holds, in this order, `name: stapel-<agent>`, `description: <its text>`, `tools: <list>`, `model: <model of the role binding>` (left out when the role has no binding), `permissionMode: <mode>` and the marker line; the tools are `Read, Edit, Write, Bash, Grep, Glob` for the builder and `Read, Grep, Glob` for the others. Output: `golden/init_agent_frontmatter.txt`. | `init_process::agent_frontmatter`, `init_process::model_from_the_role` |
 | AC-3 | WHEN the role binding has no `permission_mode` THE mode is `acceptEdits` for the builder and `default` for the other agents; WHEN it holds an allowed mode THE mode is that value. | `init_process::permission_mode_of_the_role` |
 | AC-4 | IF the binding of `builder`, `drift` or `reviewer` has `permission_mode` `bypassPermissions` THEN `init` prints `stapel: [models] <role>: permission_mode bypassPermissions is not allowed: it turns off the permission dialog for every call the guard lets through`; IF another value that is not an allowed mode THEN `stapel: [models] <role>: permission_mode "<value>" is not one of default, acceptEdits, auto, dontAsk, plan, manual`; exit 1, nothing written. | `init_process::refuses_a_bad_permission_mode` |
-| AC-5 | IF the `model` of such a binding is empty or holds a character other than ASCII letters, digits, `.`, `_`, `-`, `:`, `/`, `[`, `]` THEN `init` prints `stapel: [models] <role>: model "<value>" cannot be written to an agent file`, exits 1 and writes nothing. | `init_process::refuses_a_bad_model` |
+| AC-5 | IF the `model` of such a binding is empty, does not start with an ASCII letter or digit, or holds a character other than ASCII letters, digits, `.`, `_`, `-`, `:`, `/`, `[`, `]` THEN `init` prints `stapel: [models] <role>: model "<value>" cannot be written to an agent file`, exits 1 and writes nothing. | `init_process::refuses_a_bad_model` |
 | AC-6 | WHEN `init` writes the skill THE frontmatter holds `name: stapel`, `description: <its text>` and the marker line, in this order. | `init_process::skill_frontmatter` |
 | AC-7 | WHEN a process file is an unchanged file whose version is not greater than the binary's and its text differs from stapel's text THE command writes stapel's text and prints `updated: <path>`; WHEN the texts are equal it leaves the file and prints nothing for it. | `init_process::updates_an_unchanged_file`, `init_process::second_run_changes_nothing` |
-| AC-8 | IF an existing process file is not an unchanged file (no marker line, a marker that is not valid, a hash that does not match, a symlink, not UTF-8) THEN `init` leaves it as it is and prints on stderr `warning: <path> is not the file stapel wrote; kept. Delete it and run stapel init to take stapel's text`. | `init_process::keeps_an_edited_file`, `init_process::keeps_a_file_without_a_valid_marker`, `init_process::keeps_a_symlink_and_non_utf8` |
+| AC-8 | IF an existing process file is not an unchanged file (no marker line, a marker that is not valid, a hash that does not match, a symlink, dangling or not, not UTF-8) THEN `init` leaves it as it is and prints on stderr `warning: <path> is not the file stapel wrote; kept. Delete it and run stapel init to take stapel's text`; after such a warning the line `already set up: nothing changed` is not printed. | `init_process::keeps_an_edited_file`, `init_process::keeps_a_file_without_a_valid_marker`, `init_process::keeps_a_symlink_and_non_utf8` |
 | AC-9 | IF a process file is an unchanged file whose version is greater than the binary's THEN `init` leaves it and prints on stderr `warning: <path> was written by stapel <version>, newer than this stapel <own version>; kept`. | `init_process::keeps_a_newer_file` |
 | AC-10 | IF a process file's path is a directory THEN `init` prints `stapel: <path> is a directory; nothing was written` and exits 1 before any write. | `init_process::refuses_a_directory` |
 | AC-11 | WHEN `init` creates the folder `.claude/agents/` or `.claude/skills/` THE last line on stdout is `note: restart Claude Code so that it loads the new agents and skill`. | `init_process::restart_note` |
-| AC-12 | WHEN no hook command of `.claude/settings.json` contains `stapel hook session-start` THE command adds to `hooks.SessionStart` the entry with matcher `startup\|clear\|compact`, the session hook line and timeout 10, keeping every other key and entry; when this is the only change to the file the label is `appended: .claude/settings.json (stapel session hook)`, otherwise the labels of STP-14 stay. IF `hooks.SessionStart` is not an array THEN exit 1 with `stapel: .claude/settings.json: the hooks.SessionStart field must be an array`. | `init_process::installs_the_session_hook`, `init_process::session_hook_next_to_others` |
-| AC-13 | WHEN `stapel hook session-start` runs in a repository with `.stapel/stapel.toml` (found from `CLAUDE_PROJECT_DIR`, else the working folder) THE stdout is the line `This repository follows the stapel process: load the skill stapel and follow it.`, then, when `stapel next` succeeds there, the line `stapel next:` and its text output; exit 0. | `hook_session::prints_the_skill_line_and_next`, `hook_session::next_fails` |
-| AC-14 | IF the hook runs outside such a repository, or fails or panics THEN it prints nothing and exits 0; the session hook line with no `stapel` on PATH prints nothing and exits 0. | `hook_session::silent_outside_a_stapel_repository`, `init_process::session_hook_line_without_stapel` |
+| AC-12 | WHEN no hook command of `.claude/settings.json` contains `stapel hook session-start` THE command adds to `hooks.SessionStart` the entry with the session hook matcher, the session hook line and timeout 10, keeping every other key and entry; when this is the only change to the file the label is `appended: .claude/settings.json (stapel session hook)`, otherwise the labels of STP-14 stay. IF `hooks.SessionStart` is not an array THEN exit 1 with `stapel: .claude/settings.json: the hooks.SessionStart field must be an array`. | `init_process::installs_the_session_hook`, `init_process::session_hook_next_to_others` |
+| AC-13 | WHEN `stapel hook session-start` runs and `.stapel/stapel.toml` is a file in the repository of `CLAUDE_PROJECT_DIR`, else of the working folder, THE stdout is the line `This repository follows the stapel process: load the skill stapel and follow it.`, then, when `stapel next` succeeds there, the line `stapel next:` and its text output, and when it fails (an unreadable `stapel.toml` included) nothing more; exit 0. | `hook_session::prints_the_skill_line_and_next`, `hook_session::next_fails` |
+| AC-14 | IF no such file is found, or the hook panics before its first line, THEN it prints nothing and exits 0; the session hook line with no `stapel` on PATH prints nothing and exits 0. | `hook_session::silent_outside_a_stapel_repository`, `init_process::session_hook_line_without_stapel` |
 | AC-15 | WHEN the skill is written THE body has the headings `## The loop`, `## How work is done`, `## The spec process`, `## Build and review`, the nine rules of the spec process as a numbered list, the sentence of AC-16, and the sentence `Before the spec review, run stapel brief on every Plan step and split the steps it refuses.` | `init_process::skill_text_holds_the_process` |
 | AC-16 | WHEN the skill is written THE body holds `Spec changes inside the promise during the build are collected and confirmed by one stapel ok before code review; a change that widens the promise or changes a criterion's meaning stops the build until it is confirmed.` | `init_process::skill_text_holds_the_process` |
 | AC-17 | WHEN an agent file is written THE body holds the role lines of the cases table (row "Agent texts"). | `init_process::agent_texts_hold_their_rules` |
@@ -143,8 +152,9 @@ Terms:
 ### Guarantees
 
 - **Promised:** the Frame's promise, by AC-1 to AC-19; every file `init` wrote before this ticket, and its
-  labels, stay as they were (STP-14 labels included); a second run with nothing to change prints
-  `already set up: nothing changed`; `permission_mode` is read only by `init`, so no other command reads or
+  labels, stay as they were (STP-14 labels included); a second run with nothing to change and no warning
+  prints `already set up: nothing changed`; a new stapel version changes every marker, so this repository
+  needs `stapel init` after a version bump, which AC-18 enforces; `permission_mode` is read only by `init`, so no other command reads or
   refuses it.
 - **Not promised:** the Frame's list; a file with CRLF line ends (it reads as edited); a frontmatter that
   YAML would read differently from the line rule above; roles other than `builder`, `drift` and
@@ -158,25 +168,25 @@ Terms:
 CLI tests in two new files, `crates/stapel-cli/tests/init_process.rs` and
 `crates/stapel-cli/tests/hook_session.rs`, with `common::git_repo` and `common::stapel`. The golden file
 `crates/stapel-cli/tests/golden/init_agent_frontmatter.txt` holds the four agent frontmatters of the
-starter configuration, each marker hash written as `<hash>`. Every test runs the binary and asserts a
+starter configuration, each marker version written as `<version>` and each hash as `<hash>`. Every test runs the binary and asserts a
 `created:` line, a refusal text or a hook output, so no test passes before its code. Light tests:
 `cargo test -j 4 -p stapel-cli --test init_process -- --test-threads=3` (and `--test hook_session`,
 `--test init`, `--test hooks_install`); before each GREEN also `--test ticket_drift`.
 
 | Category | Cases | Tests |
 |---|---|---|
-| Main path | an empty repository, `init --prefix ABC`: five `created:` lines, each file starts with `---` and has a valid marker whose hash matches | `init_process::creates_the_process_files` |
-| Frontmatter | the starter configuration: the four frontmatters equal the golden file after the hash is replaced | `init_process::agent_frontmatter` |
-| Model | a configuration whose `reviewer` model is `claude-opus-5-5[1m]`: both reviewer files hold it; a configuration without `drift`: no `model:` line in the drift file | `init_process::model_from_the_role` |
+| Main path | `init --prefix ABC` in an empty repository: five `created:` lines, each file with a valid marker whose hash matches | `init_process::creates_the_process_files` |
+| Frontmatter | the starter configuration: the golden file, version and hash replaced | `init_process::agent_frontmatter` |
+| Model | `reviewer` model `claude-opus-5-5[1m]`: both reviewer files hold it; no `drift` binding: no `model:` line | `init_process::model_from_the_role` |
 | Mode | no key: `acceptEdits` and `default`; `drift` with `plan`, `builder` with `manual`: those values | `init_process::permission_mode_of_the_role` |
 | Bad mode | `bypassPermissions` on `builder`; `yolo` on `reviewer`; `Default` (case) on `drift`: exit 1, the text, no process file and no `.claude/settings.json` change; `bypassPermissions` on `author`: accepted | `init_process::refuses_a_bad_permission_mode` |
-| Bad model | `""`, `a b`, `x\npermissionMode: plan`, `x#y`: exit 1, the text, nothing written | `init_process::refuses_a_bad_model` |
+| Bad model | `""`, `[1m]`, `a b`, `x\npermissionMode: plan`, `x#y`: exit 1, the text, nothing written | `init_process::refuses_a_bad_model` |
 | Skill frontmatter | `name: stapel`, a `description:` line, a valid marker, in order | `init_process::skill_frontmatter` |
 | Update | a file written by `init`, then its body changed and its marker hash recomputed with version `0.0.1`: `updated: <path>` and stapel's text again | `init_process::updates_an_unchanged_file` |
-| Second run | `init` twice: the second prints `already set up: nothing changed`, files unchanged | `init_process::second_run_changes_nothing` |
-| Edited | one byte of the body changed: the warning on stderr, the file unchanged, the other files written | `init_process::keeps_an_edited_file` |
+| Second run | `init` twice: `already set up: nothing changed`, files unchanged | `init_process::second_run_changes_nothing` |
+| Edited | one byte of the body changed: the warning on stderr, the file unchanged, the other files written; a second run with only that warning: no `already set up` line | `init_process::keeps_an_edited_file` |
 | No valid marker | no marker line; `# stapel: 0.1 sha256:<h>`; uppercase hex; two marker lines; a valid marker line in the body only: each kept with the warning | `init_process::keeps_a_file_without_a_valid_marker` |
-| Symlink, encoding | a symlink to a copy of stapel's text; a file with a `0xff` byte: kept with the warning | `init_process::keeps_a_symlink_and_non_utf8` |
+| Symlink, encoding | a symlink to a copy of stapel's text; a dangling symlink to a path outside the repository (nothing is created there); a file with a `0xff` byte: kept with the warning | `init_process::keeps_a_symlink_and_non_utf8` |
 | Newer | a valid hash with version `999.0.0`: kept with the newer warning; version `0.0.10` with a valid hash and other text: `updated:` | `init_process::keeps_a_newer_file` |
 | Directory | `.claude/agents/stapel-builder.md/` a folder: exit 1, the text, no other process file and no `.stapel/` written | `init_process::refuses_a_directory` |
 | Restart | a first run: the last stdout line is the note; a run with both folders present and one file missing: no note | `init_process::restart_note` |
@@ -184,8 +194,8 @@ starter configuration, each marker hash written as `<hash>`. Every test runs the
 | Session hook next to others | settings with a foreign `SessionStart` entry and the STP-14 hooks: both kept, the label `appended: .claude/settings.json (stapel session hook)`; `SessionStart` an object: exit 1 | `init_process::session_hook_next_to_others` |
 | Hook line without stapel | the installed line run by `sh` with a PATH without `stapel`: empty stdout, exit 0 | `init_process::session_hook_line_without_stapel` |
 | Hook output | an initialised repository with an open ticket: the first line, `stapel next:`, the lines `ticket:` and `next:`; with `CLAUDE_PROJECT_DIR` set and the working folder elsewhere: the same | `hook_session::prints_the_skill_line_and_next` |
-| Next fails | `.stapel/stapel.toml` present, `next` refusing (two open tickets): only the first line, exit 0 | `hook_session::next_fails` |
-| Outside | a folder with no `.stapel/stapel.toml`; an unreadable `stapel.toml`: empty stdout, exit 0 | `hook_session::silent_outside_a_stapel_repository` |
+| Next fails | `.stapel/stapel.toml` present, `next` refusing (two open tickets); a `stapel.toml` that does not parse: only the first line, exit 0 | `hook_session::next_fails` |
+| Outside | a git repository with no `.stapel/stapel.toml`; a folder outside any repository: empty stdout, exit 0 | `hook_session::silent_outside_a_stapel_repository` |
 | Skill text | the headings, nine numbered rules under `## The spec process`, the sentences of AC-15 and AC-16 | `init_process::skill_text_holds_the_process` |
 | Agent texts | builder: `stapel brief`, `GREEN never changes files under tests/`, `Write files with Edit or Write, never with sed, cat or a redirection`, `Never git push`, `never switch branches`, `never run stapel ok or stapel close`; reviewer: `You work on a copy`, `run no builds`, `catchable_at`, `deletion check`, `claims check`, `verification gap`; drift: `only the step's diff and its criteria`; spec reviewer: `first read only the Frame and the criteria`, `Clear, Partial or Missing`, `inside` and `outside` | `init_process::agent_texts_hold_their_rules` |
 | This repository | a new repository with this repository's `.stapel/stapel.toml`, `init`: each process file equals this repository's | `init_process::this_repository_has_the_current_files` |
@@ -196,7 +206,7 @@ starter configuration, each marker hash written as `<hash>`. Every test runs the
 | Input | Type | Smallest / largest | Empty | Invalid | Precision | Test |
 |---|---|---|---|---|---|---|
 | `--prefix` of `init` | 2 to 8 uppercase Latin letters | as STP-1 | absent with a config: ignored | as STP-1 | exact | `init::rejects_bad_prefix` |
-| `[models].<role>.model` | string | one character | `""`: exit 1; no binding: no `model:` line | a character outside the list of AC-5: exit 1 | written as is | `init_process::refuses_a_bad_model`, `init_process::model_from_the_role` |
+| `[models].<role>.model` | string | one character | `""`: exit 1; no binding: no `model:` line | a first character that is not a letter or digit, a character outside the list of AC-5: exit 1 | written as is | `init_process::refuses_a_bad_model`, `init_process::model_from_the_role` |
 | `[models].<role>.permission_mode` | string | — | absent: the default of AC-3 | `bypassPermissions`, any value not an allowed mode (case counts): exit 1 | exact | `init_process::refuses_a_bad_permission_mode`, `init_process::permission_mode_of_the_role` |
 | a process file on disk | file | — | missing: created | a directory: exit 1; a symlink, not UTF-8, no valid marker, a wrong hash: kept with a warning | hash over bytes | `init_process::refuses_a_directory`, `init_process::keeps_a_symlink_and_non_utf8`, `init_process::keeps_a_file_without_a_valid_marker` |
 | marker version | `<a>.<b>.<c>` decimal | `0.0.0` | — | another form: not valid | numeric per part | `init_process::keeps_a_newer_file` |
@@ -223,7 +233,8 @@ starter configuration, each marker hash written as `<hash>`. Every test runs the
 **Review Focus:** a process file with CRLF line ends (reads as edited; not promised); a marker line inside
 the body only (kept; `init_process::keeps_a_file_without_a_valid_marker`); a model `inherit` (letters,
 accepted; `init_process::model_from_the_role` does not cover it, accepted by the character rule); a
-`.stapel/stapel.toml` without `[models]` (no `model:` lines; covered by the missing-role case); the hook run
+`.stapel/stapel.toml` without `[models]` (refused at the parse with exit 1, as `init` does today; not tested
+here); the hook run
 while `next` is slow (it runs `next` in the process; `next` reads no network; not tested).
 
 **Author self-check:** 2026-10-22, before spec review: every promise item has a criterion and a test
@@ -231,6 +242,12 @@ while `next` is slow (it runs `next` in the process; `next` reads no network; no
 AC-17; item 6: AC-18, AC-19); each input has its empty and invalid case; the rows were checked against
 `init.rs`, `hook.rs`, `config.rs` and the catalogue; every test runs the binary and asserts new output, or
 reads a file that this ticket changes; no open question is left.
+2026-10-22, after spec review round 1 (external): 0 HIGH, 6 MEDIUM, 9 LOW; 13 inside, 2 outside, both
+decided by the human. One change: the hook is silent only without `stapel.toml` (SR1-1); a dangling symlink
+is kept (SR1-6); a model starts with a letter or digit (SR1-13); the warning suppresses `already set up`
+(SR1-15); the matcher is a term (SR1-14); `second_run_changes_nothing` moves to step 1 (SR1-4); step 6 fixes
+when the human applies `CLAUDE.md` (SR1-5) and removes the local hook (SR1-12); the golden hides the version
+(SR1-8); Review Focus and Design corrected (SR1-3, SR1-9).
 
 ## Design
 
@@ -257,8 +274,9 @@ reads a file that this ticket changes; no open question is left.
   only `init` checks it.
 - The process files are planned after the pre-push hook, in the order of the term **Process file**; the
   folder note is printed after every label.
-- `stapel hook session-start` runs `next` in the same process through a function that returns its text
-  instead of printing it, so no second binary is started.
+- `stapel hook session-start` runs `next` in the same process through a function that takes the
+  repository root and returns its text instead of printing it, so no second binary is started and the root
+  found from `CLAUDE_PROJECT_DIR` is the one `next` reads.
 - The texts are drafted by the orchestrator in `.stapel/scratch/stp22/texts/` from `CLAUDE.md`, the ledger
   decision of 2026-10-21 and the briefs of STP-5 to STP-21 before step 5; the builder of step 5 copies them
   into `assets/` and adjusts them only to make its tests pass.
@@ -298,14 +316,13 @@ Route: full (tags `interface`, `guard`, `migration`), auto.
 1. The five process files are created with their frontmatter and marker, the bodies a placeholder line
    each (AC-1, AC-2, AC-3, AC-6; tests `init_process::creates_the_process_files`,
    `init_process::agent_frontmatter`, `init_process::model_from_the_role`,
-   `init_process::permission_mode_of_the_role`, `init_process::skill_frontmatter`). Must not change: the
-   other files of `init` and their labels (`tests/init.rs`, `tests/hooks_install.rs`).
+   `init_process::permission_mode_of_the_role`, `init_process::skill_frontmatter`,
+   `init_process::second_run_changes_nothing`). Must not change: the other files of `init` and their labels (`tests/init.rs`, `tests/hooks_install.rs`).
 2. Refusals of a role binding and of a directory (AC-4, AC-5, AC-10; tests
    `init_process::refuses_a_bad_permission_mode`, `init_process::refuses_a_bad_model`,
    `init_process::refuses_a_directory`). Must not change: the files of step 1.
 3. A re-run updates stapel's unchanged files, and the restart note (AC-7, AC-11; tests
-   `init_process::updates_an_unchanged_file`, `init_process::second_run_changes_nothing`,
-   `init_process::restart_note`). Must not change: a first run's files.
+   `init_process::updates_an_unchanged_file`, `init_process::restart_note`). Must not change: a first run's files.
 3b. A re-run keeps a file that is not stapel's unchanged file, or is newer, with a warning (AC-8, AC-9;
    tests `init_process::keeps_an_edited_file`, `init_process::keeps_a_file_without_a_valid_marker`,
    `init_process::keeps_a_symlink_and_non_utf8`, `init_process::keeps_a_newer_file`). Must not change: the
@@ -320,9 +337,10 @@ Route: full (tags `interface`, `guard`, `migration`), auto.
    `init_process::agent_texts_hold_their_rules`), copied from `.stapel/scratch/stp22/texts/`. Must not
    change: the frontmatter of step 1 except its hash.
 6. This repository gets the process files and a shorter `CLAUDE.md` (AC-18, AC-19; tests
-   `init_process::this_repository_has_the_current_files`, `init_process::claude_md_names_the_skill`). GREEN:
-   the builder runs `stapel init` here; the human applies the `CLAUDE.md` change with a script the
-   orchestrator writes under `.stapel/scratch/stp22/`. Must not change: the rules of `CLAUDE.md` that stay
+   `init_process::this_repository_has_the_current_files`, `init_process::claude_md_names_the_skill`). After the
+   RED commit the human applies the `CLAUDE.md` change with a script the orchestrator writes under
+   `.stapel/scratch/stp22/`, and removes the local SessionStart hook with a command the orchestrator gives;
+   then the builder runs `stapel init` here and the GREEN commit holds `CLAUDE.md` and the new files. Must not change: the rules of `CLAUDE.md` that stay
    (the plan, language, layout, private terms, thread limits, commit author).
 
 ## Review
