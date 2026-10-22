@@ -112,6 +112,9 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   the source stays at about 400 lines, under the split point (DR-1). Recommended and taken: quoted YAML values
   (R-1), the dropped rules back in the skill (R-2, R-3, R-4, E-1, E-2), the long lines rewrapped (R-7), the text contradictions fixed (D5-2, D8-2,
   D8-3, E-6). Not promised: a symlinked parent folder (R-6), CRLF (E-9), files left after a failed write (E-5).
+- 2026-10-22: Decision (after the drift review of step 9b, the human): the wording findings are fixed now, not
+  deferred (D9B-1, D9B-3, D9B-4, D9B-5; AC-25, step 9d); the lint runs before each commit in the skill and the
+  builder text; D9B-2 and D9B-6 are accepted without change.
 
 ## Spec
 
@@ -160,10 +163,11 @@ Terms:
 | AC-22 | WHEN `stapel init` runs and `.stapel/config/coverage-taxonomy.yml` or `.stapel/config/external-states.yml` does not exist THE command writes stapel's copy of that catalogue (equal to this repository's file) and prints `created: <path>`; an existing catalogue is never changed. | `init_process::installs_the_catalogues` |
 | AC-23 | WHEN the skill is written THE body holds `A GREEN commit that changes a criterion's meaning says spec change: AC-<n>, <reason> in its message; stapel check reads it.`, `For a tagged ticket, study the prior art (earlier tickets, other tools) before the questions.`, `stapel check runs the tests with the lock file as it is, so a stale lock file fails the check.`, `The other actions of stapel next name their own command or file; do what they name.` and a sentence that starts `The ticket lint fails when`. | `init_process::skill_text_keeps_the_old_rules` |
 | AC-24 | WHEN the builder agent file is written THE body holds `For green-step the RED exists: make only the GREEN.` and no longer holds `Run only the test command`. | `init_process::builder_text_for_green_step` |
+| AC-25 | WHEN the skill and the builder file are written THE skill body holds `They type no stapel command; the one exception is stapel close, which the person runs in their own terminal until it goes through a permission dialog.`, `The ticket lint fails when a ticket names a test that does not exist, a test exists that no ticket names, a criterion quotes an output line that is not in the code, a ticket names a missing path, a tagged ticket lacks its tables or a dated self-check, a ticket tagged guard or security lacks its Abuse table, the test lists of criteria, Test plan and Proof disagree, or a CLI option is in no Inputs table.` and `The builder runs the ticket lint before each commit.`, and the builder body holds `For green-step the RED exists: make only the GREEN. Skip item 1.` after its line that starts `2. GREEN` and holds `before each commit`. | `init_process::texts_agree_on_close_lint_and_green_step` |
 
 ### Guarantees
 
-- **Promised:** the Frame's promise, by AC-1 to AC-24; every file `init` wrote before this ticket, and its
+- **Promised:** the Frame's promise, by AC-1 to AC-25; every file `init` wrote before this ticket, and its
   labels, stay as they were (STP-14 labels included); a second run with nothing to change and no warning
   prints `already set up: nothing changed`; a new stapel version changes every marker, so this repository
   needs `stapel init` after a version bump, which AC-18 enforces; `permission_mode` is read only by `init`, so no other command reads or
@@ -233,6 +237,7 @@ starter configuration, each marker version written as `<version>` and each hash 
 | Model change | `init`, then the `reviewer` model changed in `stapel.toml`, `init` again: `updated:` for both reviewer files, the new model in each (E-4) | `init_process::model_change_updates_both_reviewers` |
 | Old rules | the sentences of AC-23 in the skill body (R-2, R-3, R-4, E-1, E-2) | `init_process::skill_text_keeps_the_old_rules` |
 | Green step | the sentences of AC-24 in the builder body (E-6, D8-2) | `init_process::builder_text_for_green_step` |
+| Texts agree | the sentences of AC-25; the green-step sentence after `2. GREEN` in the builder body (D9B-1, D9B-3, D9B-4, D9B-5) | `init_process::texts_agree_on_close_lint_and_green_step` |
 | Ticket lint | this repository's `CLAUDE.md` names `crates/stapel-cli/tests/ticket_drift.rs` (E-2) | `init_process::claude_md_names_the_ticket_lint` |
 | CLAUDE.md | this repository's `CLAUDE.md`: no `## The spec process`, no `## Build and review`, the skill path present | `init_process::claude_md_names_the_skill` |
 
@@ -304,6 +309,8 @@ AC-20 and AC-21 (D5-1 to D5-3).
 2026-10-22, after code review round 1 (reviewer, external, drift): 0 HIGH, 9 MEDIUM, 17 LOW; one change: AC-2
 and AC-6 quote their values, AC-22 installs the catalogues, AC-23 and AC-24 put the dropped rules back and
 fix the builder text, AC-19 names the lint file; steps 9, 9b and 9c; Design as built moved in.
+2026-10-22, after the drift review of step 9b: 6 findings on the wording (3 MEDIUM); the human chose to fix them
+now; AC-25 and step 9d.
 
 ## Design
 
@@ -393,6 +400,7 @@ fix the builder text, AC-19 names the lint file; steps 9, 9b and 9c; Design as b
 | AC-22 | `init_process::installs_the_catalogues` |
 | AC-23 | `init_process::skill_text_keeps_the_old_rules` |
 | AC-24 | `init_process::builder_text_for_green_step` |
+| AC-25 | `init_process::texts_agree_on_close_lint_and_green_step` |
 
 ## Plan
 
@@ -459,6 +467,9 @@ Route: full (tags `interface`, `guard`, `migration`), auto.
    change: the sentences of AC-15, AC-16, AC-20 and AC-21.
 9c. Coverage after code review round 1 (E-4; AC-3): new `#[test]` function
    `init_process::model_change_updates_both_reviewers`. Tests only, each helper nested inside its function.
+9d. Fixes after the drift review of step 9b (AC-25; test `init_process::texts_agree_on_close_lint_and_green_step`):
+   the drafts in `.stapel/scratch/stp22/texts/`; the GREEN runs the built `stapel init` here. Must not change:
+   the sentences of AC-15, AC-16, AC-20, AC-21, AC-23 and AC-24.
 
 ## Review
 
