@@ -1,7 +1,7 @@
 //! `stapel init`: the `.stapel/` layout in the repository root.
 
-use serde_json::{Value, json};
-use stapel_core::config::{Config, starter_toml, validate_prefix};
+use serde_json::{json, Value};
+use stapel_core::config::{starter_toml, validate_prefix, Config};
 use std::io::{BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,6 +25,12 @@ const POST_HOOK_LINE: &str =
 /// The hook events of the commit hook.
 const POST_HOOK_EVENTS: [&str; 2] = ["PostToolUse", "PostToolUseFailure"];
 const POST_HOOK_MATCHER: &str = "Bash";
+const SESSION_HOOK_COMMAND: &str = "stapel hook session-start";
+/// The installed SessionStart line: context, not a guard, so a missing, older or failing binary
+/// prints nothing.
+const SESSION_HOOK_LINE: &str =
+    "command -v stapel >/dev/null 2>&1 || exit 0; stapel hook session-start 2>/dev/null || exit 0";
+const SESSION_HOOK_MATCHER: &str = "startup|clear|compact";
 /// Marks the pre-push hook as ours.
 const PRE_PUSH_MARKER: &str = "# stapel: pre-push guard";
 /// Second layer against agent pushes: Claude Code sets CLAUDECODE in the shell it gives the
@@ -495,7 +501,12 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         .as_object_mut()
         .ok_or(format!("{SETTINGS}: the hooks field must be an object"))?;
     // Check all three arrays before changing anything, so a refusal leaves the value as read.
-    for event in ["PreToolUse", "PostToolUse", "PostToolUseFailure"] {
+    for event in [
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "SessionStart",
+    ] {
         if hooks.get(event).is_some_and(|v| !v.is_array()) {
             return Err(format!(
                 "{SETTINGS}: the hooks.{event} field must be an array"
@@ -514,7 +525,18 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
             post_added = true;
         }
     }
-    if !pre_upgraded && !pre_added && !post_added {
+    let session_added = {
+        let entries = hook_array(hooks, "SessionStart");
+        let missing = !has_command(entries, SESSION_HOOK_COMMAND);
+        if missing {
+            entries.push(json!({
+                "matcher": SESSION_HOOK_MATCHER,
+                "hooks": [{ "type": "command", "command": SESSION_HOOK_LINE, "timeout": HOOK_TIMEOUT }]
+            }));
+        }
+        missing
+    };
+    if !pre_upgraded && !pre_added && !post_added && !session_added {
         return Ok(());
     }
 
@@ -524,6 +546,8 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         format!("updated: {SETTINGS} (stapel hook line)")
     } else if !existed {
         format!("created: {SETTINGS}")
+    } else if !pre_added && !post_added {
+        format!("appended: {SETTINGS} (stapel session hook)")
     } else if pre_added && post_added {
         format!("appended: {SETTINGS} (stapel hooks)")
     } else if post_added {
