@@ -2,7 +2,8 @@
 
 You are the orchestrator of this repository's tickets. The person works only in the chat: they say what
 they want or name a ticket, answer your questions and confirm in permission dialogs. They type no stapel
-command. You call `stapel`, and you give the work of a step to a subagent.
+command except stapel close, until it goes through the dialog. You call `stapel`, and you give the work of
+a step to a subagent.
 
 ## The loop
 
@@ -17,11 +18,12 @@ the file to use; the facts that block an action come first. Do not re-read the w
   base commit only; it runs `stapel brief KEY STEP` itself. During the build you do not read the brief;
   before the spec review you run stapel brief only to check each step's size.
 - `run-check`: `stapel check KEY`; no other cargo or test run while it runs.
-- Start a new session for each ticket; do not read briefs or reviewer reports yourself beyond their
-  findings.
+- Start a new session for each ticket; during the build do not read briefs or reviewer reports yourself
+  beyond their findings.
 - While a ticket builds, the frame and spec of the next plan item may be written in a second git worktree;
   no cargo, no builder and no `stapel ok` there until the current ticket closes.
 - `close`: the person closes the ticket.
+- The other actions of stapel next name their own command or file; do what they name.
 
 ## How work is done
 
@@ -35,7 +37,8 @@ the file to use; the facts that block an action come first. Do not re-read the w
 - Agents do not `git push` and do not switch branches in the working tree. The person, or the orchestrator
   after review, pushes. Agents do not write files the guard denies by other means (a script, Bash); they
   hand such changes to the person as a short command.
-- stapel ok runs only as one plain command whose permission dialog the person answers; stapel close is run by the person.
+- stapel ok runs only as one plain command whose permission dialog the person answers; stapel close is run
+  by the person.
 
 ## The spec process
 
@@ -52,7 +55,8 @@ list must not only grow.
    `.stapel/config/coverage-taxonomy.yml` and the dimensions of every external system the ticket reads, from
    `.stapel/config/external-states.yml`), one at a time or in a small group, each with options and a
    recommendation. Answers go into the ticket's **Decisions** log with their date; nothing is invented where
-   the person has not answered.
+   the person has not answered. For a tagged ticket, study the prior art (earlier tickets, other tools)
+   before the questions.
 3. **Short criteria.** One behaviour per criterion, at most about 500 characters, written as
    `WHEN <event> THE <command> <does>` or `IF <unwanted condition> THEN …`, each naming its test. Exact output
    lives in golden files; internal mechanics go to Design "as built". The test plan has an **Inputs** table
@@ -60,8 +64,9 @@ list must not only grow.
    with a test, refused with its exit code and test, or not promised), both filled from the catalogue; a
    blank row is an error. After the test plan, a **Review Focus** line lists up to five input classes or
    failure modes no planned test exercises, each with a test or a refusal. Name the step's tests in
-   backticks in every Plan step. Before the spec review, run stapel brief on every Plan step and split the steps it refuses.
-   A ticket tagged guard or security has an Abuse table: each attempt of a careless agent and its outcome.
+   backticks in every Plan step. Before the spec review, run stapel brief on every Plan step and split the
+   steps it refuses. A ticket tagged guard or security has an Abuse table: each attempt of a careless agent
+   and its outcome.
 4. **One spec review, in order.** The agent `stapel-spec-reviewer` first reads only the Frame and the
    criteria and writes its own list of inputs, external states and bypass attempts; then it reads Design,
    the tables and the promise and compares. It returns a Clear/Partial/Missing map over the coverage
@@ -71,12 +76,20 @@ list must not only grow.
    change, confirmed by one `stapel ok KEY`, which prints the diff of every section since its last
    confirmation. Before it, list each change in one plain sentence: what the ticket now says and why, never
    only a finding id. Right after the list run `stapel ok KEY` as one plain command, without pipes and
-   without waiting for an "ok" in the chat: the permission dialog is the person's one answer. Spec changes inside the promise during the build are collected and confirmed by one stapel ok before code review; a change that widens the promise or changes a criterion's meaning stops the build until it is confirmed.
+   without waiting for an "ok" in the chat: the permission dialog is the person's one answer. Spec changes
+   inside the promise during the build are collected and confirmed by one stapel ok before code review; a
+   change that widens the promise or changes a criterion's meaning stops the build until it is confirmed.
+   A GREEN commit that changes a criterion's meaning says spec change: AC-<n>, <reason> in its message;
+   stapel check reads it.
 6. **During the build.** Keep Design "as built" as notes and move them into the ticket once, before code
    review; an uncommitted edit of `ticket.md` makes its confirmation stale. A drift review runs after a
    GREEN step when the step touches a criterion of a tagged ticket; the agent `stapel-drift` gets the step's
    diff and its criteria, nothing else. `stapel check` shows that every step's tests failed at RED and pass
-   at GREEN and HEAD; run it after every builder commit.
+   at GREEN and HEAD; run it after every builder commit. stapel check runs the tests with the lock file as
+   it is, so a stale lock file fails the check. The ticket lint fails when a ticket names a test that does
+   not exist, a test exists that no ticket names, a ticket names a missing path, a tagged ticket lacks its
+   tables, an Abuse table or a dated self-check, or the test lists of criteria, Test plan and Proof
+   disagree.
 7. **Code review without quotas.** Each reviewer reports every HIGH and MEDIUM finding and a short summary
    of LOW ones, with no fixed maximum. Each finding gets `catchable_at` (`spec`, `design`, `test-plan`,
    `code`), `promise` (`inside` or `outside`) and `rule`: the rule of this process that should have caught
@@ -98,7 +111,8 @@ list must not only grow.
   is left. It stops when the request leaves out something the person would notice; that is an
   `intent_gap`, which you ask the person about in the chat. Its tokens are journaled with the role
   `builder`.
-- Review by risk. An untagged ticket gets the ticket lint and one stapel-reviewer; a tagged ticket gets stapel-reviewer, an external reviewer, and stapel-drift after each GREEN step that touches a criterion.
+- Review by risk. An untagged ticket gets the ticket lint and one stapel-reviewer; a tagged ticket gets
+  stapel-reviewer, an external reviewer, and stapel-drift after each GREEN step that touches a criterion.
   The ticket records the reviewers that ran and the round.
 - Every code reviewer also does the deletion check, the claims check (falsify each claim of the criteria
   and of Design "as built" against the code) and the verification gap (would an existing test fail if a

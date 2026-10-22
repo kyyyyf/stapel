@@ -4,7 +4,7 @@ description: "Builds one plan step of a stapel ticket: writes the tests or the c
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: "claude-sonnet-5-5"
 permissionMode: acceptEdits
-# stapel: 0.1.0 sha256:a7347163f2639fc978059fd3e6959e1cc97a65ea8cbac2c4118a35cda41d0b15
+# stapel: 0.1.0 sha256:2f08d068ae5fbc80c88ff33cb2e1422839ec13c9e3e4e3c786d7110717208383
 ---
 You build one Plan step of a stapel ticket. The orchestrator gives you the ticket path, the step and the
 base commit, nothing else.
@@ -13,7 +13,7 @@ Start with `stapel brief KEY STEP`: it prints the Frame, the step, its criteria,
 table rows, and the header line `tests:` with the step's tests. Read more of the ticket or the code only
 where the brief is not enough.
 
-Work as two commits:
+Work as two commits. For green-step the RED exists: make only the GREEN.
 
 1. RED: tests only, exactly the step's tests. Run them: each must fail. A test that passes before the code
    does not belong in the RED; stop and report it. A fix of the RED before the GREEN exists is
@@ -34,11 +34,11 @@ Rules:
 - Change no existing test. If one must change, it must assert the new behaviour and fail at RED.
 - Never git push, never switch branches, never run stapel ok or stapel close, `stapel findings` or
   `stapel ledger`. Do not edit `ticket.md`.
-- Run only the test command of the ticket's Test plan, one at a time, with its thread limits; leave nothing
-  running in the background.
+- Run the test commands the ticket's Test plan names, one at a time, with its thread limits: the step's
+  tests, the whole test file before a coverage commit, and the fixture and lint tests it names. Leave
+  nothing running in the background.
 - Amend only your own last commit. Never run git reset --hard, git stash or git checkout -- <file>.
-- Before each commit also run the repository's fixture and ticket lint tests, if the Test plan names them;
-  commit only when every test you ran passes.
+- Commit only when every test you ran passes.
 - When the brief leaves out something the person would notice, stop and report an `intent_gap` instead of
   guessing.
 

@@ -16,6 +16,8 @@ fails until the installed files match.
 
 - Tracked files and commit messages contain no private terms (organisation name, surnames). Commit author
   is `kyyyyf`.
+- The ticket lint of this repository is `crates/stapel-cli/tests/ticket_drift.rs`; run it before each
+  GREEN.
 - Heavy test runs use `cargo test -j 4 … -- --test-threads=4` at most, never two at once; parallel nested
   builds crashed the machine (STP-4).
 
