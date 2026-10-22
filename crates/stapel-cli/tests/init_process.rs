@@ -260,3 +260,87 @@ fn second_run_changes_nothing() {
 
     assert_eq!(snapshot(dir), before);
 }
+
+/// Runs `init` in a repository whose `role` binding is `binding`; asserts exit 1, the stderr text
+/// and that nothing was written.
+fn refused_binding(role: &str, binding: &str, text: &str) {
+    let repo = repo_with_config(|t| replace_line(t, role, &format!("{role} = {binding}")));
+    let dir = repo.path();
+    let before = snapshot(dir);
+    stapel(dir)
+        .arg("init")
+        .assert()
+        .code(1)
+        .stderr(contains(text));
+    assert_eq!(snapshot(dir), before, "{role} {binding}");
+    for rel in std::iter::once(SKILL).chain(AGENTS) {
+        assert!(!dir.join(rel).exists(), "{rel}");
+    }
+    assert!(!dir.join(".claude/settings.json").exists());
+}
+
+// AC-4: a bypass or unknown mode refuses; `author` is not an agent role and is accepted.
+#[test]
+fn refuses_a_bad_permission_mode() {
+    refused_binding(
+        "builder",
+        "{ provider = \"claude-code\", model = \"claude-sonnet-5-5\", permission_mode = \"bypassPermissions\" }",
+        "stapel: [models] builder: permission_mode bypassPermissions is not allowed: it turns off the permission dialog for every call the guard lets through",
+    );
+    refused_binding(
+        "reviewer",
+        "{ provider = \"claude-code\", model = \"claude-sonnet-5-5\", permission_mode = \"yolo\" }",
+        "stapel: [models] reviewer: permission_mode \"yolo\" is not one of default, acceptEdits, auto, dontAsk, plan, manual",
+    );
+    refused_binding(
+        "drift",
+        "{ provider = \"claude-code\", model = \"claude-sonnet-5-5\", permission_mode = \"Default\" }",
+        "stapel: [models] drift: permission_mode \"Default\" is not one of default, acceptEdits, auto, dontAsk, plan, manual",
+    );
+
+    let repo = repo_with_config(|t| {
+        replace_line(
+            t,
+            "author",
+            "author = { provider = \"claude-code\", model = \"claude-opus-5-5\", permission_mode = \"bypassPermissions\" }",
+        )
+    });
+    stapel(repo.path()).arg("init").assert().success();
+}
+
+// AC-5: a model that cannot be written to an agent file refuses.
+#[test]
+fn refuses_a_bad_model() {
+    for model in ["", "[1m]", "a b", "x\\npermissionMode: plan", "x#y"] {
+        let shown = model.replace("\\n", "\n");
+        refused_binding(
+            "builder",
+            &format!("{{ provider = \"claude-code\", model = \"{model}\" }}"),
+            &format!(
+                "stapel: [models] builder: model \"{shown}\" cannot be written to an agent file"
+            ),
+        );
+    }
+}
+
+// AC-10: a directory at a process file's path refuses before any write.
+#[test]
+fn refuses_a_directory() {
+    let repo = git_repo();
+    let dir = repo.path();
+    std::fs::create_dir_all(dir.join(".claude/agents/stapel-builder.md")).unwrap();
+
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .code(1)
+        .stderr(contains(
+            "stapel: .claude/agents/stapel-builder.md is a directory; nothing was written",
+        ));
+
+    assert!(!dir.join(".stapel").exists());
+    assert!(!dir.join(".claude/settings.json").exists());
+    for rel in std::iter::once(SKILL).chain(AGENTS) {
+        assert!(!dir.join(rel).is_file(), "{rel}");
+    }
+}
