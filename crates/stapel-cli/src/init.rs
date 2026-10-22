@@ -47,6 +47,9 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
     let root = repo_root()?;
 
     // Read and check everything first, so a refusal leaves the repository untouched.
+    let new_folders = [".claude/agents", ".claude/skills"]
+        .iter()
+        .any(|d| std::fs::symlink_metadata(root.join(d)).is_err());
     let mut plan = Vec::new();
     let config_path = root.join(CONFIG);
     let config = if config_path.exists() {
@@ -102,6 +105,9 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
     }
     for step in plan {
         say!("{}", step.label);
+    }
+    if new_folders {
+        say!("note: restart Claude Code so that it loads the new agents and skill");
     }
     Ok(())
 }
@@ -273,16 +279,91 @@ fn plan_process_files(root: &Path, config: &Config, plan: &mut Vec<Step>) -> Res
     Ok(())
 }
 
-/// Plans `rel` when nothing is at its path, not even a symlink.
+/// Plans `rel` when nothing is at its path, not even a symlink; plans an update when the file is
+/// an unchanged file of a version not greater than the binary's whose text differs.
 fn plan_create_text(root: &Path, rel: String, content: String, plan: &mut Vec<Step>) {
-    if std::fs::symlink_metadata(root.join(&rel)).is_err() {
-        plan.push(Step {
-            label: format!("created: {rel}"),
-            rel,
-            content,
-            executable: false,
-        });
+    let path = root.join(&rel);
+    let label = match std::fs::symlink_metadata(&path) {
+        Err(_) => format!("created: {rel}"),
+        Ok(meta) if meta.is_file() => {
+            let Ok(old) = std::fs::read_to_string(&path) else {
+                return;
+            };
+            let Some(version) = unchanged_version(&old) else {
+                return;
+            };
+            if version > parse_version(env!("CARGO_PKG_VERSION")).unwrap_or_default()
+                || old == content
+            {
+                return;
+            }
+            format!("updated: {rel}")
+        }
+        Ok(_) => return,
+    };
+    plan.push(Step {
+        label,
+        rel,
+        content,
+        executable: false,
+    });
+}
+
+/// `a.b.c` as numbers; `None` when it has another form.
+fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = text.split('.');
+    let mut next = || {
+        let p = parts.next()?;
+        (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| p.parse::<u64>().ok())
+            .flatten()
+    };
+    let version = (next()?, next()?, next()?);
+    parts.next().is_none().then_some(version)
+}
+
+/// The marker version of an unchanged file: a valid marker whose hash is the SHA-256 of the text
+/// without the marker line and its newline. `None` for any other text.
+fn unchanged_version(text: &str) -> Option<(u64, u64, u64)> {
+    use sha2::{Digest, Sha256};
+    let mut lines = text.split_inclusive('\n');
+    if lines.next()?.trim_end_matches('\n') != "---" {
+        return None;
     }
+    let mut marker = None;
+    let mut closed = false;
+    let mut without = String::from("---\n");
+    for line in lines.by_ref() {
+        let bare = line.trim_end_matches('\n');
+        if bare == "---" {
+            closed = true;
+            without.push_str(line);
+            break;
+        }
+        if bare.starts_with("# stapel:") {
+            if marker.replace(bare).is_some() {
+                return None;
+            }
+        } else {
+            without.push_str(line);
+        }
+    }
+    if !closed {
+        return None;
+    }
+    without.extend(lines);
+    let rest = marker?.strip_prefix("# stapel: ")?;
+    let (version, hash) = rest.split_once(" sha256:")?;
+    let version = parse_version(version)?;
+    let valid_hash = hash.len() == 64
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    let digest: String = Sha256::digest(without.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    (valid_hash && digest == hash).then_some(version)
 }
 
 /// One file `init` is about to write.
