@@ -323,6 +323,74 @@ fn refuses_a_bad_model() {
     }
 }
 
+/// Rewrites `rel` as an unchanged file of version 0.0.1 whose body has an extra line.
+fn make_old(dir: &Path, rel: &str) {
+    let text = read(dir, rel);
+    let marker = frontmatter(&text)
+        .into_iter()
+        .find(|l| l.starts_with("# stapel:"))
+        .expect("marker");
+    let mut without = text.replacen(&format!("{marker}\n"), "", 1);
+    without.push_str("A hand-made extra line.\n");
+    let digest: String = Sha256::digest(without.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let at = without.find("\n---\n").expect("frontmatter end") + 1;
+    without.insert_str(at, &format!("# stapel: 0.0.1 sha256:{digest}\n"));
+    std::fs::write(dir.join(rel), without).unwrap();
+}
+
+// AC-7: an unchanged file of an older version with other text is updated; the others stay.
+#[test]
+fn updates_an_unchanged_file() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let want = read(dir, AGENTS[0]);
+    make_old(dir, AGENTS[0]);
+    assert_ne!(read(dir, AGENTS[0]), want);
+    let others = read(dir, AGENTS[1]);
+
+    let out = stapel(dir).arg("init").assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l == format!("updated: {}", AGENTS[0])),
+        "{stdout}"
+    );
+    assert_eq!(stdout.matches("updated:").count(), 1, "{stdout}");
+    assert_eq!(read(dir, AGENTS[0]), want);
+    assert_eq!(read(dir, AGENTS[1]), others);
+}
+
+// AC-11: a first run ends with the restart note; a run that creates no folder prints none.
+#[test]
+fn restart_note() {
+    let note = "note: restart Claude Code so that it loads the new agents and skill";
+    let repo = git_repo();
+    let dir = repo.path();
+    let out = stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert_eq!(stdout.lines().last(), Some(note), "{stdout}");
+
+    std::fs::remove_file(dir.join(AGENTS[2])).unwrap();
+    let out = stapel(dir).arg("init").assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains(&format!("created: {}", AGENTS[2])),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("restart Claude Code"), "{stdout}");
+}
+
 // AC-10: a directory at a process file's path refuses before any write.
 #[test]
 fn refuses_a_directory() {
