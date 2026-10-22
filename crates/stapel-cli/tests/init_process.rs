@@ -956,3 +956,178 @@ fn refuses_a_directory_at_any_process_path() {
         assert_eq!(snapshot(dir), before, "{rel}");
     }
 }
+
+// AC-11 (D3-4): with one of the two folders missing, the note is the last line, after `created:`.
+#[test]
+fn restart_note_for_one_missing_folder() {
+    let note = "note: restart Claude Code so that it loads the new agents and skill";
+    for (missing, created) in [(".claude/agents", AGENTS[0]), (".claude/skills", SKILL)] {
+        let repo = git_repo();
+        let dir = repo.path();
+        stapel(dir)
+            .args(["init", "--prefix", "ABC"])
+            .assert()
+            .success();
+        std::fs::remove_dir_all(dir.join(missing)).unwrap();
+
+        let out = stapel(dir).arg("init").assert().success();
+        let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+        assert_eq!(stdout.lines().last(), Some(note), "{missing}: {stdout}");
+        let at = stdout
+            .lines()
+            .position(|l| l == format!("created: {created}"))
+            .unwrap_or_else(|| panic!("{missing}: {stdout}"));
+        assert!(at + 1 < stdout.lines().count(), "{missing}: {stdout}");
+    }
+}
+
+// AC-7 (D3-5): the hash in the marker is the SHA-256 the test computes by hand.
+#[test]
+fn hash_computed_by_hand() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let want = read(dir, AGENTS[0]);
+    let text = read(dir, AGENTS[0]);
+    let marker = text
+        .lines()
+        .find(|l| l.starts_with("# stapel:"))
+        .expect("marker")
+        .to_string();
+    let mut without = text.replacen(&format!("{marker}\n"), "", 1);
+    without.push_str("Another hand-made line.\n");
+    let mut hex = String::new();
+    for b in Sha256::digest(without.as_bytes()) {
+        hex.push_str(&format!("{b:02x}"));
+    }
+    let at = without.find("\n---\n").expect("frontmatter end") + 1;
+    without.insert_str(at, &format!("# stapel: 0.0.1 sha256:{hex}\n"));
+    std::fs::write(dir.join(AGENTS[0]), without).unwrap();
+
+    let out = stapel(dir).arg("init").assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l == format!("updated: {}", AGENTS[0])),
+        "{stdout}"
+    );
+    assert!(!stderr.contains("warning"), "{stderr}");
+    assert_eq!(read(dir, AGENTS[0]), want);
+}
+
+// AC-9 (D3B-2): one unchanged newer file alone gives the newer warning and no `already set up`.
+#[test]
+fn newer_file_alone() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let text = read(dir, AGENTS[2]);
+    let marker = text
+        .lines()
+        .find(|l| l.starts_with("# stapel:"))
+        .expect("marker")
+        .to_string();
+    let mut without = text.replacen(&format!("{marker}\n"), "", 1);
+    without.push_str("A hand-made extra line.\n");
+    let mut hex = String::new();
+    for b in Sha256::digest(without.as_bytes()) {
+        hex.push_str(&format!("{b:02x}"));
+    }
+    let at = without.find("\n---\n").expect("frontmatter end") + 1;
+    without.insert_str(at, &format!("# stapel: 999.0.0 sha256:{hex}\n"));
+    std::fs::write(dir.join(AGENTS[2]), &without).unwrap();
+
+    let out = stapel(dir).arg("init").assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    let own = env!("CARGO_PKG_VERSION");
+    let warning = format!(
+        "warning: {} was written by stapel 999.0.0, newer than this stapel {own}; kept",
+        AGENTS[2]
+    );
+    assert!(stderr.lines().any(|l| l == warning), "{stderr}");
+    assert!(!stdout.contains("already set up"), "{stdout}");
+    assert_eq!(read(dir, AGENTS[2]), without);
+}
+
+// AC-9 (D3B-3): the version compares by numbers: 0.09.0 is newer than 0.1.x, though older as text.
+#[test]
+fn versions_compare_by_numbers() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let text = read(dir, AGENTS[1]);
+    let marker = text
+        .lines()
+        .find(|l| l.starts_with("# stapel:"))
+        .expect("marker")
+        .to_string();
+    let mut without = text.replacen(&format!("{marker}\n"), "", 1);
+    without.push_str("A hand-made extra line.\n");
+    let mut hex = String::new();
+    for b in Sha256::digest(without.as_bytes()) {
+        hex.push_str(&format!("{b:02x}"));
+    }
+    let at = without.find("\n---\n").expect("frontmatter end") + 1;
+    without.insert_str(at, &format!("# stapel: 0.09.0 sha256:{hex}\n"));
+    std::fs::write(dir.join(AGENTS[1]), &without).unwrap();
+
+    let out = stapel(dir).arg("init").assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    let own = env!("CARGO_PKG_VERSION");
+    let head = format!("warning: {} was written by stapel ", AGENTS[1]);
+    let tail = format!(", newer than this stapel {own}; kept");
+    assert!(
+        stderr
+            .lines()
+            .any(|l| l.starts_with(&head) && l.ends_with(&tail)),
+        "{stderr}"
+    );
+    assert!(!stdout.contains("updated:"), "{stdout}");
+    assert_eq!(read(dir, AGENTS[1]), without);
+}
+
+// AC-8 (D3B-4): a version greater than the binary's with a hash that does not match gets the AC-8
+// warning, not the newer one.
+#[test]
+fn newer_file_with_a_wrong_hash() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let text = read(dir, AGENTS[3]);
+    let marker = text
+        .lines()
+        .find(|l| l.starts_with("# stapel:"))
+        .expect("marker")
+        .to_string();
+    let wrong = format!("# stapel: 999.0.0 sha256:{}", "0".repeat(64));
+    let edited = text.replacen(&marker, &wrong, 1);
+    std::fs::write(dir.join(AGENTS[3]), &edited).unwrap();
+
+    let out = stapel(dir).arg("init").assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    let kept = format!(
+        "warning: {} is not the file stapel wrote; kept. Delete it and run stapel init to take stapel's text",
+        AGENTS[3]
+    );
+    assert!(stderr.lines().any(|l| l == kept), "{stderr}");
+    assert!(!stderr.contains("newer than"), "{stderr}");
+    assert!(!stdout.contains("already set up"), "{stdout}");
+    assert_eq!(read(dir, AGENTS[3]), edited);
+}
