@@ -46,6 +46,32 @@ pub fn pre_tool_use() -> ExitCode {
     }
 }
 
+/// `stapel hook session-start` (STP-22): in a stapel repository, the skill line and, when
+/// `stapel next` succeeds there, `stapel next:` and its text. Stdin is not read. Everything
+/// else, a panic included, prints nothing more and exits 0.
+pub fn session_start() -> ExitCode {
+    std::panic::set_hook(Box::new(|_| {}));
+    let root = std::panic::catch_unwind(|| {
+        let here = std::env::current_dir().ok()?;
+        let source = match std::env::var_os("CLAUDE_PROJECT_DIR").filter(|d| !d.is_empty()) {
+            Some(dir) => here.join(dir),
+            None => here,
+        };
+        stapel_root(&source)
+    });
+    let Ok(Some(root)) = root else {
+        return ExitCode::SUCCESS;
+    };
+    say!("This repository follows the stapel process: load the skill stapel and follow it.");
+    if let Ok(Ok(lines)) = std::panic::catch_unwind(|| crate::next::text_at(&root)) {
+        say!("stapel next:");
+        for line in lines {
+            say!("{line}");
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 /// The hook events `stapel hook post-tool-use` answers (STP-14 AC-11, AC-19).
 const POST_EVENTS: [&str; 2] = ["PostToolUse", "PostToolUseFailure"];
 

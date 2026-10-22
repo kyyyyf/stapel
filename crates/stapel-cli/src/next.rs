@@ -149,6 +149,21 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
 
 pub fn run(key: Option<&str>, json: bool) -> Result<(), Fail> {
     let (root, config) = repo::open().map_err(Fail::failed)?;
+    for line in lines(&root, &config, key, json)? {
+        say!("{line}");
+    }
+    Ok(())
+}
+
+/// The text of `stapel next` for the repository at `root`, one string per output line.
+pub fn text_at(root: &Path) -> Result<Vec<String>, Fail> {
+    let config = repo::load(root).map_err(Fail::failed)?;
+    lines(root, &config, None, false)
+}
+
+fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<Vec<String>, Fail> {
+    let (root, config) = (root.to_path_buf(), config.clone());
+    let mut out = Vec::new();
     if key.is_none()
         && !list(&root)
             .iter()
@@ -159,12 +174,12 @@ pub fn run(key: Option<&str>, json: bool) -> Result<(), Fail> {
             subject: None,
             target: Some(Target::Command("stapel new \"<title>\"".to_string())),
         };
-        if json {
-            say!("{}", json_line(None, &action, &[]));
+        out.push(if json {
+            json_line(None, &action, &[])
         } else {
-            say!("{}", action.line());
-        }
-        return Ok(());
+            action.line()
+        });
+        return Ok(out);
     }
     let ticket = resolve(&root, key).map_err(Fail::refused)?;
     let state = match &ticket.status {
@@ -235,16 +250,15 @@ pub fn run(key: Option<&str>, json: bool) -> Result<(), Fail> {
         }
     }
     if json {
-        say!(
-            "{}",
-            json_line(Some(&ticket.key), &decision.action, &decision.facts)
-        );
-        return Ok(());
+        out.push(json_line(
+            Some(&ticket.key),
+            &decision.action,
+            &decision.facts,
+        ));
+        return Ok(out);
     }
-    say!("ticket: {} — {}", ticket.key, state.title);
-    for fact in &decision.facts {
-        say!("{fact}");
-    }
-    say!("{}", decision.action.line());
-    Ok(())
+    out.push(format!("ticket: {} — {}", ticket.key, state.title));
+    out.extend(decision.facts.iter().cloned());
+    out.push(decision.action.line());
+    Ok(out)
 }

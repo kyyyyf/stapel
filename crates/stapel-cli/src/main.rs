@@ -208,6 +208,8 @@ enum HookCommand {
     PreToolUse,
     /// After a commit in a Bash call: exit 2 with the history faults on stderr, else silent.
     PostToolUse,
+    /// At session start: the skill line and `stapel next` in a stapel repository, else silent.
+    SessionStart,
 }
 
 fn main() -> ExitCode {
@@ -286,6 +288,7 @@ fn main() -> ExitCode {
         }
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),
         Command::Hook(HookCommand::PostToolUse) => return hook::post_tool_use(),
+        Command::Hook(HookCommand::SessionStart) => return hook::session_start(),
         Command::Check { key, list, history } => {
             return check::run(key.as_deref(), list, history);
         }
