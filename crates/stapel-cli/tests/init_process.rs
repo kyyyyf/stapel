@@ -876,3 +876,83 @@ fn claude_md_names_the_skill() {
     assert!(!text.lines().any(|l| l == "## Build and review"));
     assert!(text.contains(".claude/skills/stapel/SKILL.md"));
 }
+
+// AC-2, D1-1: the marker of every written file holds the version of the binary.
+#[test]
+fn marker_holds_the_binary_version() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    for rel in std::iter::once(SKILL).chain(AGENTS) {
+        assert_eq!(check_marker(dir, rel), env!("CARGO_PKG_VERSION"), "{rel}");
+    }
+}
+
+// AC-3, D1-2: `plan` on the reviewer binding reaches both reviewer files.
+#[test]
+fn reviewer_mode_reaches_both_reviewers() {
+    let repo = repo_with_config(|t| {
+        replace_line(
+            t,
+            "reviewer",
+            "reviewer = { provider = \"claude-code\", model = \"claude-sonnet-5-5\", permission_mode = \"plan\" }",
+        )
+    });
+    let dir = repo.path();
+    stapel(dir).arg("init").assert().success();
+    for rel in [AGENTS[2], AGENTS[3]] {
+        assert_eq!(
+            line_of(dir, rel, "permissionMode:").as_deref(),
+            Some("permissionMode: plan"),
+            "{rel}"
+        );
+    }
+}
+
+// AC-4, AC-5, D2-1: the refusals hold on `drift` and on `reviewer`, not only on `builder`.
+#[test]
+fn refusals_on_every_checked_role() {
+    for role in ["drift", "reviewer"] {
+        refused_binding(
+            role,
+            "{ provider = \"claude-code\", model = \"claude-sonnet-5-5\", permission_mode = \"bypassPermissions\" }",
+            &format!(
+                "stapel: [models] {role}: permission_mode bypassPermissions is not allowed: it turns off the permission dialog for every call the guard lets through"
+            ),
+        );
+        refused_binding(
+            role,
+            "{ provider = \"claude-code\", model = \"claude-sonnet-5-5\", permission_mode = \"yolo\" }",
+            &format!(
+                "stapel: [models] {role}: permission_mode \"yolo\" is not one of default, acceptEdits, auto, dontAsk, plan, manual"
+            ),
+        );
+        refused_binding(
+            role,
+            "{ provider = \"claude-code\", model = \"x#y\" }",
+            &format!("stapel: [models] {role}: model \"x#y\" cannot be written to an agent file"),
+        );
+    }
+}
+
+// AC-10, D2-2, D2-3: a directory at the first or the last process path refuses and writes nothing.
+#[test]
+fn refuses_a_directory_at_any_process_path() {
+    for rel in [SKILL, AGENTS[3]] {
+        let repo = git_repo();
+        let dir = repo.path();
+        std::fs::create_dir_all(dir.join(rel)).unwrap();
+        let before = snapshot(dir);
+        stapel(dir)
+            .args(["init", "--prefix", "ABC"])
+            .assert()
+            .code(1)
+            .stderr(contains(format!(
+                "stapel: {rel} is a directory; nothing was written"
+            )));
+        assert_eq!(snapshot(dir), before, "{rel}");
+    }
+}
