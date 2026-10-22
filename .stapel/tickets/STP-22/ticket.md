@@ -110,7 +110,7 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   `.stapel/config/` when they are missing, since the skill and the spec reviewer read them (E-3; the promise
   widens, Frame item 1). The ticket stays one ticket although its tests grew to about 1 500 lines against 700;
   the source stays at about 400 lines, under the split point (DR-1). Recommended and taken: quoted YAML values
-  (R-1), the dropped rules back in the skill (R-2, R-3, E-1, E-2), the text contradictions fixed (D5-2, D8-2,
+  (R-1), the dropped rules back in the skill (R-2, R-3, R-4, E-1, E-2), the long lines rewrapped (R-7), the text contradictions fixed (D5-2, D8-2,
   D8-3, E-6). Not promised: a symlinked parent folder (R-6), CRLF (E-9), files left after a failed write (E-5).
 
 ## Spec
@@ -452,7 +452,7 @@ Route: full (tags `interface`, `guard`, `migration`), auto.
    `description` and `model`, the two catalogues as assets under `crates/stapel-cli/assets/config/`, the stale
    comments of `init.rs`; the RED changes the golden file; the GREEN runs the built `stapel init` here so that
    AC-18 holds. Must not change: the marker rule and every other label.
-9b. Fixes after code review round 1 in the texts (R-2, R-3, R-4, R-7, E-1, E-2, E-6, D5-2, D8-2, D8-3; AC-19,
+9b. Fixes after code review round 1 in the texts (the findings are listed in the Decisions log; AC-19,
    AC-23, AC-24; tests `init_process::skill_text_keeps_the_old_rules`, `init_process::builder_text_for_green_step`,
    `init_process::claude_md_names_the_ticket_lint`): the drafts in `.stapel/scratch/stp22/texts/`; after the RED
    the human applies the `CLAUDE.md` line with a script; the GREEN runs the built `stapel init` here. Must not
