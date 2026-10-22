@@ -944,6 +944,45 @@ fn claude_md_names_the_skill() {
     assert!(text.contains(".claude/skills/stapel/SKILL.md"));
 }
 
+// AC-19: CLAUDE.md names the program that lints tickets.
+#[test]
+fn claude_md_names_the_ticket_lint() {
+    let text = std::fs::read_to_string(repo_root().join("CLAUDE.md")).unwrap();
+    assert!(text.contains("crates/stapel-cli/tests/ticket_drift.rs"));
+}
+
+// AC-23: the skill keeps the rules that CLAUDE.md held before the move.
+#[test]
+fn skill_text_keeps_the_old_rules() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let flat = collapsed(&body_of(dir, SKILL));
+    for sentence in [
+        "A GREEN commit that changes a criterion's meaning says spec change: AC-<n>, <reason> in its message; stapel check reads it.",
+        "For a tagged ticket, study the prior art (earlier tickets, other tools) before the questions.",
+        "stapel check runs the tests with the lock file as it is, so a stale lock file fails the check.",
+        "The other actions of stapel next name their own command or file; do what they name.",
+        "The ticket lint fails when",
+    ] {
+        assert!(flat.contains(sentence), "missing {sentence:?}");
+    }
+}
+
+// AC-24: the builder makes only the GREEN when the RED exists.
+#[test]
+fn builder_text_for_green_step() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let flat = collapsed(&body_of(dir, AGENTS[0]));
+    assert!(
+        flat.contains("For green-step the RED exists: make only the GREEN."),
+        "missing sentence"
+    );
+    assert!(!flat.contains("Run only the test command"));
+}
+
 // AC-2, D1-1: the marker of every written file holds the version of the binary.
 #[test]
 fn marker_holds_the_binary_version() {
