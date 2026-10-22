@@ -214,7 +214,7 @@ starter configuration, each marker version written as `<version>` and each hash 
 | Mixed labels | the bare PreToolUse line and no `SessionStart`: `updated: .claude/settings.json (stapel hook line)`; no settings: `created: .claude/settings.json` (D4-3) | `init_process::session_hook_labels_with_other_changes` |
 | Every event | settings with all four stapel events and a foreign entry in each: all kept in place; `.claude/settings.local.json` byte-equal after the run (D4-4, D4-6) | `init_process::session_hook_keeps_every_event` |
 | Failing stapel | the installed line with a fake `stapel` that prints to stderr and exits 3: empty stdout and stderr, exit 0 (D4-7) | `init_process::session_hook_line_with_a_failing_stapel` |
-| Unreadable config | `.stapel/stapel.toml` a folder: only the first line, exit 0 (D4B-3) | `hook_session::unreadable_config` |
+| Unreadable config | `.stapel/stapel.toml` a file with a `0xff` byte (not UTF-8): only the first line, exit 0; a folder at that path is no file, so the hook is silent (AC-14) (D4B-3) | `hook_session::unreadable_config` |
 | Read-only texts | the drift and spec reviewer bodies hold `no write access` and `run no builds`; the reviewer body too (D5-5) | `init_process::read_only_agents_say_so` |
 | Consistent skill | the four sentences of AC-20 are present and `Review before merge:` is absent (D5-1, D5-2) | `init_process::skill_text_is_consistent` |
 | Builder history | the sentence of AC-21 in the builder body (D5-3) | `init_process::builder_text_forbids_history_rewrites` |
