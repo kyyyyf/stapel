@@ -983,6 +983,33 @@ fn builder_text_for_green_step() {
     assert!(!flat.contains("Run only the test command"));
 }
 
+// AC-25: the skill and the builder agree on the close rule, the ticket lint and the green-step line.
+#[test]
+fn texts_agree_on_close_lint_and_green_step() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let skill = collapsed(&body_of(dir, SKILL));
+    for sentence in [
+        "They type no stapel command; the one exception is stapel close, which the person runs in their own terminal until it goes through a permission dialog.",
+        "The ticket lint fails when a ticket names a test that does not exist, a test exists that no ticket names, a criterion quotes an output line that is not in the code, a ticket names a missing path, a tagged ticket lacks its tables or a dated self-check, a ticket tagged guard or security lacks its Abuse table, the test lists of criteria, Test plan and Proof disagree, or a CLI option is in no Inputs table.",
+        "The builder runs the ticket lint before each commit.",
+    ] {
+        assert!(skill.contains(sentence), "skill misses {sentence:?}");
+    }
+    let builder = body_of(dir, AGENTS[0]);
+    let green = builder
+        .lines()
+        .position(|l| l.starts_with("2. GREEN"))
+        .expect("builder has a line that starts `2. GREEN`");
+    let after = collapsed(&builder.lines().skip(green).collect::<Vec<_>>().join("\n"));
+    assert!(
+        after.contains("For green-step the RED exists: make only the GREEN. Skip item 1."),
+        "green-step sentence missing after the GREEN item"
+    );
+    assert!(collapsed(&builder).contains("before each commit"));
+}
+
 // AC-2, D1-1: the marker of every written file holds the version of the binary.
 #[test]
 fn marker_holds_the_binary_version() {
