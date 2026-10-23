@@ -501,3 +501,110 @@ fn ledger_importer_for_catches() {
         .stderr("stapel: git config user.name is not set; set it to the name confirmations are recorded under\n");
     assert_eq!(ledger_text(dir).unwrap(), text);
 }
+
+/// Imports `record` as the only line of `in.jsonl`; asserts exit 2, nothing appended and the exact
+/// stderr.
+fn import_refused(dir: &Path, record: &Value, reason: &str) {
+    put(dir, "in.jsonl", &format!("{record}\n"));
+    let before = common::snapshot(dir);
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .code(2)
+        .stdout("")
+        .stderr(format!("stapel: in.jsonl:1: {reason}\n"));
+    assert_eq!(common::snapshot(dir), before, "{record}");
+    assert!(!dir.join(TARGET).exists());
+}
+
+#[test]
+fn import_checks_the_fate() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let reason = "fate: must be one of open, patch, bad_plan, intent_gap, defer, no-change";
+    for fate in [json!("fixed"), json!("Open"), json!(""), json!(5)] {
+        let mut v = base();
+        v["fate"] = fate;
+        import_refused(dir, &v, reason);
+    }
+    let mut v = base();
+    v.as_object_mut().unwrap().remove("fate");
+    import_refused(dir, &v, "fate: missing");
+
+    let mut lines = String::new();
+    for (i, fate) in ["open", "patch", "bad_plan", "intent_gap", "defer", "no-change"]
+        .iter()
+        .enumerate()
+    {
+        let mut v = base();
+        v["id"] = json!(format!("F-{i}"));
+        v["fate"] = json!(fate);
+        lines.push_str(&format!("{v}\n"));
+    }
+    put(dir, "in.jsonl", &lines);
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success()
+        .stdout("imported: 6 findings into ABC-1\n");
+}
+
+#[test]
+fn import_checks_the_triage_fields() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let set = |field: &str, value: Value| {
+        let mut v = base();
+        v[field] = value;
+        v
+    };
+    import_refused(
+        dir,
+        &set("verdict", json!("wrong")),
+        "verdict: must be one of high, medium, low, false, maybe-false",
+    );
+    for verdict in ["false", "maybe-false"] {
+        import_refused(
+            dir,
+            &set("verdict", json!(verdict)),
+            &format!("evidence: missing; the verdict {verdict} needs it"),
+        );
+    }
+    import_refused(
+        dir,
+        &set("evidence", json!("")),
+        "evidence: must be a non-empty string",
+    );
+    import_refused(
+        dir,
+        &set("note", json!(3)),
+        "note: must be a non-empty string",
+    );
+    import_refused(
+        dir,
+        &set("root", json!("a b")),
+        "root: must be 1 to 64 characters with no whitespace or control character",
+    );
+    import_refused(
+        dir,
+        &set("root", json!("")),
+        "root: must be 1 to 64 characters with no whitespace or control character",
+    );
+    import_refused(
+        dir,
+        &set("kind", json!("triage")),
+        "kind: a finding has no kind; triage records go through stapel findings triage",
+    );
+
+    let mut ok = base();
+    ok["verdict"] = json!("false");
+    ok["evidence"] = json!("the code does it");
+    ok["root"] = json!("R-1");
+    ok["note"] = json!("n");
+    put(dir, "in.jsonl", &format!("{ok}\n"));
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success()
+        .stdout("imported: 1 findings into ABC-1\n");
+}

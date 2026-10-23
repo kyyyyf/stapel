@@ -1552,6 +1552,22 @@ fn grant_names_the_records() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     stapel(dir).args(["new", "Second"]).assert().success();
+    put(
+        dir,
+        "free.jsonl",
+        &line(&json!({
+            "id": "F-1", "ticket": "ABC-1", "stage": "code-review", "round": 1,
+            "role": "reviewer", "severity": "HIGH", "promise": "inside", "claim": "a claim",
+            "catchable_at": "code", "fate": "kept",
+        })),
+    );
+    stapel(dir)
+        .args(["findings", "import", "free.jsonl", "ABC-1"])
+        .assert()
+        .code(2)
+        .stdout("")
+        .stderr("stapel: free.jsonl:1: fate: must be one of open, patch, bad_plan, intent_gap, defer, no-change\n");
+    assert!(!dir.join(".stapel/tickets/ABC-1/findings.jsonl").exists());
     put(dir, "in.jsonl", &many(1));
     let import = |file: &str, key: &str, token: &str| {
         agent(
@@ -1593,7 +1609,7 @@ fn grant_names_the_records() {
         &line(&json!({
             "id": "F-1", "ticket": "ABC-1", "stage": "code-review", "round": 1,
             "role": "reviewer", "severity": "HIGH", "promise": "inside", "claim": "a claim",
-            "catchable_at": "code", "fate": "fixed",
+            "catchable_at": "code", "fate": "patch",
         })),
     );
     common::hook_bash(dir, "stapel ledger add --kind finding --note x ABC-1", "auto")

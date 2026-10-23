@@ -23,7 +23,7 @@ stapel: in.jsonl:1: stage: must be one of spec-review, step-drift, code-review, 
 stapel: in.jsonl:1: role: must be one of external, drift, reviewer, fresh-code, builder, orchestrator, human
 stapel: in.jsonl:1: ticket: must be ABC-1
 stapel: in.jsonl:1: rule: must be a non-empty string
-stapel: in.jsonl:1: fate: must be a non-empty string
+stapel: in.jsonl:1: fate: must be one of open, patch, bad_plan, intent_gap, defer, no-change
 stapel: in.jsonl:1: v: must be 1
 stapel: in.jsonl:1: v: must be 1
 stapel: in.jsonl:3: severity: must be one of HIGH, MEDIUM, LOW

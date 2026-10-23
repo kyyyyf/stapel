@@ -28,7 +28,7 @@ fn base() -> Value {
         "promise": "inside",
         "claim": "a claim",
         "catchable_at": "code",
-        "fate": "fixed",
+        "fate": "patch",
     })
 }
 
@@ -83,10 +83,18 @@ fn target_text(dir: &Path) -> Option<String> {
 fn import_appends_all_in_order() {
     let repo = repo_with_ticket();
     let dir = repo.path();
+    let mut free = base();
+    free["fate"] = json!("kept");
+    put(dir, "free.jsonl", &line(&free));
+    assert_eq!(
+        refused(dir, &["free.jsonl"]),
+        "stapel: free.jsonl:1: fate: must be one of open, patch, bad_plan, intent_gap, defer, no-change\n"
+    );
+    assert!(target_text(dir).is_none());
     let old = "{\"id\":\"OLD-1\",\"round\":\"1\"}\n";
     put(dir, TARGET, old);
     // Odd spacing, an unusual key order and extra fields must survive as given.
-    let one = r#"{"id": "F-1", "note": "n1", "ticket": "ABC-1", "stage": "spec-review", "round": "2", "role": "external", "severity": "LOW", "promise": "outside", "claim": "first", "catchable_at": "spec", "fate": "kept", "step": 3}"#;
+    let one = r#"{"id": "F-1", "note": "n1", "ticket": "ABC-1", "stage": "spec-review", "round": "2", "role": "external", "severity": "LOW", "promise": "outside", "claim": "first", "catchable_at": "spec", "fate": "defer", "step": 3}"#;
     let two = line(&{
         let mut v = base();
         v["id"] = json!("F-2");
@@ -1526,8 +1534,16 @@ fn dialog_reads_file_from_the_hook_cwd() {
 fn dialog_shows_fate_and_summary() {
     let repo = repo_with_ticket();
     let dir = repo.path();
+    let mut free = base();
+    free["fate"] = json!("f".repeat(41));
+    put(dir, "free.jsonl", &line(&free));
+    assert_eq!(
+        refused(dir, &["free.jsonl"]),
+        "stapel: free.jsonl:1: fate: must be one of open, patch, bad_plan, intent_gap, defer, no-change\n"
+    );
+    assert!(target_text(dir).is_none());
     let mut v = base();
-    v["fate"] = json!("f".repeat(41));
+    v["note"] = json!("f".repeat(41));
     put(dir, "in.jsonl", &line(&v));
     // There is no summary: the guard answers with nothing.
     allowed_without_dialog(dir, "stapel findings import in.jsonl");
@@ -1553,11 +1569,19 @@ fn dialog_summary_edges() {
 fn hidden_field_edit_voids_the_grant() {
     let repo = repo_with_ticket();
     let dir = repo.path();
+    let mut free = base();
+    free["fate"] = json!("rejected");
+    put(dir, "free.jsonl", &line(&free));
+    assert_eq!(
+        refused(dir, &["free.jsonl"]),
+        "stapel: free.jsonl:1: fate: must be one of open, patch, bad_plan, intent_gap, defer, no-change\n"
+    );
+    assert!(target_text(dir).is_none());
     put(dir, "in.jsonl", &line(&base()));
     allowed_without_dialog(dir, "stapel findings import in.jsonl");
     // A file edited after the guard answered is imported as it is: there is no grant to void.
     let mut edited = base();
-    edited["fate"] = json!("rejected");
+    edited["fate"] = json!("no-change");
     put(dir, "in.jsonl", &line(&edited));
     stapel(dir)
         .args(["findings", "import", "in.jsonl", "ABC-1"])
