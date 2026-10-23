@@ -346,3 +346,89 @@ fn ledger_needs_a_user_name() {
     run();
     assert!(ledger_text(dir).is_none());
 }
+
+#[test]
+fn import_needs_a_user_name() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &format!("{}\n", base()));
+    let text = "stapel: git config user.name is not set; set it to the name confirmations are recorded under";
+
+    for value in [None, Some(""), Some("   ")] {
+        match value {
+            None => {
+                let status = std::process::Command::new("git")
+                    .args(["config", "--unset", "user.name"])
+                    .current_dir(dir)
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+            }
+            Some(v) => common::git_config(dir, "user.name", v),
+        }
+        let before = common::snapshot(dir);
+        let out = stapel(dir)
+            .args(["findings", "import", "in.jsonl"])
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        assert!(out.stdout.is_empty());
+        let err = String::from_utf8(out.stderr).unwrap();
+        assert!(err.contains(text), "{value:?}: {err}");
+        assert_eq!(common::snapshot(dir), before, "{value:?}");
+        assert!(!dir.join(TARGET).exists());
+    }
+}
+
+#[test]
+fn guard_allow_output_is_empty() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "f.jsonl", &format!("{}\n", base()));
+    let command = "stapel findings import f.jsonl ABC-1";
+
+    for mode in ["default", "bypassPermissions", ""] {
+        let out = common::hook_bash(dir, command, mode)
+            .success()
+            .get_output()
+            .clone();
+        assert!(out.stdout.is_empty(), "{mode}: {:?}", out.stdout);
+        assert!(out.stderr.is_empty(), "{mode}: {:?}", out.stderr);
+    }
+
+    // No permission mode field at all.
+    let payload = json!({
+        "tool_name": "Bash",
+        "cwd": dir,
+        "tool_input": { "command": command, "description": "test" },
+    });
+    let out = stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(payload.to_string())
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    assert!(out.stdout.is_empty(), "{:?}", out.stdout);
+    assert!(out.stderr.is_empty(), "{:?}", out.stderr);
+}
+
+#[test]
+fn importer_escapes_the_user_name() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let name = "a \"q\" é\\";
+    common::git_config(dir, "user.name", name);
+    put(dir, "in.jsonl", &format!("{}\n", base()));
+    stapel(dir)
+        .env("CLAUDECODE", "1")
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success();
+    let text = common::read(dir, TARGET);
+    let line = text.lines().last().unwrap();
+    let v: Value = serde_json::from_str(line).unwrap_or_else(|e| panic!("{e}: {line}"));
+    assert_eq!(v["imported_by"]["user"], name, "{line}");
+    assert_eq!(v["imported_by"]["by"], "agent", "{line}");
+}
