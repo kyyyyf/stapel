@@ -1064,3 +1064,306 @@ fn guard_allows_triage() {
         .stderr("");
     assert!(!common::grants_dir(dir).exists());
 }
+
+// ---- Step 4: the current state and the actions `triage` and `ask-human` of `next` ----
+
+/// A ticket with a Frame, a Spec, a Plan and the confirmations of all four sections.
+fn past_spec() -> tempfile::TempDir {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem.");
+    common::set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | WHEN a thing happens THE command does it. | `next::t_one` |",
+    );
+    common::set_section(
+        dir,
+        "ABC-1",
+        "Plan",
+        "Route: full, auto.\n\n1. One (AC-1).\n2. Two (AC-1).",
+    );
+    for s in ["spec", "design", "proof", "plan"] {
+        stapel(dir).args(["ok", s]).assert().success();
+    }
+    repo
+}
+
+/// Appends `line` to the ticket's findings.jsonl.
+fn append(dir: &Path, line: &str) {
+    let mut text = common::read(dir, TARGET);
+    text.push_str(line);
+    text.push('\n');
+    put(dir, TARGET, &text);
+}
+
+fn open_finding(id: &str) -> Value {
+    let mut v = finding(id);
+    v["fate"] = json!("open");
+    v
+}
+
+fn triage_line(id: &str, fields: Value) -> String {
+    let mut v = json!({ "kind": "triage", "id": id, "ticket": "ABC-1" });
+    for (k, f) in fields.as_object().unwrap() {
+        v[k] = f.clone();
+    }
+    v.to_string()
+}
+
+/// The `blocked: finding` lines and the action line of `stapel next`.
+fn next_lines(dir: &Path) -> (Vec<String>, String) {
+    let out = stapel(dir)
+        .args(["next", "ABC-1"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).unwrap();
+    let facts = text
+        .lines()
+        .filter(|l| l.starts_with("blocked: finding ") || l.starts_with("blocked: and "))
+        .map(String::from)
+        .collect();
+    let actions: Vec<&str> = text.lines().filter(|l| l.starts_with("next: ")).collect();
+    assert_eq!(actions.len(), 1, "one action line in: {text}");
+    (facts, actions[0].to_string())
+}
+
+fn assert_no_line(dir: &Path) {
+    let (facts, action) = next_lines(dir);
+    assert!(facts.is_empty(), "{facts:?}");
+    assert!(
+        !action.starts_with("next: triage") && !action.starts_with("next: ask-human"),
+        "{action}"
+    );
+}
+
+#[test]
+fn next_asks_for_triage() {
+    let repo = past_spec();
+    let dir = repo.path();
+    seed(dir, &[open_finding("F-1")]);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(
+        facts,
+        ["blocked: finding F-1 (HIGH, inside, code-review round 1): open"]
+    );
+    assert_eq!(
+        action,
+        "next: triage — .stapel/tickets/ABC-1/findings.jsonl"
+    );
+
+    // Twelve open MEDIUM: ten lines and the count of the rest.
+    let many: Vec<Value> = (1..=12)
+        .map(|i| {
+            let mut v = open_finding(&format!("M-{i}"));
+            v["severity"] = json!("MEDIUM");
+            v
+        })
+        .collect();
+    seed(dir, &many);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(facts.len(), 11, "{facts:?}");
+    assert_eq!(
+        facts[0],
+        "blocked: finding M-1 (MEDIUM, inside, code-review round 1): open"
+    );
+    assert_eq!(
+        facts[9],
+        "blocked: finding M-10 (MEDIUM, inside, code-review round 1): open"
+    );
+    assert_eq!(facts[10], "blocked: and 2 more");
+    assert_eq!(
+        action,
+        "next: triage — .stapel/tickets/ABC-1/findings.jsonl"
+    );
+
+    // A closed ticket stays closed.
+    let mut state = common::state_json(dir, "ABC-1");
+    state["closed"] = json!({"by": "test-user", "at": "2026-10-19T10:00:00Z", "reason": "done"});
+    put(dir, ".stapel/tickets/ABC-1/state.json", &state.to_string());
+    let (facts, action) = next_lines(dir);
+    assert!(facts.is_empty(), "{facts:?}");
+    assert_eq!(action, "next: closed");
+}
+
+#[test]
+fn next_triage_before_confirm() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem.");
+    common::set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | WHEN a thing happens THE command does it. | `next::t_one` |",
+    );
+    common::set_section(
+        dir,
+        "ABC-1",
+        "Plan",
+        "Route: full, auto.\n\n1. One (AC-1).\n2. Two (AC-1).",
+    );
+    let mut f = open_finding("F-1");
+    f["stage"] = json!("spec-review");
+    seed(dir, &[f]);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(
+        facts,
+        ["blocked: finding F-1 (HIGH, inside, spec-review round 1): open"]
+    );
+    assert_eq!(
+        action,
+        "next: triage — .stapel/tickets/ABC-1/findings.jsonl"
+    );
+
+    append(dir, &triage_line("F-1", json!({"fate": "patch"})));
+    let (facts, action) = next_lines(dir);
+    assert!(facts.is_empty(), "{facts:?}");
+    assert_eq!(action, "next: confirm — stapel ok ABC-1");
+}
+
+#[test]
+fn next_asks_the_human() {
+    let repo = past_spec();
+    let dir = repo.path();
+    let target = "next: ask-human — .stapel/tickets/ABC-1/findings.jsonl";
+
+    // An open outside LOW.
+    let mut f = open_finding("F-1");
+    f["severity"] = json!("LOW");
+    f["promise"] = json!("outside");
+    seed(dir, &[f]);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(
+        facts,
+        ["blocked: finding F-1 (LOW, outside, code-review round 1): open"]
+    );
+    assert_eq!(action, target);
+
+    // A fate intent_gap.
+    let mut f = finding("F-1");
+    f["severity"] = json!("LOW");
+    f["fate"] = json!("intent_gap");
+    seed(dir, &[f]);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(
+        facts,
+        ["blocked: finding F-1 (LOW, inside, code-review round 1): intent_gap"]
+    );
+    assert_eq!(action, target);
+
+    // An open HIGH of code-review round 2, and of round "2".
+    for round in [json!(2), json!("2")] {
+        let mut f = open_finding("F-1");
+        f["round"] = round;
+        seed(dir, &[f]);
+        let (_, action) = next_lines(dir);
+        assert_eq!(action, target);
+    }
+
+    // A step-drift finding of round "step-2" is not a person's finding.
+    let mut f = open_finding("F-1");
+    f["stage"] = json!("step-drift");
+    f["round"] = json!("step-2");
+    seed(dir, &[f]);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(
+        facts,
+        ["blocked: finding F-1 (HIGH, inside, step-drift round step-2): open"]
+    );
+    assert_eq!(
+        action,
+        "next: triage — .stapel/tickets/ABC-1/findings.jsonl"
+    );
+
+    // One person's finding among others: the lines of all, the action ask-human.
+    let mut p = open_finding("F-2");
+    p["round"] = json!(2);
+    seed(dir, &[open_finding("F-1"), p]);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(facts.len(), 2, "{facts:?}");
+    assert_eq!(action, target);
+}
+
+#[test]
+fn current_state_of_a_finding() {
+    let repo = past_spec();
+    let dir = repo.path();
+    seed(dir, &[open_finding("F-1")]);
+    let (facts, _) = next_lines(dir);
+    assert_eq!(facts.len(), 1);
+
+    append(
+        dir,
+        &triage_line("F-1", json!({"fate": "open", "verdict": "low"})),
+    );
+    assert_no_line(dir);
+
+    append(
+        dir,
+        &triage_line("F-1", json!({"fate": "open", "verdict": "medium"})),
+    );
+    let (facts, action) = next_lines(dir);
+    assert_eq!(
+        facts,
+        ["blocked: finding F-1 (MEDIUM, inside, code-review round 1): open"]
+    );
+    assert_eq!(
+        action,
+        "next: triage — .stapel/tickets/ABC-1/findings.jsonl"
+    );
+
+    append(
+        dir,
+        &triage_line("F-1", json!({"fate": "open", "verdict": "false"})),
+    );
+    assert_no_line(dir);
+
+    // A fate open with no verdict keeps the last verdict.
+    append(dir, &triage_line("F-1", json!({"fate": "open"})));
+    assert_no_line(dir);
+
+    // Written by hand: two finding records of F-4, the last one counts; a line that is not JSON
+    // is skipped; a fate that is not text and a severity that is not text give no line.
+    let mut low = open_finding("F-4");
+    low["severity"] = json!("LOW");
+    let mut f5 = open_finding("F-5");
+    f5["fate"] = json!(["x"]);
+    let mut f6 = open_finding("F-6");
+    f6["severity"] = json!(3);
+    seed(dir, &[low, f5, f6]);
+    append(dir, "this is not json");
+    assert_no_line(dir);
+    append(dir, &open_finding("F-4").to_string());
+    let (facts, action) = next_lines(dir);
+    assert_eq!(
+        facts,
+        ["blocked: finding F-4 (HIGH, inside, code-review round 1): open"]
+    );
+    assert_eq!(
+        action,
+        "next: triage — .stapel/tickets/ABC-1/findings.jsonl"
+    );
+}
+
+#[test]
+fn legacy_records_do_not_block() {
+    let repo = past_spec();
+    let dir = repo.path();
+    let mut old = finding("F-1");
+    old["fate"] = json!("fixed: done");
+    seed(dir, &[old, open_finding("F-2")]);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(
+        facts,
+        ["blocked: finding F-2 (HIGH, inside, code-review round 1): open"]
+    );
+    assert_eq!(
+        action,
+        "next: triage — .stapel/tickets/ABC-1/findings.jsonl"
+    );
+}
