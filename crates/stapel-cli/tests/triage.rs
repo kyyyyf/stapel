@@ -608,3 +608,278 @@ fn import_checks_the_triage_fields() {
         .success()
         .stdout("imported: 1 findings into ABC-1\n");
 }
+
+// ---- Step 3: stapel findings triage ----
+
+/// Writes `records` as the lines of the ticket's findings.jsonl.
+fn seed(dir: &Path, records: &[Value]) {
+    let text: String = records.iter().map(|r| format!("{r}\n")).collect();
+    put(dir, TARGET, &text);
+}
+
+fn finding(id: &str) -> Value {
+    let mut v = base();
+    v["id"] = json!(id);
+    v
+}
+
+#[test]
+fn triage_appends_records() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let importer = r#"{"by":"agent","user":"test-user"}"#;
+    seed(dir, &[finding("F-1"), finding("F-2")]);
+    let before = common::read(dir, TARGET);
+
+    let one =
+        r#"{ "id": "F-1", "ticket": "ABC-1", "verdict": "high", "root": "R-1", "fate": "patch" }"#;
+    let two = r#"{"id":"F-2","ticket":"ABC-1","fate":"no-change","verdict":"false","evidence":"the code does it","note":"n"}   "#;
+    put(dir, "t.jsonl", &format!("{one}\n\n{two}\n"));
+    stapel(dir)
+        .env("CLAUDECODE", "1")
+        .args(["findings", "triage", "t.jsonl", "ABC-1"])
+        .assert()
+        .success()
+        .stdout("triaged: 2 findings of ABC-1\n");
+    let expect = |line: &str| {
+        let t = line.trim_end();
+        let rest = t.strip_prefix('{').unwrap().strip_suffix('}').unwrap();
+        format!("{{\"kind\":\"triage\",{rest},\"imported_by\":{importer}}}\n")
+    };
+    assert_eq!(
+        common::read(dir, TARGET),
+        format!("{before}{}{}", expect(one), expect(two))
+    );
+
+    // Without KEY: the one open ticket; a person's shell records `person`.
+    put(
+        dir,
+        "t2.jsonl",
+        r#"{"id":"F-1","ticket":"ABC-1","fate":"defer"}
+"#,
+    );
+    stapel(dir)
+        .args(["findings", "triage", "t2.jsonl"])
+        .assert()
+        .success()
+        .stdout("triaged: 1 findings of ABC-1\n");
+    let text = common::read(dir, TARGET);
+    assert!(
+        text.ends_with(
+            "{\"kind\":\"triage\",\"id\":\"F-1\",\"ticket\":\"ABC-1\",\"fate\":\"defer\",\"imported_by\":{\"by\":\"person\",\"user\":\"test-user\"}}\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn triage_refusals() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let mut outside = finding("F-3");
+    outside["promise"] = json!("outside");
+    outside["fate"] = json!("open");
+    let mut late = finding("F-4");
+    late["round"] = json!("2");
+    late["fate"] = json!("open");
+    let mut gap = finding("F-5");
+    gap["fate"] = json!("intent_gap");
+    let mut inside_low = finding("F-6");
+    inside_low["severity"] = json!("LOW");
+    inside_low["fate"] = json!("open");
+    let mut triage_only = json!({"kind": "triage", "id": "F-7", "ticket": "ABC-1", "fate": "open"});
+    triage_only["imported_by"] = json!({"by": "person", "user": "x"});
+    seed(
+        dir,
+        &[
+            finding("F-1"),
+            finding("F-2"),
+            outside,
+            late,
+            gap,
+            inside_low,
+            triage_only,
+        ],
+    );
+
+    let refused = |text: &str, reason: &str| {
+        put(dir, "t.jsonl", text);
+        let before = common::snapshot(dir);
+        stapel(dir)
+            .args(["findings", "triage", "t.jsonl"])
+            .assert()
+            .code(2)
+            .stdout("")
+            .stderr(format!("stapel: t.jsonl:{reason}\n"));
+        assert_eq!(common::snapshot(dir), before, "{text}");
+    };
+    let line = |fields: &[(&str, Value)]| {
+        let mut v = json!({"id": "F-1", "ticket": "ABC-1", "fate": "patch"});
+        for (k, x) in fields {
+            if x.is_null() {
+                v.as_object_mut().unwrap().remove(*k);
+            } else {
+                v[*k] = x.clone();
+            }
+        }
+        format!("{v}\n")
+    };
+
+    refused(&line(&[("id", Value::Null)]), "1: id: missing");
+    refused(&line(&[("ticket", Value::Null)]), "1: ticket: missing");
+    refused(&line(&[("fate", Value::Null)]), "1: fate: missing");
+    refused(
+        &line(&[("fate", json!("fixed"))]),
+        "1: fate: must be one of open, patch, bad_plan, intent_gap, defer, no-change",
+    );
+    refused(
+        &line(&[("ticket", json!("XYZ-2"))]),
+        "1: ticket: must be ABC-1",
+    );
+    refused(
+        &line(&[("severity", json!("LOW"))]),
+        "1: severity: not a triage field",
+    );
+    refused(
+        &line(&[("kind", json!("triage"))]),
+        "1: kind: not a triage field",
+    );
+    refused(
+        &line(&[("verdict", json!("false"))]),
+        "1: evidence: missing; the verdict false needs it",
+    );
+    refused(
+        &line(&[("root", json!("a b"))]),
+        "1: root: must be 1 to 64 characters with no whitespace or control character",
+    );
+    refused(
+        &line(&[("id", json!("F-9"))]),
+        "1: id F-9 is not a finding in .stapel/tickets/ABC-1/findings.jsonl",
+    );
+    refused(
+        &line(&[("id", json!("F-7"))]),
+        "1: id F-7 is not a finding in .stapel/tickets/ABC-1/findings.jsonl",
+    );
+    refused(
+        &format!("{}{}", line(&[]), line(&[("fate", json!("defer"))])),
+        "2: id F-1 repeats line 1",
+    );
+    refused(
+        &format!("{}{}", line(&[]), line(&[("id", json!("F-9"))])),
+        "2: id F-9 is not a finding in .stapel/tickets/ABC-1/findings.jsonl",
+    );
+    refused("\n  \n", " no records");
+
+    // A finding for the person needs the person's words.
+    let note = "note: missing; a finding for the person needs the person's answer";
+    for id in ["F-3", "F-4", "F-5"] {
+        refused(&line(&[("id", json!(id))]), &format!("1: {note}"));
+    }
+    // A finding that is not the person's, or one with a note, is accepted.
+    put(
+        dir,
+        "ok.jsonl",
+        &format!(
+            "{}{}{}",
+            line(&[("id", json!("F-6"))]),
+            line(&[("id", json!("F-3")), ("note", json!("the person said so"))]),
+            line(&[("id", json!("F-2"))])
+        ),
+    );
+    stapel(dir)
+        .args(["findings", "triage", "ok.jsonl"])
+        .assert()
+        .success()
+        .stdout("triaged: 3 findings of ABC-1\n");
+
+    // More than 100 records.
+    let names: Vec<String> = (0..101).map(|i| format!("M-{i}")).collect();
+    let all: Vec<Value> = names.iter().map(|id| finding(id)).collect();
+    seed(dir, &all);
+    let many: String = names
+        .iter()
+        .map(|id| line(&[("id", json!(id))]))
+        .collect();
+    put(dir, "many.jsonl", &many);
+    let before = common::snapshot(dir);
+    stapel(dir)
+        .args(["findings", "triage", "many.jsonl"])
+        .assert()
+        .code(2)
+        .stdout("")
+        .stderr("stapel: many.jsonl:101: more than 100 records; split the file\n");
+    assert_eq!(common::snapshot(dir), before);
+
+    // No findings.jsonl: every id is not a finding.
+    std::fs::remove_file(dir.join(TARGET)).unwrap();
+    refused(
+        &line(&[]),
+        "1: id F-1 is not a finding in .stapel/tickets/ABC-1/findings.jsonl",
+    );
+
+    // No user name: exit 1, nothing appended.
+    seed(dir, &[finding("F-1")]);
+    unset_user_name(dir);
+    put(dir, "t.jsonl", &line(&[]));
+    let before = common::snapshot(dir);
+    stapel(dir)
+        .args(["findings", "triage", "t.jsonl"])
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("stapel: git config user.name is not set; set it to the name confirmations are recorded under\n");
+    assert_eq!(common::snapshot(dir), before);
+}
+
+#[test]
+fn triage_on_a_closed_ticket() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    seed(dir, &[finding("F-1")]);
+    stapel(dir)
+        .args(["close", "--reason", "done"])
+        .assert()
+        .success();
+    put(
+        dir,
+        "t.jsonl",
+        r#"{"id":"F-1","ticket":"ABC-1","fate":"defer"}
+"#,
+    );
+    stapel(dir)
+        .args(["findings", "triage", "t.jsonl", "ABC-1"])
+        .assert()
+        .success()
+        .stdout("triaged: 1 findings of ABC-1\n");
+    let text = common::read(dir, TARGET);
+    assert_eq!(text.lines().count(), 2, "{text}");
+    assert!(
+        text.lines()
+            .last()
+            .unwrap()
+            .starts_with(r#"{"kind":"triage","#)
+    );
+
+    // A legacy ticket: the refusal of `findings import`.
+    put(
+        dir,
+        ".stapel/tickets/ABC-9/state.json",
+        r#"{"key":"ABC-9","build":{"allowed":false}}"#,
+    );
+    put(
+        dir,
+        "t9.jsonl",
+        r#"{"id":"F-1","ticket":"ABC-9","fate":"defer"}
+"#,
+    );
+    let before = common::snapshot(dir);
+    stapel(dir)
+        .args(["findings", "triage", "t9.jsonl", "ABC-9"])
+        .assert()
+        .code(2)
+        .stdout("")
+        .stderr(
+            "stapel: ticket ABC-9 has a legacy (STP-1) state.json; its journal is kept by hand\n",
+        );
+    assert_eq!(common::snapshot(dir), before);
+}
