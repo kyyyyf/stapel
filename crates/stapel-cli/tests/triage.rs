@@ -1573,3 +1573,44 @@ fn brief_shows_the_current_fate() {
         "in: {text}"
     );
 }
+
+#[test]
+fn brief_reads_old_and_later_records() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem.");
+    common::set_section(dir, "ABC-1", "Plan", "1. One (F-1, F-2, F-3).");
+    let mut f1 = finding("F-1");
+    f1["fate"] = json!("fixed: done");
+    let mut f3_low = finding("F-3");
+    f3_low["severity"] = json!("LOW");
+    f3_low["claim"] = json!("the first claim");
+    let mut f3_high = finding("F-3");
+    f3_high["claim"] = json!("the second claim");
+    seed(dir, &[f1, finding("F-2"), f3_low, f3_high]);
+    append(
+        dir,
+        &triage_line(
+            "F-2",
+            json!({"verdict": "false", "evidence": "e", "fate": "no-change"}),
+        ),
+    );
+    append(dir, &triage_line("F-2", json!({"fate": "defer"})));
+    let out = stapel(dir)
+        .args(["brief", "ABC-1", "1"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).unwrap();
+    assert!(
+        text.ends_with(
+            "## Findings\n\
+             - F-1 (HIGH): a claim Fate: fixed: done\n\
+             - F-2 (HIGH): a claim Fate: defer Verdict: false\n\
+             - F-3 (HIGH): the second claim Fate: patch\n"
+        ),
+        "in: {text}"
+    );
+}
