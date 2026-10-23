@@ -609,6 +609,37 @@ fn import_checks_the_triage_fields() {
         .stdout("imported: 1 findings into ABC-1\n");
 }
 
+#[test]
+fn import_root_and_type_bounds() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let set = |field: &str, value: Value| {
+        let mut v = base();
+        v[field] = value;
+        v
+    };
+    let root = "must be 1 to 64 characters with no whitespace or control character";
+    for bad in ["a".repeat(65), "a\tb".to_string(), "a\nb".to_string()] {
+        import_refused(dir, &set("root", json!(bad)), &format!("root: {root}"));
+    }
+    let verdict = "verdict: must be one of high, medium, low, false, maybe-false";
+    import_refused(dir, &set("verdict", json!(5)), verdict);
+    import_refused(dir, &set("verdict", Value::Null), verdict);
+    let mut v = set("verdict", json!("false"));
+    v["evidence"] = json!(5);
+    import_refused(dir, &v, "evidence: must be a non-empty string");
+    let kind = "kind: a finding has no kind; triage records go through stapel findings triage";
+    import_refused(dir, &set("kind", Value::Null), kind);
+    import_refused(dir, &set("kind", json!("")), kind);
+
+    put(dir, "in.jsonl", &format!("{}\n", set("root", json!("a".repeat(64)))));
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success()
+        .stdout("imported: 1 findings into ABC-1\n");
+}
+
 // ---- Step 3: stapel findings triage ----
 
 /// Writes `records` as the lines of the ticket's findings.jsonl.
