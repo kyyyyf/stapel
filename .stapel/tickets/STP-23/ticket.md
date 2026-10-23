@@ -96,6 +96,10 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   AC-7 name the refusals step 3 built (the `id` rule, `imported_by`, a damaged target line), as
   `findings import` has them (D3-1 to D3-3); `FATES`, `VERDICTS` and `check_triage_fields` stay public
   (D2-3).
+- 2026-10-23: Decision (code review round 1, the orchestrator, the human away and asking for decisions
+  to be taken and reported): fix step 7 and coverage step 7b; the Design and AC-2 texts corrected; STP-18
+  AC-9 to AC-11 and AC-17 get a note, as AC-12 did (E-2); R-1 and E-3 wait for the human
+  (`.stapel/scratch/stp23/report-for-human.md`).
 - 2026-10-23: Decision (drift review of step 5, recommended): coverage step 5b (D5-1, D5-2); the other
   brief lines stay guarded by `tests/brief.rs` (D5-3).
 
@@ -130,15 +134,15 @@ Terms:
 | № | Criterion | Test |
 |---|---|---|
 | AC-1 | WHEN `stapel findings import FILE [KEY]` runs in an agent shell THE command needs no grant and has no `--grant` option, appends each input line with the importer insert, and prints `imported: <n> findings into <KEY>`; the guard allows the plain command without a dialog in every permission mode; IF a line with the insert is longer than 64 KiB THEN exit 2 with `stapel: <file>:<n>: longer than 64 KiB` and nothing appended. | `triage::import_in_an_agent_shell`, `triage::guard_allows_import_without_a_dialog`, `triage::guard_allow_output_is_empty` |
-| AC-2 | WHEN `stapel ledger add` has exactly one `--kind` with the value `finding` or `catches` (as `--kind X` or `--kind=X`) THE guard allows it without a dialog in every permission mode and the command appends the record with `imported_by` as its last field in an agent shell without a grant; any other `--kind` keeps the dialog, a `decision` record gets no `imported_by` and reads no `user.name`, and in an agent shell without a grant it exits 1 with `stapel: only a person writes ledger decisions: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT`. | `triage::ledger_records_without_a_dialog`, `triage::ledger_decision_keeps_its_dialog`, `triage::ledger_kind_words` |
+| AC-2 | WHEN `stapel ledger add` has exactly one `--kind` with the value `finding` or `catches` (as `--kind X` or `--kind=X`) THE guard allows it without a dialog in every permission mode and the command appends the record with `imported_by` as its last field in an agent shell without a grant; `--kind decision` and two `--kind` words keep the dialog, an unknown value is refused as in STP-18, a `decision` record gets no `imported_by` and reads no `user.name`, and in an agent shell without a grant it exits 1 with `stapel: only a person writes ledger decisions: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT`. | `triage::ledger_records_without_a_dialog`, `triage::ledger_decision_keeps_its_dialog`, `triage::ledger_kind_words` |
 | AC-3 | IF `git config user.name` is unset or blank THEN `findings import` and `ledger add --kind finding|catches` print `stapel: git config user.name is not set; set it to the name confirmations are recorded under`, exit 1 and append nothing; IF a record of FILE has `imported_by` THEN exit 2 with `stapel: <file>:<n>: imported_by: written by stapel, not by the file`. | `triage::importer_recorded`, `triage::import_needs_a_user_name`, `triage::ledger_needs_a_user_name`, `triage::importer_escapes_the_user_name`, `triage::ledger_importer_for_catches` |
 | AC-4 | IF a finding record of `findings import` has a `fate` outside the fate list, a `verdict` outside the verdict list, a `verdict` `false` or `maybe-false` without `evidence`, an `evidence` or `note` that is not a non-empty string, a `root` that breaks the `id` rule, or any `kind` THEN exit 2 with `stapel: <file>:<n>: <field>: <reason>` from the cases table and nothing appended. | `triage::import_checks_the_fate`, `triage::import_checks_the_triage_fields`, `triage::import_root_and_type_bounds` |
 | AC-5 | WHEN `stapel findings triage FILE [KEY]` runs, each line of FILE an object with `id`, `ticket` and `fate`, and optionally `verdict`, `evidence`, `root`, `note`, THE command appends each as `{"kind":"triage",` followed by the line after its first `{`, with the importer insert, needs no grant or dialog, and prints `triaged: <n> findings of <KEY>`; the limits of `findings import` apply (100 records, 256 KiB, 64 KiB a line). | `triage::triage_appends_records`, `triage::triage_line_rules`, `triage::guard_allows_triage` |
 | AC-6 | IF a triage line lacks `id`, `ticket` or `fate`, names an id that has no finding in the ticket's file, repeats an id of an earlier line, has an `id` that breaks the `id` rule of STP-18, has `imported_by` (the AC-3 text), has another field outside the seven (`<field>: not a triage field`), breaks a rule of AC-4, or has no `note` while its finding is a person's finding before this file THEN exit 2 with `stapel: <file>:<n>: <reason>` from the cases table and nothing appended; an unset `user.name` gives the text of AC-3, exit 1. | `triage::triage_refusals`, `triage::triage_note_reads_the_current_state`, `triage::triage_line_rules` |
 | AC-7 | WHEN `findings triage` names a closed ticket THE records are appended; IF the ticket has a legacy (STP-1) state, or its `findings.jsonl` has a damaged line, THEN the refusal of `findings import`. | `triage::triage_on_a_closed_ticket`, `triage::triage_line_rules` |
-| AC-8 | WHEN the ticket's `findings.jsonl` holds a blocking finding and none is a person's finding, and `next` would give `confirm` or a later action, THE action is `triage` with the target `.stapel/tickets/<KEY>/findings.jsonl`, after the line `blocked: finding <id> (<severity>, <promise>, <stage> round <round>): <fate>` for each blocking finding in file order, at most ten, then `blocked: and <n> more`; a closed ticket stays `closed`. | `triage::next_asks_for_triage`, `triage::next_triage_before_confirm`, `triage::next_triage_among_the_actions`, `triage::next_cap_of_ten` |
+| AC-8 | WHEN the ticket's `findings.jsonl` holds a blocking finding and none is a person's finding, and `next` would give `confirm` or a later action, THE action is `triage` with the target `.stapel/tickets/<KEY>/findings.jsonl`, after the line `blocked: finding <id> (<severity>, <promise>, <stage> round <round>): <fate>` for each blocking finding in file order, at most ten, then `blocked: and <n> more`; a closed ticket stays `closed`. | `triage::next_asks_for_triage`, `triage::next_triage_before_confirm`, `triage::next_triage_among_the_actions`, `triage::next_cap_of_ten`, `triage::next_spec_review_before_triage` |
 | AC-9 | WHEN at least one blocking finding is a person's finding THE action is `ask-human` with the same target and lines. | `triage::next_asks_the_human`, `triage::next_round_forms` |
-| AC-10 | WHEN `next` reads the current state THE last fate and the last verdict hold; a false, legacy or LOW inside open finding gives no line. | `triage::current_state_of_a_finding`, `triage::legacy_records_do_not_block` |
+| AC-10 | WHEN `next` reads the current state THE last fate and the last verdict hold; a false, legacy or LOW inside open finding gives no line. | `triage::current_state_of_a_finding`, `triage::legacy_records_do_not_block`, `triage::only_triage_kind_counts` |
 | AC-11 | WHEN `stapel brief` shows a finding a step names THE line is `- <id> (<current severity>): <claim of the finding> Fate: <current fate>`, followed by ` Verdict: <verdict>` when the last verdict is `false` or `maybe-false`. | `triage::brief_shows_the_current_fate`, `triage::brief_reads_old_and_later_records` |
 | AC-12 | WHEN the skill is written THE body holds `stapel findings import and stapel ledger add --kind finding or catches run without a dialog; stapel ledger add --kind decision keeps its dialog.`, a line that starts ``- `triage`:`` and holds `stapel findings triage FILE KEY` and `patch, bad_plan, intent_gap, defer or no-change`, a line that starts ``- `ask-human`:`` and holds `ask the person in the chat` and `with the person's answer as the note`, and no longer holds `each import is a permission dialog`. | `init_process::skill_text_names_the_triage` |
 
@@ -151,7 +155,8 @@ Terms:
   `no-change` (recorded with `imported_by` agent, not prevented); a person's terminal inside a Zed task
   started from a Claude Code shell (counted as `agent`); the order of fields in records already written;
   a Bash redirection into `findings.jsonl` (items 1.9 and 1.10); open findings of a closed ticket in
-  `next`.
+  `next`; old records whose fate is already in the fate list (they block as new ones; only closed tickets
+  hold them, R-4); a step that names an id with only a triage record (a hand-written file).
 
 ## Test plan
 
@@ -194,6 +199,8 @@ also `--test ticket_drift`.
 | Legacy | an open HIGH with fate `fixed: done` (written as an old line), and a new open HIGH F-2: only F-2 named | `triage::legacy_records_do_not_block` |
 | Brief | a step naming F-1, which has a triage record with `verdict` `low` and fate `defer`: `- F-1 (LOW): <claim> Fate: defer`; F-2 with a last verdict `false` and fate `no-change`: the line ends `Fate: no-change Verdict: false` | `triage::brief_shows_the_current_fate` |
 | Brief, old and later records | F-1 with fate `fixed: done` and no triage record: `- F-1 (HIGH): <claim> Fate: fixed: done`; F-2 with `verdict` `false`, then a fate-only record `defer`: `Fate: defer Verdict: false`; two finding records F-3, LOW then HIGH with another claim: the HIGH line with the second claim (D5-1, D5-2) | `triage::brief_reads_old_and_later_records` |
+| Only the triage kind | F-1 open HIGH, then a hand-written record `{"kind":"note","id":"F-1","fate":"defer"}`: F-1 still blocks; then a triage record `defer`: no line (code review, external LOW) | `triage::only_triage_kind_counts` |
+| Spec review first | Frame, Spec, Design, Proof and Plan written, no confirmation, no `spec-review` finding, one open HIGH inside `code-review` finding: `next: spec-review` (E-1) | `triage::next_spec_review_before_triage` |
 | Skill text | the sentences of AC-12 in `.claude/skills/stapel/SKILL.md` written by `init` | `init_process::skill_text_names_the_triage` |
 
 ### Inputs
@@ -309,11 +316,13 @@ the Abuse row on redirections is corrected (SR1-3); AC-12 pins the fates and the
   `is_blocking`, `is_persons`); `findings triage` refuses a `kind` with `kind: not a triage field` and over
   100 records with `more than 100 records; split the file`, as `findings import` does.
 - `triage::blocking_findings` gives the blocking findings with their lines; `next::decide` checks them after
-  the `spec-review` branch and before `confirm`; the CLI `next` reads `findings.jsonl` once and passes the
+  the `spec-review` branch and before `confirm`; the CLI `next` reads `findings.jsonl` with `journal::read` and passes the
   list in `Facts::blocking`.
 - `brief` takes the severity, claim, fate and verdict of a finding from `triage::state_of`.
-- `dialog::ask` allows `findings import`, `findings triage` (never a dialog command) and `ledger add` with
-  one `--kind finding|catches` before the mode check; `findings_facts` and the findings dialog are removed.
+- `dialog::ask` allows `findings import` and `ledger add` with one `--kind finding|catches` before the mode
+  check; `findings triage` never reaches it, because `guard::plain_invocation` does not read it as a dialog
+  command (DR-1, R-2); `findings_facts`, the findings dialog and its 30-record cap (STP-18 AC-17) are
+  removed, and STP-18 AC-9 to AC-11 and AC-17 carry a note (E-2).
 - The importer insert is `records::with_importer`; the importer JSON is `records::importer_json`.
 
 ## Proof
@@ -327,9 +336,9 @@ the Abuse row on redirections is corrected (SR1-3); AC-12 pins the fates and the
 | AC-5 | `triage::triage_appends_records`, `triage::triage_line_rules`, `triage::guard_allows_triage` |
 | AC-6 | `triage::triage_refusals`, `triage::triage_note_reads_the_current_state`, `triage::triage_line_rules` |
 | AC-7 | `triage::triage_on_a_closed_ticket`, `triage::triage_line_rules` |
-| AC-8 | `triage::next_asks_for_triage`, `triage::next_triage_before_confirm`, `triage::next_triage_among_the_actions`, `triage::next_cap_of_ten` |
+| AC-8 | `triage::next_asks_for_triage`, `triage::next_triage_before_confirm`, `triage::next_triage_among_the_actions`, `triage::next_cap_of_ten`, `triage::next_spec_review_before_triage` |
 | AC-9 | `triage::next_asks_the_human`, `triage::next_round_forms` |
-| AC-10 | `triage::current_state_of_a_finding`, `triage::legacy_records_do_not_block` |
+| AC-10 | `triage::current_state_of_a_finding`, `triage::legacy_records_do_not_block`, `triage::only_triage_kind_counts` |
 | AC-11 | `triage::brief_shows_the_current_fate`, `triage::brief_reads_old_and_later_records` |
 | AC-12 | `init_process::skill_text_names_the_triage` |
 
@@ -381,6 +390,14 @@ Route: full (tags `guard`, `data`, `interface`), auto.
 6. The skill text (AC-12; test `init_process::skill_text_names_the_triage`): `crates/stapel-cli/assets/skill.md`;
    the GREEN runs the built `stapel init` here so that `init_process::this_repository_has_the_current_files`
    holds. Must not change: the other sentences that `init_process` tests.
+
+7. Fixes after code review round 1 (code review, external LOW items; AC-10; test
+   `triage::only_triage_kind_counts`): `triage::state_of` reads only records with `"kind": "triage"` as
+   triage records; the unused `records::Row`, `Findings.rows` and `Findings.hash` and the comments of
+   `dialog.rs` that still name `findings import` as a dialog command go. Must not change: any other test.
+7b. Coverage after code review round 1 (E-1; AC-8): new `#[test]` function
+   `triage::next_spec_review_before_triage`. Tests only, each helper nested inside its function, no
+   `cargo fmt`; a test that fails is an `intent_gap`.
 
 ## Review
 

@@ -67,8 +67,8 @@ stapel close KEY           close after the merge, through the dialog
 stapel q <question>        query the index: symbol | refs | callers | tests | impact (phase 4)
 ```
 
-Records: `findings import`, `tokens import-records`, `ledger add`, each through the dialog; `tokens` for the
-report. Auxiliary: `status`, `init`, `hook` (the entry points Claude Code calls). The orchestrator's skill
+Records: `findings import`, `findings triage` and `ledger add --kind finding|catches` without a dialog (STP-23);
+`tokens import-records` and `ledger add --kind decision` through the dialog; `tokens` for the report. Auxiliary: `status`, `init`, `hook` (the entry points Claude Code calls). The orchestrator's skill
 is one rule: run `stapel next`, do what it says, run it again.
 
 One file for people — `ticket.md`:
