@@ -1523,3 +1523,53 @@ fn next_round_forms() {
     );
     assert_eq!(action, ask);
 }
+
+// ---- Step 5: `stapel brief` shows the current state of a finding ----
+
+#[test]
+fn brief_shows_the_current_fate() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem.");
+    common::set_section(dir, "ABC-1", "Plan", "1. One (F-1, F-2, F-3, F-4).");
+    seed(dir, &[open_finding("F-1"), finding("F-2"), finding("F-3"), finding("F-4")]);
+    append(dir, &triage_line("F-1", json!({"verdict": "low", "fate": "defer"})));
+    append(
+        dir,
+        &triage_line(
+            "F-2",
+            json!({"verdict": "false", "evidence": "e", "fate": "no-change"}),
+        ),
+    );
+    // A later verdict that is not false hides the earlier false one.
+    append(
+        dir,
+        &triage_line(
+            "F-3",
+            json!({"verdict": "false", "evidence": "e", "fate": "no-change"}),
+        ),
+    );
+    append(dir, &triage_line("F-3", json!({"verdict": "medium", "fate": "patch"})));
+    append(
+        dir,
+        &triage_line("F-4", json!({"verdict": "maybe-false", "fate": "defer"})),
+    );
+    let out = stapel(dir)
+        .args(["brief", "ABC-1", "1"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).unwrap();
+    assert!(
+        text.ends_with(
+            "## Findings\n\
+             - F-1 (LOW): a claim Fate: defer\n\
+             - F-2 (HIGH): a claim Fate: no-change Verdict: false\n\
+             - F-3 (MEDIUM): a claim Fate: patch\n\
+             - F-4 (HIGH): a claim Fate: defer Verdict: maybe-false\n"
+        ),
+        "in: {text}"
+    );
+}
