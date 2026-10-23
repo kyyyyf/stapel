@@ -944,6 +944,47 @@ fn claude_md_names_the_skill() {
     assert!(text.contains(".claude/skills/stapel/SKILL.md"));
 }
 
+// STP-23 AC-12: the skill names the triage commands, the fates and the two actions.
+#[test]
+fn skill_text_names_the_triage() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let body = body_of(dir, SKILL);
+    let flat = collapsed(&body);
+
+    assert!(flat.contains(
+        "stapel findings import and stapel ledger add --kind finding or catches run without a dialog; stapel ledger add --kind decision keeps its dialog."
+    ));
+    assert!(!flat.contains("each import is a permission dialog"));
+
+    // A bullet is its first line and the continuation lines that follow it.
+    let bullet = |start: &str| -> String {
+        let lines: Vec<&str> = body.lines().collect();
+        let i = lines
+            .iter()
+            .position(|l| l.starts_with(start))
+            .unwrap_or_else(|| panic!("no line starting {start:?}"));
+        let mut parts = vec![lines[i]];
+        for l in &lines[i + 1..] {
+            if l.trim().is_empty() || l.starts_with("- ") || l.starts_with('#') {
+                break;
+            }
+            parts.push(l);
+        }
+        collapsed(&parts.join("\n"))
+    };
+    let triage = bullet("- `triage`:");
+    assert!(triage.contains("stapel findings triage FILE KEY"), "{triage:?}");
+    assert!(
+        triage.contains("patch, bad_plan, intent_gap, defer or no-change"),
+        "{triage:?}"
+    );
+    let ask = bullet("- `ask-human`:");
+    assert!(ask.contains("ask the person in the chat"), "{ask:?}");
+    assert!(ask.contains("with the person's answer as the note"), "{ask:?}");
+}
+
 // AC-19: CLAUDE.md names the program that lints tickets.
 #[test]
 fn claude_md_names_the_ticket_lint() {
