@@ -179,6 +179,14 @@ enum FindingsAction {
         /// The ticket key; without it, the only open ticket.
         key: Option<String>,
     },
+    /// Append triage records (a fate and more for a finding id) to the ticket's findings.jsonl, all
+    /// or nothing.
+    Triage {
+        /// A regular UTF-8 file of JSON lines.
+        file: String,
+        /// The ticket key; without it, the only open ticket.
+        key: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -274,6 +282,9 @@ fn main() -> ExitCode {
         },
         Command::Findings(FindingsAction::Import { file, key }) => {
             return fail::finish(findings::import(&file, key.as_deref()));
+        }
+        Command::Findings(FindingsAction::Triage { file, key }) => {
+            return fail::finish(findings::triage(&file, key.as_deref()));
         }
         Command::Ledger(LedgerAction::Add {
             kind,

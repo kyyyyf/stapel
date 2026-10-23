@@ -576,7 +576,7 @@ fn is_machine_path(root: &Path, path: &Path) -> bool {
     }
 }
 
-fn text_field(m: &Map<String, Value>, name: &str) -> Result<(), String> {
+pub(crate) fn text_field(m: &Map<String, Value>, name: &str) -> Result<(), String> {
     match m.get(name) {
         None => Err(format!("{name}: missing")),
         Some(Value::String(s)) if !s.is_empty() => Ok(()),
@@ -584,7 +584,7 @@ fn text_field(m: &Map<String, Value>, name: &str) -> Result<(), String> {
     }
 }
 
-fn listed(m: &Map<String, Value>, name: &str, list: &[&str]) -> Result<(), String> {
+pub(crate) fn listed(m: &Map<String, Value>, name: &str, list: &[&str]) -> Result<(), String> {
     match m.get(name) {
         None => Err(format!("{name}: missing")),
         Some(Value::String(s)) if list.contains(&s.as_str()) => Ok(()),
