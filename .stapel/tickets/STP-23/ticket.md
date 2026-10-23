@@ -114,9 +114,9 @@ Terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN `stapel findings import FILE [KEY]` runs in an agent shell THE command needs no grant and has no `--grant` option, appends each input line with the importer insert, and prints `imported: <n> findings into <KEY>`; the guard allows the plain command without a dialog in every permission mode; IF a line with the insert is longer than 64 KiB THEN exit 2 with `stapel: <file>:<n>: longer than 64 KiB` and nothing appended. | `triage::import_in_an_agent_shell`, `triage::guard_allows_import_without_a_dialog` |
+| AC-1 | WHEN `stapel findings import FILE [KEY]` runs in an agent shell THE command needs no grant and has no `--grant` option, appends each input line with the importer insert, and prints `imported: <n> findings into <KEY>`; the guard allows the plain command without a dialog in every permission mode; IF a line with the insert is longer than 64 KiB THEN exit 2 with `stapel: <file>:<n>: longer than 64 KiB` and nothing appended. | `triage::import_in_an_agent_shell`, `triage::guard_allows_import_without_a_dialog`, `triage::guard_allow_output_is_empty` |
 | AC-2 | WHEN `stapel ledger add` has exactly one `--kind` with the value `finding` or `catches` (as `--kind X` or `--kind=X`) THE guard allows it without a dialog in every permission mode and the command appends the record with `imported_by` as its last field in an agent shell without a grant; any other `--kind` keeps the dialog, a `decision` record gets no `imported_by` and reads no `user.name`, and in an agent shell without a grant it exits 1 with `stapel: only a person writes ledger decisions: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT`. | `triage::ledger_records_without_a_dialog`, `triage::ledger_decision_keeps_its_dialog` |
-| AC-3 | IF `git config user.name` is unset or blank THEN `findings import` and `ledger add --kind finding|catches` print `stapel: git config user.name is not set; set it to the name confirmations are recorded under`, exit 1 and append nothing; IF a record of FILE has `imported_by` THEN exit 2 with `stapel: <file>:<n>: imported_by: written by stapel, not by the file`. | `triage::importer_recorded`, `triage::import_needs_a_user_name`, `triage::ledger_needs_a_user_name` |
+| AC-3 | IF `git config user.name` is unset or blank THEN `findings import` and `ledger add --kind finding|catches` print `stapel: git config user.name is not set; set it to the name confirmations are recorded under`, exit 1 and append nothing; IF a record of FILE has `imported_by` THEN exit 2 with `stapel: <file>:<n>: imported_by: written by stapel, not by the file`. | `triage::importer_recorded`, `triage::import_needs_a_user_name`, `triage::ledger_needs_a_user_name`, `triage::importer_escapes_the_user_name` |
 | AC-4 | IF a finding record of `findings import` has a `fate` outside the fate list, a `verdict` outside the verdict list, a `verdict` `false` or `maybe-false` without `evidence`, an `evidence` or `note` that is not a non-empty string, a `root` that breaks the `id` rule, or any `kind` THEN exit 2 with `stapel: <file>:<n>: <field>: <reason>` from the cases table and nothing appended. | `triage::import_checks_the_fate`, `triage::import_checks_the_triage_fields` |
 | AC-5 | WHEN `stapel findings triage FILE [KEY]` runs, each line of FILE an object with `id`, `ticket` and `fate`, and optionally `verdict`, `evidence`, `root`, `note`, THE command appends each as `{"kind":"triage",` followed by the line after its first `{`, with the importer insert, needs no grant or dialog, and prints `triaged: <n> findings of <KEY>`; the limits of `findings import` apply (100 records, 256 KiB, 64 KiB a line). | `triage::triage_appends_records` |
 | AC-6 | IF a triage line lacks `id`, `ticket` or `fate`, names an id that has no finding in the ticket's file, repeats an id of an earlier line, has a field outside the seven, breaks a rule of AC-4, or has no `note` while its finding is a person's finding before this file THEN exit 2 with `stapel: <file>:<n>: <reason>` from the cases table and nothing appended; an unset `user.name` gives the text of AC-3, exit 1. | `triage::triage_refusals` |
@@ -154,6 +154,8 @@ also `--test ticket_drift`.
 | Ledger without a dialog | `--kind finding`, `--kind=catches`, mode `bypassPermissions`: the hook allows, the command in an agent shell appends with `imported_by` | `triage::ledger_records_without_a_dialog` |
 | Ledger decision | `--kind decision`, `--kind=decision`, `--kind Decision`, `--kind finding --kind decision`: the hook asks; `--kind decision` in an agent shell without a grant: the AC-2 text, exit 1; through the grant: no `imported_by`, appended with `user.name` unset | `triage::ledger_decision_keeps_its_dialog` |
 | Importer | without `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT`: `"by":"person"`; `CLAUDE_CODE_ENTRYPOINT=` (empty): `agent`; a record with `imported_by`: exit 2 | `triage::importer_recorded` |
+| Guard output | the hook on the import command in modes `default`, `bypassPermissions` and none: stdout empty, stderr empty, exit 0 (D1-3) | `triage::guard_allow_output_is_empty` |
+| Escaped name | `user.name` `a "q" é\\`: the appended `imported_by` parses as JSON with that exact user (D1-4) | `triage::importer_escapes_the_user_name` |
 | No user name, import | `user.name` unset, then blank, for `findings import`: exit 1, the text, files unchanged | `triage::import_needs_a_user_name` |
 | No user name, ledger | `user.name` unset, then blank, for `ledger add --kind finding`: exit 1, the text, the ledger unchanged | `triage::ledger_needs_a_user_name` |
 | Fate | `fixed`, `Open`, `""`, a number: `fate: must be one of open, patch, bad_plan, intent_gap, defer, no-change` (a missing fate keeps `fate: missing`) | `triage::import_checks_the_fate` |
@@ -280,9 +282,9 @@ the Abuse row on redirections is corrected (SR1-3); AC-12 pins the fates and the
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `triage::import_in_an_agent_shell`, `triage::guard_allows_import_without_a_dialog` |
+| AC-1 | `triage::import_in_an_agent_shell`, `triage::guard_allows_import_without_a_dialog`, `triage::guard_allow_output_is_empty` |
 | AC-2 | `triage::ledger_records_without_a_dialog`, `triage::ledger_decision_keeps_its_dialog` |
-| AC-3 | `triage::importer_recorded`, `triage::import_needs_a_user_name`, `triage::ledger_needs_a_user_name` |
+| AC-3 | `triage::importer_recorded`, `triage::import_needs_a_user_name`, `triage::ledger_needs_a_user_name`, `triage::importer_escapes_the_user_name` |
 | AC-4 | `triage::import_checks_the_fate`, `triage::import_checks_the_triage_fields` |
 | AC-5 | `triage::triage_appends_records` |
 | AC-6 | `triage::triage_refusals` |
@@ -300,13 +302,17 @@ Route: full (tags `guard`, `data`, `interface`), auto.
 1. `findings import` without a dialog (AC-1; tests `triage::import_in_an_agent_shell`,
    `triage::guard_allows_import_without_a_dialog`); the old findings-dialog tests as in Design. Must not
    change: the checks of STP-18 and the dialog of `ledger add`, `tokens import-records`, `ok`, `close`.
-1b. The importer of `findings import` (AC-3; tests `triage::importer_recorded`,
-   `triage::import_needs_a_user_name`); the raw-line tests as in Design. Must not change: step 1.
+1b. The importer of `findings import` (AC-3; test `triage::importer_recorded`); the raw-line tests as in
+   Design. Must not change: step 1.
 1c. `ledger add --kind finding|catches` without a dialog, with the importer, and the new refusal text of
    `--kind decision` (AC-2, AC-3; tests `triage::ledger_records_without_a_dialog`,
    `triage::ledger_decision_keeps_its_dialog`, `triage::ledger_needs_a_user_name`); the old ledger-dialog
    tests as in Design. Must not change: the dialog and grant of `ledger add --kind decision`, steps 1
    and 1b.
+1d. Coverage after step 1 and the drift review of step 1 (D1-3, D1-4; AC-1, AC-3): new `#[test]`
+   functions `triage::import_needs_a_user_name` (it passed at the RED of step 1b),
+   `triage::guard_allow_output_is_empty`, `triage::importer_escapes_the_user_name`. Tests only, each
+   helper nested inside its function; a test that fails is an `intent_gap`.
 2. The fate list and the triage fields at import (AC-4; tests `triage::import_checks_the_fate`,
    `triage::import_checks_the_triage_fields`); `base()` as in Design. Must not change: the other refusals
    and their order.
