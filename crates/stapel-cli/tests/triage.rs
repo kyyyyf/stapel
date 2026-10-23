@@ -198,3 +198,151 @@ fn importer_recorded() {
     );
     assert_eq!(common::read(dir, TARGET), before);
 }
+
+const LEDGER: &str = ".stapel/process-ledger.jsonl";
+
+const DECISION_REFUSAL: &str = "stapel: only a person writes ledger decisions: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT\n";
+
+fn ledger_text(dir: &Path) -> Option<String> {
+    std::fs::read_to_string(dir.join(LEDGER)).ok()
+}
+
+fn unset_user_name(dir: &Path) {
+    let status = std::process::Command::new("git")
+        .args(["config", "--unset", "user.name"])
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn ledger_records_without_a_dialog() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+
+    // The guard allows both kinds in every permission mode, writes no grant.
+    for command in [
+        "stapel ledger add --kind finding --note x",
+        "stapel ledger add --kind=catches --note x",
+        "stapel ledger add --note x --kind finding ABC-1",
+    ] {
+        for mode in ["default", "bypassPermissions", "dontAsk", "auto", ""] {
+            let out = common::hook_bash(dir, command, mode)
+                .success()
+                .get_output()
+                .clone();
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert!(text.is_empty(), "{command} {mode}: {text}");
+        }
+    }
+    assert!(!common::grants_dir(dir).exists());
+
+    // In an agent shell without a grant the command appends, `imported_by` last.
+    stapel(dir)
+        .env("CLAUDECODE", "1")
+        .args(["ledger", "add", "--kind", "finding", "--note", "first"])
+        .assert()
+        .success()
+        .stdout("recorded: finding for ABC-1\n");
+    stapel(dir)
+        .env("CLAUDE_CODE_ENTRYPOINT", "cli")
+        .args(["ledger", "add", "--kind=catches", "--note=second"])
+        .assert()
+        .success()
+        .stdout("recorded: catches for ABC-1\n");
+    stapel(dir)
+        .args(["ledger", "add", "--kind", "finding", "--note", "third"])
+        .assert()
+        .success();
+    let text = ledger_text(dir).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3, "{text}");
+    for (line, kind, note, by) in [
+        (lines[0], "finding", "first", "agent"),
+        (lines[1], "catches", "second", "agent"),
+        (lines[2], "finding", "third", "person"),
+    ] {
+        let tail = format!(
+            r#""kind":"{kind}","ticket":"ABC-1","note":"{note}","imported_by":{{"by":"{by}","user":"test-user"}}}}"#
+        );
+        assert!(line.ends_with(&tail), "{line}");
+    }
+}
+
+#[test]
+fn ledger_decision_keeps_its_dialog() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+
+    // One plain `decision` asks; the same with another case or a second `--kind` is not allowed.
+    for command in [
+        "stapel ledger add --kind decision --note x",
+        "stapel ledger add --kind=decision --note x",
+        "stapel ledger add --kind finding --kind decision --note x",
+    ] {
+        let (reason, _) = common::ask(dir, command);
+        assert!(reason.contains("add a ledger record"), "{command}: {reason}");
+    }
+    for mode in ["default", "bypassPermissions", "dontAsk", ""] {
+        let out = common::hook_bash(dir, "stapel ledger add --kind Decision --note x", mode)
+            .get_output()
+            .clone();
+        assert!(!out.stdout.is_empty() || !out.status.success(), "{mode}");
+    }
+
+    // In an agent shell without a grant: the refusal of decisions, nothing written.
+    for var in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] {
+        stapel(dir)
+            .env(var, "1")
+            .args(["ledger", "add", "--kind", "decision", "--note", "x"])
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr(DECISION_REFUSAL);
+    }
+    assert!(ledger_text(dir).is_none());
+
+    // Through the grant: no importer, and `user.name` is not read.
+    unset_user_name(dir);
+    let (_, replaced) = common::ask(dir, "stapel ledger add --kind decision --note x");
+    let token = common::token_of(&replaced);
+    stapel(dir)
+        .env("CLAUDECODE", "1")
+        .args([
+            "ledger", "add", "--kind", "decision", "--note", "x", "ABC-1", "--grant", &token,
+        ])
+        .assert()
+        .success()
+        .stdout("recorded: decision for ABC-1\n");
+    let text = ledger_text(dir).unwrap();
+    assert!(!text.contains("imported_by"), "{text}");
+    assert!(
+        text.trim_end()
+            .ends_with(r#""kind":"decision","ticket":"ABC-1","note":"x"}"#),
+        "{text}"
+    );
+}
+
+#[test]
+fn ledger_needs_a_user_name() {
+    let text = "stapel: git config user.name is not set; set it to the name confirmations are recorded under\n";
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let run = || {
+        stapel(dir)
+            .args(["ledger", "add", "--kind", "finding", "--note", "x"])
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr(text)
+    };
+
+    unset_user_name(dir);
+    run();
+    assert!(ledger_text(dir).is_none());
+
+    common::git_config(dir, "user.name", "  ");
+    run();
+    assert!(ledger_text(dir).is_none());
+}

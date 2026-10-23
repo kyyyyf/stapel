@@ -625,7 +625,7 @@ fn ledger_add_appends_one_record() {
         .success()
         .stdout("recorded: catches for ABC-1\n");
     let first = format!(
-        "{{\"v\":1,\"at\":\"{at}\",\"kind\":\"catches\",\"ticket\":\"ABC-1\",\"note\":\"item 3 caught it\"}}\n"
+        "{{\"v\":1,\"at\":\"{at}\",\"kind\":\"catches\",\"ticket\":\"ABC-1\",\"note\":\"item 3 caught it\",\"imported_by\":{{\"by\":\"person\",\"user\":\"test-user\"}}}}\n"
     );
     assert_eq!(ledger_text(dir).unwrap(), first);
 
@@ -1017,7 +1017,7 @@ fn dialog_for_ledger_add() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     let note = "n".repeat(201);
-    let command = format!("stapel ledger add --kind catches --note {note}");
+    let command = format!("stapel ledger add --kind decision --note {note}");
     let (reason, replaced) = common::ask(dir, &command);
     assert_eq!(
         dialog_text(&reason, &replaced),
@@ -1049,7 +1049,7 @@ fn dialog_for_ledger_add() {
     // The `cargo run` form as written.
     let (reason, replaced) = common::ask(
         dir,
-        "cargo run -q -p stapel-cli -- ledger add --kind finding --note x",
+        "cargo run -q -p stapel-cli -- ledger add --kind decision --note x",
     );
     assert!(
         reason.ends_with(&format!("; runs: cargo run -q -p stapel-cli --. {TAIL}")),
@@ -1057,7 +1057,7 @@ fn dialog_for_ledger_add() {
     );
     assert!(
         replaced.starts_with(
-            "cargo run -q -p stapel-cli -- ledger add --kind finding --note x ABC-1 --grant "
+            "cargo run -q -p stapel-cli -- ledger add --kind decision --note x ABC-1 --grant "
         ),
         "{replaced}"
     );
@@ -1065,11 +1065,17 @@ fn dialog_for_ledger_add() {
 
     // A closed ticket by its key.
     close_ticket(dir, "ABC-1");
-    let (reason, _) = common::ask(dir, "stapel ledger add --kind finding --note x ABC-1");
+    let (reason, _) = common::ask(dir, "stapel ledger add --kind decision --note x ABC-1");
     assert_eq!(
         reason,
-        format!("stapel: add a ledger record for ABC-1 (closed): finding: x; runs: stapel. {TAIL}")
+        format!(
+            "stapel: add a ledger record for ABC-1 (closed): decision: x; runs: stapel. {TAIL}"
+        )
     );
+    // A finding record on a closed ticket has no dialog.
+    common::hook_bash(dir, "stapel ledger add --kind finding --note x ABC-1", "auto")
+        .success()
+        .stdout("");
 }
 
 // ---- AC-10 ----
@@ -1116,15 +1122,19 @@ fn guard_denies_what_the_command_refuses() {
         );
         assert!(got.stdout.is_empty());
     }
-    let blank = ledger_refused(dir, &["--kind", "finding", "--note", " "]);
-    common::hook_bash(dir, "stapel ledger add --kind finding --note ' '", "auto")
+    let blank = ledger_refused(dir, &["--kind", "decision", "--note", " "]);
+    common::hook_bash(dir, "stapel ledger add --kind decision --note ' '", "auto")
         .code(DENY)
         .stderr(blank);
+    // A finding record needs no dialog: the guard allows it and the command refuses by itself.
+    common::hook_bash(dir, "stapel ledger add --kind finding --note ' '", "auto")
+        .success()
+        .stdout("");
     assert_eq!(grant_files(dir), 0);
 
     // Modes without a dialog deny.
     std::fs::remove_file(dir.join(TARGET)).unwrap();
-    for command in ["stapel ledger add --kind finding --note x"] {
+    for command in ["stapel ledger add --kind decision --note x"] {
         for mode in ["bypassPermissions", "dontAsk", ""] {
             common::hook_bash(dir, command, mode)
                 .code(DENY)
@@ -1139,7 +1149,7 @@ fn guard_denies_what_the_command_refuses() {
         ".claude/settings.local.json",
         r#"{"permissions":{"allow":["Bash(stapel findings:*)","Bash(stapel ledger:*)"]}}"#,
     );
-    for command in ["stapel ledger add --kind finding --note x"] {
+    for command in ["stapel ledger add --kind decision --note x"] {
         common::hook_bash(dir, command, "auto")
             .code(DENY)
             .stderr(predicates::str::contains("allow rule"));
@@ -1169,18 +1179,24 @@ fn grant_writes_once() {
         inserted(&line(&base())).replace("\"person\"", "\"agent\"")
     );
 
-    // `ledger add`: written once; the same token then does not match.
+    // A `catches` record has no grant either.
+    common::hook_bash(dir, "stapel ledger add --kind catches --note 'a note'", "auto")
+        .success()
+        .stdout("");
+    assert_eq!(grant_files(dir), 0);
+
+    // `ledger add --kind decision`: written once; the same token then does not match.
     let at = today_utc();
-    let (_, replaced) = common::ask(dir, "stapel ledger add --kind catches --note 'a note'");
+    let (_, replaced) = common::ask(dir, "stapel ledger add --kind decision --note 'a note'");
     let token = common::token_of(&replaced);
     let args = [
-        "ledger", "add", "--kind", "catches", "--note", "a note", "ABC-1", "--grant", &token,
+        "ledger", "add", "--kind", "decision", "--note", "a note", "ABC-1", "--grant", &token,
     ];
     agent(dir, &args)
         .success()
-        .stdout("recorded: catches for ABC-1\n");
+        .stdout("recorded: decision for ABC-1\n");
     let record = format!(
-        "{{\"v\":1,\"at\":\"{at}\",\"kind\":\"catches\",\"ticket\":\"ABC-1\",\"note\":\"a note\"}}\n"
+        "{{\"v\":1,\"at\":\"{at}\",\"kind\":\"decision\",\"ticket\":\"ABC-1\",\"note\":\"a note\"}}\n"
     );
     assert_eq!(ledger_text(dir).unwrap(), record);
     agent(dir, &args).code(1).stderr(MISMATCH).stdout("");
@@ -1211,28 +1227,32 @@ fn grant_names_the_records() {
     };
     let token = |command: &str| common::token_of(&common::ask(dir, command).1);
 
-    // Another note, kind or key after the dialog.
-    let t = token("stapel ledger add --kind finding --note x ABC-1");
-    add("finding", "y", "ABC-1", &t).code(1).stderr(MISMATCH);
-    let t = token("stapel ledger add --kind finding --note x ABC-1");
-    add("catches", "x", "ABC-1", &t).code(1).stderr(MISMATCH);
-    let t = token("stapel ledger add --kind finding --note x ABC-1");
-    add("finding", "x", "ABC-2", &t).code(1).stderr(MISMATCH);
+    // A finding record has no dialog and so no grant.
+    common::hook_bash(dir, "stapel ledger add --kind finding --note x ABC-1", "auto")
+        .success()
+        .stdout("");
+    assert_eq!(grant_files(dir), 0);
+
+    // Another note or key after the dialog.
+    let t = token("stapel ledger add --kind decision --note x ABC-1");
+    add("decision", "y", "ABC-1", &t).code(1).stderr(MISMATCH);
+    let t = token("stapel ledger add --kind decision --note x ABC-1");
+    add("decision", "x", "ABC-2", &t).code(1).stderr(MISMATCH);
     // A grant of `ok` on `ledger add`, and a grant of `ledger add` on `ok`.
     let t = token("stapel ok ABC-1 spec");
-    add("finding", "x", "ABC-1", &t).code(1).stderr(MISMATCH);
-    let t = token("stapel ledger add --kind finding --note x ABC-1");
+    add("decision", "x", "ABC-1", &t).code(1).stderr(MISMATCH);
+    let t = token("stapel ledger add --kind decision --note x ABC-1");
     agent(dir, &["ok", "ABC-1", "spec", "--grant", &t])
         .code(1)
         .stderr(predicates::str::contains("the grant does not match"));
     assert!(ledger_text(dir).is_none());
 
     // An expired grant.
-    let t = token("stapel ledger add --kind finding --note x ABC-1");
+    let t = token("stapel ledger add --kind decision --note x ABC-1");
     for entry in std::fs::read_dir(common::grants_dir(dir)).unwrap() {
         std::fs::write(entry.unwrap().path(), r#"{"expires_at":1}"#).unwrap();
     }
-    add("finding", "x", "ABC-1", &t)
+    add("decision", "x", "ABC-1", &t)
         .code(1)
         .stderr("stapel: the grant expired; ask the agent to run the command again\n");
     assert!(ledger_text(dir).is_none());
@@ -1247,10 +1267,10 @@ fn agent_shell_without_grant_refused() {
     let dir = repo.path();
     put(dir, "in.jsonl", &line(&base()));
     let before = common::snapshot(dir);
-    let refusal = "stapel: only a person writes review records and ledger records: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT\n";
+    let refusal = "stapel: only a person writes ledger decisions: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT\n";
     for var in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] {
         stapel(dir)
-            .args(["ledger", "add", "--kind", "finding", "--note", "x"])
+            .args(["ledger", "add", "--kind", "decision", "--note", "x"])
             .env(var, "1")
             .assert()
             .code(1)
@@ -1299,10 +1319,13 @@ fn ledger_grant_survives_a_failed_check() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     let at = today_utc();
-    let (_, replaced) = common::ask(dir, "stapel ledger add --kind catches --note 'a note'");
+    common::hook_bash(dir, "stapel ledger add --kind catches --note 'a note'", "auto")
+        .success()
+        .stdout("");
+    let (_, replaced) = common::ask(dir, "stapel ledger add --kind decision --note 'a note'");
     let token = common::token_of(&replaced);
     let args = [
-        "ledger", "add", "--kind", "catches", "--note", "a note", "ABC-1", "--grant", &token,
+        "ledger", "add", "--kind", "decision", "--note", "a note", "ABC-1", "--grant", &token,
     ];
     assert_eq!(grant_files(dir), 1);
 
@@ -1322,9 +1345,9 @@ fn ledger_grant_survives_a_failed_check() {
     put(dir, LEDGER, "");
     agent(dir, &args)
         .success()
-        .stdout("recorded: catches for ABC-1\n");
+        .stdout("recorded: decision for ABC-1\n");
     let record = format!(
-        "{{\"v\":1,\"at\":\"{at}\",\"kind\":\"catches\",\"ticket\":\"ABC-1\",\"note\":\"a note\"}}\n"
+        "{{\"v\":1,\"at\":\"{at}\",\"kind\":\"decision\",\"ticket\":\"ABC-1\",\"note\":\"a note\"}}\n"
     );
     assert_eq!(ledger_text(dir).unwrap(), record);
     assert_eq!(grant_files(dir), 0);
@@ -1341,10 +1364,13 @@ fn dialog_cuts_at_the_limits() {
         .stdout("");
 
     let note = "n".repeat(200);
-    let command = format!("stapel ledger add --kind catches --note {note}");
+    let command = format!("stapel ledger add --kind decision --note {note}");
+    common::hook_bash(dir, &command.replace("decision", "catches"), "auto")
+        .success()
+        .stdout("");
     let (reason, _) = common::ask(dir, &command);
     assert!(
-        reason.contains(&format!("catches: {note}; runs:")),
+        reason.contains(&format!("decision: {note}; runs:")),
         "{reason}"
     );
     assert!(!reason.contains('…'), "{reason}");
@@ -1555,14 +1581,14 @@ fn dialog_usage_denials() {
     }
     let cases = [
         (
-            "stapel ledger add --kind finding --note x --bogus",
+            "stapel ledger add --kind decision --note x --bogus",
             "unexpected option --bogus for stapel ledger add",
         ),
         (
-            "stapel ledger add --kind finding --note x ABC-1 extra",
+            "stapel ledger add --kind decision --note x ABC-1 extra",
             ledger_usage,
         ),
-        ("stapel ledger add --kind finding", ledger_usage),
+        ("stapel ledger add --kind decision", ledger_usage),
         ("stapel ledger add --note x", ledger_usage),
     ];
     for (command, reason) in cases {
@@ -1572,15 +1598,22 @@ fn dialog_usage_denials() {
             .stderr(format!("stapel: {reason}\n"));
     }
     assert_eq!(grant_files(dir), 0);
+    // A finding or catches record has no dialog: the guard leaves its usage to the command.
+    for command in [
+        "stapel ledger add --kind finding --note x --bogus",
+        "stapel ledger add --kind catches",
+    ] {
+        common::hook_bash(dir, command, "auto").success().stdout("");
+    }
 
     // The `--kind=` and `--note=` forms are read as the separate-word forms.
-    let (reason, replaced) = common::ask(dir, "stapel ledger add --kind=catches --note=hello");
+    let (reason, replaced) = common::ask(dir, "stapel ledger add --kind=decision --note=hello");
     assert_eq!(
         reason,
-        format!("stapel: add a ledger record for ABC-1: catches: hello; runs: stapel. {TAIL}")
+        format!("stapel: add a ledger record for ABC-1: decision: hello; runs: stapel. {TAIL}")
     );
     assert!(
-        replaced.starts_with("stapel ledger add --kind catches --note hello ABC-1 --grant "),
+        replaced.starts_with("stapel ledger add --kind decision --note hello ABC-1 --grant "),
         "{replaced}"
     );
     assert_eq!(grant_files(dir), 1);
@@ -1602,7 +1635,7 @@ fn dialog_refuses_a_broken_config() {
 
     // The guard gives the reason that the command gives, and writes no grant.
     let out = stapel(dir)
-        .args(["ledger", "add", "--kind", "finding", "--note", "x"])
+        .args(["ledger", "add", "--kind", "decision", "--note", "x"])
         .assert()
         .code(1)
         .get_output()
@@ -1612,7 +1645,11 @@ fn dialog_refuses_a_broken_config() {
         expected.starts_with("stapel: .stapel/stapel.toml: "),
         "{expected}"
     );
+    // A finding record has no dialog: the guard allows it.
     common::hook_bash(dir, "stapel ledger add --kind finding --note x", "auto")
+        .success()
+        .stdout("");
+    common::hook_bash(dir, "stapel ledger add --kind decision --note x", "auto")
         .code(DENY)
         .stdout("")
         .stderr(expected);
@@ -1626,7 +1663,7 @@ fn ledger_line_limit_before_the_grant() {
     // Quotes take two bytes in the record and one in the command, so the record can pass 64 KiB
     // while the command stays under the guard's own limit.
     let overhead = format!(
-        "{{\"v\":1,\"at\":\"{}\",\"kind\":\"catches\",\"ticket\":\"ABC-1\",\"note\":\"\"}}\n",
+        "{{\"v\":1,\"at\":\"{}\",\"kind\":\"decision\",\"ticket\":\"ABC-1\",\"note\":\"\"}}\n",
         today_utc()
     )
     .len();
@@ -1634,12 +1671,21 @@ fn ledger_line_limit_before_the_grant() {
         let extra = line_len - overhead;
         format!("{}{}", "\"".repeat(extra / 2), "a".repeat(extra % 2))
     };
-    let command = |note: &str| format!("stapel ledger add --kind catches --note '{note}'");
+    let command = |note: &str| format!("stapel ledger add --kind decision --note '{note}'");
+
+    // A finding or catches record has no dialog, so the guard leaves its line limit to the command.
+    common::hook_bash(
+        dir,
+        &command(&note(65_537)).replace("decision", "catches"),
+        "auto",
+    )
+    .success()
+    .stdout("");
 
     // A line of 64 KiB + 1 byte: the command refuses, and the guard denies with the same reason
     // before any grant.
     let over = note(65_537);
-    let expected = ledger_refused(dir, &["--kind", "catches", "--note", &over]);
+    let expected = ledger_refused(dir, &["--kind", "decision", "--note", &over]);
     assert!(expected.contains("64 KiB"), "{expected}");
     common::hook_bash(dir, &command(&over), "auto")
         .code(DENY)
@@ -1692,7 +1738,7 @@ fn dialog_refuses_an_unreadable_config() {
         .success()
         .stdout("");
     let out = stapel(dir)
-        .args(["ledger", "add", "--kind", "finding", "--note", "x"])
+        .args(["ledger", "add", "--kind", "decision", "--note", "x"])
         .assert()
         .code(1)
         .get_output()
@@ -1702,7 +1748,11 @@ fn dialog_refuses_an_unreadable_config() {
         expected.starts_with("stapel: ") && expected.contains("stapel.toml: Permission denied"),
         "{expected}"
     );
+    // A finding record has no dialog: the guard allows it.
     common::hook_bash(dir, "stapel ledger add --kind finding --note x", "auto")
+        .success()
+        .stdout("");
+    common::hook_bash(dir, "stapel ledger add --kind decision --note x", "auto")
         .code(DENY)
         .stdout("")
         .stderr(expected);

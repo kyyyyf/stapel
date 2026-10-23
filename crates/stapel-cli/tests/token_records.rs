@@ -1596,7 +1596,10 @@ fn grant_names_the_records() {
             "catchable_at": "code", "fate": "fixed",
         })),
     );
-    let t = token("stapel ledger add --kind finding --note x ABC-1");
+    common::hook_bash(dir, "stapel ledger add --kind finding --note x ABC-1", "auto")
+        .success()
+        .stdout("");
+    let t = token("stapel ledger add --kind decision --note x ABC-1");
     import("in.jsonl", "ABC-1", &t).code(1).stderr(MISMATCH);
     let t = token("stapel ok ABC-1 spec");
     import("in.jsonl", "ABC-1", &t)
