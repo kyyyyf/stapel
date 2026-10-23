@@ -22,6 +22,10 @@ the file to use; the facts that block an action come first. Do not re-read the w
   beyond their findings.
 - While a ticket builds, the frame and spec of the next plan item may be written in a second git worktree;
   no cargo, no builder and no `stapel ok` there until the current ticket closes.
+- `triage`: an open HIGH or MEDIUM finding inside the promise has no fate yet. Write a triage file and run
+  `stapel findings triage FILE KEY`; the fate is one of patch, bad_plan, intent_gap, defer or no-change.
+- `ask-human`: a finding waits for the person. First ask the person in the chat, then run
+  `stapel findings triage FILE KEY` with the person's answer as the note.
 - `close`: the person closes the ticket.
 - The other actions of stapel next name their own command or file; do what they name.
 
@@ -118,4 +122,4 @@ list must not only grow.
 - Every code reviewer also does the deletion check, the claims check (falsify each claim of the criteria
   and of Design "as built" against the code) and the verification gap (would an existing test fail if a
   behaviour change were wrong). A test that did not run counts as missing.
-- Collect the findings of several reviews into one import; each import is a permission dialog.
+- Collect the findings of several reviews into one import. stapel findings import and stapel ledger add --kind finding or catches run without a dialog; stapel ledger add --kind decision keeps its dialog.
