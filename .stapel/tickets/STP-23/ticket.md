@@ -3,7 +3,7 @@
 ## Description
 
 Source: `docs/PHASES.md`, plan item 1.5, part 1 (split by the ledger decision of 2026-10-22); the ledger
-decision of 2026-10-21 (approval dialogs, part 1); `docs/decisions/0002`, item 7 (label STP-8).
+decision of 2026-10-21 (approval dialogs, part 1); `docs/decisions/0002-build-and-review-from-bmad.md`, item 7 (label STP-8).
 
 ### Frame
 
@@ -308,6 +308,13 @@ the Abuse row on redirections is corrected (SR1-3); AC-12 pins the fates and the
 - `crates/stapel-core/src/triage.rs` holds `plan_triage` and the current state (`state_of`, `whole_round`,
   `is_blocking`, `is_persons`); `findings triage` refuses a `kind` with `kind: not a triage field` and over
   100 records with `more than 100 records; split the file`, as `findings import` does.
+- `triage::blocking_findings` gives the blocking findings with their lines; `next::decide` checks them after
+  the `spec-review` branch and before `confirm`; the CLI `next` reads `findings.jsonl` once and passes the
+  list in `Facts::blocking`.
+- `brief` takes the severity, claim, fate and verdict of a finding from `triage::state_of`.
+- `dialog::ask` allows `findings import`, `findings triage` (never a dialog command) and `ledger add` with
+  one `--kind finding|catches` before the mode check; `findings_facts` and the findings dialog are removed.
+- The importer insert is `records::with_importer`; the importer JSON is `records::importer_json`.
 
 ## Proof
 
