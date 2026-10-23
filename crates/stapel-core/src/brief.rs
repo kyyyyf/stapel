@@ -213,6 +213,10 @@ fn named_findings<'a>(
 /// well-formed record of the id; an error for the first named finding without a record.
 fn findings_part(item: &str, findings: &str, step: &str) -> Result<String, String> {
     let records = records(findings);
+    let maps: Vec<serde_json::Map<String, serde_json::Value>> = records
+        .iter()
+        .filter_map(|(_, v)| v.as_object().cloned())
+        .collect();
     let prefixes: Vec<String> = records
         .iter()
         .filter_map(|(id, _)| finding_split(id).map(|(p, _)| p.to_string()))
@@ -224,22 +228,36 @@ fn findings_part(item: &str, findings: &str, step: &str) -> Result<String, Strin
         if seen.contains(&id) {
             continue;
         }
-        let Some((_, record)) = records.iter().rev().find(|(r, _)| *r == id) else {
+        if !records.iter().any(|(r, _)| *r == id) {
             return Err(format!(
                 "step {step} names {id}, which findings.jsonl does not have"
             ));
-        };
+        }
+        let state = crate::triage::state_of(&maps, &id);
         // Every run of whitespace is one space; a missing or non-string field is `none`.
-        let field = |name: &str| match record.get(name).and_then(|v| v.as_str()) {
+        let flat = |text: Option<&str>| match text {
             Some(text) => text.split_whitespace().collect::<Vec<_>>().join(" "),
             None => "none".to_string(),
         };
-        lines.push(format!(
+        let claim = state
+            .finding
+            .as_ref()
+            .and_then(|m| m.get("claim"))
+            .and_then(|v| v.as_str());
+        let mut line = format!(
             "- {id} ({}): {} Fate: {}",
-            field("severity"),
-            field("claim"),
-            field("fate")
-        ));
+            flat(state.severity.as_deref()),
+            flat(claim),
+            flat(state.fate.as_deref())
+        );
+        if let Some(v) = state
+            .verdict
+            .as_deref()
+            .filter(|v| ["false", "maybe-false"].contains(v))
+        {
+            line.push_str(&format!(" Verdict: {v}"));
+        }
+        lines.push(line);
         seen.push(id);
     }
     Ok(lines.join("\n"))
