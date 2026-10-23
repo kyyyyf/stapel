@@ -266,7 +266,8 @@ spec of the next item may be written in a second worktree while the current tick
   the three review checks of `docs/decisions/0002`) and names the reviewers by route; `findings import`
   runs from the orchestrator without a dialog and records the importer; the triage of `docs/decisions/0002`
   (verdict, evidence, root cause, the fates `patch`, `bad_plan`, `intent_gap`, `defer`; two rounds at most)
-  (label STP-8).
+  (label STP-8). Split on 2026-10-22 (ledger): part 1 (STP-23) the import without a dialog and the
+  triage; part 2 `review start`, the pack and the reviewers by route.
 - 1.6 `stapel lint [KEY]`: the checks of `crates/stapel-cli/tests/ticket_drift.rs` that any repository
   can run (a named test exists, a named path exists, a tagged ticket has its tables and self-check, the test
   lists agree, a criterion is one behaviour of at most about 500 characters, the Frame within about 300
