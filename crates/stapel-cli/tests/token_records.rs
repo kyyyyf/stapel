@@ -1585,8 +1585,8 @@ fn grant_names_the_records() {
     import("in.jsonl", "ABC-2", &t).code(1).stderr(MISMATCH);
     nothing_written();
 
-    // A grant of `findings import`, of `ledger add` and of `ok` on the import command, and a
-    // grant of the import command on `findings import`.
+    // A grant of `ledger add` and of `ok` on the import command, and a grant of the import command
+    // on `findings import`, which has no `--grant` option.
     put(
         dir,
         "f.jsonl",
@@ -1596,8 +1596,6 @@ fn grant_names_the_records() {
             "catchable_at": "code", "fate": "fixed",
         })),
     );
-    let t = token("stapel findings import f.jsonl ABC-1");
-    import("in.jsonl", "ABC-1", &t).code(1).stderr(MISMATCH);
     let t = token("stapel ledger add --kind finding --note x ABC-1");
     import("in.jsonl", "ABC-1", &t).code(1).stderr(MISMATCH);
     let t = token("stapel ok ABC-1 spec");
@@ -1606,9 +1604,7 @@ fn grant_names_the_records() {
         .stderr(predicates::str::contains("the grant does not match"));
     nothing_written();
     let t = token("stapel tokens import-records in.jsonl ABC-1");
-    agent(dir, &["findings", "import", "f.jsonl", "ABC-1", "--grant", &t])
-        .code(1)
-        .stderr(MISMATCH);
+    agent(dir, &["findings", "import", "f.jsonl", "ABC-1", "--grant", &t]).code(2);
     assert!(!dir.join(".stapel/tickets/ABC-1/findings.jsonl").exists());
 
     // Used twice: the first run writes, the second (with the records gone) does not match.

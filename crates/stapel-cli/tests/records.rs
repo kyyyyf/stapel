@@ -42,6 +42,19 @@ fn line(v: &Value) -> String {
     format!("{v}\n")
 }
 
+/// The lines of `text` as `findings import` appends them for a person (STP-23): the importer
+/// insert before the last `}`, trailing whitespace of the line removed.
+fn inserted(text: &str) -> String {
+    text.split_inclusive('\n')
+        .map(|l| match l.trim_end().strip_suffix('}') {
+            Some(body) => format!(
+                "{body},\"imported_by\":{{\"by\":\"person\",\"user\":\"test-user\"}}}}\n"
+            ),
+            None => l.to_string(),
+        })
+        .collect()
+}
+
 /// Runs `findings import` and expects exit 2, an empty stdout and the stderr returned.
 fn refused(dir: &Path, args: &[&str]) -> String {
     let out = stapel(dir)
@@ -93,7 +106,10 @@ fn import_appends_all_in_order() {
         .assert()
         .success()
         .stdout("imported: 3 findings into ABC-1\n");
-    let expect = format!("{old}{one}\n{}\n{}\n", two.trim_end(), three.trim_end());
+    let expect = format!(
+        "{old}{}",
+        inserted(&format!("{one}\n{}\n{}\n", two.trim_end(), three.trim_end()))
+    );
     assert_eq!(target_text(dir).unwrap(), expect);
 }
 
@@ -108,7 +124,7 @@ fn import_creates_and_repairs_target() {
         .assert()
         .success()
         .stdout("imported: 1 findings into ABC-1\n");
-    assert_eq!(target_text(dir).unwrap(), line(&base()));
+    assert_eq!(target_text(dir).unwrap(), inserted(&line(&base())));
 
     // A target cut short gets its newline before the append.
     let repo = repo_with_ticket();
@@ -122,7 +138,7 @@ fn import_creates_and_repairs_target() {
         .stdout("imported: 1 findings into ABC-1\n");
     assert_eq!(
         target_text(dir).unwrap(),
-        format!("{{\"id\":\"OLD-1\"}}\n{}", line(&base()))
+        format!("{{\"id\":\"OLD-1\"}}\n{}", inserted(&line(&base())))
     );
 }
 
@@ -225,7 +241,7 @@ fn import_refuses_unsafe_id() {
         .assert()
         .success()
         .stdout("imported: 1 findings into ABC-1\n");
-    assert_eq!(target_text(dir).unwrap(), line(&v));
+    assert_eq!(target_text(dir).unwrap(), inserted(&line(&v)));
 }
 
 #[test]
@@ -257,7 +273,7 @@ fn import_refuses_unsafe_round() {
         .assert()
         .success()
         .stdout("imported: 1 findings into ABC-1\n");
-    assert_eq!(target_text(dir).unwrap(), line(&v));
+    assert_eq!(target_text(dir).unwrap(), inserted(&line(&v)));
 }
 
 #[test]
@@ -283,7 +299,7 @@ fn id_rule_counts_characters_and_controls() {
         .assert()
         .success()
         .stdout("imported: 1 findings into ABC-1\n");
-    assert_eq!(target_text(dir).unwrap(), line(&v));
+    assert_eq!(target_text(dir).unwrap(), inserted(&line(&v)));
 }
 
 // ---- AC-3 ----
@@ -453,7 +469,7 @@ fn import_refuses_bad_input_path() {
             .stdout("imported: 1 findings into ABC-1\n");
         assert_eq!(
             target_text(dir).unwrap(),
-            format!("{before_target}{}", line(&v))
+            format!("{before_target}{}", inserted(&line(&v)))
         );
     }
 }
@@ -511,26 +527,29 @@ fn import_accepts_the_limits() {
         .assert()
         .success()
         .stdout("imported: 100 findings into ABC-1\n");
-    assert_eq!(target_text(dir).unwrap(), hundred);
+    assert_eq!(target_text(dir).unwrap(), inserted(&hundred));
 
-    // A line of exactly 64 KiB, newline included.
+    // A line that is exactly 64 KiB, newline included, with the importer insert.
+    let extra = inserted("{}\n").len() - "{}\n".len();
     let repo = repo_with_ticket();
     let dir = repo.path();
-    let big = padded("F-1", 64 * 1024);
+    let big = padded("F-1", 64 * 1024 - extra);
     put(dir, "in.jsonl", &big);
     stapel(dir)
         .args(["findings", "import", "in.jsonl"])
         .assert()
         .success()
         .stdout("imported: 1 findings into ABC-1\n");
-    assert_eq!(target_text(dir).unwrap(), big);
+    assert_eq!(target_text(dir).unwrap(), inserted(&big));
+    assert_eq!(target_text(dir).unwrap().len(), 64 * 1024);
 
-    // A file of exactly 256 KiB: four lines of 64 KiB.
+    // A file of exactly 256 KiB: four such lines and blank lines for the rest.
     let repo = repo_with_ticket();
     let dir = repo.path();
-    let file: String = (1..=4)
-        .map(|n| padded(&format!("F-{n}"), 64 * 1024))
+    let lines: String = (1..=4)
+        .map(|n| padded(&format!("F-{n}"), 64 * 1024 - extra))
         .collect();
+    let file = format!("{lines}{}", "\n".repeat(4 * extra));
     assert_eq!(file.len(), 256 * 1024);
     put(dir, "in.jsonl", &file);
     stapel(dir)
@@ -538,7 +557,7 @@ fn import_accepts_the_limits() {
         .assert()
         .success()
         .stdout("imported: 4 findings into ABC-1\n");
-    assert_eq!(target_text(dir).unwrap(), file);
+    assert_eq!(target_text(dir).unwrap(), inserted(&lines));
 }
 
 // ---- Step 2: `ledger add`, the ledger as a machine file ----
@@ -736,7 +755,7 @@ fn closed_ticket_by_key_only() {
     import(dir, Some("abc-1"))
         .success()
         .stdout("imported: 1 findings into ABC-1\n");
-    assert_eq!(target_text(dir).unwrap(), one_finding("ABC-1"));
+    assert_eq!(target_text(dir).unwrap(), inserted(&one_finding("ABC-1")));
     ledger_add(dir, Some("ABC-1"))
         .success()
         .stdout("recorded: finding for ABC-1\n");
@@ -773,7 +792,7 @@ fn closed_ticket_by_key_only() {
     ledger_add(dir, None)
         .success()
         .stdout("recorded: finding for ABC-2\n");
-    assert_eq!(target_text(dir).unwrap(), one_finding("ABC-1"));
+    assert_eq!(target_text(dir).unwrap(), inserted(&one_finding("ABC-1")));
 
     // No KEY with two open tickets.
     stapel(dir).args(["new", "Third"]).assert().success();
@@ -979,16 +998,6 @@ fn grant_files(dir: &Path) -> usize {
     std::fs::read_dir(common::grants_dir(dir)).map_or(0, |d| d.count())
 }
 
-/// A record as a line of a findings file.
-fn finding(id: &str, severity: &str, promise: &str, claim: &str) -> String {
-    let mut v = base();
-    v["id"] = json!(id);
-    v["severity"] = json!(severity);
-    v["promise"] = json!(promise);
-    v["claim"] = json!(claim);
-    line(&v)
-}
-
 /// A command run in an agent's shell: `CLAUDECODE` is set.
 fn agent(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
     stapel(dir).args(args).env("CLAUDECODE", "1").assert()
@@ -999,68 +1008,6 @@ fn close_ticket(dir: &Path, key: &str) {
         .args(["close", key, "--reason", "done"])
         .assert()
         .success();
-}
-
-// ---- AC-9 ----
-
-#[test]
-fn dialog_for_findings_import() {
-    let repo = repo_with_ticket();
-    let dir = repo.path();
-    let long = "я".repeat(81);
-    let file = format!(
-        "{}{}{}",
-        finding("F-1", "HIGH", "inside", "a claim"),
-        finding("F-2", "MEDIUM", "outside", &long),
-        finding("F-3", "LOW", "inside", "line one\nline two"),
-    );
-    put(dir, "in.jsonl", &file);
-    let before = std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/state.json")).unwrap();
-
-    // The golden: reason and replaced command; the key is added; one grant file per dialog.
-    let (reason, replaced) = common::ask(dir, "stapel findings import in.jsonl");
-    assert_eq!(
-        dialog_text(&reason, &replaced),
-        dialog_golden("findings"),
-        "{reason}"
-    );
-    assert_eq!(common::token_of(&replaced).len(), 32);
-    assert_eq!(grant_files(dir), 1);
-    // Nothing is written by the dialog.
-    assert!(target_text(dir).is_none());
-    assert_eq!(
-        std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/state.json")).unwrap(),
-        before
-    );
-
-    // A key in any case, and the `cargo run` form as written.
-    let (reason, replaced) = common::ask(dir, "stapel findings import in.jsonl abc-1");
-    assert!(reason.starts_with("stapel: import 3 findings into ABC-1: 1 HIGH"));
-    assert!(replaced.starts_with("stapel findings import in.jsonl ABC-1 --grant "));
-    let (reason, replaced) = common::ask(
-        dir,
-        "cargo run -q -p stapel-cli -- findings import in.jsonl",
-    );
-    assert!(
-        reason.ends_with(&format!("; runs: cargo run -q -p stapel-cli --. {TAIL}")),
-        "{reason}"
-    );
-    assert!(
-        replaced
-            .starts_with("cargo run -q -p stapel-cli -- findings import in.jsonl ABC-1 --grant "),
-        "{replaced}"
-    );
-    assert_eq!(grant_files(dir), 3);
-
-    // A closed ticket by its key: the reason says so.
-    close_ticket(dir, "ABC-1");
-    let (reason, _) = common::ask(dir, "stapel findings import in.jsonl ABC-1");
-    assert!(
-        reason.starts_with(
-            "stapel: import 3 findings into ABC-1 (closed): 1 HIGH, 1 MEDIUM, 1 LOW; stage code-review, role reviewer, round 1 | F-1"
-        ),
-        "{reason}"
-    );
 }
 
 // ---- AC-13 ----
@@ -1139,28 +1086,16 @@ fn guard_denies_what_the_command_refuses() {
     put(dir, "dir/x", "");
 
     // The guard gives the reason of the command, and writes no grant.
-    let cases: [(&str, Vec<&str>); 5] = [
-        (
-            "stapel findings import bad.jsonl",
-            vec!["findings", "import", "bad.jsonl"],
-        ),
-        (
-            "stapel findings import missing.jsonl",
-            vec!["findings", "import", "missing.jsonl"],
-        ),
-        (
-            "stapel findings import ok.jsonl",
-            vec!["findings", "import", "ok.jsonl"],
-        ),
-        (
-            "stapel findings import dir",
-            vec!["findings", "import", "dir"],
-        ),
-        (
-            "stapel ledger add --kind other --note x",
-            vec!["ledger", "add", "--kind", "other", "--note", "x"],
-        ),
-    ];
+    // `findings import` has no dialog: the guard allows it and the command refuses by itself.
+    for file in ["bad.jsonl", "missing.jsonl", "ok.jsonl", "dir"] {
+        common::hook_bash(dir, &format!("stapel findings import {file}"), "auto")
+            .success()
+            .stdout("");
+    }
+    let cases: [(&str, Vec<&str>); 1] = [(
+        "stapel ledger add --kind other --note x",
+        vec!["ledger", "add", "--kind", "other", "--note", "x"],
+    )];
     for (command, args) in cases {
         let out = stapel(dir)
             .args(&args)
@@ -1189,10 +1124,7 @@ fn guard_denies_what_the_command_refuses() {
 
     // Modes without a dialog deny.
     std::fs::remove_file(dir.join(TARGET)).unwrap();
-    for command in [
-        "stapel findings import ok.jsonl",
-        "stapel ledger add --kind finding --note x",
-    ] {
+    for command in ["stapel ledger add --kind finding --note x"] {
         for mode in ["bypassPermissions", "dontAsk", ""] {
             common::hook_bash(dir, command, mode)
                 .code(DENY)
@@ -1207,10 +1139,7 @@ fn guard_denies_what_the_command_refuses() {
         ".claude/settings.local.json",
         r#"{"permissions":{"allow":["Bash(stapel findings:*)","Bash(stapel ledger:*)"]}}"#,
     );
-    for command in [
-        "stapel findings import ok.jsonl",
-        "stapel ledger add --kind finding --note x",
-    ] {
+    for command in ["stapel ledger add --kind finding --note x"] {
         common::hook_bash(dir, command, "auto")
             .code(DENY)
             .stderr(predicates::str::contains("allow rule"));
@@ -1226,54 +1155,19 @@ fn grant_writes_once() {
     let dir = repo.path();
     put(dir, "in.jsonl", &line(&base()));
 
-    // `findings import`: written once; the grant is gone; the same token then meets the check of
-    // the repeated id first (the checks run before the grant is used).
-    let (_, replaced) = common::ask(dir, "stapel findings import in.jsonl");
-    let token = common::token_of(&replaced);
-    agent(
-        dir,
-        &["findings", "import", "in.jsonl", "ABC-1", "--grant", &token],
-    )
-    .success()
-    .stdout("imported: 1 findings into ABC-1\n");
-    assert_eq!(target_text(dir).unwrap(), line(&base()));
+    // `findings import` has no grant: the guard allows it, writes none, and the command writes
+    // once without one.
+    common::hook_bash(dir, "stapel findings import in.jsonl", "auto")
+        .success()
+        .stdout("");
     assert_eq!(grant_files(dir), 0);
-    agent(
-        dir,
-        &["findings", "import", "in.jsonl", "ABC-1", "--grant", &token],
-    )
-    .code(2)
-    .stderr(predicates::str::contains("id F-1 is already in"))
-    .stdout("");
-    assert_eq!(target_text(dir).unwrap(), line(&base()));
-    // With the record gone from the target, the checks pass and the used grant does not match.
-    put(dir, TARGET, "");
-    agent(
-        dir,
-        &["findings", "import", "in.jsonl", "ABC-1", "--grant", &token],
-    )
-    .code(1)
-    .stderr(MISMATCH)
-    .stdout("");
-    assert_eq!(target_text(dir).unwrap(), "");
-    put(dir, TARGET, &line(&base()));
-
-    // An id added to the target after the dialog: a refusal of the checks, the grant stays.
-    let mut other = base();
-    other["id"] = json!("F-9");
-    put(dir, "in.jsonl", &line(&other));
-    let (_, replaced) = common::ask(dir, "stapel findings import in.jsonl");
-    let token = common::token_of(&replaced);
-    let target = format!("{}{}", target_text(dir).unwrap(), line(&other));
-    put(dir, TARGET, &target);
-    agent(
-        dir,
-        &["findings", "import", "in.jsonl", "ABC-1", "--grant", &token],
-    )
-    .code(2)
-    .stderr(predicates::str::contains("id F-9 is already in"));
-    assert_eq!(target_text(dir).unwrap(), target);
-    assert_eq!(grant_files(dir), 1);
+    agent(dir, &["findings", "import", "in.jsonl", "ABC-1"])
+        .success()
+        .stdout("imported: 1 findings into ABC-1\n");
+    assert_eq!(
+        target_text(dir).unwrap(),
+        inserted(&line(&base())).replace("\"person\"", "\"agent\"")
+    );
 
     // `ledger add`: written once; the same token then does not match.
     let at = today_utc();
@@ -1301,12 +1195,12 @@ fn grant_names_the_records() {
     let dir = repo.path();
     stapel(dir).args(["new", "Second"]).assert().success();
     put(dir, "in.jsonl", &line(&base()));
-    let import = |token: &str| {
-        agent(
-            dir,
-            &["findings", "import", "in.jsonl", "ABC-1", "--grant", token],
-        )
-    };
+    // `findings import` takes no grant: an option `--grant` is a usage error.
+    agent(
+        dir,
+        &["findings", "import", "in.jsonl", "ABC-1", "--grant", "abc"],
+    )
+    .code(2);
     let add = |kind: &str, note: &str, key: &str, token: &str| {
         agent(
             dir,
@@ -1317,24 +1211,6 @@ fn grant_names_the_records() {
     };
     let token = |command: &str| common::token_of(&common::ask(dir, command).1);
 
-    // `FILE` edited after the dialog.
-    let t = token("stapel findings import in.jsonl ABC-1");
-    put(
-        dir,
-        "in.jsonl",
-        &finding("F-1", "HIGH", "inside", "another claim"),
-    );
-    import(&t).code(1).stderr(MISMATCH);
-    // The file as it was, with a grant of the ledger, and a grant of `ok`.
-    put(dir, "in.jsonl", &line(&base()));
-    let t = token("stapel ledger add --kind finding --note x ABC-1");
-    import(&t).code(1).stderr(MISMATCH);
-    let t = token("stapel ok ABC-1 spec");
-    import(&t)
-        .code(1)
-        .stderr(predicates::str::contains("the grant does not match"));
-    assert!(target_text(dir).is_none());
-
     // Another note, kind or key after the dialog.
     let t = token("stapel ledger add --kind finding --note x ABC-1");
     add("finding", "y", "ABC-1", &t).code(1).stderr(MISMATCH);
@@ -1342,8 +1218,8 @@ fn grant_names_the_records() {
     add("catches", "x", "ABC-1", &t).code(1).stderr(MISMATCH);
     let t = token("stapel ledger add --kind finding --note x ABC-1");
     add("finding", "x", "ABC-2", &t).code(1).stderr(MISMATCH);
-    // A grant of `findings import` on `ledger add`, and a grant of `ledger add` on `ok`.
-    let t = token("stapel findings import in.jsonl ABC-1");
+    // A grant of `ok` on `ledger add`, and a grant of `ledger add` on `ok`.
+    let t = token("stapel ok ABC-1 spec");
     add("finding", "x", "ABC-1", &t).code(1).stderr(MISMATCH);
     let t = token("stapel ledger add --kind finding --note x ABC-1");
     agent(dir, &["ok", "ABC-1", "spec", "--grant", &t])
@@ -1352,14 +1228,14 @@ fn grant_names_the_records() {
     assert!(ledger_text(dir).is_none());
 
     // An expired grant.
-    let t = token("stapel findings import in.jsonl ABC-1");
+    let t = token("stapel ledger add --kind finding --note x ABC-1");
     for entry in std::fs::read_dir(common::grants_dir(dir)).unwrap() {
         std::fs::write(entry.unwrap().path(), r#"{"expires_at":1}"#).unwrap();
     }
-    import(&t)
+    add("finding", "x", "ABC-1", &t)
         .code(1)
         .stderr("stapel: the grant expired; ask the agent to run the command again\n");
-    assert!(target_text(dir).is_none());
+    assert!(ledger_text(dir).is_none());
     assert_eq!(grant_files(dir), 0);
 }
 
@@ -1373,20 +1249,21 @@ fn agent_shell_without_grant_refused() {
     let before = common::snapshot(dir);
     let refusal = "stapel: only a person writes review records and ledger records: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT\n";
     for var in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] {
-        for args in [
-            vec!["findings", "import", "in.jsonl"],
-            vec!["ledger", "add", "--kind", "finding", "--note", "x"],
-        ] {
-            stapel(dir)
-                .args(&args)
-                .env(var, "1")
-                .assert()
-                .code(1)
-                .stdout("")
-                .stderr(refusal);
-        }
+        stapel(dir)
+            .args(["ledger", "add", "--kind", "finding", "--note", "x"])
+            .env(var, "1")
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr(refusal);
     }
     assert_eq!(common::snapshot(dir), before);
+    // `findings import` needs no grant in an agent's shell.
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .env("CLAUDECODE", "1")
+        .assert()
+        .success();
 }
 
 // ---- AC-15 ----
@@ -1457,16 +1334,11 @@ fn ledger_grant_survives_a_failed_check() {
 fn dialog_cuts_at_the_limits() {
     let repo = repo_with_ticket();
     let dir = repo.path();
-    let claim = "я".repeat(80);
-    let mut record = base();
-    record["claim"] = json!(claim);
-    put(dir, "in.jsonl", &format!("{record}\n"));
-    let (reason, _) = common::ask(dir, "stapel findings import in.jsonl");
-    assert!(
-        reason.contains(&format!("F-1 HIGH inside fate fixed: {claim};")),
-        "{reason}"
-    );
-    assert!(!reason.contains('…'), "{reason}");
+    // `findings import` has no dialog to cut.
+    put(dir, "in.jsonl", &line(&base()));
+    common::hook_bash(dir, "stapel findings import in.jsonl", "auto")
+        .success()
+        .stdout("");
 
     let note = "n".repeat(200);
     let command = format!("stapel ledger add --kind catches --note {note}");
@@ -1481,28 +1353,6 @@ fn dialog_cuts_at_the_limits() {
 // ---- Step 4d: coverage after code review round 1 ----
 
 #[test]
-fn hidden_field_edit_voids_the_grant() {
-    let repo = repo_with_ticket();
-    let dir = repo.path();
-    put(dir, "in.jsonl", &line(&base()));
-    let (_, replaced) = common::ask(dir, "stapel findings import in.jsonl");
-    let token = common::token_of(&replaced);
-
-    // Only `fate`, which the dialog did not show, is edited after the dialog.
-    let mut edited = base();
-    edited["fate"] = json!("rejected");
-    put(dir, "in.jsonl", &line(&edited));
-    agent(
-        dir,
-        &["findings", "import", "in.jsonl", "ABC-1", "--grant", &token],
-    )
-    .code(1)
-    .stderr(MISMATCH)
-    .stdout("");
-    assert!(target_text(dir).is_none());
-}
-
-#[test]
 fn as_built_line_rules() {
     let repo = repo_with_ticket();
     let dir = repo.path();
@@ -1513,7 +1363,7 @@ fn as_built_line_rules() {
         .args(["findings", "import", "in.jsonl"])
         .assert()
         .success();
-    assert_eq!(target_text(dir).unwrap(), line(&base()));
+    assert_eq!(target_text(dir).unwrap(), inserted(&line(&base())));
 
     // A target line with an unknown version is skipped: its id does not count.
     let old = "{\"v\":2,\"id\":\"F-1\"}\n";
@@ -1522,7 +1372,10 @@ fn as_built_line_rules() {
         .args(["findings", "import", "in.jsonl"])
         .assert()
         .success();
-    assert_eq!(target_text(dir).unwrap(), format!("{old}{}", line(&base())));
+    assert_eq!(
+        target_text(dir).unwrap(),
+        format!("{old}{}", inserted(&line(&base())))
+    );
     put(dir, TARGET, "");
 
     // A duplicate key is read by its last value, and the line is kept as given.
@@ -1534,7 +1387,7 @@ fn as_built_line_rules() {
         .args(["findings", "import", "in.jsonl"])
         .assert()
         .success();
-    assert_eq!(target_text(dir).unwrap(), accepted);
+    assert_eq!(target_text(dir).unwrap(), inserted(&accepted));
     put(dir, TARGET, "");
     let rejected = format!(
         "{},\"severity\":\"nobody\"}}\n",
@@ -1572,14 +1425,61 @@ fn as_built_line_rules() {
     );
 }
 
+// ---- STP-23: `findings import` has no dialog; these tests of its former dialog now assert that ----
+
+/// The guard allows the command with no output, and writes no grant.
+fn allowed_without_dialog(dir: &Path, command: &str) {
+    common::hook_bash(dir, command, "auto").success().stdout("");
+    assert_eq!(grant_files(dir), 0, "{command}");
+}
+
+#[test]
+fn dialog_for_findings_import() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &line(&base()));
+    for command in [
+        "stapel findings import in.jsonl",
+        "stapel findings import in.jsonl abc-1",
+        "cargo run -q -p stapel-cli -- findings import in.jsonl",
+    ] {
+        allowed_without_dialog(dir, command);
+    }
+    // A closed ticket by its key.
+    close_ticket(dir, "ABC-1");
+    allowed_without_dialog(dir, "stapel findings import in.jsonl ABC-1");
+    assert!(target_text(dir).is_none());
+}
+
+#[test]
+fn dialog_limits_to_30_records() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let records: String = (0..31)
+        .map(|i| {
+            let mut v = base();
+            v["id"] = json!(format!("F-{i}"));
+            line(&v)
+        })
+        .collect();
+    put(dir, "in.jsonl", &records);
+    // No limit of 30 records in the guard.
+    allowed_without_dialog(dir, "stapel findings import in.jsonl");
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success()
+        .stdout("imported: 31 findings into ABC-1\n");
+}
+
 #[test]
 fn dialog_reads_file_from_the_hook_cwd() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     put(dir, "sub/in.jsonl", &line(&base()));
-
-    // The hook process runs in the repository root; the payload's `cwd` is the subdirectory.
-    let hook = |cwd: &Path| {
+    // The guard reads no file: the same relative name is allowed from the subdirectory and from
+    // the root.
+    for cwd in [dir.join("sub"), dir.to_path_buf()] {
         let payload = json!({
             "tool_name": "Bash",
             "cwd": cwd,
@@ -1590,46 +1490,70 @@ fn dialog_reads_file_from_the_hook_cwd() {
             .args(["hook", "pre-tool-use"])
             .write_stdin(payload.to_string())
             .assert()
-    };
-    let out = hook(&dir.join("sub")).success().get_output().stdout.clone();
-    let v: Value = serde_json::from_slice(&out).unwrap();
-    let h = &v["hookSpecificOutput"];
-    assert_eq!(h["permissionDecision"], "ask", "{v}");
-    assert!(
-        h["permissionDecisionReason"]
-            .as_str()
-            .unwrap()
-            .starts_with("stapel: import 1 findings into ABC-1: 1 HIGH"),
-        "{v}"
-    );
-    assert!(
-        h["updatedInput"]["command"]
-            .as_str()
-            .unwrap()
-            .starts_with("stapel findings import in.jsonl ABC-1 --grant "),
-        "{v}"
-    );
-    assert_eq!(grant_files(dir), 1);
+            .success()
+            .stdout("");
+    }
+    assert_eq!(grant_files(dir), 0);
+}
 
-    // From the root the same relative name is a missing file: the denial names it.
-    let err = String::from_utf8(hook(dir).code(DENY).get_output().stderr.clone()).unwrap();
-    assert!(err.starts_with("stapel: in.jsonl: "), "{err}");
-    assert_eq!(grant_files(dir), 1);
+#[test]
+fn dialog_shows_fate_and_summary() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let mut v = base();
+    v["fate"] = json!("f".repeat(41));
+    put(dir, "in.jsonl", &line(&v));
+    // There is no summary: the guard answers with nothing.
+    allowed_without_dialog(dir, "stapel findings import in.jsonl");
+}
+
+#[test]
+fn dialog_summary_edges() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let mut other = base();
+    other["id"] = json!("F-2");
+    other["round"] = json!("1");
+    other["role"] = json!("external");
+    put(
+        dir,
+        "in.jsonl",
+        &format!("{}{}", line(&base()), line(&other)),
+    );
+    allowed_without_dialog(dir, "stapel findings import in.jsonl");
+}
+
+#[test]
+fn hidden_field_edit_voids_the_grant() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &line(&base()));
+    allowed_without_dialog(dir, "stapel findings import in.jsonl");
+    // A file edited after the guard answered is imported as it is: there is no grant to void.
+    let mut edited = base();
+    edited["fate"] = json!("rejected");
+    put(dir, "in.jsonl", &line(&edited));
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl", "ABC-1"])
+        .assert()
+        .success();
+    assert_eq!(target_text(dir).unwrap(), inserted(&line(&edited)));
 }
 
 #[test]
 fn dialog_usage_denials() {
     let repo = repo_with_ticket();
     let dir = repo.path();
-    let findings_usage = "usage: stapel findings import FILE [KEY]";
     let ledger_usage = "usage: stapel ledger add --kind KIND --note TEXT [KEY]";
+    // `findings import` has no dialog: the guard leaves its usage to the command.
+    for command in [
+        "stapel findings import --x in.jsonl",
+        "stapel findings import",
+        "stapel findings import a b c",
+    ] {
+        common::hook_bash(dir, command, "auto").success().stdout("");
+    }
     let cases = [
-        (
-            "stapel findings import --x in.jsonl",
-            "unexpected option --x for stapel findings import",
-        ),
-        ("stapel findings import", findings_usage),
-        ("stapel findings import a b c", findings_usage),
         (
             "stapel ledger add --kind finding --note x --bogus",
             "unexpected option --bogus for stapel ledger add",
@@ -1665,136 +1589,33 @@ fn dialog_usage_denials() {
 // ---- Step 5: code review round 1 fixes ----
 
 #[test]
-fn dialog_shows_fate_and_summary() {
-    let repo = repo_with_ticket();
-    let dir = repo.path();
-    let with = |id: &str, stage: &str, round: Value, fate: &str| {
-        let mut v = base();
-        v["id"] = json!(id);
-        v["stage"] = json!(stage);
-        v["round"] = round;
-        v["fate"] = json!(fate);
-        line(&v)
-    };
-
-    // A string round and a differing stage: the round as given, the stage `mixed`.
-    let fate41 = "f".repeat(41);
-    let fate40 = "g".repeat(40);
-    put(
-        dir,
-        "in.jsonl",
-        &format!(
-            "{}{}{}",
-            with("F-1", "code-review", json!("r1"), &fate41),
-            with("F-2", "spec-review", json!("r1"), &fate40),
-            with("F-3", "code-review", json!("r1"), "two\nlines"),
-        ),
-    );
-    let (reason, _) = common::ask(dir, "stapel findings import in.jsonl");
-    let f = "f".repeat(40);
-    assert!(
-        reason.contains(&format!(
-            "0 LOW; stage mixed, role reviewer, round r1 | F-1 HIGH inside fate {f}…: a claim | \
-             F-2 HIGH inside fate {fate40}: a claim | F-3 HIGH inside fate two lines: a claim; runs:"
-        )),
-        "{reason}"
-    );
-
-    // A differing role and round: `mixed` each.
-    let mut other = base();
-    other["id"] = json!("F-2");
-    other["role"] = json!("external");
-    other["round"] = json!(2);
-    put(
-        dir,
-        "in.jsonl",
-        &format!("{}{}", line(&base()), line(&other)),
-    );
-    let (reason, _) = common::ask(dir, "stapel findings import in.jsonl");
-    assert!(
-        reason.contains(
-            "; stage code-review, role mixed, round mixed | F-1 HIGH inside fate fixed: a claim |"
-        ),
-        "{reason}"
-    );
-}
-
-#[test]
-fn dialog_limits_to_30_records() {
-    let repo = repo_with_ticket();
-    let dir = repo.path();
-    let records = |n: usize| -> String {
-        (0..n)
-            .map(|i| {
-                let mut v = base();
-                v["id"] = json!(format!("F-{i}"));
-                line(&v)
-            })
-            .collect()
-    };
-
-    // 31 records: a denial with the exact text, no grant.
-    put(dir, "in.jsonl", &records(31));
-    common::hook_bash(dir, "stapel findings import in.jsonl", "auto")
-        .code(DENY)
-        .stdout("")
-        .stderr(
-            "stapel: the permission dialog shows at most 30 findings; split the file into parts of at most 30 records\n",
-        );
-    assert_eq!(grant_files(dir), 0);
-
-    // 30 records ask.
-    put(dir, "in.jsonl", &records(30));
-    let (reason, _) = common::ask(dir, "stapel findings import in.jsonl");
-    assert!(
-        reason.starts_with("stapel: import 30 findings into ABC-1:"),
-        "{reason}"
-    );
-    assert_eq!(grant_files(dir), 1);
-
-    // A person in a terminal imports 31.
-    put(dir, "in.jsonl", &records(31));
-    stapel(dir)
-        .args(["findings", "import", "in.jsonl"])
-        .assert()
-        .success()
-        .stdout("imported: 31 findings into ABC-1\n");
-}
-
-#[test]
 fn dialog_refuses_a_broken_config() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     put(dir, "in.jsonl", &line(&base()));
     put(dir, ".stapel/stapel.toml", "this is = [not toml\n");
 
+    // `findings import` has no dialog: the guard allows it and the command gives the reason.
+    common::hook_bash(dir, "stapel findings import in.jsonl", "auto")
+        .success()
+        .stdout("");
+
     // The guard gives the reason that the command gives, and writes no grant.
-    for (command, args) in [
-        (
-            "stapel findings import in.jsonl",
-            vec!["findings", "import", "in.jsonl"],
-        ),
-        (
-            "stapel ledger add --kind finding --note x",
-            vec!["ledger", "add", "--kind", "finding", "--note", "x"],
-        ),
-    ] {
-        let out = stapel(dir)
-            .args(&args)
-            .assert()
-            .code(1)
-            .get_output()
-            .clone();
-        let expected = String::from_utf8(out.stderr).unwrap();
-        assert!(
-            expected.starts_with("stapel: .stapel/stapel.toml: "),
-            "{expected}"
-        );
-        common::hook_bash(dir, command, "auto")
-            .code(DENY)
-            .stdout("")
-            .stderr(expected);
-    }
+    let out = stapel(dir)
+        .args(["ledger", "add", "--kind", "finding", "--note", "x"])
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    let expected = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        expected.starts_with("stapel: .stapel/stapel.toml: "),
+        "{expected}"
+    );
+    common::hook_bash(dir, "stapel ledger add --kind finding --note x", "auto")
+        .code(DENY)
+        .stdout("")
+        .stderr(expected);
     assert_eq!(grant_files(dir), 0);
 }
 
@@ -1854,53 +1675,10 @@ fn own_grant_in_any_case() {
 }
 
 #[test]
-fn dialog_summary_edges() {
-    let repo = repo_with_ticket();
-    let dir = repo.path();
-    let two = |edit: &dyn Fn(&mut Value, &mut Value)| -> String {
-        let (mut a, mut b) = (base(), base());
-        b["id"] = json!("F-2");
-        edit(&mut a, &mut b);
-        format!("{}{}", line(&a), line(&b))
-    };
-    let summary = |text: String| -> String {
-        put(dir, "in.jsonl", &text);
-        let (reason, _) = common::ask(dir, "stapel findings import in.jsonl");
-        reason
-    };
-
-    // A number and the same digits as a string are one value.
-    let reason = summary(two(&|_, b| b["round"] = json!("1")));
-    assert!(
-        reason.contains("; stage code-review, role reviewer, round 1 | F-1"),
-        "{reason}"
-    );
-    // Role `mixed` alone.
-    let reason = summary(two(&|_, b| b["role"] = json!("external")));
-    assert!(
-        reason.contains("; stage code-review, role mixed, round 1 | F-1"),
-        "{reason}"
-    );
-    // Round `mixed` alone.
-    let reason = summary(two(&|_, b| b["round"] = json!(2)));
-    assert!(
-        reason.contains("; stage code-review, role reviewer, round mixed | F-1"),
-        "{reason}"
-    );
-    // A Cyrillic fate of 41 characters is cut at 40 characters.
-    let reason = summary(two(&|a, _| a["fate"] = json!("я".repeat(41))));
-    assert!(
-        reason.contains(&format!("fate {}…: a claim", "я".repeat(40))),
-        "{reason}"
-    );
-}
-
-#[test]
 fn dialog_refuses_an_unreadable_config() {
     use std::os::unix::fs::PermissionsExt;
     let repo = repo_with_ticket();
     let dir = repo.path();
-    put(dir, "in.jsonl", &line(&base()));
     let config = dir.join(".stapel/stapel.toml");
     put(dir, ".stapel/stapel.toml", "[x]\n");
     std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o000)).unwrap();
@@ -1909,8 +1687,12 @@ fn dialog_refuses_an_unreadable_config() {
         return;
     }
 
+    // `findings import` has no dialog: the guard allows it and the command gives the reason.
+    common::hook_bash(dir, "stapel findings import in.jsonl", "auto")
+        .success()
+        .stdout("");
     let out = stapel(dir)
-        .args(["findings", "import", "in.jsonl"])
+        .args(["ledger", "add", "--kind", "finding", "--note", "x"])
         .assert()
         .code(1)
         .get_output()
@@ -1920,7 +1702,7 @@ fn dialog_refuses_an_unreadable_config() {
         expected.starts_with("stapel: ") && expected.contains("stapel.toml: Permission denied"),
         "{expected}"
     );
-    common::hook_bash(dir, "stapel findings import in.jsonl", "auto")
+    common::hook_bash(dir, "stapel ledger add --kind finding --note x", "auto")
         .code(DENY)
         .stdout("")
         .stderr(expected);
