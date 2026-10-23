@@ -587,6 +587,9 @@ fn listed(m: &Map<String, Value>, name: &str, list: &[&str]) -> Result<(), Strin
 
 /// The first rule a record breaks, as `<field>: <reason>`.
 fn check_record(m: &Map<String, Value>, key: &str) -> Result<(), String> {
+    if m.contains_key("imported_by") {
+        return Err("imported_by: written by stapel, not by the file".into());
+    }
     text_field(m, "id")?;
     if let Some(Value::String(id)) = m.get("id")
         && (id.chars().count() > 64 || id.chars().any(|c| c.is_whitespace() || c.is_control()))
