@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::stage::{freshness, latest};
 use crate::state::State;
 use crate::ticket::{Lookup, Section, find};
+use crate::triage::Blocking;
 
 /// What an action points at: a command to run or a file to write.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +115,8 @@ pub struct Facts<'a> {
     pub sections: &'a [Section],
     /// The `stage` of each record of `findings.jsonl`.
     pub finding_stages: &'a [String],
+    /// The blocking findings of `findings.jsonl` (STP-23).
+    pub blocking: &'a [Blocking],
     /// The history facts; `None` until the caller has read the history.
     pub history: Option<&'a History>,
 }
@@ -381,6 +384,24 @@ pub fn decide(f: &Facts) -> Decision {
         && !f.finding_stages.iter().any(|s| s == "spec-review")
     {
         Action::new("spec-review", None, Some(Target::Path(path)))
+    } else if !f.blocking.is_empty() {
+        facts.extend(f.blocking.iter().take(10).map(|b| b.line.clone()));
+        if f.blocking.len() > 10 {
+            facts.push(format!("and {} more", f.blocking.len() - 10));
+        }
+        let name = if f.blocking.iter().any(|b| b.persons) {
+            "ask-human"
+        } else {
+            "triage"
+        };
+        Action::new(
+            name,
+            None,
+            Some(Target::Path(format!(
+                ".stapel/tickets/{}/findings.jsonl",
+                f.key
+            ))),
+        )
     } else if unconfirmed {
         facts.extend(confirm_facts);
         Action::new(

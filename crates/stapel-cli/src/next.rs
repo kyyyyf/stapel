@@ -13,6 +13,7 @@ use stapel_core::outcomes::{open_red, passing};
 use stapel_core::steps::{Marker, git_text, step_commits, steps};
 use stapel_core::ticket::{parse, read};
 use stapel_core::tickets::{Status, Ticket, list, resolve};
+use stapel_core::triage::blocking_findings;
 use stapel_core::worktree::dirty_paths;
 use std::path::Path;
 
@@ -194,14 +195,19 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
     };
     let text = read(&ticket.dir.join("ticket.md")).map_err(Fail::failed)?;
     let sections = parse(&text);
-    let finding_stages: Vec<String> = journal::read(&ticket.dir.join("findings.jsonl"))
-        .map_err(Fail::failed)?
+    let entries = journal::read(&ticket.dir.join("findings.jsonl")).map_err(Fail::failed)?;
+    let records: Vec<_> = entries
         .into_iter()
         .filter_map(|(_, entry)| match entry {
-            Entry::V1(map) | Entry::Legacy(map) => map.get("stage")?.as_str().map(String::from),
+            Entry::V1(map) | Entry::Legacy(map) => Some(map),
             Entry::Problem(_) => None,
         })
         .collect();
+    let finding_stages: Vec<String> = records
+        .iter()
+        .filter_map(|map| map.get("stage")?.as_str().map(String::from))
+        .collect();
+    let blocking = blocking_findings(&records);
 
     let mut facts = Facts {
         key: &ticket.key,
@@ -209,6 +215,7 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
         state,
         sections: &sections,
         finding_stages: &finding_stages,
+        blocking: &blocking,
         history: None,
     };
     let mut decision = decide(&facts);

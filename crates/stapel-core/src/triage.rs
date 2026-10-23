@@ -105,6 +105,49 @@ impl State {
     }
 }
 
+/// A blocking finding as `next` names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Blocking {
+    /// `finding <id> (<severity>, <promise>, <stage> round <round>): <fate>`.
+    pub line: String,
+    /// Whether it waits for the person.
+    pub persons: bool,
+}
+
+/// The blocking findings of a findings file, in file order of their ids.
+pub fn blocking_findings(records: &[Map<String, Value>]) -> Vec<Blocking> {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut out = Vec::new();
+    for m in records.iter().filter(|m| !m.contains_key("kind")) {
+        let Some(id) = text(m, "id") else { continue };
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        let state = state_of(records, id);
+        if !state.is_blocking() {
+            continue;
+        }
+        let finding = state.finding.as_ref().expect("a blocking finding exists");
+        let round = match finding.get("round") {
+            Some(Value::String(s)) => s.clone(),
+            Some(v) => v.to_string(),
+            None => String::new(),
+        };
+        out.push(Blocking {
+            line: format!(
+                "finding {id} ({}, {}, {} round {round}): {}",
+                state.severity.as_deref().unwrap_or(""),
+                text(finding, "promise").unwrap_or(""),
+                text(finding, "stage").unwrap_or(""),
+                state.fate.as_deref().unwrap_or(""),
+            ),
+            persons: state.is_persons(),
+        });
+    }
+    out
+}
+
 /// The first rule a triage line breaks before the ticket's file is looked at.
 fn check_line(m: &Map<String, Value>, key: &str) -> Result<(), String> {
     if m.contains_key("imported_by") {
