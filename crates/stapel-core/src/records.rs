@@ -26,6 +26,10 @@ const ROLES: [&str; 7] = [
 const SEVERITIES: [&str; 3] = ["HIGH", "MEDIUM", "LOW"];
 const PROMISES: [&str; 2] = ["inside", "outside"];
 const CATCHABLE: [&str; 4] = ["spec", "design", "test-plan", "code"];
+/// The fate list of a finding.
+pub const FATES: [&str; 6] = ["open", "patch", "bad_plan", "intent_gap", "defer", "no-change"];
+/// The verdict list of a triage.
+pub const VERDICTS: [&str; 5] = ["high", "medium", "low", "false", "maybe-false"];
 
 /// The records of a findings file that passed every check.
 #[derive(Debug)]
@@ -588,6 +592,40 @@ fn listed(m: &Map<String, Value>, name: &str, list: &[&str]) -> Result<(), Strin
     }
 }
 
+/// The optional triage fields of a finding or a triage record: `verdict`, `evidence`, `root`,
+/// `note`.
+pub fn check_triage_fields(m: &Map<String, Value>) -> Result<(), String> {
+    if m.contains_key("verdict") {
+        listed(m, "verdict", &VERDICTS)?;
+    }
+    if let Some(Value::String(v)) = m.get("verdict")
+        && (v == "false" || v == "maybe-false")
+        && !m.contains_key("evidence")
+    {
+        return Err(format!("evidence: missing; the verdict {v} needs it"));
+    }
+    for name in ["evidence", "note"] {
+        if m.contains_key(name) {
+            text_field(m, name)?;
+        }
+    }
+    if let Some(root) = m.get("root") {
+        match root {
+            Value::String(s)
+                if !s.is_empty()
+                    && s.chars().count() <= 64
+                    && !s.chars().any(|c| c.is_whitespace() || c.is_control()) => {}
+            _ => {
+                return Err(
+                    "root: must be 1 to 64 characters with no whitespace or control character"
+                        .into(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The first rule a record breaks, as `<field>: <reason>`.
 fn check_record(m: &Map<String, Value>, key: &str) -> Result<(), String> {
     if m.contains_key("imported_by") {
@@ -626,10 +664,17 @@ fn check_record(m: &Map<String, Value>, key: &str) -> Result<(), String> {
     listed(m, "promise", &PROMISES)?;
     text_field(m, "claim")?;
     listed(m, "catchable_at", &CATCHABLE)?;
-    text_field(m, "fate")?;
+    listed(m, "fate", &FATES)?;
     if m.contains_key("rule") {
         text_field(m, "rule")?;
     }
+    if m.contains_key("kind") {
+        return Err(
+            "kind: a finding has no kind; triage records go through stapel findings triage"
+                .into(),
+        );
+    }
+    check_triage_fields(m)?;
     if m.get("v").is_some_and(|v| v != 1) {
         return Err("v: must be 1".into());
     }
