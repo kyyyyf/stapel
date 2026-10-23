@@ -1367,3 +1367,159 @@ fn legacy_records_do_not_block() {
         "next: triage — .stapel/tickets/ABC-1/findings.jsonl"
     );
 }
+
+// ---- Step 4b: coverage after the drift review of step 4 ----
+
+#[test]
+fn next_triage_among_the_actions() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) {
+        for (rel, text) in files {
+            put(dir, rel, text);
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+    let line = "blocked: finding F-1 (HIGH, inside, code-review round 1): open";
+    let triage = "next: triage — .stapel/tickets/ABC-1/findings.jsonl";
+
+    // No Frame: write-frame, no finding line.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    seed(dir, &[open_finding("F-1")]);
+    let (facts, action) = next_lines(dir);
+    assert!(facts.is_empty(), "{facts:?}");
+    assert_eq!(action, "next: write-frame — .stapel/tickets/ABC-1/ticket.md");
+
+    // A Frame, the Plan not written: write-section.
+    common::set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem.");
+    let (facts, action) = next_lines(dir);
+    assert!(facts.is_empty(), "{facts:?}");
+    assert_eq!(
+        action,
+        "next: write-section Plan — .stapel/tickets/ABC-1/ticket.md"
+    );
+
+    // A confirmed ticket with step 1 built as RED only: triage, not green-step.
+    let repo = past_spec();
+    let dir = repo.path();
+    commit(dir, &[], "initial");
+    commit(
+        dir,
+        &[(
+            "crates/tiny/tests/t1.rs",
+            "#[test]\nfn t() {\n    assert!(true);\n}\n",
+        )],
+        "ABC-1 step 1 RED: one",
+    );
+    let (facts, action) = next_lines(dir);
+    assert!(facts.is_empty(), "{facts:?}");
+    assert!(action.starts_with("next: green-step step 1"), "{action}");
+    seed(dir, &[open_finding("F-1")]);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(facts, [line]);
+    assert_eq!(action, triage);
+}
+
+#[test]
+fn next_cap_of_ten() {
+    let triage = "next: triage — .stapel/tickets/ABC-1/findings.jsonl";
+    let ask = "next: ask-human — .stapel/tickets/ABC-1/findings.jsonl";
+    let many = |n: usize| -> Vec<Value> {
+        (1..=n)
+            .map(|i| open_finding(&format!("F-{i}")))
+            .collect()
+    };
+    let repo = past_spec();
+    let dir = repo.path();
+
+    // Ten: ten lines, no `and` line.
+    seed(dir, &many(10));
+    let (facts, action) = next_lines(dir);
+    assert_eq!(facts.len(), 10, "{facts:?}");
+    assert!(facts.iter().all(|l| l.starts_with("blocked: finding ")));
+    assert_eq!(action, triage);
+
+    // Eleven: ten lines and the count of the rest.
+    seed(dir, &many(11));
+    let (facts, action) = next_lines(dir);
+    assert_eq!(facts.len(), 11, "{facts:?}");
+    assert_eq!(
+        facts[9],
+        "blocked: finding F-10 (HIGH, inside, code-review round 1): open"
+    );
+    assert_eq!(facts[10], "blocked: and 1 more");
+    assert_eq!(action, triage);
+
+    // Eleven, one of them outside: ask-human with the same lines.
+    let mut all = many(11);
+    all[10]["promise"] = json!("outside");
+    seed(dir, &all);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(facts.len(), 11, "{facts:?}");
+    assert_eq!(
+        facts[9],
+        "blocked: finding F-10 (HIGH, inside, code-review round 1): open"
+    );
+    assert_eq!(facts[10], "blocked: and 1 more");
+    assert_eq!(action, ask);
+}
+
+#[test]
+fn next_round_forms() {
+    let triage = "next: triage — .stapel/tickets/ABC-1/findings.jsonl";
+    let ask = "next: ask-human — .stapel/tickets/ABC-1/findings.jsonl";
+    let repo = past_spec();
+    let dir = repo.path();
+
+    // A round string that is not a whole number is not a person's finding.
+    let mut f = open_finding("F-1");
+    f["round"] = json!("2a");
+    seed(dir, &[f]);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(
+        facts,
+        ["blocked: finding F-1 (HIGH, inside, code-review round 2a): open"]
+    );
+    assert_eq!(action, triage);
+
+    // A round 2.0 is the whole round 2: the person, the line shows `round 2.0`.
+    let mut f = open_finding("F-1");
+    f["round"] = json!(2.0);
+    seed(dir, &[f]);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(
+        facts,
+        ["blocked: finding F-1 (HIGH, inside, code-review round 2.0): open"]
+    );
+    assert_eq!(action, ask);
+
+    // An open HIGH of spec-review round 2: the person.
+    let mut f = open_finding("F-1");
+    f["stage"] = json!("spec-review");
+    f["round"] = json!(2);
+    seed(dir, &[f]);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(
+        facts,
+        ["blocked: finding F-1 (HIGH, inside, spec-review round 2): open"]
+    );
+    assert_eq!(action, ask);
+}
