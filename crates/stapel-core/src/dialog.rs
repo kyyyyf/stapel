@@ -12,7 +12,7 @@ use crate::guard::{Decision, Invocation, stapel_root};
 use crate::hash::normal_form;
 use crate::identity::user_name;
 use crate::records::{
-    FindingsPlan, LedgerPlan, Row, TokenRecord, TokensPlan, plan_findings, plan_ledger, plan_tokens,
+    LedgerPlan, TokenRecord, TokensPlan, plan_ledger, plan_tokens,
 };
 use crate::stage::{Reason, freshness, latest};
 use crate::ticket::{find, parse, read};
@@ -21,9 +21,6 @@ use std::path::Path;
 
 /// Permission modes in which Claude Code shows the dialog for an `ask` answer.
 pub const DIALOG_MODES: [&str; 4] = ["default", "acceptEdits", "auto", "plan"];
-
-/// The permission dialog of `findings import` shows at most this many records (STP-18 AC-17).
-pub const DIALOG_MAX_FINDINGS: usize = 30;
 
 /// The permission dialog of `tokens import-records` shows at most this many records (STP-19).
 pub const DIALOG_MAX_TOKEN_RECORDS: usize = 30;
@@ -123,6 +120,10 @@ pub fn ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Decision {
 }
 
 fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decision, String> {
+    // `findings import` needs no dialog (STP-23): the command records who imported.
+    if inv.action == "findings import" {
+        return Ok(Decision::Allow);
+    }
     if crate::identity::in_agent_tool_shell() {
         return Err(format!(
             "this hook call comes from an agent's shell ({} is set), not from Claude Code's hook \
@@ -140,10 +141,7 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
         ));
     }
     let root = stapel_root(cwd).ok_or("not inside a stapel repository")?;
-    if inv.action == "findings import"
-        || inv.action == "ledger add"
-        || inv.action == "tokens import-records"
-    {
+    if inv.action == "ledger add" || inv.action == "tokens import-records" {
         // The command reads the configuration first (`repo::open`); so does the dialog, with the
         // same reasons.
         let path = root.join(".stapel/stapel.toml");
@@ -228,17 +226,6 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
     finish(inv, &root, facts, reason, tail)
 }
 
-/// The grant facts of `findings import`: the ids, and the hash of the lines to append.
-pub fn findings_facts(plan: &FindingsPlan) -> Facts {
-    Facts {
-        key: plan.key.clone(),
-        action: "findings-import".into(),
-        detail: plan.findings.ids.join(","),
-        hash: plan.findings.hash.clone(),
-        dependencies: Vec::new(),
-    }
-}
-
 /// The grant facts of `tokens import-records`: the ids, and the records hash.
 pub fn tokens_facts(plan: &TokensPlan) -> Facts {
     Facts {
@@ -304,64 +291,7 @@ fn shown(text: &str, max: usize) -> String {
 /// the command, then the grant over the records.
 fn prepare_records(inv: &Invocation, cwd: &Path, root: &Path) -> Result<Decision, String> {
     let program = program(inv).join(" ");
-    let (facts, reason, tail) = if inv.action == "findings import" {
-        let mut positional = Vec::new();
-        for a in &inv.args {
-            if a.starts_with('-') && a != "-" {
-                return Err(format!("unexpected option {a} for stapel findings import"));
-            }
-            positional.push(a.as_str());
-        }
-        let (file, key) = match positional.as_slice() {
-            [file] => (*file, None),
-            [file, key] => (*file, Some(*key)),
-            _ => return Err("usage: stapel findings import FILE [KEY]".into()),
-        };
-        let plan = plan_findings(root, cwd, file, key)?;
-        let rows = &plan.findings.rows;
-        if rows.len() > DIALOG_MAX_FINDINGS {
-            return Err(format!(
-                "the permission dialog shows at most {DIALOG_MAX_FINDINGS} findings; split the \
-                 file into parts of at most {DIALOG_MAX_FINDINGS} records"
-            ));
-        }
-        let count = |severity: &str| rows.iter().filter(|r| r.severity == severity).count();
-        // The value all records share, else `mixed`.
-        let common = |value: fn(&Row) -> &str| {
-            let first = value(&rows[0]);
-            if rows.iter().all(|r| value(r) == first) {
-                first.to_string()
-            } else {
-                "mixed".to_string()
-            }
-        };
-        let reason = format!(
-            "stapel: import {} findings into {}{}: {} HIGH, {} MEDIUM, {} LOW; stage {}, role {}, \
-             round {} | {}; runs: {program}. Answer Yes or No; do not choose \"don't ask again\".",
-            rows.len(),
-            plan.key,
-            if plan.closed { " (closed)" } else { "" },
-            count("HIGH"),
-            count("MEDIUM"),
-            count("LOW"),
-            common(|r| &r.stage),
-            common(|r| &r.role),
-            common(|r| &r.round),
-            rows.iter()
-                .map(|r| format!(
-                    "{} {} {} fate {}: {}",
-                    r.id,
-                    r.severity,
-                    r.promise,
-                    shown(&r.fate, 40),
-                    shown(&r.claim, 80)
-                ))
-                .collect::<Vec<_>>()
-                .join(" | "),
-        );
-        let tail = format!("findings import {} {}", quote(file), quote(&plan.key));
-        (findings_facts(&plan), reason, tail)
-    } else if inv.action == "tokens import-records" {
+    let (facts, reason, tail) = if inv.action == "tokens import-records" {
         let mut positional = Vec::new();
         for a in &inv.args {
             if a.starts_with('-') && a != "-" {

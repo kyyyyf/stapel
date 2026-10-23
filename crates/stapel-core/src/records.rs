@@ -76,6 +76,22 @@ pub struct FindingsPlan {
     pub findings: Findings,
 }
 
+/// The importer of a record: `{"by":"agent"|"person","user":<name>}` as JSON text.
+pub fn importer_json(agent: bool, user: &str) -> String {
+    format!(
+        "{{\"by\":\"{}\",\"user\":{}}}",
+        if agent { "agent" } else { "person" },
+        serde_json::to_string(user).expect("a string is JSON")
+    )
+}
+
+/// `line` with `,"imported_by":<importer>` put before its last `}`, after trailing whitespace is
+/// removed; the rest stays byte for byte. `None` when the line does not end in `}`.
+pub fn with_importer(line: &str, importer: &str) -> Option<String> {
+    let body = line.trim_end().strip_suffix('}')?;
+    Some(format!("{body},\"imported_by\":{importer}}}"))
+}
+
 /// Every check of `findings import FILE [KEY]`; `base` is the directory that a relative `FILE`
 /// is read from.
 pub fn plan_findings(
@@ -83,12 +99,13 @@ pub fn plan_findings(
     base: &Path,
     file: &str,
     key: Option<&str>,
+    importer: &str,
 ) -> Result<FindingsPlan, String> {
     let ticket = journal_ticket(root, key)?;
     let text = read_input(root, base, file)?;
     let target = ticket.dir.join("findings.jsonl");
     let label = format!(".stapel/tickets/{}/findings.jsonl", ticket.key);
-    let findings = check_findings(file, &text, &ticket.key, &target, &label)?;
+    let findings = check_findings(file, &text, &ticket.key, &target, &label, importer)?;
     Ok(FindingsPlan {
         closed: matches!(ticket.status, Status::Closed(_)),
         key: ticket.key,
@@ -622,6 +639,7 @@ pub fn check_findings(
     key: &str,
     target: &Path,
     target_label: &str,
+    importer: &str,
 ) -> Result<Findings, String> {
     let mut lines: Vec<String> = Vec::new();
     let mut ids: Vec<String> = Vec::new();
@@ -659,6 +677,11 @@ pub fn check_findings(
             ));
         }
         check_record(&map, key).map_err(|reason| format!("{file}:{n}: {reason}"))?;
+        let line = with_importer(raw, importer)
+            .ok_or_else(|| format!("{file}:{n}: not a JSON object"))?;
+        if line.len() + 1 > MAX_LINE {
+            return Err(format!("{file}:{n}: longer than 64 KiB"));
+        }
         let Some(Value::String(id)) = map.get("id") else {
             unreachable!("check_record needs a text id");
         };
@@ -690,7 +713,7 @@ pub fn check_findings(
         });
         ids.push(id.clone());
         numbers.push(n);
-        lines.push(raw.to_string());
+        lines.push(line);
     }
     if lines.is_empty() {
         return Err(format!("{file}: no records"));
