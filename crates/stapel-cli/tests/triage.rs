@@ -914,3 +914,153 @@ fn triage_on_a_closed_ticket() {
         );
     assert_eq!(common::snapshot(dir), before);
 }
+
+// ---- Step 3c: coverage after the drift review ----
+
+#[test]
+fn triage_note_reads_the_current_state() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let by = json!({"by": "person", "user": "x"});
+    let mut f3 = finding("F-3");
+    f3["promise"] = json!("outside");
+    f3["fate"] = json!("open");
+    let mut f4 = finding("F-4");
+    f4["fate"] = json!("open");
+    let mut f5 = finding("F-5");
+    f5["promise"] = json!("outside");
+    f5["fate"] = json!("open");
+    let moved = json!({"kind": "triage", "id": "F-4", "ticket": "ABC-1", "fate": "intent_gap", "imported_by": by});
+    let false_verdict = json!({"kind": "triage", "id": "F-5", "ticket": "ABC-1", "verdict": "false", "evidence": "e", "fate": "open", "imported_by": by});
+    seed(dir, &[f3, f4, f5, moved, false_verdict]);
+
+    let line = |id: &str, extra: &str| {
+        format!("{{\"id\":\"{id}\",\"ticket\":\"ABC-1\",\"fate\":\"defer\"{extra}}}\n")
+    };
+    let run = |text: &str| {
+        put(dir, "t.jsonl", text);
+        stapel(dir)
+            .args(["findings", "triage", "t.jsonl"])
+            .assert()
+    };
+
+    // F-3 outside and open: a note is needed; after a record with a note it is not.
+    run(&line("F-3", "")).code(2);
+    run(&line("F-3", ",\"note\":\"the person said so\""))
+        .success()
+        .stdout("triaged: 1 findings of ABC-1\n");
+    run(&line("F-3", ""))
+        .success()
+        .stdout("triaged: 1 findings of ABC-1\n");
+
+    // F-4 was moved to intent_gap by an earlier record: the person's finding again.
+    run(&line("F-4", ""))
+        .code(2)
+        .stdout("")
+        .stderr("stapel: t.jsonl:1: note: missing; a finding for the person needs the person's answer\n");
+
+    // F-5 is false by an earlier verdict: no note needed.
+    run(&line("F-5", ""))
+        .success()
+        .stdout("triaged: 1 findings of ABC-1\n");
+}
+
+#[test]
+fn triage_line_rules() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    seed(dir, &[finding("F-1")]);
+    let ok = r#"{"id":"F-1","ticket":"ABC-1","fate":"defer"}"#;
+
+    let refused = |text: &str, reason: &str| {
+        put(dir, "t.jsonl", text);
+        let before = common::snapshot(dir);
+        stapel(dir)
+            .args(["findings", "triage", "t.jsonl"])
+            .assert()
+            .code(2)
+            .stdout("")
+            .stderr(format!("stapel: t.jsonl:{reason}\n"));
+        assert_eq!(common::snapshot(dir), before, "{text}");
+    };
+
+    refused(
+        r#"{"id":"F-1","ticket":"ABC-1","fate":"defer","imported_by":{"by":"person","user":"x"}}
+"#,
+        "1: imported_by: written by stapel, not by the file",
+    );
+    let id_rule = "1: id: must be 1 to 64 characters with no whitespace or control character";
+    refused(
+        &format!(
+            "{{\"id\":\"{}\",\"ticket\":\"ABC-1\",\"fate\":\"defer\"}}\n",
+            "a".repeat(65)
+        ),
+        id_rule,
+    );
+    refused(
+        "{\"id\":\"F 1\",\"ticket\":\"ABC-1\",\"fate\":\"defer\"}\n",
+        id_rule,
+    );
+
+    // A line of 64 KiB less 10 bytes grows past the limit with the insert.
+    let short = r#"{"id":"F-1","ticket":"ABC-1","fate":"defer","note":""}"#;
+    let long = format!(
+        "{}{}\"}}",
+        &short[..short.len() - 2],
+        "x".repeat(65536 - 10 - short.len())
+    );
+    assert_eq!(long.len(), 65536 - 10);
+    refused(&format!("{long}\n"), "1: longer than 64 KiB");
+
+    // A file over 256 KiB.
+    let big = format!("{ok}\n").repeat(6000);
+    assert!(big.len() > 256 * 1024);
+    refused(&big, " more than 256 KiB; split the file");
+
+    // A damaged line in findings.jsonl: the refusal of `findings import`.
+    put(dir, TARGET, &format!("{}\nnot json\n", finding("F-1")));
+    put(dir, "t.jsonl", &format!("{ok}\n"));
+    let before = common::snapshot(dir);
+    let out = stapel(dir)
+        .args(["findings", "triage", "t.jsonl"])
+        .assert()
+        .code(2)
+        .stdout("")
+        .get_output()
+        .clone();
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        err.starts_with("stapel: .stapel/tickets/ABC-1/findings.jsonl:2: "),
+        "{err}"
+    );
+    assert_eq!(common::snapshot(dir), before);
+}
+
+#[test]
+fn guard_allows_triage() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "f.jsonl", "{}\n");
+    let command = "stapel findings triage f.jsonl ABC-1";
+
+    for mode in ["default", "bypassPermissions", ""] {
+        common::hook_bash(dir, command, mode)
+            .success()
+            .stdout("")
+            .stderr("");
+    }
+
+    let payload = json!({
+        "tool_name": "Bash",
+        "cwd": dir,
+        "tool_input": { "command": command, "description": "test" },
+    });
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(payload.to_string())
+        .assert()
+        .success()
+        .stdout("")
+        .stderr("");
+    assert!(!common::grants_dir(dir).exists());
+}
