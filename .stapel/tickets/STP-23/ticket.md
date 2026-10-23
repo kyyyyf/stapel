@@ -84,7 +84,8 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   loses `--grant` (SR1-14); a closed ticket stays `closed` in `next` (SR1-9); a Bash redirection into
   `findings.jsonl` is not promised and stays with items 1.9 and 1.10 (SR1-3).
 - 2026-10-23: Decision (drift review of step 4, recommended): coverage step 4b (D4-2 to D4-4); a round
-  `2.0` is not a whole round, its line shows `2.0` as written (D4-3).
+  `2.0` is the whole round 2 by the term, so it gives `ask-human`, and its line shows `2.0` as written;
+  `findings import` refuses `2.0` (STP-18), so it comes only from a hand-written line (D4-3, D4B-1).
 - 2026-10-23: Decision (an old quote, the human, recommended): STP-18 AC-12 quotes the refusal text as
   changed by STP-23 AC-2, with a note; the builder's comment line that kept the old text in `fail.rs` goes
   in step 2. Rejected: keep the comment; a lint rule for superseded quotes now.
@@ -95,6 +96,8 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   AC-7 name the refusals step 3 built (the `id` rule, `imported_by`, a damaged target line), as
   `findings import` has them (D3-1 to D3-3); `FATES`, `VERDICTS` and `check_triage_fields` stay public
   (D2-3).
+- 2026-10-23: Decision (drift review of step 5, recommended): coverage step 5b (D5-1, D5-2); the other
+  brief lines stay guarded by `tests/brief.rs` (D5-3).
 
 ## Spec
 
@@ -136,7 +139,7 @@ Terms:
 | AC-8 | WHEN the ticket's `findings.jsonl` holds a blocking finding and none is a person's finding, and `next` would give `confirm` or a later action, THE action is `triage` with the target `.stapel/tickets/<KEY>/findings.jsonl`, after the line `blocked: finding <id> (<severity>, <promise>, <stage> round <round>): <fate>` for each blocking finding in file order, at most ten, then `blocked: and <n> more`; a closed ticket stays `closed`. | `triage::next_asks_for_triage`, `triage::next_triage_before_confirm`, `triage::next_triage_among_the_actions`, `triage::next_cap_of_ten` |
 | AC-9 | WHEN at least one blocking finding is a person's finding THE action is `ask-human` with the same target and lines. | `triage::next_asks_the_human`, `triage::next_round_forms` |
 | AC-10 | WHEN `next` reads the current state THE last fate and the last verdict hold; a false, legacy or LOW inside open finding gives no line. | `triage::current_state_of_a_finding`, `triage::legacy_records_do_not_block` |
-| AC-11 | WHEN `stapel brief` shows a finding a step names THE line is `- <id> (<current severity>): <claim of the finding> Fate: <current fate>`, followed by ` Verdict: <verdict>` when the last verdict is `false` or `maybe-false`. | `triage::brief_shows_the_current_fate` |
+| AC-11 | WHEN `stapel brief` shows a finding a step names THE line is `- <id> (<current severity>): <claim of the finding> Fate: <current fate>`, followed by ` Verdict: <verdict>` when the last verdict is `false` or `maybe-false`. | `triage::brief_shows_the_current_fate`, `triage::brief_reads_old_and_later_records` |
 | AC-12 | WHEN the skill is written THE body holds `stapel findings import and stapel ledger add --kind finding or catches run without a dialog; stapel ledger add --kind decision keeps its dialog.`, a line that starts ``- `triage`:`` and holds `stapel findings triage FILE KEY` and `patch, bad_plan, intent_gap, defer or no-change`, a line that starts ``- `ask-human`:`` and holds `ask the person in the chat` and `with the person's answer as the note`, and no longer holds `each import is a permission dialog`. | `init_process::skill_text_names_the_triage` |
 
 ### Guarantees
@@ -185,11 +188,12 @@ also `--test ticket_drift`.
 | Next, order | a ticket with spec-review findings and no confirmation: `triage`, not `confirm`; after a triage record with fate `patch`: `confirm` | `triage::next_triage_before_confirm` |
 | Next among the actions | a blocking finding on a ticket without a Frame: `write-frame`; with an unwritten Plan: `write-section`; on a confirmed ticket with step 1 built as RED only: `triage`, not `green-step` (D4-2) | `triage::next_triage_among_the_actions` |
 | Next, ten lines | ten blocking findings: ten lines and no `and` line; eleven: ten lines and `blocked: and 1 more`; eleven of which one is outside: `ask-human` with the same ten lines and `blocked: and 1 more` (D4-4) | `triage::next_cap_of_ten` |
-| Next, round forms | an open HIGH of `code-review` round `"2a"`: `triage`; round `2.0`: `triage`, the line shows `round 2.0`; an open HIGH of `spec-review` round 2: `ask-human` (D4-3) | `triage::next_round_forms` |
+| Next, round forms | an open HIGH of `code-review` round `"2a"`: `triage`; round `2.0`: `ask-human` (a whole round), the line shows `round 2.0`; an open HIGH of `spec-review` round 2: `ask-human` (D4-3) | `triage::next_round_forms` |
 | Next, person | an open outside LOW; a fate `intent_gap`; an open HIGH of `code-review` round 2, and of round `"2"`: `ask-human`; an open HIGH of `step-drift` round `step-2`: `triage` | `triage::next_asks_the_human` |
 | Current state | F-1 HIGH, then triage `verdict` `low`: no line; then `verdict` `medium`: `(MEDIUM, …)`; then `verdict` `false`: no line; then `fate` `open` with no verdict: still false, no line; written by hand: two finding records F-4 (LOW, then HIGH open): one line for the last; F-5 with `fate` `["x"]` and F-6 with `severity` `3` open inside: no line; a line that is not JSON: skipped | `triage::current_state_of_a_finding` |
 | Legacy | an open HIGH with fate `fixed: done` (written as an old line), and a new open HIGH F-2: only F-2 named | `triage::legacy_records_do_not_block` |
 | Brief | a step naming F-1, which has a triage record with `verdict` `low` and fate `defer`: `- F-1 (LOW): <claim> Fate: defer`; F-2 with a last verdict `false` and fate `no-change`: the line ends `Fate: no-change Verdict: false` | `triage::brief_shows_the_current_fate` |
+| Brief, old and later records | F-1 with fate `fixed: done` and no triage record: `- F-1 (HIGH): <claim> Fate: fixed: done`; F-2 with `verdict` `false`, then a fate-only record `defer`: `Fate: defer Verdict: false`; two finding records F-3, LOW then HIGH with another claim: the HIGH line with the second claim (D5-1, D5-2) | `triage::brief_reads_old_and_later_records` |
 | Skill text | the sentences of AC-12 in `.claude/skills/stapel/SKILL.md` written by `init` | `init_process::skill_text_names_the_triage` |
 
 ### Inputs
@@ -319,7 +323,7 @@ the Abuse row on redirections is corrected (SR1-3); AC-12 pins the fates and the
 | AC-8 | `triage::next_asks_for_triage`, `triage::next_triage_before_confirm`, `triage::next_triage_among_the_actions`, `triage::next_cap_of_ten` |
 | AC-9 | `triage::next_asks_the_human`, `triage::next_round_forms` |
 | AC-10 | `triage::current_state_of_a_finding`, `triage::legacy_records_do_not_block` |
-| AC-11 | `triage::brief_shows_the_current_fate` |
+| AC-11 | `triage::brief_shows_the_current_fate`, `triage::brief_reads_old_and_later_records` |
 | AC-12 | `init_process::skill_text_names_the_triage` |
 
 ## Plan
@@ -364,6 +368,9 @@ Route: full (tags `guard`, `data`, `interface`), auto.
    only, each helper nested inside its function, no `cargo fmt`; a test that fails is an `intent_gap`.
 5. `brief` shows the current state (AC-11; test `triage::brief_shows_the_current_fate`). Must not change:
    the other lines of the brief.
+5b. Coverage after the drift review of step 5 (D5-1, D5-2; AC-11): new `#[test]` function
+   `triage::brief_reads_old_and_later_records`. Tests only, each helper nested inside its function, no
+   `cargo fmt`; a test that fails is an `intent_gap`.
 6. The skill text (AC-12; test `init_process::skill_text_names_the_triage`): `crates/stapel-cli/assets/skill.md`;
    the GREEN runs the built `stapel init` here so that `init_process::this_repository_has_the_current_files`
    holds. Must not change: the other sentences that `init_process` tests.
