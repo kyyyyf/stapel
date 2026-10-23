@@ -141,3 +141,60 @@ fn guard_allows_import_without_a_dialog() {
 
     assert!(!common::grants_dir(dir).exists());
 }
+
+#[test]
+fn importer_recorded() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, "in.jsonl", &format!("{}\n", base()));
+
+    // Neither agent variable: a person.
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success();
+    let text = common::read(dir, TARGET);
+    assert!(
+        text.trim_end()
+            .ends_with(r#","imported_by":{"by":"person","user":"test-user"}}"#),
+        "{text}"
+    );
+
+    // An empty agent variable still means an agent.
+    let mut second = base();
+    second["id"] = json!("F-2");
+    put(dir, "in2.jsonl", &format!("{second}\n"));
+    stapel(dir)
+        .env("CLAUDE_CODE_ENTRYPOINT", "")
+        .args(["findings", "import", "in2.jsonl"])
+        .assert()
+        .success();
+    let text = common::read(dir, TARGET);
+    let last = text.lines().last().unwrap();
+    assert!(
+        last.ends_with(r#","imported_by":{"by":"agent","user":"test-user"}}"#),
+        "{last}"
+    );
+
+    // A record that brings `imported_by` is refused, and nothing is appended.
+    let before = common::read(dir, TARGET);
+    let mut third = base();
+    third["id"] = json!("F-3");
+    let ok = third.to_string();
+    third["id"] = json!("F-4");
+    third["imported_by"] = json!({"by": "person", "user": "someone"});
+    put(dir, "in3.jsonl", &format!("{ok}\n{third}\n"));
+    let out = stapel(dir)
+        .args(["findings", "import", "in3.jsonl"])
+        .assert()
+        .code(2)
+        .get_output()
+        .clone();
+    assert!(out.stdout.is_empty());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        err.contains("stapel: in3.jsonl:2: imported_by: written by stapel, not by the file"),
+        "{err}"
+    );
+    assert_eq!(common::read(dir, TARGET), before);
+}
