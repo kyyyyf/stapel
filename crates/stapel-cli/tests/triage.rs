@@ -432,3 +432,72 @@ fn importer_escapes_the_user_name() {
     assert_eq!(v["imported_by"]["user"], name, "{line}");
     assert_eq!(v["imported_by"]["by"], "agent", "{line}");
 }
+
+#[test]
+fn ledger_kind_words() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+
+    // A wrong word is denied by the hook with the reason of the command, in the modes with a dialog.
+    for mode in ["default", "auto"] {
+        let out = common::hook_bash(dir, "stapel ledger add --kind Decision --note x", mode)
+            .get_output()
+            .clone();
+        assert!(!out.status.success(), "{mode}");
+        assert!(out.stdout.is_empty(), "{mode}: {:?}", out.stdout);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("--kind must be one of finding, catches, decision"),
+            "{mode}: {err}"
+        );
+    }
+
+    // Two `--kind` words: the dialog stays, also in modes `default` and `auto`.
+    for mode in ["default", "auto"] {
+        let out = common::hook_bash(
+            dir,
+            "stapel ledger add --kind finding --kind decision --note x",
+            mode,
+        )
+        .success()
+        .get_output()
+        .clone();
+        let v: Value = serde_json::from_slice(&out.stdout)
+            .unwrap_or_else(|e| panic!("{mode}: {e}: {:?}", out.stdout));
+        assert_eq!(
+            v["hookSpecificOutput"]["permissionDecision"], "ask",
+            "{mode}: {v}"
+        );
+    }
+    assert!(ledger_text(dir).is_none());
+}
+
+#[test]
+fn ledger_importer_for_catches() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let name = "a \"q\" \\";
+    common::git_config(dir, "user.name", name);
+    stapel(dir)
+        .env("CLAUDECODE", "1")
+        .args(["ledger", "add", "--kind", "catches", "--note", "x"])
+        .assert()
+        .success()
+        .stdout("recorded: catches for ABC-1\n");
+    let text = ledger_text(dir).unwrap();
+    let line = text.lines().last().unwrap();
+    let v: Value = serde_json::from_str(line).unwrap_or_else(|e| panic!("{e}: {line}"));
+    assert_eq!(v["imported_by"]["by"], "agent", "{line}");
+    assert_eq!(v["imported_by"]["user"], name, "{line}");
+
+    // No user name: the AC-3 text, exit 1, nothing more appended.
+    unset_user_name(dir);
+    stapel(dir)
+        .env("CLAUDECODE", "1")
+        .args(["ledger", "add", "--kind", "catches", "--note", "y"])
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("stapel: git config user.name is not set; set it to the name confirmations are recorded under\n");
+    assert_eq!(ledger_text(dir).unwrap(), text);
+}
