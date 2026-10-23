@@ -448,9 +448,10 @@ pub fn plan_ledger(
     kind: &str,
     note: &str,
     key: Option<&str>,
+    importer: Option<&str>,
 ) -> Result<LedgerPlan, String> {
     let ticket = journal_ticket(root, key)?;
-    let record = check_ledger(root, kind, &ticket.key, note)?;
+    let record = check_ledger(root, kind, &ticket.key, note, importer)?;
     Ok(LedgerPlan {
         closed: matches!(ticket.status, Status::Closed(_)),
         key: ticket.key,
@@ -482,6 +483,7 @@ pub fn check_ledger(
     kind: &str,
     key: &str,
     note: &str,
+    importer: Option<&str>,
 ) -> Result<LedgerRecord, String> {
     if !KINDS.contains(&kind) {
         return Err(format!("--kind must be one of {}", KINDS.join(", ")));
@@ -498,8 +500,9 @@ pub fn check_ledger(
     }
     let at = &crate::time::now_rfc3339()[..10];
     let text = |s: &str| serde_json::to_string(s).expect("a string is JSON");
+    let imported = importer.map_or(String::new(), |i| format!(",\"imported_by\":{i}"));
     let line = format!(
-        "{{\"v\":1,\"at\":\"{at}\",\"kind\":{},\"ticket\":{},\"note\":{}}}",
+        "{{\"v\":1,\"at\":\"{at}\",\"kind\":{},\"ticket\":{},\"note\":{}{imported}}}",
         text(kind),
         text(key),
         text(note)

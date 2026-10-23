@@ -5,17 +5,25 @@ use crate::fail::{AGENT_SHELL, Fail, MISMATCH};
 use crate::repo;
 use stapel_core::dialog::ledger_facts;
 use stapel_core::grant::consume_with;
-use stapel_core::identity::in_agent_shell;
+use stapel_core::identity::{in_agent_shell, user_name};
 use stapel_core::journal::append_all;
-use stapel_core::records::{LEDGER, plan_ledger};
+use stapel_core::records::{LEDGER, importer_json, plan_ledger};
 
 pub fn add(kind: &str, note: &str, key: Option<&str>, grant: Option<&str>) -> Result<(), Fail> {
-    if in_agent_shell() && grant.is_none() {
+    if kind == "decision" && in_agent_shell() && grant.is_none() {
         return Err(Fail::failed(AGENT_SHELL));
     }
     let (root, _config) = repo::open().map_err(Fail::failed)?;
+    // A finding or catches record carries its importer; a decision does not (STP-23).
+    let importer = if kind == "finding" || kind == "catches" {
+        let user = user_name(&root).map_err(Fail::failed)?;
+        Some(importer_json(in_agent_shell(), &user))
+    } else {
+        None
+    };
     // Every check runs before the grant is used, so a refusal leaves the grant to expire.
-    let plan = plan_ledger(&root, kind, note, key).map_err(Fail::refused)?;
+    let plan =
+        plan_ledger(&root, kind, note, key, importer.as_deref()).map_err(Fail::refused)?;
     if let Some(token) = grant {
         consume_with(&root, token, &ledger_facts(&plan), MISMATCH).map_err(Fail::failed)?;
     }

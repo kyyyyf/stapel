@@ -26,8 +26,9 @@ impl Fail {
     }
 }
 
-/// The refusal of a record command in an agent's shell without a grant (STP-18 AC-12).
-pub const AGENT_SHELL: &str = "only a person writes review records and ledger records: this \
+/// The refusal of `ledger add --kind decision` in an agent's shell without a grant (STP-23 AC-2).
+/// STP-18 AC-12 quotes the text before STP-23: `only a person writes review records and ledger records: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command as one plain command so that Claude Code shows the permission dialog, or, from a Zed task started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT`.
+pub const AGENT_SHELL: &str = "only a person writes ledger decisions: this \
      shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); run the command \
      as one plain command so that Claude Code shows the permission dialog, or, from a Zed task \
      started from a Claude Code shell, run it with env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT";

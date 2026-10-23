@@ -124,6 +124,10 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
     if inv.action == "findings import" {
         return Ok(Decision::Allow);
     }
+    // So does a `finding` or `catches` ledger record (STP-23): exactly one `--kind` with that value.
+    if inv.action == "ledger add" && has_plain_record_kind(&inv.args) {
+        return Ok(Decision::Allow);
+    }
     if crate::identity::in_agent_tool_shell() {
         return Err(format!(
             "this hook call comes from an agent's shell ({} is set), not from Claude Code's hook \
@@ -287,6 +291,21 @@ fn shown(text: &str, max: usize) -> String {
     }
 }
 
+/// Whether the words of `ledger add` hold exactly one `--kind` (as `--kind X` or `--kind=X`) and
+/// its value is `finding` or `catches`.
+fn has_plain_record_kind(args: &[String]) -> bool {
+    let mut kinds = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--kind" {
+            kinds.push(it.next().map(String::as_str));
+        } else if let Some(v) = a.strip_prefix("--kind=") {
+            kinds.push(Some(v));
+        }
+    }
+    matches!(kinds.as_slice(), [Some("finding" | "catches")])
+}
+
 /// The dialog of `findings import`, `ledger add` and `tokens import-records`: the same checks as
 /// the command, then the grant over the records.
 fn prepare_records(inv: &Invocation, cwd: &Path, root: &Path) -> Result<Decision, String> {
@@ -369,7 +388,7 @@ fn prepare_records(inv: &Invocation, cwd: &Path, root: &Path) -> Result<Decision
         let (Some(kind), Some(note)) = (kind, note) else {
             return Err("usage: stapel ledger add --kind KIND --note TEXT [KEY]".into());
         };
-        let plan = plan_ledger(root, &kind, &note, key)?;
+        let plan = plan_ledger(root, &kind, &note, key, None)?;
         let reason = format!(
             "stapel: add a ledger record for {}{}: {}: {}; runs: {program}. Answer Yes or No; do \
              not choose \"don't ask again\".",
