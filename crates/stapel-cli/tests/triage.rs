@@ -1614,3 +1614,25 @@ fn brief_reads_old_and_later_records() {
         "in: {text}"
     );
 }
+
+// ---- Step 7: fixes after code review round 1 ----
+
+#[test]
+fn only_triage_kind_counts() {
+    let repo = past_spec();
+    let dir = repo.path();
+    seed(dir, &[open_finding("F-1")]);
+    append(dir, r#"{"kind":"note","id":"F-1","fate":"defer"}"#);
+    let (facts, action) = next_lines(dir);
+    assert_eq!(
+        facts,
+        ["blocked: finding F-1 (HIGH, inside, code-review round 1): open"]
+    );
+    assert_eq!(
+        action,
+        "next: triage — .stapel/tickets/ABC-1/findings.jsonl"
+    );
+
+    append(dir, &triage_line("F-1", json!({"fate": "defer"})));
+    assert_no_line(dir);
+}
