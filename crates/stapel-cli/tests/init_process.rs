@@ -1513,3 +1513,122 @@ fn read_only_agents_say_so() {
         }
     }
 }
+
+const ALLOW_RULES: [&str; 4] = [
+    "Bash(stapel findings import:*)",
+    "Bash(stapel findings triage:*)",
+    "Bash(stapel ledger add --kind finding:*)",
+    "Bash(stapel ledger add --kind catches:*)",
+];
+
+// AC-13: a fresh install writes the four allow rules in order; a second run adds none.
+#[test]
+fn installs_the_allow_rules() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+
+    let s = settings_json(dir);
+    let allow: Vec<&str> = s["permissions"]["allow"]
+        .as_array()
+        .expect("permissions.allow")
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(allow, ALLOW_RULES);
+
+    let before = read(dir, SETTINGS);
+    let stdout = init_in(dir);
+    assert_eq!(read(dir, SETTINGS), before);
+    assert!(
+        stdout.lines().any(|l| l == "already set up: nothing changed"),
+        "{stdout}"
+    );
+}
+
+// AC-13: the rules go after the foreign ones, only the missing ones are added, the label is its own,
+// and a decision record still asks.
+#[test]
+fn allow_rules_next_to_others() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+
+    let mut s = settings_json(dir);
+    s["permissions"] = serde_json::json!({
+        "allow": ["Bash(ls:*)"],
+        "deny": ["Bash(rm:*)"]
+    });
+    std::fs::write(
+        dir.join(SETTINGS),
+        serde_json::to_string_pretty(&s).unwrap(),
+    )
+    .unwrap();
+
+    let stdout = init_in(dir);
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l == "appended: .claude/settings.json (stapel allow rules)"),
+        "{stdout}"
+    );
+    let after = settings_json(dir);
+    let mut expected = vec!["Bash(ls:*)"];
+    expected.extend(ALLOW_RULES);
+    assert_eq!(after["permissions"]["allow"], serde_json::json!(expected));
+    assert_eq!(after["permissions"]["deny"], serde_json::json!(["Bash(rm:*)"]));
+    assert_eq!(after["hooks"], s["hooks"]);
+
+    // One of the four present: only the other three are added.
+    let mut s = after.clone();
+    s["permissions"]["allow"] = serde_json::json!(["Bash(ls:*)", ALLOW_RULES[2]]);
+    std::fs::write(
+        dir.join(SETTINGS),
+        serde_json::to_string_pretty(&s).unwrap(),
+    )
+    .unwrap();
+    init_in(dir);
+    assert_eq!(
+        settings_json(dir)["permissions"]["allow"],
+        serde_json::json!([
+            "Bash(ls:*)",
+            ALLOW_RULES[2],
+            ALLOW_RULES[0],
+            ALLOW_RULES[1],
+            ALLOW_RULES[3]
+        ])
+    );
+
+    // A decision record is not covered by any rule: the hook still asks.
+    stapel(dir).args(["new", "First"]).assert().success();
+    let (_, replaced) = common::ask(dir, "stapel ledger add --kind decision --note x ABC-1");
+    assert!(replaced.contains("--grant"), "{replaced}");
+}
+
+// AC-13: permissions that is not an object, or allow that is not an array, refuses and writes nothing.
+#[test]
+fn refuses_bad_permissions() {
+    for bad in [
+        serde_json::json!({ "permissions": [] }),
+        serde_json::json!({ "permissions": { "allow": "x" } }),
+    ] {
+        let repo = git_repo();
+        let dir = repo.path();
+        let start = serde_json::to_string_pretty(&bad).unwrap();
+        std::fs::create_dir_all(dir.join(".claude")).unwrap();
+        std::fs::write(dir.join(SETTINGS), &start).unwrap();
+
+        stapel(dir)
+            .args(["init", "--prefix", "ABC"])
+            .assert()
+            .code(1)
+            .stderr(contains(
+                "stapel: .claude/settings.json: the permissions.allow field must be an array",
+            ));
+        assert_eq!(read(dir, SETTINGS), start);
+        assert!(!dir.join(".stapel").exists());
+        for rel in std::iter::once(SKILL).chain(AGENTS) {
+            assert!(!dir.join(rel).exists(), "{rel}");
+        }
+    }
+}

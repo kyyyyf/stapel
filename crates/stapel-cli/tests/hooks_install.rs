@@ -82,7 +82,16 @@ fn hooks_merge_with_foreign_settings() {
         .success();
 
     let s = settings(dir);
-    assert_eq!(s["permissions"], foreign["permissions"]);
+    assert_eq!(
+        s["permissions"]["allow"],
+        json!([
+            "Bash(ls:*)",
+            "Bash(stapel findings import:*)",
+            "Bash(stapel findings triage:*)",
+            "Bash(stapel ledger add --kind finding:*)",
+            "Bash(stapel ledger add --kind catches:*)"
+        ])
+    );
     assert_eq!(s["model"], foreign["model"]);
     assert_eq!(s["hooks"]["Stop"], foreign["hooks"]["Stop"]);
     let pre = s["hooks"]["PreToolUse"].as_array().unwrap();
