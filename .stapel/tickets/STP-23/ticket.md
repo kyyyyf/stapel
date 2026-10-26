@@ -444,8 +444,50 @@ Route: full (tags `guard`, `data`, `interface`), auto.
 
 ## Review
 
-TODO
+Spec review: one round by an external model (18 findings, 0 HIGH, 7 MEDIUM; 16 inside, 2 outside, both
+decided by the human: SR1-17 a digit string is a whole round, SR1-18 the note is required). Drift review after
+the GREEN steps (24 records, 0 HIGH, 3 MEDIUM) and seven builder records (B-1 to B-6, D4B-1); verification gaps
+became the coverage steps 1d, 1e, 3b, 3c, 4b and 5b. Two no-red history rewrites, run by the human: step 2
+(old tests changed in a RED that passed there, B-4) and step 4 (`cargo fmt` in a RED, B-6). Code review round
+1 by three reviewers (stapel-reviewer, an external model, stapel-drift on the whole ticket): 14 records, 0
+HIGH, 4 MEDIUM (3 inside, 1 outside). The human was away for three days; the orchestrator decided the inside
+records and left two questions in `.stapel/scratch/stp23/report-for-human.md`. On return the human chose
+narrow allow rules from `stapel init` (R-1, AC-13) and the drift template fix in this ticket (E-3, AC-14);
+fixes in steps 7 to 9. Code review round 2 by one stapel-reviewer on the fixes: 5 records, one MEDIUM (R2-1, a
+`null` allow panicked), fixed in step 10. Deferred: B-1 (builders' heredocs and scripts) and E-9 (a script
+that unsets `CLAUDECODE`), both to items 1.9 and 1.10. The 50 build and code review records were imported
+with the new build and no dialog, as AC-1 promises. Every finding with its fate is in `findings.jsonl`.
 
 ## Summary
 
-TODO
+`stapel findings import` and `stapel ledger add --kind finding|catches` run without a dialog and record who
+imported them (agent or person, with the git user). `stapel findings triage` sets a fate from a fixed list
+(open, patch, bad_plan, intent_gap, defer, no-change) and a verdict, as a `kind: triage` record; the last
+record of an id is its state. `stapel next` gives `triage` while an inside HIGH or MEDIUM finding is open and
+`ask-human` while a person's finding is open (outside, `intent_gap`, or a whole round of 2 or more), after
+spec review and before the confirmation. `stapel init` adds four narrow allow rules, so a person in the
+default permission mode gets no Claude Code dialog for these commands. The drift template writes stage
+`step-drift`.
+
+Measures against STP-22 (the skill, rule 8):
+
+- Escaped defects of STP-22 found after its close: none known.
+- Code review HIGH and MEDIUM inside the promise: 4 over two rounds (STP-22: 8). By rule: item 3: 1 (R2-1,
+  a `null` allow); none: 3 (R-1 Claude Code's own dialog, E-1 the order of spec-review and triage untested,
+  E-2 STP-18 criteria still stated the removed dialog). Outside: E-3 (the drift stage; the promise widened).
+- `ticket.md`: 48.4 KB (STP-22: 51.7 KB).
+- Size: about 342 net source, 1 747 net test and 5 net text lines against an estimate of 350 source and 800
+  test lines; the item was split in two before the build.
+- Tokens, measured: orchestrator output 188k, cache read 79.5M (STP-22: 76.9M); builder 57k / 12.6M
+  (STP-22: 66k / 6.6M); drift 8k / 0.3M; external 61k / 1.8M; reviewer 20k / 1.3M.
+- Wall time: 2026-10-22 about 12:00 UTC (the frame) to 2026-10-26 about 16:30 UTC, with three days of the
+  human's absence.
+
+Approval dialogs: about 10 (STP-22: about 14): `stapel ok` 8 (four after small inside changes, while the
+guard blocks the build on any stale confirmation), one `findings import` with the old build, one ledger
+decision (the split), and two history scripts the human ran.
+
+What improved: findings and catches go in without a dialog; the human's three-day absence did not stop the
+ticket, because the open questions waited in one report. What did not: the orchestrator's context stays the main cost; builders
+still wrote files through heredocs or scripts and three times returned an empty report (B-5); the builder text
+forbids rustfmt only for `tests/next.rs`; the Test plan and the Decisions are in no confirmed hash (item 1.8).
