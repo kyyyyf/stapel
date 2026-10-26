@@ -517,10 +517,10 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         .as_object_mut()
         .ok_or(format!("{SETTINGS}: expected a JSON object"))?;
     // Check the allow list before changing anything, so a refusal leaves the value as read.
-    if root_object
-        .get("permissions")
-        .is_some_and(|p| !p.is_object() || p["allow"].as_array().is_none() && !p["allow"].is_null())
-    {
+    if root_object.get("permissions").is_some_and(|p| {
+        p.as_object()
+            .is_none_or(|o| o.get("allow").is_some_and(|a| !a.is_array()))
+    }) {
         return Err(format!(
             "{SETTINGS}: the permissions.allow field must be an array"
         ));
