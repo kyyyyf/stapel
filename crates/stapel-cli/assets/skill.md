@@ -123,3 +123,4 @@ list must not only grow.
   and of Design "as built" against the code) and the verification gap (would an existing test fail if a
   behaviour change were wrong). A test that did not run counts as missing.
 - Collect the findings of several reviews into one import. stapel findings import and stapel ledger add --kind finding or catches run without a dialog; stapel ledger add --kind decision keeps its dialog.
+  Write stapel ledger add --kind <kind> first, so that the allow rules of stapel init match it.

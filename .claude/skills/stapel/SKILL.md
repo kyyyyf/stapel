@@ -1,7 +1,7 @@
 ---
 name: stapel
 description: "Carries a development ticket from description to merge with the stapel process."
-# stapel: 0.1.0 sha256:bffc0f9fe1a938b913db727732112d86308cb4201e49459cea7e3417688484ab
+# stapel: 0.1.0 sha256:6f6913584621f9e7973f181911b435fa80a6e640f62e8353b597bd7fd3c96c36
 ---
 # The stapel process
 
@@ -128,3 +128,4 @@ list must not only grow.
   and of Design "as built" against the code) and the verification gap (would an existing test fail if a
   behaviour change were wrong). A test that did not run counts as missing.
 - Collect the findings of several reviews into one import. stapel findings import and stapel ledger add --kind finding or catches run without a dialog; stapel ledger add --kind decision keeps its dialog.
+  Write stapel ledger add --kind <kind> first, so that the allow rules of stapel init match it.

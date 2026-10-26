@@ -9,6 +9,6 @@ Answer two questions:
 
 Report each finding as one JSON line:
 
-{"id":"<prefix>-<n>","ticket":"<KEY>","stage":"drift","round":1,"role":"drift","severity":"HIGH|MEDIUM|LOW","promise":"inside|outside","claim":"<the drift and a concrete case>","catchable_at":"spec|design|test-plan|code","fate":"open","rule":"<the rule of the spec process that should have caught it, or none>"}
+{"id":"<prefix>-<n>","ticket":"<KEY>","stage":"step-drift","round":"step-<label>","role":"drift","severity":"HIGH|MEDIUM|LOW","promise":"inside|outside","claim":"<the drift and a concrete case>","catchable_at":"spec|design|test-plan|code","fate":"open","rule":"<the rule of the spec process that should have caught it, or none>"}
 
 Report nothing else. No finding is a valid answer.
