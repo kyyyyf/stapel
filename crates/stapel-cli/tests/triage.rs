@@ -1227,6 +1227,30 @@ fn next_triage_before_confirm() {
 }
 
 #[test]
+fn next_spec_review_before_triage() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem.");
+    common::set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | WHEN a thing happens THE command does it. | `next::t_one` |",
+    );
+    common::set_section(
+        dir,
+        "ABC-1",
+        "Plan",
+        "Route: full, auto.\n\n1. One (AC-1).\n2. Two (AC-1).",
+    );
+    // One open HIGH inside code-review finding, no spec-review finding, no confirmation.
+    seed(dir, &[open_finding("F-1")]);
+    let (facts, action) = next_lines(dir);
+    assert!(facts.is_empty(), "{facts:?}");
+    assert!(action.starts_with("next: spec-review"), "{action}");
+}
+
+#[test]
 fn next_asks_the_human() {
     let repo = past_spec();
     let dir = repo.path();
