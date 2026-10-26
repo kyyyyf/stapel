@@ -1633,6 +1633,30 @@ fn refuses_bad_permissions() {
     }
 }
 
+// STP-23 AC-13 (R2-1): a null permissions.allow refuses with the same text, no panic, nothing written.
+#[test]
+fn refuses_a_null_allow() {
+    let repo = git_repo();
+    let dir = repo.path();
+    let start = serde_json::to_string_pretty(&serde_json::json!({ "permissions": { "allow": null } }))
+        .unwrap();
+    std::fs::create_dir_all(dir.join(".claude")).unwrap();
+    std::fs::write(dir.join(SETTINGS), &start).unwrap();
+
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .code(1)
+        .stderr(contains(
+            "stapel: .claude/settings.json: the permissions.allow field must be an array",
+        ));
+    assert_eq!(read(dir, SETTINGS), start);
+    assert!(!dir.join(".stapel").exists());
+    for rel in std::iter::once(SKILL).chain(AGENTS) {
+        assert!(!dir.join(rel).exists(), "{rel}");
+    }
+}
+
 // STP-23 AC-14: the drift body writes the stage step-drift; the skill names the kind order.
 #[test]
 fn drift_and_kind_order_texts() {
