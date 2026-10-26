@@ -10,6 +10,13 @@ const CONFIG: &str = ".stapel/stapel.toml";
 const ALLOWLIST: &str = "# Reviewer false positives that were decided not to fix.\n";
 const IGNORE_LINE: &str = "/.stapel/index/";
 const SETTINGS: &str = ".claude/settings.json";
+/// The narrow allow rules of the dialog-free commands, in the order `init` appends them.
+const ALLOW_RULES: [&str; 4] = [
+    "Bash(stapel findings import:*)",
+    "Bash(stapel findings triage:*)",
+    "Bash(stapel ledger add --kind finding:*)",
+    "Bash(stapel ledger add --kind catches:*)",
+];
 const HOOK_COMMAND: &str = "stapel hook pre-tool-use";
 /// The installed hook line. Claude Code treats any exit code but 2 as "go ahead", so a missing
 /// binary would silently disable the guard; this line turns that case into a denial.
@@ -506,9 +513,38 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         json!({})
     };
 
-    let hooks = settings
+    let root_object = settings
         .as_object_mut()
-        .ok_or(format!("{SETTINGS}: expected a JSON object"))?
+        .ok_or(format!("{SETTINGS}: expected a JSON object"))?;
+    // Check the allow list before changing anything, so a refusal leaves the value as read.
+    if root_object
+        .get("permissions")
+        .is_some_and(|p| !p.is_object() || p["allow"].as_array().is_none() && !p["allow"].is_null())
+    {
+        return Err(format!(
+            "{SETTINGS}: the permissions.allow field must be an array"
+        ));
+    }
+    let allow_added = {
+        let allow = root_object
+            .entry("permissions")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .expect("checked to be an object")
+            .entry("allow")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .expect("checked to be an array");
+        let mut added = false;
+        for rule in ALLOW_RULES {
+            if !allow.iter().any(|v| v.as_str() == Some(rule)) {
+                allow.push(json!(rule));
+                added = true;
+            }
+        }
+        added
+    };
+    let hooks = root_object
         .entry("hooks")
         .or_insert_with(|| json!({}))
         .as_object_mut()
@@ -549,7 +585,7 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         }
         missing
     };
-    if !pre_upgraded && !pre_added && !post_added && !session_added {
+    if !pre_upgraded && !pre_added && !post_added && !session_added && !allow_added {
         return Ok(());
     }
 
@@ -559,6 +595,8 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         format!("updated: {SETTINGS} (stapel hook line)")
     } else if !existed {
         format!("created: {SETTINGS}")
+    } else if !pre_added && !post_added && !session_added {
+        format!("appended: {SETTINGS} (stapel allow rules)")
     } else if !pre_added && !post_added {
         format!("appended: {SETTINGS} (stapel session hook)")
     } else if pre_added && post_added {

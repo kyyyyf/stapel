@@ -48,5 +48,13 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(stapel findings import:*)",
+      "Bash(stapel findings triage:*)",
+      "Bash(stapel ledger add --kind finding:*)",
+      "Bash(stapel ledger add --kind catches:*)"
+    ]
   }
 }
