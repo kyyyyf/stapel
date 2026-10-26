@@ -29,6 +29,8 @@ tracking a `patch`; other dialogs.
    that waits for the person, before `confirm`; `brief` shows the current fate.
 5. Old records (free-text fates) stay readable and count as triaged.
 6. The skill names the new commands, the fates and the two actions.
+7. `stapel init` adds narrow allow rules for the dialog-free commands, so Claude Code does not ask either;
+   the drift agent writes the stage `step-drift` that the import accepts.
 
 Not promised: an importer who lies about being a person; deliberate circumvention.
 
@@ -100,6 +102,11 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   to be taken and reported): fix step 7 and coverage step 7b; the Design and AC-2 texts corrected; STP-18
   AC-9 to AC-11 and AC-17 get a note, as AC-12 did (E-2); R-1 and E-3 wait for the human
   (`.stapel/scratch/stp23/report-for-human.md`).
+- 2026-10-26: Decision (R-1, the human, recommended): `stapel init` adds four narrow allow rules (AC-13),
+  none for `ledger add` as a whole, so the decision dialog stays. Rejected: the hook answers allow (it
+  would override the person's deny rules); not promised. The promise widens (Frame item 7).
+- 2026-10-26: Decision (E-3, the human, recommended): the drift agent writes `step-drift` now (AC-14), and
+  the skill names the word order `--kind <kind>` first. Rejected: a later ticket.
 - 2026-10-23: Decision (drift review of step 5, recommended): coverage step 5b (D5-1, D5-2); the other
   brief lines stay guarded by `tests/brief.rs` (D5-3).
 
@@ -145,10 +152,12 @@ Terms:
 | AC-10 | WHEN `next` reads the current state THE last fate and the last verdict hold; a false, legacy or LOW inside open finding gives no line. | `triage::current_state_of_a_finding`, `triage::legacy_records_do_not_block`, `triage::only_triage_kind_counts` |
 | AC-11 | WHEN `stapel brief` shows a finding a step names THE line is `- <id> (<current severity>): <claim of the finding> Fate: <current fate>`, followed by ` Verdict: <verdict>` when the last verdict is `false` or `maybe-false`. | `triage::brief_shows_the_current_fate`, `triage::brief_reads_old_and_later_records` |
 | AC-12 | WHEN the skill is written THE body holds `stapel findings import and stapel ledger add --kind finding or catches run without a dialog; stapel ledger add --kind decision keeps its dialog.`, a line that starts ``- `triage`:`` and holds `stapel findings triage FILE KEY` and `patch, bad_plan, intent_gap, defer or no-change`, a line that starts ``- `ask-human`:`` and holds `ask the person in the chat` and `with the person's answer as the note`, and no longer holds `each import is a permission dialog`. | `init_process::skill_text_names_the_triage` |
+| AC-13 | WHEN `stapel init` runs and `permissions.allow` of `.claude/settings.json` lacks any of `Bash(stapel findings import:*)`, `Bash(stapel findings triage:*)`, `Bash(stapel ledger add --kind finding:*)`, `Bash(stapel ledger add --kind catches:*)` THE command appends the missing ones in this order, keeping every other key and rule; when this is the only change to an existing file the label is `appended: .claude/settings.json (stapel allow rules)`, otherwise the labels of STP-22 stay; IF `permissions` is not an object or `permissions.allow` is not an array THEN exit 1 with `stapel: .claude/settings.json: the permissions.allow field must be an array` and nothing written. | `init_process::installs_the_allow_rules`, `init_process::allow_rules_next_to_others`, `init_process::refuses_bad_permissions` |
+| AC-14 | WHEN the drift agent file and the skill are written THE drift body's JSON line holds `"stage":"step-drift"` and `"round":"step-<label>"` and no `"stage":"drift"`, and the skill holds `Write stapel ledger add --kind <kind> first, so that the allow rules of stapel init match it.` | `init_process::drift_and_kind_order_texts` |
 
 ### Guarantees
 
-- **Promised:** the Frame's promise, by AC-1 to AC-12; records already in `findings.jsonl` and the ledger
+- **Promised:** the Frame's promise, by AC-1 to AC-14; records already in `findings.jsonl` and the ledger
   are never rewritten; `findings import` keeps every check of STP-18 except the dialog; `ledger add --kind
   decision` keeps its dialog and grant; `tokens import-records`, `ok` and `close` are unchanged.
 - **Not promised:** the Frame's list; whether a `patch` was built; an agent that marks findings
@@ -201,6 +210,10 @@ also `--test ticket_drift`.
 | Brief, old and later records | F-1 with fate `fixed: done` and no triage record: `- F-1 (HIGH): <claim> Fate: fixed: done`; F-2 with `verdict` `false`, then a fate-only record `defer`: `Fate: defer Verdict: false`; two finding records F-3, LOW then HIGH with another claim: the HIGH line with the second claim (D5-1, D5-2) | `triage::brief_reads_old_and_later_records` |
 | Only the triage kind | F-1 open HIGH, then a hand-written record `{"kind":"note","id":"F-1","fate":"defer"}`: F-1 still blocks; then a triage record `defer`: no line (code review, external LOW) | `triage::only_triage_kind_counts` |
 | Spec review first | Frame, Spec, Design, Proof and Plan written, no confirmation, no `spec-review` finding, one open HIGH inside `code-review` finding: `next: spec-review` (E-1) | `triage::next_spec_review_before_triage` |
+| Allow rules | `init` in an empty repository: the four rules in `permissions.allow` in order; a second run adds none and prints `already set up: nothing changed` | `init_process::installs_the_allow_rules` |
+| Allow rules next to others | settings with `permissions.allow` `["Bash(ls:*)"]`, `permissions.deny` and every stapel hook: `Bash(ls:*)` first, then the four, the deny list kept, the label `appended: .claude/settings.json (stapel allow rules)`; one of the four present: only the three others added; then `stapel ledger add --kind decision` through the hook still asks (STP-18 AC-10 finds no matching rule) | `init_process::allow_rules_next_to_others` |
+| Bad permissions | `permissions` `[]`; `permissions.allow` `"x"`: exit 1, the text, the file and the other process files unchanged | `init_process::refuses_bad_permissions` |
+| Drift stage and kind order | the drift body holds `"stage":"step-drift"` and `"round":"step-<label>"` and not `"stage":"drift"`; the skill holds the sentence of AC-14 | `init_process::drift_and_kind_order_texts` |
 | Skill text | the sentences of AC-12 in `.claude/skills/stapel/SKILL.md` written by `init` | `init_process::skill_text_names_the_triage` |
 
 ### Inputs
@@ -217,6 +230,7 @@ also `--test ticket_drift`.
 | `kind` in FILE | any | — | — | present in an import, or in a triage line: exit 2 | — | `triage::import_checks_the_triage_fields`, `triage::triage_refusals` |
 | `--kind` of `ledger add` | string | — | missing: the STP-18 refusal | not `finding`, `catches`, `decision`: STP-18 | exact; only one plain `finding` or `catches` skips the dialog | `triage::ledger_records_without_a_dialog`, `triage::ledger_decision_keeps_its_dialog`, `triage::ledger_kind_words` |
 | `--grant` of `ledger add` | string | — | absent: needed only for `--kind decision` in an agent shell | from an agent: denied by the guard, as STP-18; `findings import` has no such option: a usage error | exact | `triage::ledger_decision_keeps_its_dialog`, `triage::import_in_an_agent_shell` |
+| `permissions.allow` of `.claude/settings.json` | JSON array of strings | — | absent: created with the four rules | `permissions` not an object or `allow` not an array: exit 1 | a rule counts as present when equal as a string | `init_process::allow_rules_next_to_others`, `init_process::refuses_bad_permissions` |
 | `round` | number or string | as STP-18 | — | as STP-18 | a whole round counts for a person's finding; another string never | `triage::next_asks_the_human`, `triage::next_round_forms` |
 
 ### External states
@@ -227,7 +241,7 @@ also `--test ticket_drift`.
 | git | history, shallow, object format, worktrees, submodules, paths, messages, dirty tree | not read by the new code; `next` as STP-20 | — |
 | claude-code | environment of hook processes versus the agent's Bash shell | `by` is `agent` when an agent-shell variable is set, empty included | `triage::importer_recorded` |
 | claude-code | permission mode; whether the dialog is offered | the two record commands need no dialog in any mode; `ledger add --kind decision` as STP-18 | `triage::guard_allows_import_without_a_dialog`, `triage::ledger_decision_keeps_its_dialog` |
-| claude-code | settings, allow rules | an allow rule changes nothing: the guard allows the two commands anyway | `triage::guard_allows_import_without_a_dialog` |
+| claude-code | settings, allow rules | `init` adds four narrow rules to the project settings, so Claude Code's own check does not ask in `default` mode; a rule for `ledger add` as a whole is not added, because STP-18 AC-10 then denies `--kind decision`; local and user settings not touched | `init_process::installs_the_allow_rules`, `init_process::allow_rules_next_to_others` |
 | claude-code | transcripts; tool call succeeded or failed | not read | — |
 | cargo | every dimension | not run | — |
 | os | file permissions | a write error refuses as STP-18 | — |
@@ -244,6 +258,8 @@ findings that are theirs".
 | The agent runs `env -u CLAUDECODE stapel findings import …` to read as a person | the guard denies it (STP-14, clearing the Claude Code variables) |
 | The agent appends to `findings.jsonl` with Edit or Write | the guard denies it (machine file, STP-2) |
 | The agent appends to `findings.jsonl` with a Bash redirection | not denied today; items 1.9 and 1.10 (not promised) |
+| The agent adds `Bash(stapel ledger add:*)` to the settings to skip the decision dialog | the guard denies `--kind decision` (STP-18 AC-10) |
+| The agent removes the allow rules | Claude Code asks again; not prevented (not promised) |
 | The agent relays the person's answer and leaves out what the person said | refused without `note`, AC-6 |
 | The agent writes `--kind=decision` or `--kind finding --kind decision` to skip the dialog | the guard asks, AC-2 |
 | The agent marks an outside finding `no-change` to avoid asking the person | recorded with `by: agent`; not prevented (not promised) |
@@ -266,6 +282,9 @@ decisions get no importer and a new refusal text (SR1-5, SR1-12); hand-written r
 reading (SR1-7); a string round of digits counts and a person's finding needs a note (SR1-17, SR1-18);
 the Abuse row on redirections is corrected (SR1-3); AC-12 pins the fates and the `ask-human` text
 (SR1-4); smaller fixes SR1-8 to SR1-11, SR1-13, SR1-14, SR1-16.
+2026-10-26, after code review round 1 (reviewer, external, drift): 0 HIGH, 4 MEDIUM, 10 LOW; the human
+widened the promise by AC-13 (narrow allow rules, R-1) and AC-14 (the drift stage, E-3); fix step 7,
+coverage step 7b, steps 8 and 9; STP-18 notes (E-2); Design and AC-2 corrected (DR-1, E-4, E-5).
 
 ## Design
 
@@ -341,6 +360,8 @@ the Abuse row on redirections is corrected (SR1-3); AC-12 pins the fates and the
 | AC-10 | `triage::current_state_of_a_finding`, `triage::legacy_records_do_not_block`, `triage::only_triage_kind_counts` |
 | AC-11 | `triage::brief_shows_the_current_fate`, `triage::brief_reads_old_and_later_records` |
 | AC-12 | `init_process::skill_text_names_the_triage` |
+| AC-13 | `init_process::installs_the_allow_rules`, `init_process::allow_rules_next_to_others`, `init_process::refuses_bad_permissions` |
+| AC-14 | `init_process::drift_and_kind_order_texts` |
 
 ## Plan
 
@@ -398,6 +419,14 @@ Route: full (tags `guard`, `data`, `interface`), auto.
 7b. Coverage after code review round 1 (E-1; AC-8): new `#[test]` function
    `triage::next_spec_review_before_triage`. Tests only, each helper nested inside its function, no
    `cargo fmt`; a test that fails is an `intent_gap`.
+
+8. Allow rules from `init` (AC-13; tests `init_process::installs_the_allow_rules`,
+   `init_process::allow_rules_next_to_others`, `init_process::refuses_bad_permissions`); the RED changes the
+   old tests that read the permissions of `settings.json` (`hooks_install`) so that they fail there; the
+   GREEN runs the built `stapel init` here. Must not change: the hook entries and their labels.
+9. The drift stage and the kind order (AC-14; test `init_process::drift_and_kind_order_texts`):
+   `crates/stapel-cli/assets/agents/drift.md` and `skill.md`; the GREEN runs the built `stapel init` here.
+   Must not change: the other sentences that `init_process` tests.
 
 ## Review
 
