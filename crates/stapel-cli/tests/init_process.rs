@@ -1632,3 +1632,24 @@ fn refuses_bad_permissions() {
         }
     }
 }
+
+// STP-23 AC-14: the drift body writes the stage step-drift; the skill names the kind order.
+#[test]
+fn drift_and_kind_order_texts() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+
+    let drift = collapsed(&body_of(dir, ".claude/agents/stapel-drift.md"));
+    assert!(drift.contains(r#""stage":"step-drift""#), "{drift:?}");
+    assert!(drift.contains(r#""round":"step-<label>""#), "{drift:?}");
+    assert!(!drift.contains(r#""stage":"drift""#), "{drift:?}");
+
+    let skill = collapsed(&body_of(dir, SKILL));
+    assert!(
+        skill.contains(
+            "Write stapel ledger add --kind <kind> first, so that the allow rules of stapel init match it."
+        ),
+        "{skill:?}"
+    );
+}
