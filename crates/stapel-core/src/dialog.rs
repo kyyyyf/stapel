@@ -1,5 +1,5 @@
-//! The permission dialog for `stapel ok`, `stapel close`, `stapel findings import`, `stapel
-//! ledger add` and `stapel tokens import-records` run by an agent (STP-2 AC-15, AC-16; STP-18
+//! The permission dialog for `stapel ok`, `stapel close`, `stapel ledger add --kind decision`
+//! and `stapel tokens import-records` run by an agent (STP-2 AC-15, AC-16; STP-18
 //! AC-9, AC-13; STP-19).
 //!
 //! The guard runs the same checks the command will run, so a "yes" does not end in a refusal,
@@ -306,7 +306,7 @@ fn has_plain_record_kind(args: &[String]) -> bool {
     matches!(kinds.as_slice(), [Some("finding" | "catches")])
 }
 
-/// The dialog of `findings import`, `ledger add` and `tokens import-records`: the same checks as
+/// The dialog of `ledger add` (a decision) and `tokens import-records`: the same checks as
 /// the command, then the grant over the records.
 fn prepare_records(inv: &Invocation, cwd: &Path, root: &Path) -> Result<Decision, String> {
     let program = program(inv).join(" ");

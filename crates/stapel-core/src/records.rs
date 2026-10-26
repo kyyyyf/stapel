@@ -38,24 +38,6 @@ pub struct Findings {
     pub lines: Vec<String>,
     /// The `id` of each record.
     pub ids: Vec<String>,
-    /// SHA-256 of the lines, each followed by a newline, as lowercase hex.
-    pub hash: String,
-    /// What the dialog shows of each record.
-    pub rows: Vec<Row>,
-}
-
-/// The fields of a finding that the permission dialog shows.
-#[derive(Debug)]
-pub struct Row {
-    pub id: String,
-    pub severity: String,
-    pub promise: String,
-    pub claim: String,
-    pub fate: String,
-    pub stage: String,
-    pub role: String,
-    /// The round as given: a number or a string, shown without quotes.
-    pub round: String,
 }
 
 /// A ticket that accepts records: open or closed, not legacy or unreadable.
@@ -695,7 +677,6 @@ pub fn check_findings(
     let mut lines: Vec<String> = Vec::new();
     let mut ids: Vec<String> = Vec::new();
     let mut numbers: Vec<usize> = Vec::new();
-    let mut rows: Vec<Row> = Vec::new();
     let mut known: Vec<(String, usize)> = Vec::new();
     // The target is read first as a set of ids; its own defects are reported after the records.
     let existing = journal::read(target)?;
@@ -742,26 +723,6 @@ pub fn check_findings(
         if known.iter().any(|(e, _)| e == id) {
             return Err(format!("{file}:{n}: id {id} is already in {target_label}"));
         }
-        let field = |name: &str| {
-            map.get(name)
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string()
-        };
-        rows.push(Row {
-            id: id.clone(),
-            severity: field("severity"),
-            promise: field("promise"),
-            claim: field("claim"),
-            fate: field("fate"),
-            stage: field("stage"),
-            role: field("role"),
-            round: match map.get("round") {
-                Some(Value::String(s)) => s.clone(),
-                Some(other) => other.to_string(),
-                None => String::new(),
-            },
-        });
         ids.push(id.clone());
         numbers.push(n);
         lines.push(line);
@@ -776,20 +737,5 @@ pub fn check_findings(
             return Err(format!("{target_label}:{n}: {reason}"));
         }
     }
-    let mut digest = Sha256::new();
-    for l in &lines {
-        digest.update(l.as_bytes());
-        digest.update(b"\n");
-    }
-    let hash = digest
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    Ok(Findings {
-        lines,
-        ids,
-        hash,
-        rows,
-    })
+    Ok(Findings { lines, ids })
 }

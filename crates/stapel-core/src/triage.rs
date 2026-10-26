@@ -8,7 +8,6 @@ use crate::records::{
 };
 use crate::tickets::Status;
 use serde_json::{Map, Value};
-use sha2::{Digest, Sha256};
 use std::path::Path;
 
 /// The fields of a triage line.
@@ -40,9 +39,12 @@ pub fn state_of(records: &[Map<String, Value>], id: &str) -> State {
     let mut own = None;
     let mut graded = None;
     for m in records.iter().filter(|m| text(m, "id") == Some(id)) {
+        let kind = text(m, "kind");
         if !m.contains_key("kind") {
             state.finding = Some(m.clone());
             own = text(m, "severity").map(str::to_string);
+        } else if kind != Some("triage") {
+            continue;
         }
         state.fate = text(m, "fate").map(str::to_string);
         if let Some(v) = text(m, "verdict") {
@@ -252,25 +254,10 @@ pub fn plan_triage(
             return Err(format!("{label}:{n}: {reason}"));
         }
     }
-    let mut digest = Sha256::new();
-    for l in &lines {
-        digest.update(l.as_bytes());
-        digest.update(b"\n");
-    }
-    let hash = digest
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
     Ok(FindingsPlan {
         closed: matches!(ticket.status, Status::Closed(_)),
         key: ticket.key,
         target,
-        findings: Findings {
-            lines,
-            ids,
-            hash,
-            rows: Vec::new(),
-        },
+        findings: Findings { lines, ids },
     })
 }
