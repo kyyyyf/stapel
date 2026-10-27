@@ -16,30 +16,36 @@ pub fn start(key: &str, round: u64) -> Result<(), Fail> {
     let state = match &ticket.status {
         Status::Open(state) => state,
         Status::Closed(_) => {
-            return Err(Fail::refused(format!("ticket {} is closed", ticket.key)));
+            return Err(Fail::refused(format!(
+                "ticket {} is closed; it has no review round",
+                ticket.key
+            )));
         }
         Status::Legacy(_) => {
             return Err(Fail::failed(format!(
-                "ticket {} has a legacy (STP-1) state.json",
+                "ticket {} is in the STP-1 format; it has no review pack",
                 ticket.key
             )));
         }
         Status::Unreadable(reason) => return Err(Fail::failed(reason.clone())),
     };
     if !(1..=2).contains(&round) {
-        return Err(Fail::refused("round must be 1 or 2"));
+        return Err(Fail::refused(
+            "--round must be 1 or 2; after round 2 the person decides",
+        ));
     }
     let dirty = dirty_paths(&root).map_err(Fail::failed)?;
     if !dirty.is_empty() {
+        let first: Vec<&str> = dirty.iter().take(5).map(String::as_str).collect();
         return Err(Fail::refused(format!(
-            "uncommitted changes: {}; commit them first",
-            dirty.join(", ")
+            "uncommitted changes: {}; commit them before a review round",
+            first.join(", ")
         )));
     }
     let head = read_head(&root).map_err(Fail::failed)?;
     let Some(base) = &state.base else {
         return Err(Fail::failed(format!(
-            "ticket {} has no base in state.json",
+            "state.json of {} has no base commit",
             ticket.key
         )));
     };
