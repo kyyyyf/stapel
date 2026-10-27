@@ -12,6 +12,7 @@ mod new;
 mod next;
 mod ok;
 mod repo;
+mod review;
 mod status;
 mod token_records;
 mod tokens;
@@ -107,6 +108,9 @@ enum Command {
     /// Review findings kept in a ticket's findings.jsonl.
     #[command(subcommand)]
     Findings(FindingsAction),
+    /// The code review rounds of a ticket.
+    #[command(subcommand)]
+    Review(ReviewAction),
     /// The process ledger kept in .stapel/process-ledger.jsonl.
     #[command(subcommand)]
     Ledger(LedgerAction),
@@ -186,6 +190,18 @@ enum FindingsAction {
         file: String,
         /// The ticket key; without it, the only open ticket.
         key: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReviewAction {
+    /// Prepare one code review round of a ticket.
+    Start {
+        /// The ticket key.
+        key: String,
+        /// The round, 1 or 2.
+        #[arg(long)]
+        round: u64,
     },
 }
 
@@ -285,6 +301,9 @@ fn main() -> ExitCode {
         }
         Command::Findings(FindingsAction::Triage { file, key }) => {
             return fail::finish(findings::triage(&file, key.as_deref()));
+        }
+        Command::Review(ReviewAction::Start { key, round }) => {
+            return fail::finish(review::start(&key, round));
         }
         Command::Ledger(LedgerAction::Add {
             kind,
