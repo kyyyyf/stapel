@@ -256,12 +256,10 @@ Route: full (tag `interface`), auto.
    change: the other commands.
 1d. Fix after the drift review of step 1 (D1-1 to D1-4, D1-6; AC-1; tests `review::refuses_tickets`,
    `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`,
-   `review::refusal_order`): the RED changes these tests so that they fail there: each asserts the exact
-   text after `stapel: ` and the exit code of its row of the refusal cases table of the Spec (under AC-9 in
-   `ticket.md`; the brief does not carry it), in the table's order (legacy before closed); a dirty tree of
-   seven paths names the first five; a base that exists but is off the first-parent history (a commit of a
-   merged side branch) exits 1; `common::snapshot` shows no file changed. The GREEN changes
-   `crates/stapel-cli/src/review.rs` only. Must not change: the other commands.
+   `review::refusal_order`): the RED makes these tests assert the exact text and exit code of the Spec's
+   refusal cases table (under AC-9; not in the brief) in its order; seven dirty paths name five; a base off
+   the first-parent history exits 1; `common::snapshot` unchanged. The GREEN changes
+   `crates/stapel-cli/src/review.rs` only.
 1b. The copy of HEAD (AC-3; tests `review::copies_head`, `review::rerun_replaces_the_copy`,
    `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf`). Must not change: the repository's
    index, working tree and refs; step 1.
