@@ -117,7 +117,8 @@ Cases table of the refusals, in the order they are checked (exit 2 unless named)
 - **Promised:** the Frame's promise, by AC-1 to AC-9; outside `.stapel/scratch/review/` `review start`
   writes nothing; `pack.md` is written last, so a folder without it is incomplete; the other actions of `next` and their order are unchanged.
 - **Not promised:** the Frame's list; the copy's own `findings.jsonl` is that of HEAD and may be older
-  than the working tree's; submodules (a gitlink gives no files); symlinks in
+  than the working tree's; the round 2 refusal reads legacy records like new ones and skips damaged
+  lines, as `next` does (D1-5); submodules (a gitlink gives no files); symlinks in
   HEAD that point outside the copy; `.gitattributes` `export-ignore` (the copy is a checkout, not an
   archive); a Claude Code allow rule for `review start`; two `review start` runs at once.
 
@@ -253,6 +254,14 @@ Route: full (tag `interface`), auto.
    `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`,
    `review::round_two_needs_round_one`, `review::refusal_order`); a success is the stub of Design. Must not
    change: the other commands.
+1d. Fix after the drift review of step 1 (D1-1 to D1-4, D1-6; AC-1; tests `review::refuses_tickets`,
+   `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`,
+   `review::refusal_order`): the RED changes these tests so that they fail there: each asserts the exact
+   text after `stapel: ` and the exit code of its row of the refusal cases table of the Spec (under AC-9 in
+   `ticket.md`; the brief does not carry it), in the table's order (legacy before closed); a dirty tree of
+   seven paths names the first five; a base that exists but is off the first-parent history (a commit of a
+   merged side branch) exits 1; `common::snapshot` shows no file changed. The GREEN changes
+   `crates/stapel-cli/src/review.rs` only. Must not change: the other commands.
 1b. The copy of HEAD (AC-3; tests `review::copies_head`, `review::rerun_replaces_the_copy`,
    `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf`). Must not change: the repository's
    index, working tree and refs; step 1.
