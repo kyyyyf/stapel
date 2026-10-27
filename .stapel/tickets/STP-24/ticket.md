@@ -88,7 +88,7 @@ Terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | IF `stapel review start KEY --round N` names an unknown ticket, a closed ticket or a round other than 1 or 2, or the tree has uncommitted changes (as `next` counts them) THEN exit 2 with the text of the cases table and nothing written; a legacy (STP-1) ticket, a missing base or a base not on the first-parent history of HEAD exit 1; the first case in the table's order wins. | `review::refuses_tickets`, `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`, `review::refusal_order` |
+| AC-1 | IF `stapel review start KEY --round N` names an unknown ticket, a closed ticket or a round other than 1 or 2, or the tree has uncommitted changes (as `next` counts them) THEN exit 2 with the text of the cases table and nothing written; a legacy (STP-1) ticket, a missing base or a base not on the first-parent history of HEAD exit 1; the first case in the table's order wins. | `review::refuses_tickets`, `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`, `review::refusal_order`, `review::refusal_order_of_the_later_cases` |
 | AC-2 | IF `--round 2` runs while the ticket has no finding record with stage `code-review` and whole round 1 THEN exit 2 with `stapel: round 2 needs the code review findings of round 1 in .stapel/tickets/<KEY>/findings.jsonl` and nothing written. | `review::round_two_needs_round_one` |
 | AC-3 | WHEN `review start` runs THE review folder is removed if present and gets `tree/`, the files of HEAD as a checkout with `core.autocrlf=false` writes them (the `.gitattributes` of HEAD apply), with their modes and no `.git`, while the repository's index, working tree and refs stay unchanged. | `review::copies_head`, `review::rerun_replaces_the_copy`, `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf` |
 | AC-4 | WHEN `review start` runs THE review folder gets `diff.patch`, the output of `git -c core.quotepath=false diff --no-color --no-ext-diff --no-textconv --find-renames --src-prefix=a/ --dst-prefix=b/ base..HEAD`, and `pack.md` written last: the key, round, base and HEAD commits, the paths of the copy, the ticket in the copy and `diff.patch`, the stat of the same diff with `--stat=120 --stat-graph-width=20`, the criteria rows of the Spec and the three review checks of decision 0002, as the golden file of round 1. | `review::pack_of_round_one`, `review::diff_file` |
@@ -138,6 +138,7 @@ ticket_drift`.
 | Dirty tree | an untracked file, then a staged change, then an unstaged change to `ticket.md`: exit 2, the dirty text with the path; an ignored file and a change to `findings.jsonl` (a machine file): accepted | `review::refuses_a_dirty_tree` |
 | Rounds | `--round 0`, `--round 3`: exit 2, the round text; `--round x`, `--round -1`, no `--round`: the clap usage error, exit 2; nothing written | `review::refuses_bad_rounds` |
 | Refusal order | a closed ticket with `--round 3` and a dirty tree: the closed text; a legacy ticket with a dirty tree: exit 1, the legacy text; round 2 with no findings and a bad base: exit 1, the base text | `review::refusal_order` |
+| Later order | an unknown key with `--round 3`: the unknown text; `--round 3` with a dirty tree: the round text; a dirty tree with no base: the dirty text; a dirty tree with a bad base: the dirty text (D1D-1) | `review::refusal_order_of_the_later_cases` |
 | Base | `base` removed from `state.json`: exit 1, the no-base text; a base not on the first-parent history: exit 1, the `check_base` text | `review::refuses_a_bad_base` |
 | Round 2 needs round 1 | no `findings.jsonl`; only `spec-review` and `step-drift` records; a `code-review` record of round 2 only: exit 2, the AC-2 text; one `code-review` record of round `"1"`: accepted | `review::round_two_needs_round_one` |
 | Copy | HEAD with `a b.txt`, `dir/é.rs`, an executable script and an empty file: the same bytes and the executable bit under `tree/`; no `tree/.git`; a file deleted in the last commit is absent | `review::copies_head` |
@@ -236,7 +237,7 @@ heading line (SR1-10); a decision narrowed (SR1-2).
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `review::refuses_tickets`, `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`, `review::refusal_order` |
+| AC-1 | `review::refuses_tickets`, `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`, `review::refusal_order`, `review::refusal_order_of_the_later_cases` |
 | AC-2 | `review::round_two_needs_round_one` |
 | AC-3 | `review::copies_head`, `review::rerun_replaces_the_copy`, `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf` |
 | AC-4 | `review::pack_of_round_one`, `review::diff_file` |
@@ -260,6 +261,9 @@ Route: full (tag `interface`), auto.
    refusal cases table (under AC-9; not in the brief) in its order; seven dirty paths name five; a base off
    the first-parent history exits 1; `common::snapshot` unchanged. The GREEN changes
    `crates/stapel-cli/src/review.rs` only.
+1e. Coverage after the drift review of step 1d (D1D-1; AC-1): new `#[test]` function
+   `review::refusal_order_of_the_later_cases`. Tests only, each helper nested inside its function, no
+   `cargo fmt`; a test that fails is an `intent_gap`.
 1b. The copy of HEAD (AC-3; tests `review::copies_head`, `review::rerun_replaces_the_copy`,
    `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf`). Must not change: the repository's
    index, working tree and refs; step 1.
