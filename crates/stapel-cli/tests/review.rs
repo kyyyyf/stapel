@@ -443,3 +443,41 @@ fn copy_needs_no_tar() {
         .code(0);
     assert_eq!(std::fs::read(tree(dir, 1).join("code.txt")).unwrap(), b"one\n");
 }
+
+#[test]
+fn removes_old_copies() {
+    let repo = built();
+    let dir = repo.path();
+    for title in ["Second", "Third"] {
+        stapel(dir).args(["new", title]).assert().success();
+    }
+    let mut state = state_json(dir, "ABC-2");
+    state["closed"] =
+        serde_json::json!({"by": "test-user", "at": "2026-10-19T10:00:00Z", "reason": "done"});
+    write_state(dir, "ABC-2", &state);
+    commit_all(dir, "more tickets");
+    findings(dir, &[ROUND_ONE]);
+
+    let review = dir.join(".stapel/scratch/review");
+    for name in ["ABC-1-r1", "ABC-2-r1", "ABC-3-r1", "ABC-2-rx", "notes"] {
+        std::fs::create_dir_all(review.join(name)).unwrap();
+        std::fs::write(review.join(name).join("file"), "x").unwrap();
+    }
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("keep"), "x").unwrap();
+    std::os::unix::fs::symlink(outside.path(), review.join("ABC-2-r2")).unwrap();
+    std::fs::write(review.join(".gitignore"), "*\n").unwrap();
+
+    start(dir, &["ABC-1", "--round", "2"]).code(0);
+    assert!(review.join("ABC-1-r2/tree/code.txt").exists());
+    assert!(!review.join("ABC-1-r1").exists(), "another round of the ticket");
+    assert!(!review.join("ABC-2-r1").exists(), "a closed ticket");
+    assert!(
+        review.join("ABC-2-r2").symlink_metadata().is_err(),
+        "the symlink"
+    );
+    assert!(outside.path().join("keep").exists(), "the symlink target");
+    assert!(review.join("ABC-3-r1/file").exists(), "an open ticket");
+    assert!(review.join("ABC-2-rx/file").exists(), "not a round name");
+    assert!(review.join("notes/file").exists(), "another name");
+}
