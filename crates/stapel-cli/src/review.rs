@@ -70,7 +70,42 @@ pub fn start(key: &str, round: u64) -> Result<(), Fail> {
             )));
         }
     }
+    remove_old_copies(&root, &ticket.key, round)?;
     copy_head(&root, &ticket.key, round)
+}
+
+/// Removes the folders `<KEY>-r<n>` directly under `.stapel/scratch/review/` of this ticket with
+/// another round and of closed tickets. A symlink is removed itself, never followed.
+fn remove_old_copies(root: &Path, key: &str, round: u64) -> Result<(), Fail> {
+    let review = root.join(".stapel/scratch/review");
+    let Ok(entries) = std::fs::read_dir(&review) else {
+        return Ok(());
+    };
+    let tickets = stapel_core::tickets::list(root);
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some((owner, n)) = name.rsplit_once("-r") else {
+            continue;
+        };
+        if n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let closed = tickets
+            .iter()
+            .any(|t| t.key == owner && matches!(t.status, Status::Closed(_)));
+        if !(closed || (owner == key && n.parse::<u64>().ok() != Some(round))) {
+            continue;
+        }
+        let path = entry.path();
+        let is_dir = std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_dir());
+        let removed = if is_dir {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        removed.map_err(|e| Fail::failed(format!("{}: {e}", path.display())))?;
+    }
+    Ok(())
 }
 
 /// Replaces `.stapel/scratch/review/<KEY>-r<N>/tree/` with the files of HEAD as a checkout with
