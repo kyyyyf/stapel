@@ -287,3 +287,39 @@ fn refusal_order() {
         ),
     );
 }
+
+#[test]
+fn refusal_order_of_the_later_cases() {
+    let repo = built();
+    let dir = repo.path();
+    let good = state_json(dir, "ABC-1");
+    let dirty = "uncommitted changes: stray.txt; commit them before a review round";
+
+    // An unknown key wins over a bad round.
+    refused(
+        dir,
+        &["ABC-9", "--round", "3"],
+        2,
+        "no ticket ABC-9 in .stapel/tickets",
+    );
+
+    // A bad round wins over a dirty tree.
+    std::fs::write(dir.join("stray.txt"), "x").unwrap();
+    refused(
+        dir,
+        &["ABC-1", "--round", "3"],
+        2,
+        "--round must be 1 or 2; after round 2 the person decides",
+    );
+
+    // A dirty tree wins over a missing base and over a bad base.
+    let mut no_base = good.clone();
+    no_base.as_object_mut().unwrap().remove("base");
+    write_state(dir, "ABC-1", &no_base);
+    refused(dir, &["ABC-1", "--round", "1"], 2, dirty);
+
+    let mut bad_base = good;
+    bad_base["base"] = serde_json::json!("0".repeat(40));
+    write_state(dir, "ABC-1", &bad_base);
+    refused(dir, &["ABC-1", "--round", "1"], 2, dirty);
+}
