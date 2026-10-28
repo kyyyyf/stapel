@@ -411,4 +411,35 @@ fn copy_keeps_the_index() {
     assert_eq!(state(), before_state);
     assert!(!dir.join(".stapel/scratch/review/ABC-1-r1/index").exists());
     assert!(!tree(dir, 1).join("index").exists());
+    assert_eq!(
+        std::fs::read(dir.join(".stapel/scratch/review/.gitignore")).unwrap(),
+        b"*\n"
+    );
+    assert!(
+        !dir.join(".stapel/scratch/review/ABC-1-r1/.gitignore").exists(),
+        "the round folder has a .gitignore of its own"
+    );
+}
+
+#[test]
+fn copy_needs_no_tar() {
+    let repo = built();
+    let dir = repo.path();
+    let git_path = String::from_utf8(
+        std::process::Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let only_git = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(git_path.trim(), only_git.path().join("git")).unwrap();
+
+    stapel(dir)
+        .env("PATH", only_git.path())
+        .args(["review", "start", "ABC-1", "--round", "1"])
+        .assert()
+        .code(0);
+    assert_eq!(std::fs::read(tree(dir, 1).join("code.txt")).unwrap(), b"one\n");
 }
