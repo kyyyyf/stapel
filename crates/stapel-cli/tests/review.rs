@@ -89,6 +89,7 @@ fn refuses_tickets() {
 
     // The key is case-insensitive.
     start(dir, &["abc-1", "--round", "1"]).code(0);
+    std::fs::remove_dir_all(dir.join(".stapel/scratch")).unwrap();
 
     let mut state = state_json(dir, "ABC-1");
     close(dir);
@@ -322,4 +323,92 @@ fn refusal_order_of_the_later_cases() {
     bad_base["base"] = serde_json::json!("0".repeat(40));
     write_state(dir, "ABC-1", &bad_base);
     refused(dir, &["ABC-1", "--round", "1"], 2, dirty);
+}
+
+fn tree(dir: &Path, round: u32) -> std::path::PathBuf {
+    dir.join(format!(".stapel/scratch/review/ABC-1-r{round}/tree"))
+}
+
+fn commit_all(dir: &Path, message: &str) {
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", message]);
+}
+
+#[test]
+fn copies_head() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = built();
+    let dir = repo.path();
+    std::fs::create_dir_all(dir.join("dir")).unwrap();
+    std::fs::write(dir.join("a b.txt"), "spaced\n").unwrap();
+    std::fs::write(dir.join("dir/é.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(dir.join("run.sh"), "#!/bin/sh\necho hi\n").unwrap();
+    std::fs::set_permissions(dir.join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(dir.join("empty"), "").unwrap();
+    std::fs::write(dir.join("gone.txt"), "x\n").unwrap();
+    commit_all(dir, "more files");
+    git(dir, &["rm", "-q", "gone.txt"]);
+    git(dir, &["commit", "-q", "-m", "delete"]);
+
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    let t = tree(dir, 1);
+    assert_eq!(std::fs::read(t.join("a b.txt")).unwrap(), b"spaced\n");
+    assert_eq!(std::fs::read(t.join("dir/é.rs")).unwrap(), b"fn main() {}\n");
+    assert_eq!(std::fs::read(t.join("empty")).unwrap(), b"");
+    assert_eq!(std::fs::read(t.join("code.txt")).unwrap(), b"one\n");
+    let mode = std::fs::metadata(t.join("run.sh")).unwrap().permissions().mode();
+    assert_eq!(mode & 0o111, 0o111, "the executable bit");
+    assert!(!t.join(".git").exists());
+    assert!(!t.join("gone.txt").exists());
+}
+
+#[test]
+fn copy_ignores_autocrlf() {
+    let repo = built();
+    let dir = repo.path();
+    common::git_config(dir, "core.autocrlf", "true");
+    std::fs::write(dir.join("lf.txt"), "one\ntwo\n").unwrap();
+    git(dir, &["-c", "core.autocrlf=false", "add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "lf"]);
+
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    assert_eq!(
+        std::fs::read(tree(dir, 1).join("lf.txt")).unwrap(),
+        b"one\ntwo\n"
+    );
+}
+
+#[test]
+fn rerun_replaces_the_copy() {
+    let repo = built();
+    let dir = repo.path();
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    std::fs::write(tree(dir, 1).join("stray.txt"), "x").unwrap();
+    std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+    commit_all(dir, "new");
+
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    assert!(!tree(dir, 1).join("stray.txt").exists());
+    assert_eq!(std::fs::read(tree(dir, 1).join("new.txt")).unwrap(), b"new\n");
+}
+
+#[test]
+fn copy_keeps_the_index() {
+    let repo = built();
+    let dir = repo.path();
+    let index = || std::fs::read(dir.join(".git/index")).unwrap();
+    let state = || {
+        (
+            git(dir, &["status", "--porcelain"]),
+            git(dir, &["rev-parse", "HEAD"]),
+        )
+    };
+    let (before_index, before_state) = (index(), state());
+
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    assert!(tree(dir, 1).join("code.txt").exists(), "the copy");
+    assert!(index() == before_index, ".git/index changed");
+    assert_eq!(state(), before_state);
+    assert!(!dir.join(".stapel/scratch/review/ABC-1-r1/index").exists());
+    assert!(!tree(dir, 1).join("index").exists());
 }
