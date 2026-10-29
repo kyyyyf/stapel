@@ -70,6 +70,21 @@ pub fn start(key: &str, round: u64) -> Result<(), Fail> {
             )));
         }
     }
+    let ticket_text =
+        stapel_core::ticket::read(&ticket.dir.join("ticket.md")).map_err(Fail::failed)?;
+    let ticket_sections = stapel_core::ticket::parse(&ticket_text);
+    let has_criteria = match stapel_core::ticket::find(&ticket_sections, "Spec") {
+        stapel_core::ticket::Lookup::Found(spec) => !stapel_core::review::criteria(spec).is_empty(),
+        _ => false,
+    };
+    // AC-10 prints `stapel: the Spec of <KEY> has no criteria; a review pack needs them`; `Fail` adds
+    // the `stapel: ` prefix.
+    if !has_criteria {
+        return Err(Fail::refused(format!(
+            "the Spec of {} has no criteria; a review pack needs them",
+            ticket.key
+        )));
+    }
     remove_old_copies(&root, &ticket.key, round)?;
     copy_head(&root, &ticket.key, round)?;
     write_pack(&root, &ticket.key, &ticket.dir, round, base, &head)?;
