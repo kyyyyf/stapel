@@ -29,6 +29,7 @@ fn write_state(dir: &Path, key: &str, v: &serde_json::Value) {
 fn built() -> tempfile::TempDir {
     let repo = repo_with_ticket();
     let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Spec", SPEC_TWO);
     git(dir, &["add", "-A"]);
     git(dir, &["commit", "-q", "-m", "initial"]);
     let base = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
@@ -824,4 +825,51 @@ fn reviewer_without_a_model() {
     assert_eq!(lines[3], "reviewer: stapel-reviewer, no model (role external)");
     assert!(lines[2].ends_with("(role reviewer)"), "{stdout}");
     assert!(lines[4].ends_with("(role drift), on the whole ticket"), "{stdout}");
+}
+
+#[test]
+fn refuses_a_ticket_without_criteria() {
+    let text = "the Spec of ABC-1 has no criteria; a review pack needs them";
+    let rewrite = |dir: &Path, f: &dyn Fn(&str) -> String| {
+        let path = dir.join(".stapel/tickets/ABC-1/ticket.md");
+        let old = std::fs::read_to_string(&path).unwrap();
+        let new = f(&old);
+        assert_ne!(old, new);
+        std::fs::write(&path, new).unwrap();
+        commit_all(dir, "edit the ticket");
+    };
+    let original = |dir: &Path| {
+        std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/ticket.md")).unwrap()
+    };
+
+    let repo = built();
+    let dir = repo.path();
+    let good = original(dir);
+
+    // No Spec section.
+    rewrite(dir, &|t| t.replace("## Spec\n", "## Notes\n"));
+    refused(dir, &["ABC-1", "--round", "1"], 2, text);
+
+    // Two Spec sections.
+    rewrite(dir, &|_| format!("{good}\n## Spec\n\n{SPEC_TWO}\n"));
+    refused(dir, &["ABC-1", "--round", "1"], 2, text);
+
+    // A Spec without an AC row.
+    rewrite(dir, &|_| good.replace(SPEC_TWO, "The spec."));
+    refused(dir, &["ABC-1", "--round", "1"], 2, text);
+
+    // The other refusals come first: a dirty tree and round 2 without round 1.
+    refused(
+        dir,
+        &["ABC-1", "--round", "2"],
+        2,
+        "round 2 needs the code review findings of round 1 in .stapel/tickets/ABC-1/findings.jsonl",
+    );
+    std::fs::write(dir.join("stray.txt"), "x").unwrap();
+    refused(
+        dir,
+        &["ABC-1", "--round", "1"],
+        2,
+        "uncommitted changes: stray.txt; commit them before a review round",
+    );
 }
