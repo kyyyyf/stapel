@@ -114,7 +114,8 @@ pub fn pack_text(p: &Pack) -> String {
             out.push_str("- none\n");
         }
         for f in findings {
-            out.push_str(&format!("- {} ({}): {}\n", f.id, f.severity, f.claim));
+            let claim = f.claim.replace("\r\n", " ").replace(['\n', '\r'], " ");
+            out.push_str(&format!("- {} ({}): {}\n", f.id, f.severity, claim));
         }
     }
     out.push_str(

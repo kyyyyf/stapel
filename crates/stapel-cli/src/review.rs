@@ -1,5 +1,9 @@
-//! `stapel review start KEY --round N`: the refusals before a code review round (STP-24 AC-1, AC-2).
-//! A success writes the copy of HEAD (AC-3) and prints nothing yet.
+//! `stapel review start KEY --round N` (STP-24): refuses an unknown, closed or legacy ticket, a bad
+//! round, a dirty tree, a bad base commit and a round 2 without round 1 findings or with an
+//! unreadable `state.json` (AC-1, AC-2). A success removes the review folders of other rounds and of
+//! closed tickets, writes the copy of HEAD under `tree/` with the `.gitignore` and `.ignore` of the
+//! review folder (AC-3), writes `diff.patch` and `pack.md` (AC-4, AC-5), and prints one line per
+//! reviewer (AC-6).
 
 use crate::check::read_head;
 use crate::fail::Fail;
@@ -240,6 +244,9 @@ fn copy_head(root: &Path, key: &str, round: u64) -> Result<(), Fail> {
     // One ignore file for every copy, so a review copy never makes the tree dirty.
     let ignore = review.join(".gitignore");
     std::fs::write(&ignore, "*\n").map_err(|e| io(&ignore, e))?;
+    // Search tools that read `.ignore` (ripgrep) let `.ignore` override the `.gitignore` above.
+    let search = review.join(".ignore");
+    std::fs::write(&search, "!*\n").map_err(|e| io(&search, e))?;
     let index = folder.join("index");
     let mut prefix = tree.clone().into_os_string();
     prefix.push("/");
