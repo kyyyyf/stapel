@@ -1085,3 +1085,58 @@ fn next_after_a_clean_round() {
     pack_file(dir, 2);
     assert_eq!(next_line(dir), path_line);
 }
+
+#[test]
+fn next_counts_only_real_rounds() {
+    let path_line = format!("next: code-review — {TICKET_PATH}");
+    let review_file = |dir: &Path, folder: &str, name: &str| {
+        let review = dir.join(".stapel/scratch/review");
+        std::fs::create_dir_all(review.join(folder)).unwrap();
+        std::fs::write(review.join(".gitignore"), "*\n").unwrap();
+        std::fs::write(review.join(folder).join(name), "x\n").unwrap();
+    };
+
+    // A whole round 1 finding triaged `defer` beside patch findings of other stages and rounds.
+    let repo = after_the_steps();
+    let dir = repo.path();
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-1","severity":"LOW","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-1","fate":"defer"}"#,
+            r#"{"v":1,"stage":"step-drift","round":"1","id":"D-1","severity":"LOW","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"D-1","fate":"patch"}"#,
+        ],
+    );
+    assert_eq!(next_line(dir), path_line);
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-1","severity":"LOW","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-1","fate":"defer"}"#,
+            r#"{"v":1,"stage":"step-drift","round":"1","id":"D-1","severity":"LOW","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"D-1","fate":"patch"}"#,
+            r#"{"v":1,"stage":"code-review","round":"1.5","id":"R-3","severity":"LOW","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-3","fate":"patch"}"#,
+        ],
+    );
+    assert_eq!(next_line(dir), path_line);
+
+    // Folders that are not the pack of round 2 of this ticket do not close round 2.
+    let repo = after_the_steps();
+    let dir = repo.path();
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-1","severity":"MEDIUM","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-1","fate":"patch"}"#,
+        ],
+    );
+    let round_two = "next: code-review — stapel review start ABC-1 --round 2";
+    review_file(dir, "ABC-1-r2", "diff.patch");
+    assert_eq!(next_line(dir), round_two);
+    review_file(dir, "ABC-12-r2", "pack.md");
+    assert_eq!(next_line(dir), round_two);
+    review_file(dir, "ABC-1-r01", "pack.md");
+    assert_eq!(next_line(dir), round_two);
+}
