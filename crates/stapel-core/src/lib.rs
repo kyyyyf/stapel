@@ -15,6 +15,7 @@ pub mod next;
 pub mod outcomes;
 pub mod privacy;
 pub mod records;
+pub mod review;
 pub mod runner;
 pub mod rust_tests;
 pub mod stage;

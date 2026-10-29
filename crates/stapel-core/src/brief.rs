@@ -264,7 +264,7 @@ fn findings_part(item: &str, findings: &str, step: &str) -> Result<String, Strin
 }
 
 /// The cells of a table row, trimmed.
-fn cells(line: &str) -> Vec<&str> {
+pub fn cells(line: &str) -> Vec<&str> {
     let line = line.trim();
     let line = line.strip_prefix('|').unwrap_or(line);
     let line = line.strip_suffix('|').unwrap_or(line);
@@ -532,7 +532,7 @@ struct Criteria {
 }
 
 /// The `n` of a Spec line that starts with `| AC-<n> |`.
-fn row_number(line: &str) -> Option<u64> {
+pub fn row_number(line: &str) -> Option<u64> {
     let rest = line.strip_prefix("| AC-")?;
     let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
     if digits == 0 || !rest[digits..].starts_with(" |") {

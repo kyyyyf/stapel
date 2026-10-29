@@ -71,7 +71,85 @@ pub fn start(key: &str, round: u64) -> Result<(), Fail> {
         }
     }
     remove_old_copies(&root, &ticket.key, round)?;
-    copy_head(&root, &ticket.key, round)
+    copy_head(&root, &ticket.key, round)?;
+    write_pack(&root, &ticket.key, &ticket.dir, round, base, &head)
+}
+
+/// The output of `git diff` of `base..head` in the form AC-4 pins, with `extra` flags.
+fn diff(root: &Path, extra: &[&str], base: &str, head: &str) -> Result<Vec<u8>, Fail> {
+    let out = Command::new("git")
+        .args(["-c", "core.quotepath=false", "diff"])
+        .args([
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--find-renames",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+        ])
+        .args(extra)
+        .arg(format!("{base}..{head}"))
+        .current_dir(root)
+        .output()
+        .map_err(|e| Fail::failed(format!("git diff: {e}")))?;
+    if !out.status.success() {
+        return Err(Fail::failed(format!(
+            "git diff failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(out.stdout)
+}
+
+/// Writes `diff.patch` and then `pack.md` into the review folder of the round.
+fn write_pack(
+    root: &Path,
+    key: &str,
+    ticket_dir: &Path,
+    round: u64,
+    base: &str,
+    head: &str,
+) -> Result<(), Fail> {
+    let relative = format!(".stapel/scratch/review/{key}-r{round}");
+    let folder = root.join(&relative);
+    let write = |name: &str, bytes: &[u8]| {
+        let path = folder.join(name);
+        std::fs::write(&path, bytes).map_err(|e| Fail::failed(format!("{}: {e}", path.display())))
+    };
+    write("diff.patch", &diff(root, &[], base, head)?)?;
+    let stat = diff(root, &["--stat=120", "--stat-graph-width=20"], base, head)?;
+    let ticket_md = ticket_dir.join("ticket.md");
+    let text = stapel_core::ticket::read(&ticket_md).map_err(Fail::failed)?;
+    let sections = stapel_core::ticket::parse(&text);
+    let spec = match stapel_core::ticket::find(&sections, "Spec") {
+        stapel_core::ticket::Lookup::Found(body) => body,
+        _ => "",
+    };
+    let criteria = stapel_core::review::criteria(spec);
+    let findings = if round == 2 {
+        let entries = journal::read(&ticket_dir.join("findings.jsonl")).map_err(Fail::failed)?;
+        let records: Vec<_> = entries
+            .into_iter()
+            .filter_map(|(_, entry)| match entry {
+                Entry::V1(map) | Entry::Legacy(map) => Some(map),
+                Entry::Problem(_) => None,
+            })
+            .collect();
+        Some(stapel_core::review::patch_findings(&records))
+    } else {
+        None
+    };
+    let pack = stapel_core::review::pack_text(&stapel_core::review::Pack {
+        key,
+        round,
+        base,
+        head,
+        folder: &relative,
+        stat: &String::from_utf8_lossy(&stat),
+        criteria: &criteria,
+        findings: findings.as_deref(),
+    });
+    write("pack.md", pack.as_bytes())
 }
 
 /// Removes the folders `<KEY>-r<n>` directly under `.stapel/scratch/review/` of this ticket with
