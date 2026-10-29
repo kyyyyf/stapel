@@ -332,6 +332,15 @@ Route: full (tags `guard`, `interface`), auto.
 2a. The reserved title lifted for `description` (AC-1; test `config::rejects_bad_sections`): the RED adds
    the accepted case for the id `description`, so that the test fails there; the GREEN changes
    `crates/stapel-core/src/config.rs`. Must not change: the refusal for any other id.
+2c. Fix of step 2 (findings D2-1 to D2-5; AC-3; tests `ok_page::criteria_new_and_changed`,
+   `ok_page::criteria_without_rows`): the RED adds cases to both tests, so that they fail there: a blank
+   line and a re-wrapped paragraph among the other Spec lines give no `spec, other lines` line (the count
+   is of logical lines); `+0 -0` gives no count line; a removed AC row shows only `- `; a confirmation
+   without stored text shows the Spec as new; a heading indented by 4 spaces, a `### ` line inside a fence
+   and inside an HTML comment are not headings, as in `ticket::parse`; a blank line inside a fence; list
+   items `- `, `* `, `1. `; the diff form of a Spec without rows. The GREEN reads logical lines, headings
+   and AC rows in `page.rs` by the rules of `ticket::parse` (one shared reader, no second copy of them).
+   Must not change: steps 1, 2a.
 2b. Frame and Decisions in the dialog (AC-4; tests `ok_page::frame_and_decisions_new_and_changed`,
    `ok_page::description_without_headings`). Must not change: 1, 2.
 3. The limit, the folding and the cut (AC-5; tests `ok_page::dialog_limit_and_cut`,
