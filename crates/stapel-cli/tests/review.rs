@@ -898,3 +898,190 @@ fn tags_paragraph_ends() {
         assert_eq!(reviewers(&format!("**Risk tags:** `{tag}`.\n")), 3, "{tag}");
     }
 }
+
+const TICKET_PATH: &str = ".stapel/tickets/ABC-1/ticket.md";
+
+/// A confirmed ticket ABC-1 whose one step has its RED and GREEN committed; the tree is clean and
+/// `next` names the code review.
+fn after_the_steps() -> tempfile::TempDir {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem.");
+    common::set_section(dir, "ABC-1", "Spec", SPEC_TWO);
+    common::set_section(dir, "ABC-1", "Plan", "Route: full, auto.\n\n1. One (AC-1).");
+    for id in ["spec", "design", "proof", "plan"] {
+        stapel(dir).args(["ok", id]).assert().success();
+    }
+    commit_all(dir, "initial");
+    std::fs::create_dir_all(dir.join("crates/tiny/tests")).unwrap();
+    std::fs::write(dir.join("crates/tiny/tests/t1.rs"), "#[test]\nfn t() {}\n").unwrap();
+    commit_all(dir, "ABC-1 step 1 RED: test");
+    std::fs::create_dir_all(dir.join("crates/tiny/src")).unwrap();
+    std::fs::write(dir.join("crates/tiny/src/lib.rs"), "// one\n").unwrap();
+    commit_all(dir, "ABC-1 step 1 GREEN: code");
+    repo
+}
+
+/// The action line of `stapel next`.
+fn next_line(dir: &Path) -> String {
+    let out = stapel(dir).arg("next").assert().code(0).get_output().stdout.clone();
+    let text = String::from_utf8(out).unwrap();
+    let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("next: ")).collect();
+    assert_eq!(lines.len(), 1, "one action line in: {text}");
+    lines[0].to_string()
+}
+
+/// A `pack.md` of `round`, with the folder ignored as `review start` leaves it.
+fn pack_file(dir: &Path, round: u32) {
+    let review = dir.join(".stapel/scratch/review");
+    std::fs::create_dir_all(review.join(format!("ABC-1-r{round}"))).unwrap();
+    std::fs::write(review.join(".gitignore"), "*\n").unwrap();
+    std::fs::write(review.join(format!("ABC-1-r{round}/pack.md")), "pack\n").unwrap();
+}
+
+#[test]
+fn next_names_round_one() {
+    let repo = after_the_steps();
+    let dir = repo.path();
+    let round_one = "next: code-review — stapel review start ABC-1 --round 1";
+    assert_eq!(next_line(dir), round_one);
+
+    let out = stapel(dir).args(["next", "--json"]).assert().code(0).get_output().stdout.clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["action"], "code-review");
+    assert_eq!(json["command"], "stapel review start ABC-1 --round 1");
+    assert!(json["path"].is_null(), "{json}");
+
+    // Findings of other stages and rounds do not move the round.
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"spec-review","round":"1","id":"S-1"}"#,
+            r#"{"v":1,"stage":"step-drift","round":"1","id":"D-1"}"#,
+        ],
+    );
+    assert_eq!(next_line(dir), round_one);
+}
+
+#[test]
+fn next_names_round_two() {
+    let repo = after_the_steps();
+    let dir = repo.path();
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-1","severity":"MEDIUM","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-1","fate":"patch"}"#,
+        ],
+    );
+    assert_eq!(
+        next_line(dir),
+        "next: code-review — stapel review start ABC-1 --round 2"
+    );
+    let out = stapel(dir).args(["next", "--json"]).assert().code(0).get_output().stdout.clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["command"], "stapel review start ABC-1 --round 2");
+
+    // A round written as a number counts as a whole round.
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":1,"id":"R-1","severity":"MEDIUM","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-1","fate":"patch"}"#,
+        ],
+    );
+    assert_eq!(
+        next_line(dir),
+        "next: code-review — stapel review start ABC-1 --round 2"
+    );
+}
+
+#[test]
+fn next_after_the_rounds() {
+    let repo = after_the_steps();
+    let dir = repo.path();
+    let path_line = format!("next: code-review — {TICKET_PATH}");
+
+    // Round 1 findings that are all `defer`.
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-1","severity":"LOW","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-1","fate":"defer"}"#,
+        ],
+    );
+    assert_eq!(next_line(dir), path_line);
+
+    // A round 2 finding: the rounds are over.
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-1","severity":"LOW","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-1","fate":"patch"}"#,
+            r#"{"v":1,"stage":"code-review","round":"2","id":"R-2","severity":"LOW","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-2","fate":"defer"}"#,
+        ],
+    );
+    assert_eq!(next_line(dir), path_line);
+
+    // A round 1 `patch` finding with the verdict `false` is no patch finding.
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-1","severity":"HIGH","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-1","fate":"patch"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-1","fate":"patch","verdict":"false"}"#,
+        ],
+    );
+    assert_eq!(next_line(dir), path_line);
+
+    // A patch finding of another stage or a round that is not whole is not counted.
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"step-drift","round":"1","id":"D-1","severity":"LOW","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"D-1","fate":"patch"}"#,
+            r#"{"v":1,"stage":"code-review","round":"1.5","id":"R-3","severity":"LOW","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-3","fate":"patch"}"#,
+        ],
+    );
+    assert_eq!(
+        next_line(dir),
+        "next: code-review — stapel review start ABC-1 --round 1"
+    );
+
+    // The Review section written: the Summary is next.
+    findings(dir, &[]);
+    common::set_section(dir, "ABC-1", "Review", "Reviewed: no findings.");
+    commit_all(dir, "ABC-1: review");
+    assert_eq!(next_line(dir), format!("next: write-summary — {TICKET_PATH}"));
+}
+
+#[test]
+fn next_after_a_clean_round() {
+    let path_line = format!("next: code-review — {TICKET_PATH}");
+
+    // No findings and a pack of round 1: the round ran and found nothing.
+    let repo = after_the_steps();
+    let dir = repo.path();
+    pack_file(dir, 1);
+    assert_eq!(next_line(dir), path_line);
+
+    // A round 1 `patch` finding and a pack of round 2.
+    let repo = after_the_steps();
+    let dir = repo.path();
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-1","severity":"MEDIUM","claim":"c"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-1","fate":"patch"}"#,
+        ],
+    );
+    pack_file(dir, 1);
+    assert_eq!(
+        next_line(dir),
+        "next: code-review — stapel review start ABC-1 --round 2"
+    );
+    pack_file(dir, 2);
+    assert_eq!(next_line(dir), path_line);
+}

@@ -9,6 +9,9 @@ use std::path::Path;
 
 const TICKET: &str = ".stapel/tickets/ABC-1/ticket.md";
 
+/// The `code-review` line before any review round ran.
+const REVIEW_ONE: &str = "next: code-review — stapel review start ABC-1 --round 1";
+
 /// The standard output of `stapel next` with `args`, after the exit code `code` is checked.
 fn output(dir: &Path, args: &[&str], code: i32) -> String {
     let out = stapel(dir)
@@ -1553,7 +1556,7 @@ macro_rules! after_the_build {
 #[test]
 fn uncommitted_changes_before_the_check() {
     after_the_build!();
-    let review = format!("next: code-review — {TICKET}");
+    let review = REVIEW_ONE.to_string();
     let commit_line = "next: commit — git status";
 
     // A clean tree after the steps: no commit to make.
@@ -1600,7 +1603,7 @@ fn uncommitted_changes_before_the_check() {
 fn run_check_after_the_steps() {
     after_the_build!();
     let run = "next: run-check — stapel check ABC-1";
-    let review = format!("next: code-review — {TICKET}");
+    let review = REVIEW_ONE.to_string();
 
     // No record.
     let (repo, _, _) = done(true);
@@ -1628,7 +1631,7 @@ fn code_review_then_summary() {
     after_the_build!();
     let (repo, _, _) = done(false);
     let dir = repo.path();
-    assert_eq!(action(dir), format!("next: code-review — {TICKET}"));
+    assert_eq!(action(dir), REVIEW_ONE);
     assert!(facts(dir).is_empty());
 
     set_section(dir, "ABC-1", "Review", "Reviewed: no findings.");
@@ -1746,7 +1749,7 @@ fn review_and_summary_edges() {
     set_section(dir, "ABC-1", "Summary", "Done.");
     commit(dir, &[], "ABC-1: summary");
     assert!(facts(dir).is_empty(), "{:?}", facts(dir));
-    assert_eq!(action(dir), format!("next: code-review — {TICKET}"));
+    assert_eq!(action(dir), REVIEW_ONE);
 
     // Review written, Summary with an empty body.
     let (repo, _, _) = done(false);
@@ -1876,7 +1879,7 @@ fn index_untouched() {
         .unwrap();
     let index = dir.join(".git/index");
     let before = std::fs::read(&index).unwrap();
-    assert_eq!(action(dir), format!("next: code-review — {TICKET}"));
+    assert_eq!(action(dir), REVIEW_ONE);
     assert!(
         before == std::fs::read(&index).unwrap(),
         "`next` rewrote .git/index"
