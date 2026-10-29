@@ -55,7 +55,6 @@
       "hash": "sha256:26726b82267da42454d01ce6c91904ae2627a6f717418a1bb224004101eb029b",
       "normal_form": 1,
       "depends_on": {},
-      "text": "Terms:\n\n- **Review folder**: `.stapel/scratch/review/<KEY>-r<N>/`, with `<KEY>` as in `state.json`; ignored by git.\n- **Tags**: the backtick spans equal to `security`, `guard`, `data`, `migration` or `interface` in the\n  paragraph of the Frame that starts with `**Risk tags:**`, up to the next blank line or heading line.\n- **Light**: the Plan's `Route:` line starts with `light` (`next::is_light`).\n- **Code-review round** of a ticket: the highest of the whole rounds (STP-23) of the finding records with\n  stage `code-review` in `findings.jsonl` and the rounds whose review folder holds `pack.md`; 0 when there\n  is none.\n- **Patch finding**: a finding record with stage `code-review` and whole round 1 whose current state\n  (STP-23) has the fate `patch` and is not false.\n\n| № | Criterion | Test |\n|---|---|---|\n| AC-1 | IF `stapel review start KEY --round N` names an unknown ticket, a closed ticket or a round other than 1 or 2, or the tree has uncommitted changes (as `next` counts them) THEN exit 2 with the text of the cases table and nothing written; a legacy (STP-1) ticket, a missing base or a base not on the first-parent history of HEAD exit 1; the first case in the table's order wins. | `review::refuses_tickets`, `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`, `review::refusal_order` |\n| AC-2 | IF `--round 2` runs while the ticket has no finding record with stage `code-review` and whole round 1 THEN exit 2 with `stapel: round 2 needs the code review findings of round 1 in .stapel/tickets/<KEY>/findings.jsonl` and nothing written. | `review::round_two_needs_round_one` |\n| AC-3 | WHEN `review start` runs THE review folder is removed if present and gets `tree/`, the files of HEAD as a checkout with `core.autocrlf=false` writes them (the `.gitattributes` of HEAD apply), with their modes and no `.git`, while the repository's index, working tree and refs stay unchanged. | `review::copies_head`, `review::rerun_replaces_the_copy`, `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf` |\n| AC-4 | WHEN `review start` runs THE review folder gets `diff.patch`, the output of `git -c core.quotepath=false diff --no-color --no-ext-diff --no-textconv --find-renames --src-prefix=a/ --dst-prefix=b/ base..HEAD`, and `pack.md` written last: the key, round, base and HEAD commits, the paths of the copy, the ticket in the copy and `diff.patch`, the stat of the same diff with `--stat=120 --stat-graph-width=20`, the criteria rows of the Spec and the three review checks of decision 0002, as the golden file of round 1. | `review::pack_of_round_one`, `review::diff_file` |\n| AC-5 | WHEN `--round 2` runs THE pack also lists every patch finding of the working tree's `findings.jsonl` as `- <id> (<current severity>): <claim>` in file order, or `- none`, as the golden file of round 2. | `review::pack_of_round_two` |\n| AC-6 | WHEN `review start` succeeds THE output is `copy: <folder>tree (HEAD <12 hex>)`, `pack: <folder>pack.md`, then one line `reviewer: <agent>, model <model> (role <role>)` per reviewer: for a light ticket or one without tags only `stapel-reviewer` (role `reviewer`); for a tagged one also `stapel-reviewer` (role `external`) and `stapel-drift` (role `drift`) followed by `, on the whole ticket`; a role absent from `[models]` prints `no model` for `model <model>`. | `review::reviewers_by_route_and_tags`, `review::reviewer_without_a_model` |\n| AC-7 | WHEN `next` would give `code-review` and the code-review round is 0 THE target is the command `stapel review start <KEY> --round 1`; when it is 1 and a patch finding exists, `stapel review start <KEY> --round 2`; otherwise the ticket path, as before. | `review::next_names_round_one`, `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round` |\n| AC-8 | WHEN `init` writes the skill and the reviewer agent THE skill holds a line that starts ``- `code-review`:`` and holds `stapel review start KEY --round N` and `pack.md`, and the reviewer body holds `Read pack.md of stapel review start first; read files only under the copy it names.` | `init_process::skill_text_names_the_review_pack` |\n| AC-9 | WHEN `review start` runs THE folders directly under `.stapel/scratch/review/` named `<KEY>-r<n>`, with `<n>` a whole number, of the same ticket and another round or of a closed ticket are removed without following symlinks; other open tickets' folders and other names stay. | `review::removes_old_copies` |\n\nCases table of the refusals, in the order they are checked (exit 2 unless named):\n\n| Case | Text after `stapel: ` |\n|---|---|\n| round not a number | the clap usage error, exit 2 |\n| unknown key | `no ticket <KEY> in .stapel/tickets` (as `resolve`) |\n| legacy, exit 1 | `ticket <KEY> is in the STP-1 format; it has no review pack` |\n| closed | `ticket <KEY> is closed; it has no review round` |\n| round 0, 3 or more | `--round must be 1 or 2; after round 2 the person decides` |\n| dirty tree | `uncommitted changes: <first five paths>; commit them before a review round` |\n| no base, exit 1 | `state.json of <KEY> has no base commit` |\n| bad base, exit 1 | the text of `build_inputs::check_base` |\n| round 2 without round 1 | the text of AC-2 |\n\n### Guarantees\n\n- **Promised:** the Frame's promise, by AC-1 to AC-9; outside `.stapel/scratch/review/` `review start`\n  writes nothing; `pack.md` is written last, so a folder without it is incomplete; the other actions of `next` and their order are unchanged.\n- **Not promised:** the Frame's list; the copy's own `findings.jsonl` is that of HEAD and may be older\n  than the working tree's; the round 2 refusal reads legacy records like new ones and skips damaged\n  lines, as `next` does (D1-5); submodules (a gitlink gives no files); symlinks in\n  HEAD that point outside the copy; `.gitattributes` `export-ignore` (the copy is a checkout, not an\n  archive); a Claude Code allow rule for `review start`; two `review start` runs at once.",
       "via": "grant"
     },
     {
@@ -67,7 +66,6 @@
       "depends_on": {
         "spec": "sha256:26726b82267da42454d01ce6c91904ae2627a6f717418a1bb224004101eb029b"
       },
-      "text": "### Facts\n\n- F-0: prior art: the reviewer prompts of STP-22 and STP-23 under `.stapel/scratch/`, the agent text\n  `crates/stapel-cli/assets/agents/reviewer.md`; no code runs `git archive` or reads a tar, and\n  `stapel-cli` has no tar dependency.\n- F-1: `tickets::resolve` gives the key and status; `build_inputs::check_base` checks the base;\n  `worktree::dirty_paths` lists dirty paths without ignored and machine files.\n- F-2: `next::is_light` reads the route; risk tags are read only by `tests/ticket_drift.rs`, from the first\n  line; the AC rows are read by private functions of `brief.rs` (`row_number`, `cells`).\n- F-3: `triage::state_of` and `triage::whole_round` give the current state and round of a finding.\n- F-4: `next::after_the_steps` gives `code-review` with the ticket path; five tests of `tests/next.rs`\n  assert that path (`uncommitted_changes_before_the_check`, `run_check_after_the_steps`,\n  `code_review_then_summary`, `review_and_summary_edges`, `index_untouched`).\n\n### Decisions (before the build)\n\n- The new module `crates/stapel-cli/src/review.rs` holds `start`; `crates/stapel-core/src/review.rs` holds the\n  pure parts: the tags of a Frame, the reviewer list, the patch findings, the pack text and the round that\n  `next` names.\n- The copy: `git -c core.autocrlf=false read-tree HEAD` with `GIT_INDEX_FILE` set to `<folder>index`, then\n  `git checkout-index -a --prefix=<folder>tree/` with the same variable, then the index file is removed.\n- `diff.patch` and the stat: the commands of AC-4; `checkout-index` also runs with `-c core.autocrlf=false`.\n- Step 1 GREEN: a command that passes every refusal exits 0 and prints and writes nothing; steps 1b to 3\n  replace this.\n- `brief.rs` makes `row_number` and `cells` public for the criteria rows.\n- `next::Facts` gets the code-review round and whether a patch finding exists, computed by the CLI `next`\n  from the records it already reads.\n- Old tests: in the RED of step 4, the five tests of F-4 change their expected `code-review` line to the\n  command, so that they fail at the RED.",
       "via": "grant"
     },
     {
@@ -80,7 +78,6 @@
         "design": "sha256:842700057d54bf8427fd3bd9935b045b8f0809c58ed52f8ea48d3c7ce3c5d2c1",
         "spec": "sha256:26726b82267da42454d01ce6c91904ae2627a6f717418a1bb224004101eb029b"
       },
-      "text": "| Criterion | Test |\n|---|---|\n| AC-1 | `review::refuses_tickets`, `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`, `review::refusal_order` |\n| AC-2 | `review::round_two_needs_round_one` |\n| AC-3 | `review::copies_head`, `review::rerun_replaces_the_copy`, `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf` |\n| AC-4 | `review::pack_of_round_one`, `review::diff_file` |\n| AC-5 | `review::pack_of_round_two` |\n| AC-6 | `review::reviewers_by_route_and_tags`, `review::reviewer_without_a_model` |\n| AC-7 | `review::next_names_round_one`, `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round` |\n| AC-8 | `init_process::skill_text_names_the_review_pack` |\n| AC-9 | `review::removes_old_copies` |",
       "via": "grant"
     },
     {
@@ -93,7 +90,409 @@
         "design": "sha256:842700057d54bf8427fd3bd9935b045b8f0809c58ed52f8ea48d3c7ce3c5d2c1",
         "spec": "sha256:26726b82267da42454d01ce6c91904ae2627a6f717418a1bb224004101eb029b"
       },
-      "text": "Route: full (tag `interface`), auto.\n\n1. `stapel review start KEY --round N` with its refusals (AC-1, AC-2; tests `review::refuses_tickets`,\n   `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`,\n   `review::round_two_needs_round_one`, `review::refusal_order`); a success is the stub of Design. Must not\n   change: the other commands.\n1d. Fix after the drift review of step 1 (D1-1 to D1-4, D1-6; AC-1; tests `review::refuses_tickets`,\n   `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`,\n   `review::refusal_order`): the RED changes these tests so that they fail there: each asserts the exact\n   text after `stapel: ` and the exit code of its row of the refusal cases table of the Spec (under AC-9 in\n   `ticket.md`; the brief does not carry it), in the table's order (legacy before closed); a dirty tree of\n   seven paths names the first five; a base that exists but is off the first-parent history (a commit of a\n   merged side branch) exits 1; `common::snapshot` shows no file changed. The GREEN changes\n   `crates/stapel-cli/src/review.rs` only. Must not change: the other commands.\n1b. The copy of HEAD (AC-3; tests `review::copies_head`, `review::rerun_replaces_the_copy`,\n   `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf`). Must not change: the repository's\n   index, working tree and refs; step 1.\n1c. Old copies removed (AC-9; test `review::removes_old_copies`). Must not change: steps 1 and 1b.\n2. `pack.md` and `diff.patch` (AC-4, AC-5; tests `review::pack_of_round_one`, `review::diff_file`,\n   `review::pack_of_round_two`); the golden files come with the RED. Must not change: steps 1 to 1c; the output of\n   `brief`.\n3. The reviewer lines (AC-6; tests `review::reviewers_by_route_and_tags`,\n   `review::reviewer_without_a_model`). Must not change: steps 1 and 2.\n4. The `code-review` target of `next` (AC-7; tests `review::next_names_round_one`,\n   `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round`); the old tests as in Design. Must not\n   change: the other actions of `next` and their order.\n5. The skill and reviewer texts (AC-8; test `init_process::skill_text_names_the_review_pack`):\n   `crates/stapel-cli/assets/skill.md` and `assets/agents/reviewer.md`; the GREEN runs the built\n   `stapel init` here so that `init_process::this_repository_has_the_current_files` holds. Must not change:\n   the other sentences that `init_process` tests.",
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-10-27T15:45:01Z",
+      "hash": "sha256:0272ba9e95803ecd6a4f88c966e1d222e54b696795830de8c40c631d6190d148",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:842700057d54bf8427fd3bd9935b045b8f0809c58ed52f8ea48d3c7ce3c5d2c1",
+        "spec": "sha256:26726b82267da42454d01ce6c91904ae2627a6f717418a1bb224004101eb029b"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-10-28T12:16:56Z",
+      "hash": "sha256:e8c095294fb90bf53527a060de4bbae6dd66559132cc32a1e79dc1440ae4d0c8",
+      "normal_form": 1,
+      "depends_on": {},
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-10-28T12:16:56Z",
+      "hash": "sha256:842700057d54bf8427fd3bd9935b045b8f0809c58ed52f8ea48d3c7ce3c5d2c1",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:e8c095294fb90bf53527a060de4bbae6dd66559132cc32a1e79dc1440ae4d0c8"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-10-28T12:16:56Z",
+      "hash": "sha256:6dc39a4da0a5c7488d0a4a917b227b7e66310bd0648bede65d53da1d5eaadc6c",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:842700057d54bf8427fd3bd9935b045b8f0809c58ed52f8ea48d3c7ce3c5d2c1",
+        "spec": "sha256:e8c095294fb90bf53527a060de4bbae6dd66559132cc32a1e79dc1440ae4d0c8"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-10-28T12:16:56Z",
+      "hash": "sha256:17d778c461fd01935f0cfa20c03baa27f09b363362b7048b00bf4f0a5b63e100",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:842700057d54bf8427fd3bd9935b045b8f0809c58ed52f8ea48d3c7ce3c5d2c1",
+        "spec": "sha256:e8c095294fb90bf53527a060de4bbae6dd66559132cc32a1e79dc1440ae4d0c8"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-10-28T13:43:08Z",
+      "hash": "sha256:c64767d555eeb45e8fe87cea8eeace953224e1ff52fe306c6c7dbf840402138e",
+      "normal_form": 1,
+      "depends_on": {},
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-10-28T13:43:08Z",
+      "hash": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:c64767d555eeb45e8fe87cea8eeace953224e1ff52fe306c6c7dbf840402138e"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-10-28T13:43:08Z",
+      "hash": "sha256:e1698f98676b1c9a43662a4a5c7c4f0a83b09ba70bdd2c4dc29f4cc8a4844b43",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+        "spec": "sha256:c64767d555eeb45e8fe87cea8eeace953224e1ff52fe306c6c7dbf840402138e"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-10-28T13:43:08Z",
+      "hash": "sha256:b6e245d4c09ee34372b4f30769ec35991b3e0f88dde0d5b0659ddba282484f11",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+        "spec": "sha256:c64767d555eeb45e8fe87cea8eeace953224e1ff52fe306c6c7dbf840402138e"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-10-29T06:49:34Z",
+      "hash": "sha256:36ae6d8eba1c10ec8e1e9b25a575bf741a01f70de0fbc92efcae3ca5e1b91778",
+      "normal_form": 1,
+      "depends_on": {},
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-10-29T06:49:34Z",
+      "hash": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:36ae6d8eba1c10ec8e1e9b25a575bf741a01f70de0fbc92efcae3ca5e1b91778"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-10-29T06:49:34Z",
+      "hash": "sha256:fde2fc0a38cd456758ea58be627040ea5e7c1fef8f8d32f6464cb890a4543d31",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+        "spec": "sha256:36ae6d8eba1c10ec8e1e9b25a575bf741a01f70de0fbc92efcae3ca5e1b91778"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-10-29T06:49:34Z",
+      "hash": "sha256:f5d017502b736a04f664ee36faf39792671510e702c9cb4cf4b1b3548a6f758a",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+        "spec": "sha256:36ae6d8eba1c10ec8e1e9b25a575bf741a01f70de0fbc92efcae3ca5e1b91778"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-10-29T07:20:27Z",
+      "hash": "sha256:d0da8a6fd0dec1c20d075c45f4bdc70db241ae7e0d4471034a463864df3c0666",
+      "normal_form": 1,
+      "depends_on": {},
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-10-29T07:20:27Z",
+      "hash": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:d0da8a6fd0dec1c20d075c45f4bdc70db241ae7e0d4471034a463864df3c0666"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-10-29T07:20:27Z",
+      "hash": "sha256:45aab10882bde6a12dc1c751931102aba33227020fe985c2e0fb7c5f2eed6a74",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+        "spec": "sha256:d0da8a6fd0dec1c20d075c45f4bdc70db241ae7e0d4471034a463864df3c0666"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-10-29T07:20:27Z",
+      "hash": "sha256:7e81701b90b88b3539ad91e7afa24ee58cd234915f6bfd37dcb7875cf78da641",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+        "spec": "sha256:d0da8a6fd0dec1c20d075c45f4bdc70db241ae7e0d4471034a463864df3c0666"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-10-29T07:36:34Z",
+      "hash": "sha256:305cc333c211ca304a5303b5c4f9e2ef460d99eedd910430bdc953491592bd11",
+      "normal_form": 1,
+      "depends_on": {},
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-10-29T07:36:34Z",
+      "hash": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:305cc333c211ca304a5303b5c4f9e2ef460d99eedd910430bdc953491592bd11"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-10-29T07:36:34Z",
+      "hash": "sha256:60cecf12bccd7984e12612eb4542301ba39b62bd59ca2c4cb84378ec4cc3bfa9",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+        "spec": "sha256:305cc333c211ca304a5303b5c4f9e2ef460d99eedd910430bdc953491592bd11"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-10-29T07:36:34Z",
+      "hash": "sha256:e96d2fbca4996be07db30bcd03b3f87936567457f88081c41fe48866343588cb",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+        "spec": "sha256:305cc333c211ca304a5303b5c4f9e2ef460d99eedd910430bdc953491592bd11"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-10-29T08:29:49Z",
+      "hash": "sha256:a7a8771b9c77de427cb9228204494358d306292ff16186aab60f79dd7b35efa6",
+      "normal_form": 1,
+      "depends_on": {},
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-10-29T08:29:49Z",
+      "hash": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:a7a8771b9c77de427cb9228204494358d306292ff16186aab60f79dd7b35efa6"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-10-29T08:29:49Z",
+      "hash": "sha256:2f4785027541347ea0816c56905f19273a5cd7de579590a7f8597a0db7c8777c",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+        "spec": "sha256:a7a8771b9c77de427cb9228204494358d306292ff16186aab60f79dd7b35efa6"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-10-29T08:29:49Z",
+      "hash": "sha256:15a4e43125d17f35aedbf76bcec5498d39087bae5bf1a64e5fe0487835055a4e",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:7dde8d21b81c467540b5e9f69800b683dc8342110c8079baf490cec7d1c334fa",
+        "spec": "sha256:a7a8771b9c77de427cb9228204494358d306292ff16186aab60f79dd7b35efa6"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-10-29T08:59:55Z",
+      "hash": "sha256:0ec1ab0bea06b9dd1ba9db4a1c3449d12a2813c24665504e1f12a7c3e9557d90",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:a7a8771b9c77de427cb9228204494358d306292ff16186aab60f79dd7b35efa6"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-10-29T08:59:55Z",
+      "hash": "sha256:2f4785027541347ea0816c56905f19273a5cd7de579590a7f8597a0db7c8777c",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:0ec1ab0bea06b9dd1ba9db4a1c3449d12a2813c24665504e1f12a7c3e9557d90",
+        "spec": "sha256:a7a8771b9c77de427cb9228204494358d306292ff16186aab60f79dd7b35efa6"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-10-29T08:59:55Z",
+      "hash": "sha256:15a4e43125d17f35aedbf76bcec5498d39087bae5bf1a64e5fe0487835055a4e",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:0ec1ab0bea06b9dd1ba9db4a1c3449d12a2813c24665504e1f12a7c3e9557d90",
+        "spec": "sha256:a7a8771b9c77de427cb9228204494358d306292ff16186aab60f79dd7b35efa6"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-10-29T09:36:28Z",
+      "hash": "sha256:21a525ba3ddb6c24f5cf91c3375ce1530fc690a073bd050a856f2a2456854e43",
+      "normal_form": 1,
+      "depends_on": {},
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-10-29T09:36:28Z",
+      "hash": "sha256:0ec1ab0bea06b9dd1ba9db4a1c3449d12a2813c24665504e1f12a7c3e9557d90",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:21a525ba3ddb6c24f5cf91c3375ce1530fc690a073bd050a856f2a2456854e43"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-10-29T09:36:28Z",
+      "hash": "sha256:e7642807d7ababd73f9cc22ac9d9766996b4df87910fa678ea6f6ec689bf50b9",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:0ec1ab0bea06b9dd1ba9db4a1c3449d12a2813c24665504e1f12a7c3e9557d90",
+        "spec": "sha256:21a525ba3ddb6c24f5cf91c3375ce1530fc690a073bd050a856f2a2456854e43"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-10-29T09:36:28Z",
+      "hash": "sha256:005b632232fcd219241bb16acfc1e2d8fe68c1de4f3e9080a709e8aff827d288",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:0ec1ab0bea06b9dd1ba9db4a1c3449d12a2813c24665504e1f12a7c3e9557d90",
+        "spec": "sha256:21a525ba3ddb6c24f5cf91c3375ce1530fc690a073bd050a856f2a2456854e43"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-10-29T10:47:06Z",
+      "hash": "sha256:a9b5ee582ff7ff53907078539fbd7eaa4f0990359382d9f57ce0e744b55b0235",
+      "normal_form": 1,
+      "depends_on": {},
+      "text": "Terms:\n\n- **Review folder**: `.stapel/scratch/review/<KEY>-r<N>/`, with `<KEY>` the name of the ticket's folder\n  under `.stapel/tickets/`; ignored by git.\n- **Tags**: the backtick spans equal to `security`, `guard`, `data`, `migration` or `interface` in the\n  paragraph of the Frame that starts with `**Risk tags:**`, up to the next blank line or the next line that starts with `#` or `**`.\n- **Light**: the Plan's `Route:` line starts with `light` (`next::is_light`).\n- **Code-review round** of a ticket: the highest of the whole rounds (STP-23) of the finding records with\n  stage `code-review` in `findings.jsonl` and the rounds whose review folder holds `pack.md`; 0 when there\n  is none.\n- **Patch finding**: a finding record with stage `code-review` and whole round 1 whose current state\n  (STP-23) has the fate `patch` and is not false.\n\n| № | Criterion | Test |\n|---|---|---|\n| AC-1 | IF `stapel review start KEY --round N` names an unknown ticket, a closed ticket or a round other than 1 or 2, or the tree has uncommitted changes (as `next` counts them) THEN exit 2 with the text of the cases table and nothing written; a legacy (STP-1) ticket, a missing base or a base not on the first-parent history of HEAD exit 1; the first case in the table's order wins. | `review::refuses_tickets`, `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`, `review::refusal_order`, `review::refusal_order_of_the_later_cases`, `review::refusals_write_nothing` |\n| AC-2 | IF `--round 2` runs while the ticket has no finding record with stage `code-review` and whole round 1 THEN exit 2 with `stapel: round 2 needs the code review findings of round 1 in .stapel/tickets/<KEY>/findings.jsonl` and nothing written. | `review::round_two_needs_round_one` |\n| AC-3 | WHEN `review start` runs THE review folder is removed if present and gets `tree/`, the files of HEAD as a checkout with `core.autocrlf=false` writes them (the `.gitattributes` of HEAD apply), with their modes and no `.git`, while the repository's index, working tree and refs stay unchanged; `.stapel/scratch/review/.gitignore` holds `*` so that the copies never make the tree dirty, and `.stapel/scratch/review/.ignore` holds `!*` so that search tools that read `.ignore` (ripgrep) still search them. | `review::copies_head`, `review::rerun_replaces_the_copy`, `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf`, `review::copy_needs_no_tar`, `review::copy_follows_attributes`, `review::copy_keeps_plain_modes`, `review::copy_is_searchable` |\n| AC-4 | WHEN `review start` runs THE review folder gets `diff.patch`, the output of `git -c core.quotepath=false diff --no-color --no-ext-diff --no-textconv --find-renames --src-prefix=a/ --dst-prefix=b/ base..HEAD`, and `pack.md` written last: the key, round, base and HEAD commits, the paths of the copy, the ticket in the copy and `diff.patch`, the stat of the same diff with `--stat=120 --stat-graph-width=20`, the whole Spec section as written (its Terms, criteria, tables and Guarantees) and the three review checks of decision 0002, as the golden file of round 1. | `review::pack_of_round_one`, `review::diff_file`, `review::pack_stat_and_order` |\n| AC-5 | WHEN `--round 2` runs THE pack also lists every patch finding of the working tree's `findings.jsonl` as `- <id> (<current severity>): <claim>` in file order, with each line break of the claim written as a space, or `- none`, as the golden file of round 2. | `review::pack_of_round_two`, `review::pack_flattens_a_claim` |\n| AC-6 | WHEN `review start` succeeds THE output is `copy: <folder>tree (HEAD <12 hex>)`, `pack: <folder>pack.md`, then one line `reviewer: <agent>, model <model> (role <role>)` per reviewer: for a light ticket or one without tags only `stapel-reviewer` (role `reviewer`); for a tagged one also `stapel-reviewer` (role `external`) and `stapel-drift` (role `drift`) followed by `, on the whole ticket`; a role absent from `[models]` prints `no model` for `model <model>`. | `review::reviewers_by_route_and_tags`, `review::reviewer_without_a_model`, `review::tags_paragraph_ends` |\n| AC-7 | WHEN `next` would give `code-review` and the code-review round is 0 THE target is the command `stapel review start <KEY> --round 1`; when it is 1 and a patch finding exists, `stapel review start <KEY> --round 2`; otherwise the ticket path, as before. | `review::next_names_round_one`, `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round`, `review::next_counts_only_real_rounds` |\n| AC-8 | WHEN `init` writes the skill and the reviewer agent THE skill holds a line that starts ``- `code-review`:`` and holds `stapel review start KEY --round N`, `give every reviewer it prints the path of pack.md` and `before round 2, add a fix step to the Plan for each finding with the fate patch`, and no longer holds ``a copy (`git archive`)``; the reviewer body holds `Read pack.md first; read files only in the review folder it names.` and no longer holds `git archive`. | `init_process::skill_text_names_the_review_pack` |\n| AC-9 | WHEN `review start` runs THE folders directly under `.stapel/scratch/review/` named `<KEY>-r<n>`, with `<n>` a whole number, of the same ticket and another round or of a closed ticket are removed without following symlinks; other open tickets' folders and other names stay. | `review::removes_old_copies`, `review::removes_old_copies_edges` |\n| AC-10 | IF the ticket has no Spec section, two of them, or a Spec without an `AC-<n>` row THEN `review start` exits 2 with `stapel: the Spec of <KEY> has no criteria; a review pack needs them` and nothing written. | `review::refuses_a_ticket_without_criteria` |\n| AC-11 | WHEN `init` writes the drift agent THE body holds `When the orchestrator gives you a pack.md instead of a step, you review the whole ticket` and a JSON line with `\"stage\":\"code-review\"`, and keeps the step-drift line of STP-23; its first paragraph names both inputs, a step's diff or a `pack.md`, and no longer holds `do not look for more context`. | `init_process::drift_text_reviews_the_whole_ticket` |\n\nCases table of the refusals, in the order they are checked (exit 2 unless named):\n\n| Case | Text after `stapel: ` |\n|---|---|\n| round not a number | the clap usage error, exit 2 |\n| unknown key | `no ticket <KEY> in .stapel/tickets` (as `resolve`) |\n| legacy, exit 1 | `ticket <KEY> is in the STP-1 format; it has no review pack` |\n| closed | `ticket <KEY> is closed; it has no review round` |\n| round 0, 3 or more | `--round must be 1 or 2; after round 2 the person decides` |\n| dirty tree | `uncommitted changes: <first five paths>; commit them before a review round` |\n| no base, exit 1 | `state.json of <KEY> has no base commit` |\n| bad base, exit 1 | the text of `build_inputs::check_base` |\n| round 2 without round 1 | the text of AC-2 |\n| no criteria | the text of AC-10 |\n\n### Guarantees\n\n- **Promised:** the Frame's promise, by AC-1 to AC-11; outside `.stapel/scratch/review/` `review start`\n  writes nothing; `pack.md` is written last, so a folder without it is incomplete; the other actions of `next` and their order are unchanged.\n- **Not promised:** the Frame's list; the copy's own `findings.jsonl` is that of HEAD and may be older\n  than the working tree's; the round 2 refusal reads legacy records like new ones and skips damaged\n  lines, as `next` does (D1-5); a temporary `index` left in the round folder when git fails (D1F-2); a\n  file or file symlink named like a round folder is removed as well (D1C-1); a failed removal of an old\n  copy stops `review start` with exit 1, and an unreadable `review/` folder is skipped (D1C-2); a\n  `**Risk tags:**` line below the Frame is read when the Frame has none (D3-2); a missing or doubled Plan\n  or Description reads as full and untagged (D3-4); diff settings other than those AC-4 overrides, such as\n  `diff.algorithm`, `diff.context` and `diff.orderFile` (R-4); a dangling symlink, a plain file or a\n  `<KEY>-r0<N>` name in place of the current round's folder (R-5, E-8); review folders of a ticket whose\n  folder is gone, legacy or unreadable (E-6); an unreadable `state.json` exits 1 with its reason (DR-1); submodules (a gitlink gives no files); symlinks in\n  HEAD that point outside the copy; `.gitattributes` `export-ignore` (the copy is a checkout, not an\n  archive); a Claude Code allow rule for `review start`; two `review start` runs at once.",
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-10-29T10:47:06Z",
+      "hash": "sha256:c5a64cc0f8c03d11b004fc5ea0ab385ca9888a7af98352f3415fec6febbe2f80",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:a9b5ee582ff7ff53907078539fbd7eaa4f0990359382d9f57ce0e744b55b0235"
+      },
+      "text": "### Facts\n\n- F-0: prior art: the reviewer prompts of STP-22 and STP-23 under `.stapel/scratch/`, the agent text\n  `crates/stapel-cli/assets/agents/reviewer.md`; no code runs `git archive` or reads a tar, and\n  `stapel-cli` has no tar dependency.\n- F-1: `tickets::resolve` gives the key and status; `build_inputs::check_base` checks the base;\n  `worktree::dirty_paths` lists dirty paths without ignored and machine files.\n- F-2: `next::is_light` reads the route; risk tags are read only by `tests/ticket_drift.rs`, from the first\n  line; the AC rows are read by private functions of `brief.rs` (`row_number`, `cells`).\n- F-3: `triage::state_of` and `triage::whole_round` give the current state and round of a finding.\n- F-4: `next::after_the_steps` gives `code-review` with the ticket path; five tests of `tests/next.rs`\n  assert that path (`uncommitted_changes_before_the_check`, `run_check_after_the_steps`,\n  `code_review_then_summary`, `review_and_summary_edges`, `index_untouched`).\n\n### Decisions (before the build)\n\n- The new module `crates/stapel-cli/src/review.rs` holds `start`; `crates/stapel-core/src/review.rs` holds the\n  pure parts: the tags of a Frame, the reviewer list, the patch findings, the pack text and the round that\n  `next` names.\n- The copy: `git -c core.autocrlf=false read-tree HEAD` with `GIT_INDEX_FILE` set to `<folder>index`, then\n  `git checkout-index -a --prefix=<folder>tree/` with the same variable, then the index file is removed.\n- `diff.patch` and the stat: the commands of AC-4; `checkout-index` also runs with `-c core.autocrlf=false`.\n- `review start` writes `.stapel/scratch/review/.gitignore` (`*`) before the copy (the human, 2026-10-28,\n  B-4).\n- Step 1 GREEN: a command that passes every refusal exits 0 and prints and writes nothing; steps 1b to 3\n  replace this.\n- `brief.rs` makes `row_number` and `cells` public for the criteria rows.\n- `next::Facts` gets the code-review round and whether a patch finding exists, computed by the CLI `next`\n  from the records it already reads.\n- Old tests: in the RED of step 4, the five tests of F-4 change their expected `code-review` line to the\n  command, so that they fail at the RED.\n\n### Decisions (as built)\n\n- `crates/stapel-cli/src/review.rs` checks the refusals in the order of the cases table; a legacy\n  `state.json` that also has `closed` reads as legacy, so legacy wins (step 1d).\n- `copy_head` runs `git -c core.autocrlf=false read-tree HEAD` and `checkout-index -a --prefix` with\n  `GIT_INDEX_FILE=<folder>index`, removes that file, and writes `.stapel/scratch/review/.gitignore` (`*`)\n  (step 1f, replacing the `git archive | tar` of step 1b, B-2) and `.stapel/scratch/review/.ignore`\n  (`!*`) (step 6, R-1).\n- `remove_old_copies` runs before the copy; it takes names `<KEY>-r<digits>`, removes a symlink itself and\n  never follows it (step 1c).\n- `crates/stapel-core/src/review.rs` holds `criteria`, `patch_findings`, `pack_text`, `frame_tags`,\n  `reviewers`, `finding_round` and `next_round`; `brief.rs` makes `cells` and `row_number` public.\n- `pack.md`: a title `# Review pack <KEY>, round <N>`, list items for the ticket, round, base and head,\n  the repository-relative paths, the stat in a code fence, the Spec section as written (step 8; step 2\n  wrote one line per AC row), the round 2 list with the claims' line breaks as spaces (step 6), then the\n  three checks; the golden files hold the exact text.\n- The AC-10 refusal reads `ticket.md` after the round 2 check and before the old copies are removed; a\n  comment in `review.rs` holds the full AC-10 text with its `stapel: ` prefix, because `Fail` adds the\n  prefix at print time and the ticket lint looks for the quoted line (step 2c).\n- `frame_tags` ends the tags paragraph at a blank line or a line that starts with `#` or `**` (step 3).\n- `next::Facts` gets `review_round` and `patch_finding`; the CLI `next` computes the round from the\n  records and from `pack_round`, which counts `<KEY>-r<N>` folders holding `pack.md` with `N` written\n  without leading zeros, while the cleanup of AC-9 also removes `r02` (step 4).",
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-10-29T10:47:06Z",
+      "hash": "sha256:e7642807d7ababd73f9cc22ac9d9766996b4df87910fa678ea6f6ec689bf50b9",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:c5a64cc0f8c03d11b004fc5ea0ab385ca9888a7af98352f3415fec6febbe2f80",
+        "spec": "sha256:a9b5ee582ff7ff53907078539fbd7eaa4f0990359382d9f57ce0e744b55b0235"
+      },
+      "text": "| Criterion | Test |\n|---|---|\n| AC-1 | `review::refuses_tickets`, `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`, `review::refusal_order`, `review::refusal_order_of_the_later_cases`, `review::refusals_write_nothing` |\n| AC-2 | `review::round_two_needs_round_one` |\n| AC-3 | `review::copies_head`, `review::rerun_replaces_the_copy`, `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf`, `review::copy_needs_no_tar`, `review::copy_follows_attributes`, `review::copy_keeps_plain_modes`, `review::copy_is_searchable` |\n| AC-4 | `review::pack_of_round_one`, `review::diff_file`, `review::pack_stat_and_order` |\n| AC-5 | `review::pack_of_round_two`, `review::pack_flattens_a_claim` |\n| AC-6 | `review::reviewers_by_route_and_tags`, `review::reviewer_without_a_model`, `review::tags_paragraph_ends` |\n| AC-7 | `review::next_names_round_one`, `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round`, `review::next_counts_only_real_rounds` |\n| AC-8 | `init_process::skill_text_names_the_review_pack` |\n| AC-9 | `review::removes_old_copies`, `review::removes_old_copies_edges` |\n| AC-10 | `review::refuses_a_ticket_without_criteria` |\n| AC-11 | `init_process::drift_text_reviews_the_whole_ticket` |",
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-10-29T10:47:06Z",
+      "hash": "sha256:f29156d2f79463ab6429da51c7c58d4fc6be20e97bcb89c4802357ca43810a2a",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:c5a64cc0f8c03d11b004fc5ea0ab385ca9888a7af98352f3415fec6febbe2f80",
+        "spec": "sha256:a9b5ee582ff7ff53907078539fbd7eaa4f0990359382d9f57ce0e744b55b0235"
+      },
+      "text": "Route: full (tag `interface`), auto.\n\n1. `stapel review start KEY --round N` with its refusals (AC-1, AC-2; tests `review::refuses_tickets`,\n   `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`,\n   `review::round_two_needs_round_one`, `review::refusal_order`); a success is the stub of Design. Must not\n   change: the other commands.\n1d. Fix after the drift review of step 1 (D1-1 to D1-4, D1-6; AC-1; tests `review::refuses_tickets`,\n   `review::refuses_a_dirty_tree`, `review::refuses_bad_rounds`, `review::refuses_a_bad_base`,\n   `review::refusal_order`): the RED makes these tests assert the exact text and exit code of the Spec's\n   refusal cases table (under AC-9; not in the brief) in its order; seven dirty paths name five; a base off\n   the first-parent history exits 1; `common::snapshot` unchanged. The GREEN changes\n   `crates/stapel-cli/src/review.rs` only.\n1e. Coverage after the drift review of step 1d (D1D-1; AC-1): new `#[test]` function\n   `review::refusal_order_of_the_later_cases`. Tests only, each helper nested inside its function, no\n   `cargo fmt`; a test that fails is an `intent_gap`.\n1b. The copy of HEAD (AC-3; tests `review::copies_head`, `review::rerun_replaces_the_copy`,\n   `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf`). Must not change: the repository's\n   index, working tree and refs; step 1.\n1f. Fix after step 1b (B-2 to B-4; AC-3; tests `review::copy_needs_no_tar`,\n   `review::copy_keeps_the_index`): the copy by a temporary index and `checkout-index` as Design says, not\n   `git archive | tar`; one `.gitignore` in `.stapel/scratch/review/`; output only through `out.rs`\n   (`closed_pipe::no_print_macros_outside_out`). The RED adds `review::copy_needs_no_tar` and changes\n   `review::copy_keeps_the_index` so that both fail there. Must not change: steps 1 to 1e.\n1c. Old copies removed (AC-9; test `review::removes_old_copies`). Must not change: steps 1 and 1b.\n1g. Coverage after the drift reviews of steps 1f and 1c (D1F-1, D1F-3, D1C-3; AC-3, AC-9): new `#[test]`\n   functions `review::copy_follows_attributes`, `review::copy_keeps_plain_modes`,\n   `review::removes_old_copies_edges`. Tests only, each helper nested inside its function, no `cargo fmt`;\n   a test that fails is an `intent_gap`.\n2. `pack.md` and `diff.patch` (AC-4, AC-5; tests `review::pack_of_round_one`, `review::diff_file`,\n   `review::pack_of_round_two`); the golden files come with the RED. Must not change: steps 1 to 1c; the output of\n   `brief`.\n3. The reviewer lines (AC-6; tests `review::reviewers_by_route_and_tags`,\n   `review::reviewer_without_a_model`). Must not change: steps 1 and 2.\n2b. Coverage after the drift review of step 2 (D2-3, D2-4; AC-4, AC-5): new `#[test]` function\n   `review::pack_stat_and_order`. Tests only, each helper nested inside its function, no `cargo fmt`; a\n   test that fails is an `intent_gap`.\n2c. A ticket without criteria refused (AC-10, D2-2; test `review::refuses_a_ticket_without_criteria`),\n   checked after the other refusals of the cases table. Must not change: steps 1 to 3.\n3b. Coverage after the drift review of step 3 (D3-1, D3-3; AC-6): new `#[test]` function\n   `review::tags_paragraph_ends`. Tests only, each helper nested inside its function, no `cargo fmt`; a\n   test that fails is an `intent_gap`.\n4. The `code-review` target of `next` (AC-7; tests `review::next_names_round_one`,\n   `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round`); the old tests as in Design. Must not\n   change: the other actions of `next` and their order.\n4b. Coverage after the drift review of step 4 (D4-1, D4-2; AC-7): new `#[test]` function\n   `review::next_counts_only_real_rounds`. Tests only, each helper nested inside its function, no\n   `cargo fmt`; a test that fails is an `intent_gap`.\n5. The skill and reviewer texts (AC-8; test `init_process::skill_text_names_the_review_pack`):\n   `crates/stapel-cli/assets/skill.md` and `assets/agents/reviewer.md`; the GREEN runs the built\n   `stapel init` here so that `init_process::this_repository_has_the_current_files` holds. Must not change:\n   the other sentences that `init_process` tests.\n\n6. Fixes after code review round 1 (R-1, R-3, DR-1, E-3; AC-3, AC-5; tests `review::copy_is_searchable`,\n   `review::pack_flattens_a_claim`): `review start` writes `.stapel/scratch/review/.ignore`; a claim's\n   line breaks become spaces in the pack; the module comment of `crates/stapel-cli/src/review.rs` says what\n   the command does now. Must not change: the other tests.\n6b. Coverage after code review round 1 (E-4; AC-1, AC-2): new `#[test]` function\n   `review::refusals_write_nothing`. Tests only, each helper nested inside its function, no `cargo fmt`;\n   a test that fails is an `intent_gap`.\n7. Texts after code review round 1 (R-2, E-1, E-2, E-7; AC-8, AC-11; tests\n   `init_process::skill_text_names_the_review_pack`, `init_process::drift_text_reviews_the_whole_ticket`):\n   the RED changes the first test to the new AC-8 sentences, so that it fails there, and adds the second;\n   the GREEN changes `assets/skill.md`, `assets/agents/reviewer.md` and `assets/agents/drift.md` and runs the\n   built `stapel init` here. Must not change: the other sentences that `init_process` tests.\n\n8. The whole Spec in the pack (AC-4; tests `review::pack_of_round_one`, `review::pack_of_round_two`): the\n   RED changes the golden files `crates/stapel-cli/tests/golden/review_pack_r1.md` and `review_pack_r2.md`\n   (and the fixture Spec, if it lacks Terms or Guarantees) so that both tests fail there; the GREEN writes\n   the Spec section as written in place of the criteria lines. Must not change: the other tests.\n9. Texts after code review round 2 (R2-1, E2-3, E2-4; AC-11; test\n   `init_process::drift_text_reviews_the_whole_ticket`): the RED makes the test assert the new first\n   paragraph, so that it fails there; the GREEN changes `assets/agents/drift.md`, its front-matter\n   description and the module comment of `crates/stapel-cli/src/review.rs`, and runs the built `stapel init`\n   here. Must not change: the other sentences that `init_process` tests.",
       "via": "grant"
     }
   ]

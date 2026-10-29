@@ -409,4 +409,37 @@ checked by hand and by the external reviewer's Grep in round 2. All 70 records a
 
 ## Summary
 
-TODO
+`stapel review start KEY --round N` makes the review folder `.stapel/scratch/review/<KEY>-r<N>/`: a copy of
+HEAD (`tree/`, through a temporary index and `checkout-index`, so the main index stays and no `tar` is
+needed), `diff.patch` with pinned flags, and `pack.md` with the commits, the stat, the whole Spec section,
+the round 1 findings with the fate `patch` (round 2) and the three review checks. It refuses an unknown,
+closed or legacy ticket, a round other than 1 or 2, a dirty tree, a bad base, a round 2 without round 1
+findings and a Spec without criteria, in a fixed order. It prints the reviewers by route and risk tags,
+removes the copies of other rounds and of closed tickets, and keeps the copies out of git (`.gitignore`)
+but in reach of Grep (`.ignore`). `stapel next` names the command for round 1, and for round 2 when round 1
+has a `patch` finding. The skill, the reviewer and the drift agent texts use the pack; the drift agent can
+review a whole ticket.
+
+Measures against STP-23 (the skill, rule 8):
+
+- Escaped defects of STP-23 found after its close: none known.
+- Code review HIGH and MEDIUM inside the promise: 1 over two rounds (STP-23: 4); R-1 (HIGH, the copy hidden
+  from Grep), rule none. Outside: E-1 (the drift text), O-1 (the pack without the Spec), O-2 (check and
+  golden-only REDs).
+- `ticket.md`: 39.9 KB (STP-23: 52.2 KB).
+- Size: about 522 net source and 1 358 net test lines against an estimate of 300 and 700; the promise grew
+  by AC-9 to AC-11 and the fix steps of 28 drift records.
+- Tokens, measured: orchestrator output 130k, cache read 47.6M (STP-23: 188k / 79.5M); builder 41k / 7.4M
+  (STP-23: 57k / 12.6M); drift 6k / 0.3M; external 45k / 2.1M; reviewer 12k / 0.4M; research 0.6k / 1.0M.
+- Wall time: 2026-10-27 about 14:45 UTC (the frame) to 2026-10-29 about 12:15 UTC.
+
+Approval dialogs: about 15 (STP-23: about 10): `stapel ok` 13 (one expired grant; eleven after inside
+changes during the build, because a stale confirmation still blocks `next`, item 1.8) and two history
+scripts the human ran. No findings import, ledger record or token import asked.
+
+What improved: the ticket reviewed itself with its own command in both rounds; the orchestrator's context
+fell by 40 % against STP-23; inside-promise defects at code review fell from 4 to 1. What did not: the
+brief and, until step 8, the pack left out the Spec's terms and tables, which gave one HIGH (D1-1) and five
+false findings; builders ignored the ban on heredocs in eight steps (items 1.9, 1.10); `stapel check` does
+not see a RED that changes only golden files (O-2), which cost two history rewrites; every inside change
+during the build still needed its own `stapel ok`.
