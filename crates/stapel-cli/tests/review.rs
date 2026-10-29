@@ -564,3 +564,130 @@ fn removes_old_copies_edges() {
     assert!(!review.join("ABC-1-r02").exists(), "a whole number");
     assert!(review.join("AB-r1-1/file").exists(), "an open ticket with -r in its key");
 }
+
+const SPEC_TWO: &str = "| № | Criterion | Test |\n|---|---|---|\n\
+| AC-1 | first criterion | `t::a` |\n| AC-2 | second criterion | `t::b` |";
+
+/// Like `built()`, with a Spec of two criteria and an extra tracked `files` before the base.
+fn built_with_spec(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Spec", SPEC_TWO);
+    for (name, text) in files {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    commit_all(dir, "initial");
+    let base = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let mut state = state_json(dir, "ABC-1");
+    state["base"] = serde_json::json!(base);
+    write_state(dir, "ABC-1", &state);
+    std::fs::write(dir.join("code.txt"), "one\n").unwrap();
+    commit_all(dir, "ABC-1 step 1 GREEN: code");
+    repo
+}
+
+/// `pack.md` of a round with the base and HEAD commits replaced by `<base>` and `<head>`.
+fn pack_of(dir: &Path, round: u32) -> String {
+    let base = state_json(dir, "ABC-1")["base"].as_str().unwrap().to_string();
+    let head = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let text = std::fs::read_to_string(
+        dir.join(format!(".stapel/scratch/review/ABC-1-r{round}/pack.md")),
+    )
+    .unwrap();
+    text.replace(&base, "<base>").replace(&head, "<head>")
+}
+
+fn golden(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden").join(name);
+    std::fs::read_to_string(path).unwrap()
+}
+
+#[test]
+fn pack_of_round_one() {
+    let repo = built_with_spec(&[]);
+    let dir = repo.path();
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    assert_eq!(pack_of(dir, 1), golden("review_pack_r1.md"));
+}
+
+#[test]
+fn diff_file() {
+    let repo = built_with_spec(&[("old.txt", "a\nb\nc\nd\n")]);
+    let dir = repo.path();
+    git(dir, &["mv", "old.txt", "é.txt"]);
+    commit_all(dir, "rename");
+    for (key, value) in [
+        ("diff.external", "echo external"),
+        ("color.diff", "always"),
+        ("diff.noprefix", "true"),
+        ("diff.renames", "false"),
+        ("core.quotepath", "true"),
+    ] {
+        common::git_config(dir, key, value);
+    }
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    for key in [
+        "diff.external",
+        "color.diff",
+        "diff.noprefix",
+        "diff.renames",
+        "core.quotepath",
+    ] {
+        git(dir, &["config", "--unset", key]);
+    }
+    let base = state_json(dir, "ABC-1")["base"].as_str().unwrap().to_string();
+    let range = format!("{base}..HEAD");
+    let expected = git(
+        dir,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--find-renames",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            &range,
+        ],
+    );
+    assert!(expected.contains("rename to é.txt"), "{expected}");
+    let written =
+        std::fs::read_to_string(dir.join(".stapel/scratch/review/ABC-1-r1/diff.patch")).unwrap();
+    assert_eq!(written, expected);
+}
+
+#[test]
+fn pack_of_round_two() {
+    let repo = built_with_spec(&[]);
+    let dir = repo.path();
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-1","severity":"HIGH","claim":"first claim"}"#,
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-2","severity":"LOW","claim":"second claim"}"#,
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-3","severity":"HIGH","claim":"third claim"}"#,
+            r#"{"v":1,"stage":"step-drift","round":"1","id":"R-4","severity":"HIGH","claim":"fourth claim"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-1","fate":"patch","verdict":"medium"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-2","fate":"defer"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-3","fate":"patch"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-4","fate":"patch"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-3","fate":"patch","verdict":"false"}"#,
+        ],
+    );
+    start(dir, &["ABC-1", "--round", "2"]).code(0);
+    assert_eq!(pack_of(dir, 2), golden("review_pack_r2.md"));
+
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-2","severity":"LOW","claim":"second claim"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-2","fate":"defer"}"#,
+        ],
+    );
+    start(dir, &["ABC-1", "--round", "2"]).code(0);
+    let pack = pack_of(dir, 2);
+    assert!(pack.contains("\n- none\n"), "{pack}");
+    assert!(!pack.contains("R-2"), "{pack}");
+}
