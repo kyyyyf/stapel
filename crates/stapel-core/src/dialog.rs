@@ -14,8 +14,7 @@ use crate::identity::user_name;
 use crate::records::{
     LedgerPlan, TokenRecord, TokensPlan, plan_ledger, plan_tokens,
 };
-use crate::stage::{Reason, freshness, latest};
-use crate::ticket::{find, parse, read};
+use crate::ticket::{find, parse};
 use crate::tickets::{Status, resolve};
 use std::path::Path;
 
@@ -64,42 +63,6 @@ pub fn ok_key_facts(key: &str, waiting: &[Prepared]) -> Facts {
             })
             .collect(),
     }
-}
-
-/// One waiting section in the dialog: id, short hash, and what changed since the last
-/// confirmation (STP-17 AC-7).
-fn waiting_line(config: &Config, p: &Prepared) -> String {
-    let short = &p.hash[..p.hash.len().min("sha256:".len() + 12)];
-    let new = || format!("new, {}", lines(&p.text));
-    let Some(old) = latest(&p.state, &p.section) else {
-        return format!("{} ({short}…): {}", p.section, new());
-    };
-    let sections = read(&p.dir.join("ticket.md"))
-        .map(|t| parse(&t))
-        .unwrap_or_default();
-    let others: Vec<String> = freshness(config, &sections, old)
-        .iter()
-        .filter(|r| **r != Reason::Changed)
-        .map(|r| r.describe(old))
-        .collect();
-    let mut change = match old.text.as_deref() {
-        None => new(),
-        Some(old_text) => {
-            let (mut added, mut removed) = (0, 0);
-            for change in similar::TextDiff::from_lines(old_text, &p.text).iter_all_changes() {
-                match change.tag() {
-                    similar::ChangeTag::Insert => added += 1,
-                    similar::ChangeTag::Delete => removed += 1,
-                    similar::ChangeTag::Equal => {}
-                }
-            }
-            format!("+{added} -{removed} lines since last confirmation")
-        }
-    };
-    if !others.is_empty() {
-        change.push_str(&format!("; {}", others.join(", ")));
-    }
-    format!("{} ({short}…): {change}", p.section)
 }
 
 pub fn close_facts(key: &str, reason: &str) -> Facts {
@@ -172,17 +135,11 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
                     if waiting.is_empty() {
                         return Err(format!("nothing to confirm: {folder}"));
                     }
-                    let reason = format!(
-                        "stapel: confirm {} waiting section{} of {folder}: {}; runs: {}. Answer \
-                         Yes or No; do not choose \"don't ask again\".",
-                        waiting.len(),
-                        if waiting.len() == 1 { "" } else { "s" },
-                        waiting
-                            .iter()
-                            .map(|p| waiting_line(&config, p))
-                            .collect::<Vec<_>>()
-                            .join(" | "),
-                        program(inv).join(" ")
+                    let reason = crate::page::dialog_page(
+                        &config,
+                        &folder,
+                        &program(inv).join(" "),
+                        &waiting,
                     );
                     let tail = format!("ok {}", quote(&folder));
                     return finish(inv, &root, ok_key_facts(&folder, &waiting), reason, tail);

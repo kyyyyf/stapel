@@ -13,6 +13,7 @@ pub mod includes;
 pub mod journal;
 pub mod next;
 pub mod outcomes;
+pub mod page;
 pub mod privacy;
 pub mod records;
 pub mod review;
