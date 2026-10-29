@@ -10,6 +10,7 @@ use stapel_core::config::Config;
 use stapel_core::journal::{self, Entry};
 use stapel_core::next::{Action, Facts, Fault, History, Target, decide};
 use stapel_core::outcomes::{open_red, passing};
+use stapel_core::review::{finding_round, patch_findings};
 use stapel_core::steps::{Marker, git_text, step_commits, steps};
 use stapel_core::ticket::{parse, read};
 use stapel_core::tickets::{Status, Ticket, list, resolve};
@@ -39,6 +40,23 @@ fn json_line(ticket: Option<&str>, action: &Action, facts: &[String]) -> String 
         "facts": facts,
     })
     .to_string()
+}
+
+/// The highest round whose review folder holds `pack.md`; 0 when there is none.
+fn pack_round(root: &Path, key: &str) -> u64 {
+    let Ok(entries) = std::fs::read_dir(root.join(".stapel/scratch/review")) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let n = name.strip_prefix(key)?.strip_prefix("-r")?;
+            let round: u64 = n.parse().ok()?;
+            (round.to_string() == n && e.path().join("pack.md").is_file()).then_some(round)
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 fn short(sha: &str) -> String {
@@ -209,6 +227,9 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
         .collect();
     let blocking = blocking_findings(&records);
 
+    let review_round = finding_round(&records).max(pack_round(&root, &ticket.key));
+    let patch_finding = !patch_findings(&records).is_empty();
+
     let mut facts = Facts {
         key: &ticket.key,
         config: &config,
@@ -216,6 +237,8 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
         sections: &sections,
         finding_stages: &finding_stages,
         blocking: &blocking,
+        review_round,
+        patch_finding,
         history: None,
     };
     let mut decision = decide(&facts);

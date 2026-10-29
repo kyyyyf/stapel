@@ -117,6 +117,10 @@ pub struct Facts<'a> {
     pub finding_stages: &'a [String],
     /// The blocking findings of `findings.jsonl` (STP-23).
     pub blocking: &'a [Blocking],
+    /// The code-review round of the ticket (STP-24): 0 when none ran.
+    pub review_round: u64,
+    /// Whether a patch finding of round 1 exists (STP-24).
+    pub patch_finding: bool,
     /// The history facts; `None` until the caller has read the history.
     pub history: Option<&'a History>,
 }
@@ -300,7 +304,13 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
         if let Some(def) = f.config.section(id)
             && !written(f.sections, &def.title)
         {
-            return Action::new(name, None, Some(Target::Path(ticket_path(f.key))));
+            let target = match (id, crate::review::next_round(f.review_round, f.patch_finding)) {
+                ("review", Some(round)) => {
+                    Target::Command(format!("stapel review start {} --round {round}", f.key))
+                }
+                _ => Target::Path(ticket_path(f.key)),
+            };
+            return Action::new(name, None, Some(target));
         }
     }
     Action::new(

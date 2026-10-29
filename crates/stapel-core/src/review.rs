@@ -59,6 +59,26 @@ pub fn patch_findings(records: &[Map<String, Value>]) -> Vec<PatchFinding> {
     out
 }
 
+/// The highest whole round of the finding records with stage `code-review`; 0 when there is none.
+pub fn finding_round(records: &[Map<String, Value>]) -> u64 {
+    records
+        .iter()
+        .filter(|m| !m.contains_key("kind") && text(m, "stage") == Some("code-review"))
+        .filter_map(|m| m.get("round").and_then(whole_round))
+        .max()
+        .unwrap_or(0)
+}
+
+/// The round that `next` names for a code review: 1 before any round, 2 after round 1 when a patch
+/// finding exists, else none.
+pub fn next_round(round: u64, patch_finding: bool) -> Option<u64> {
+    match (round, patch_finding) {
+        (0, _) => Some(1),
+        (1, true) => Some(2),
+        _ => None,
+    }
+}
+
 /// What `pack.md` is made of. `folder` is the review folder, relative to the repository root, with
 /// no trailing slash; `findings` is `Some` in round 2.
 pub struct Pack<'a> {
