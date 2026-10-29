@@ -481,3 +481,86 @@ fn removes_old_copies() {
     assert!(review.join("ABC-2-rx/file").exists(), "not a round name");
     assert!(review.join("notes/file").exists(), "another name");
 }
+
+#[test]
+fn copy_follows_attributes() {
+    let repo = built();
+    let dir = repo.path();
+    std::fs::write(dir.join(".gitattributes"), "*.txt text eol=crlf\n").unwrap();
+    std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    commit_all(dir, "attributes");
+    assert_eq!(
+        git(dir, &["cat-file", "blob", "HEAD:a.txt"]),
+        "one\ntwo\n",
+        "the blob has LF endings"
+    );
+
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    assert_eq!(
+        std::fs::read(tree(dir, 1).join("a.txt")).unwrap(),
+        b"one\r\ntwo\r\n"
+    );
+}
+
+#[test]
+fn copy_keeps_plain_modes() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = built();
+    let dir = repo.path();
+    std::fs::write(dir.join("plain.txt"), "plain\n").unwrap();
+    std::fs::set_permissions(dir.join("plain.txt"), std::fs::Permissions::from_mode(0o644))
+        .unwrap();
+    std::os::unix::fs::symlink("code.txt", dir.join("link")).unwrap();
+    commit_all(dir, "plain and link");
+    let refs_before = git(dir, &["for-each-ref"]);
+
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    let t = tree(dir, 1);
+    let mode = std::fs::metadata(t.join("plain.txt")).unwrap().permissions().mode();
+    assert_eq!(mode & 0o111, 0, "a plain file stays non-executable");
+    let link = t.join("link");
+    assert!(
+        link.symlink_metadata().unwrap().file_type().is_symlink(),
+        "a symlink stays a symlink"
+    );
+    assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("code.txt"));
+    assert_eq!(git(dir, &["for-each-ref"]), refs_before, "the refs");
+}
+
+#[test]
+fn removes_old_copies_edges() {
+    let repo = built();
+    let dir = repo.path();
+    stapel(dir).args(["new", "Second"]).assert().success();
+    let odd = dir.join(".stapel/tickets/AB-r1-1");
+    std::fs::create_dir_all(&odd).unwrap();
+    for entry in std::fs::read_dir(dir.join(".stapel/tickets/ABC-2")).unwrap() {
+        let path = entry.unwrap().path();
+        std::fs::copy(&path, odd.join(path.file_name().unwrap())).unwrap();
+    }
+    let mut state = state_json(dir, "AB-r1-1");
+    state["key"] = serde_json::json!("AB-r1-1");
+    write_state(dir, "AB-r1-1", &state);
+    commit_all(dir, "more tickets");
+
+    let review = dir.join(".stapel/scratch/review");
+    for name in ["ABC-1-r02", "AB-r1-1", "ABC-1-r1"] {
+        std::fs::create_dir_all(review.join(name)).unwrap();
+        std::fs::write(review.join(name).join("file"), "x").unwrap();
+    }
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("keep"), "x").unwrap();
+    std::os::unix::fs::symlink(outside.path(), review.join("ABC-1-r3")).unwrap();
+    std::fs::write(review.join(".gitignore"), "*\n").unwrap();
+
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    assert!(review.join("ABC-1-r1/tree/code.txt").exists(), "the current round");
+    assert!(!review.join("ABC-1-r1/file").exists(), "the current folder is replaced");
+    assert!(
+        review.join("ABC-1-r3").symlink_metadata().is_err(),
+        "the symlink"
+    );
+    assert!(outside.path().join("keep").exists(), "the symlink target");
+    assert!(!review.join("ABC-1-r02").exists(), "a whole number");
+    assert!(review.join("AB-r1-1/file").exists(), "an open ticket with -r in its key");
+}
