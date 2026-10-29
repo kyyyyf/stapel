@@ -119,6 +119,17 @@ fn rejects_bad_sections() {
         let err = Config::parse(&text).expect_err(word);
         assert!(err.contains(word), "{word}: {err}");
     }
+    // STP-25 AC-1: the title Description is accepted for the id description only.
+    let marker = "[[sections]]\nid = \"spec\"";
+    assert!(base.contains(marker), "starter config changed shape");
+    let with = base.replace(
+        marker,
+        &format!(
+            "[[sections]]\nid = \"description\"\ntitle = \"Description\"\nowner = \"product\"\n\n{marker}"
+        ),
+    );
+    let config = Config::parse(&with).unwrap();
+    assert!(config.section("description").is_some());
 }
 
 // STP-2 AC-13: without a [build] table the permit needs spec, design and proof.
