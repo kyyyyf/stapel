@@ -529,6 +529,27 @@ fn copy_keeps_plain_modes() {
 }
 
 #[test]
+fn copy_is_searchable() {
+    let repo = built();
+    let dir = repo.path();
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    let ignore = dir.join(".stapel/scratch/review/.ignore");
+    assert_eq!(std::fs::read_to_string(&ignore).unwrap(), "!*\n");
+    let gitignore = dir.join(".stapel/scratch/review/.gitignore");
+    assert_eq!(std::fs::read_to_string(&gitignore).unwrap(), "*\n");
+    let rg = std::process::Command::new("rg").arg("--version").output();
+    if rg.is_ok_and(|o| o.status.success()) {
+        let out = std::process::Command::new("rg")
+            .args(["-l", "one"])
+            .arg(tree(dir, 1))
+            .output()
+            .unwrap();
+        let listed = String::from_utf8_lossy(&out.stdout);
+        assert!(listed.contains("code.txt"), "{listed}");
+    }
+}
+
+#[test]
 fn removes_old_copies_edges() {
     let repo = built();
     let dir = repo.path();
@@ -691,6 +712,22 @@ fn pack_of_round_two() {
     let pack = pack_of(dir, 2);
     assert!(pack.contains("\n- none\n"), "{pack}");
     assert!(!pack.contains("R-2"), "{pack}");
+}
+
+#[test]
+fn pack_flattens_a_claim() {
+    let repo = built_with_spec(&[]);
+    let dir = repo.path();
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-1","severity":"MEDIUM","claim":"a\nb\r\nc"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-1","fate":"patch"}"#,
+        ],
+    );
+    start(dir, &["ABC-1", "--round", "2"]).code(0);
+    let pack = pack_of(dir, 2);
+    assert!(pack.contains("\n- R-1 (MEDIUM): a b c\n"), "{pack}");
 }
 
 #[test]
