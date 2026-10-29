@@ -9,7 +9,7 @@ permissionMode: acceptEdits
 ===
 ---
 name: stapel-drift
-description: "Checks the diff of one step against its criteria and reports where the code and the criteria differ."
+description: "Checks the diff of one step, or the pack.md of the whole ticket, against its criteria and reports where the code and the criteria differ."
 tools: Read, Grep, Glob
 model: "claude-sonnet-5-5"
 permissionMode: default

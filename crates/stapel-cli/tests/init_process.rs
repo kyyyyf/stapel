@@ -925,6 +925,16 @@ fn drift_text_reviews_the_whole_ticket() {
     );
     assert!(drift.contains("\"stage\":\"code-review\""), "no code-review line");
     assert!(drift.contains("\"stage\":\"step-drift\""), "no step-drift line");
+    let raw = body_of(dir, AGENTS[1]);
+    let first = collapsed(raw.split("\n\n").next().unwrap());
+    assert!(
+        first.contains("pack.md") && first.contains("diff"),
+        "first paragraph does not name both inputs"
+    );
+    assert!(
+        !drift.contains("do not look for more context"),
+        "drift text still forbids more context"
+    );
 }
 
 fn repo_root() -> &'static Path {
