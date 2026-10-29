@@ -17,7 +17,7 @@ the file to use; the facts that block an action come first. Do not re-read the w
 - `build-step` and `green-step`: start the agent `stapel-builder` with the ticket path, the step and the
   base commit only; it runs `stapel brief KEY STEP` itself. During the build you do not read the brief;
   before the spec review you run stapel brief only to check each step's size.
-- `code-review`: run `stapel review start KEY --round N`, give each reviewer it prints the path of its `pack.md`.
+- `code-review`: run `stapel review start KEY --round N` and give every reviewer it prints the path of pack.md; before round 2, add a fix step to the Plan for each finding with the fate patch.
 - `run-check`: `stapel check KEY`; no other cargo or test run while it runs.
 - Start a new session for each ticket; during the build do not read briefs or reviewer reports yourself
   beyond their findings.
@@ -35,7 +35,7 @@ the file to use; the facts that block an action come first. Do not re-read the w
 - Every acceptance criterion has a test that fails first. Commits come in pairs: RED (tests only), then
   GREEN (code). One plan step is one pair. A test that passes before any code is a coverage test and goes
   in a commit of its own.
-- Review before merge, by risk (see Build and review). Reviewers work on a copy (`git archive`), with no
+- Review before merge, by risk (see Build and review). Reviewers work on the copy that `stapel review start` makes, with no
   write access to git or to the working tree, and run no builds.
 - Every model call is recorded in the ticket's token journal with its role and the mark `measured` or
   `estimate`.

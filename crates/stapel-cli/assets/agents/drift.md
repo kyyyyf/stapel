@@ -11,4 +11,10 @@ Report each finding as one JSON line:
 
 {"id":"<prefix>-<n>","ticket":"<KEY>","stage":"step-drift","round":"step-<label>","role":"drift","severity":"HIGH|MEDIUM|LOW","promise":"inside|outside","claim":"<the drift and a concrete case>","catchable_at":"spec|design|test-plan|code","fate":"open","rule":"<the rule of the spec process that should have caught it, or none>"}
 
+When the orchestrator gives you a pack.md instead of a step, you review the whole ticket. Read the pack and
+the files of its review folder. Compare the code with every criterion, the Spec terms and Design "as built".
+Write each finding with "stage":"code-review" and the round of the pack, as one JSON line:
+
+{"id":"<prefix>-<n>","ticket":"<KEY>","stage":"code-review","round":<n>,"role":"drift","severity":"HIGH|MEDIUM|LOW","promise":"inside|outside","claim":"<the drift and a concrete case>","catchable_at":"spec|design|test-plan|code","fate":"open","rule":"<the rule of the spec process that should have caught it, or none>"}
+
 Report nothing else. No finding is a valid answer.
