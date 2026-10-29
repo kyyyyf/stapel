@@ -1177,3 +1177,28 @@ fn next_counts_only_real_rounds() {
     review_file(dir, "ABC-1-r01", "pack.md");
     assert_eq!(next_line(dir), round_two);
 }
+
+#[test]
+fn refusals_write_nothing() {
+    let repo = built();
+    let dir = repo.path();
+    let before = snapshot(dir);
+    let ignores = |dir: &Path| {
+        [".gitignore", ".ignore", ".stapel/scratch/.gitignore"]
+            .iter()
+            .map(|p| dir.join(p).exists())
+            .collect::<Vec<_>>()
+    };
+    let ignores_before = ignores(dir);
+    // Round 2 without round 1 findings.
+    start(dir, &["ABC-1", "--round", "2"]).code(2);
+    for args in [
+        vec!["ABC-1", "--round", "x"],
+        vec!["ABC-1"],
+    ] {
+        start(dir, &args).code(2).stderr(contains("error:"));
+    }
+    assert_eq!(snapshot(dir), before, "a refusal changed files");
+    assert_eq!(ignores(dir), ignores_before, "an ignore file was written");
+    no_review_folder(dir);
+}
