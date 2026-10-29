@@ -691,3 +691,80 @@ fn pack_of_round_two() {
     assert!(pack.contains("\n- none\n"), "{pack}");
     assert!(!pack.contains("R-2"), "{pack}");
 }
+
+/// The stdout of `review start ABC-1 --round 1` for a ticket with this Frame text and Plan text.
+fn reviewer_output(frame: &str, plan: &str) -> String {
+    let repo = built_with_spec(&[]);
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Description", &format!("### Frame\n\n{frame}"));
+    common::set_section(dir, "ABC-1", "Plan", plan);
+    commit_all(dir, "frame");
+    let out = start(dir, &["ABC-1", "--round", "1"]).code(0).get_output().clone();
+    let head = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    String::from_utf8(out.stdout).unwrap().replace(&head[..12], "<head12>")
+}
+
+#[test]
+fn reviewers_by_route_and_tags() {
+    let top = "copy: .stapel/scratch/review/ABC-1-r1/tree (HEAD <head12>)\n\
+               pack: .stapel/scratch/review/ABC-1-r1/pack.md\n";
+    let one = format!(
+        "{top}reviewer: stapel-reviewer, model claude-sonnet-5-5 (role reviewer)\n"
+    );
+    let three = format!(
+        "{one}reviewer: stapel-reviewer, model claude-fable-5-1 (role external)\n\
+         reviewer: stapel-drift, model claude-sonnet-5-5 (role drift), on the whole ticket\n"
+    );
+    let full = "Route: full, auto.";
+    assert_eq!(reviewer_output("**Problem.** none.", full), one);
+    assert_eq!(
+        reviewer_output("**Risk tags:** `unknown`, `Data`.\n", full),
+        one
+    );
+    assert_eq!(
+        reviewer_output("**Risk tags:** `interface` (a new\ncommand).\n", full),
+        three
+    );
+    assert_eq!(
+        reviewer_output("**Risk tags:** `security` and\nthe `interface`.\n", full),
+        three
+    );
+    assert_eq!(reviewer_output("**Risk tags:** guard only.\n", full), one);
+    assert_eq!(
+        reviewer_output("**Risk tags:** `data`.\n", "Route: light, pinned."),
+        one
+    );
+    assert_eq!(
+        reviewer_output("**Risk tags:** none.\n**Non-goals.** a `data` change.\n", full),
+        one
+    );
+}
+
+#[test]
+fn reviewer_without_a_model() {
+    let repo = built_with_spec(&[]);
+    let dir = repo.path();
+    common::set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "### Frame\n\n**Risk tags:** `data`.\n",
+    );
+    let toml = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    let kept: String = text
+        .lines()
+        .filter(|l| !l.starts_with("external"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    assert_ne!(text, kept);
+    std::fs::write(&toml, kept).unwrap();
+    commit_all(dir, "no external model");
+    let out = start(dir, &["ABC-1", "--round", "1"]).code(0).get_output().clone();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 5, "{stdout}");
+    assert_eq!(lines[3], "reviewer: stapel-reviewer, no model (role external)");
+    assert!(lines[2].ends_with("(role reviewer)"), "{stdout}");
+    assert!(lines[4].ends_with("(role drift), on the whole ticket"), "{stdout}");
+}
