@@ -429,14 +429,8 @@ fn change_block_with_two_reasons() {
 
 #[test]
 fn dialog_lists_every_waiting_section() {
-    use common::{ask, grants_dir, hook_bash, read};
+    use common::{ask, grants_dir, hook_bash};
     const DENY: i32 = 2;
-    fn short(dir: &Path, title: &str) -> String {
-        let text = read(dir, ".stapel/tickets/ABC-1/ticket.md");
-        let sections = stapel_core::ticket::parse(&text);
-        let body = stapel_core::ticket::find(&sections, title).found().unwrap();
-        stapel_core::hash::section_hash(body)[.."sha256:".len() + 12].to_string()
-    }
     let repo = repo_with_ticket();
     let dir = repo.path();
     confirm(dir, "spec");
@@ -444,15 +438,11 @@ fn dialog_lists_every_waiting_section() {
     set_section(dir, "ABC-1", "Spec", "The spec, revised.");
 
     // Spec changed (+1 -1); design stale only by its dependency; proof and plan never confirmed.
-    let (spec, design) = (short(dir, "Spec"), short(dir, "Design"));
-    let (proof, plan) = (short(dir, "Proof"), short(dir, "Plan"));
     let expected = [
-        format!("spec ({spec}…): +1 -1 lines since last confirmation"),
-        format!(
-            "design ({design}…): +0 -0 lines since last confirmation; depends on spec, which changed"
-        ),
-        format!("proof ({proof}…): new, 1 line"),
-        format!("plan ({plan}…): new, 1 line"),
+        "spec: 2 lines changed (+1 -1)".to_string(),
+        "design: unchanged; depends on spec, which changed".to_string(),
+        "proof: new, 1 line".to_string(),
+        "plan: new, 1 line".to_string(),
     ];
     for (command, program) in [
         ("stapel ok ABC-1", "stapel"),
@@ -463,7 +453,16 @@ fn dialog_lists_every_waiting_section() {
         ),
     ] {
         let (reason, replaced) = ask(dir, command);
-        assert!(reason.contains("ABC-1"), "{reason}");
+        assert!(
+            reason.starts_with(&format!(
+                "stapel: confirm 4 waiting sections of ABC-1; runs: {program}\n"
+            )),
+            "{reason}"
+        );
+        assert!(
+            reason.ends_with("\nAnswer Yes or No; do not choose \"don't ask again\"."),
+            "{reason}"
+        );
         let mut at = 0;
         for line in &expected {
             let i = reason[at..]
@@ -647,7 +646,8 @@ fn dialog_shows_every_stale_reason() {
     set_section(dir, "ABC-1", "Design", "The design, revised.");
     let (reason, _) = ask(dir, "stapel ok ABC-1");
     assert!(
-        reason.contains("+1 -1 lines since last confirmation; depends on spec, which changed"),
+        reason.contains("\nspec: 2 lines changed (+1 -1)\n")
+            && reason.contains("\ndesign: 2 lines changed (+1 -1); depends on spec, which changed\n"),
         "{reason}"
     );
 }
@@ -670,7 +670,7 @@ fn key_form_grant_binds_a_generated_dependency() {
     )
     .unwrap();
     let (reason, replaced) = ask(dir, "stapel ok ABC-1");
-    assert!(reason.contains("plan ("), "{reason}");
+    assert!(reason.contains("\nplan: new, 1 line"), "{reason}");
     set_section(dir, "ABC-1", "Review", "A review, edited after the dialog.");
     let before = (confirmations(dir).len(), decisions(dir).len());
     ok_key_grant(dir, &["ABC-1", "--grant", &token_of(&replaced)])
@@ -704,7 +704,7 @@ fn new_with_reasons_in_terminal_and_dialog() {
     });
     let (reason, _) = ask(dir, "stapel ok ABC-1");
     assert!(
-        reason.contains("new, 3 lines; depends on spec, which changed"),
+        reason.contains("\nplan: new, 3 lines; depends on spec, which changed\n"),
         "{reason}"
     );
     let out = stdout_of(stapel(dir).args(["ok", "ABC-1"]).assert().success());
@@ -741,11 +741,12 @@ fn new_never_shows_the_text_change() {
         let out = stdout_of(stapel(dir).args(["ok", "ABC-1"]).assert().success());
         let plan_line = out.lines().find(|l| l.starts_with("== plan:")).unwrap();
         assert!(!plan_line.contains("changed since"), "{out}");
-        let plan_part = &reason[reason.find("plan (").unwrap()..];
+        let plan_part = &reason[reason.find("\nplan: ").unwrap()..];
         assert!(!plan_part.contains("changed since"), "{reason}");
+        assert!(!plan_part.contains("lines changed"), "{reason}");
         if with_dependency {
             assert!(
-                reason.contains("new, 1 line; depends on spec, which changed"),
+                reason.contains("\nplan: new, 1 line; depends on spec, which changed\n"),
                 "{reason}"
             );
             assert!(
@@ -753,7 +754,7 @@ fn new_never_shows_the_text_change() {
                 "{out}"
             );
         } else {
-            assert!(reason.contains("new, 1 line; runs:"), "{reason}");
+            assert!(reason.contains("\nplan: new, 1 line\n"), "{reason}");
             assert!(!reason.contains("depends on"), "{reason}");
             assert!(out.contains("== plan: new, 1 line\n"), "{out}");
         }
@@ -837,7 +838,7 @@ fn dialog_counts_added_and_removed_apart() {
     set_section(dir, "ABC-1", "Spec", "keep\nnew one\nnew two");
     let (reason, _) = ask(dir, "stapel ok ABC-1");
     assert!(
-        reason.contains("+2 -1 lines since last confirmation"),
+        reason.contains("\nspec: 3 lines changed (+2 -1)\n"),
         "{reason}"
     );
 }
