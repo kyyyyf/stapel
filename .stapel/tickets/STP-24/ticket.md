@@ -99,7 +99,7 @@ Terms:
 | AC-4 | WHEN `review start` runs THE review folder gets `diff.patch`, the output of `git -c core.quotepath=false diff --no-color --no-ext-diff --no-textconv --find-renames --src-prefix=a/ --dst-prefix=b/ base..HEAD`, and `pack.md` written last: the key, round, base and HEAD commits, the paths of the copy, the ticket in the copy and `diff.patch`, the stat of the same diff with `--stat=120 --stat-graph-width=20`, the criteria rows of the Spec and the three review checks of decision 0002, as the golden file of round 1. | `review::pack_of_round_one`, `review::diff_file`, `review::pack_stat_and_order` |
 | AC-5 | WHEN `--round 2` runs THE pack also lists every patch finding of the working tree's `findings.jsonl` as `- <id> (<current severity>): <claim>` in file order, or `- none`, as the golden file of round 2. | `review::pack_of_round_two` |
 | AC-6 | WHEN `review start` succeeds THE output is `copy: <folder>tree (HEAD <12 hex>)`, `pack: <folder>pack.md`, then one line `reviewer: <agent>, model <model> (role <role>)` per reviewer: for a light ticket or one without tags only `stapel-reviewer` (role `reviewer`); for a tagged one also `stapel-reviewer` (role `external`) and `stapel-drift` (role `drift`) followed by `, on the whole ticket`; a role absent from `[models]` prints `no model` for `model <model>`. | `review::reviewers_by_route_and_tags`, `review::reviewer_without_a_model`, `review::tags_paragraph_ends` |
-| AC-7 | WHEN `next` would give `code-review` and the code-review round is 0 THE target is the command `stapel review start <KEY> --round 1`; when it is 1 and a patch finding exists, `stapel review start <KEY> --round 2`; otherwise the ticket path, as before. | `review::next_names_round_one`, `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round` |
+| AC-7 | WHEN `next` would give `code-review` and the code-review round is 0 THE target is the command `stapel review start <KEY> --round 1`; when it is 1 and a patch finding exists, `stapel review start <KEY> --round 2`; otherwise the ticket path, as before. | `review::next_names_round_one`, `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round`, `review::next_counts_only_real_rounds` |
 | AC-8 | WHEN `init` writes the skill and the reviewer agent THE skill holds a line that starts ``- `code-review`:`` and holds `stapel review start KEY --round N` and `pack.md`, and the reviewer body holds `Read pack.md of stapel review start first; read files only under the copy it names.` | `init_process::skill_text_names_the_review_pack` |
 | AC-9 | WHEN `review start` runs THE folders directly under `.stapel/scratch/review/` named `<KEY>-r<n>`, with `<n>` a whole number, of the same ticket and another round or of a closed ticket are removed without following symlinks; other open tickets' folders and other names stay. | `review::removes_old_copies`, `review::removes_old_copies_edges` |
 | AC-10 | IF the ticket has no Spec section, two of them, or a Spec without an `AC-<n>` row THEN `review start` exits 2 with `stapel: the Spec of <KEY> has no criteria; a review pack needs them` and nothing written. | `review::refuses_a_ticket_without_criteria` |
@@ -171,6 +171,7 @@ ticket_drift`.
 | Next, round 2 | a `code-review` finding of round 1 triaged `patch`: `--round 2` | `review::next_names_round_two` |
 | Next after the rounds | round 1 findings all `defer`; a round 2 finding; a round 1 `patch` finding with verdict `false`: the ticket path; the Review section written: `write-summary` | `review::next_after_the_rounds` |
 | Next after a clean round | no findings and `pack.md` in `ABC-1-r1`: the ticket path; a round 1 `patch` finding and `pack.md` in `ABC-1-r2`: the ticket path | `review::next_after_a_clean_round` |
+| Only real rounds | a whole round 1 `code-review` finding triaged `defer` plus a `step-drift` `patch` finding, then plus a round `"1.5"` `patch` finding: the ticket path; `ABC-1-r2` without `pack.md`, `ABC-12-r2` and `ABC-1-r01` with `pack.md`, after a round 1 `patch` finding: still `--round 2` (D4-1, D4-2) | `review::next_counts_only_real_rounds` |
 | Old copies | folders `ABC-1-r1`, `ABC-2-r1` (ABC-2 closed), `ABC-3-r1` (open), `ABC-2-rx`, `notes` and a symlink `ABC-2-r2` to a folder outside: `review start ABC-1 --round 2` leaves `ABC-1-r2`, `ABC-3-r1`, `ABC-2-rx`, `notes` and the symlink's target; the symlink itself is removed | `review::removes_old_copies` |
 | Old copies, edges | a symlink `ABC-1-r3` while round 1 runs: removed, its target kept; `ABC-1-r02` removed (a whole number); the folder of a ticket `AB-r1-1` that is open stays; the current round's folder is replaced (D1C-3) | `review::removes_old_copies_edges` |
 | Skill text | the sentences of AC-8 in the files written by `init` | `init_process::skill_text_names_the_review_pack` |
@@ -263,7 +264,7 @@ heading line (SR1-10); a decision narrowed (SR1-2).
 | AC-4 | `review::pack_of_round_one`, `review::diff_file`, `review::pack_stat_and_order` |
 | AC-5 | `review::pack_of_round_two` |
 | AC-6 | `review::reviewers_by_route_and_tags`, `review::reviewer_without_a_model`, `review::tags_paragraph_ends` |
-| AC-7 | `review::next_names_round_one`, `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round` |
+| AC-7 | `review::next_names_round_one`, `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round`, `review::next_counts_only_real_rounds` |
 | AC-8 | `init_process::skill_text_names_the_review_pack` |
 | AC-9 | `review::removes_old_copies`, `review::removes_old_copies_edges` |
 | AC-10 | `review::refuses_a_ticket_without_criteria` |
@@ -314,6 +315,9 @@ Route: full (tag `interface`), auto.
 4. The `code-review` target of `next` (AC-7; tests `review::next_names_round_one`,
    `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round`); the old tests as in Design. Must not
    change: the other actions of `next` and their order.
+4b. Coverage after the drift review of step 4 (D4-1, D4-2; AC-7): new `#[test]` function
+   `review::next_counts_only_real_rounds`. Tests only, each helper nested inside its function, no
+   `cargo fmt`; a test that fails is an `intent_gap`.
 5. The skill and reviewer texts (AC-8; test `init_process::skill_text_names_the_review_pack`):
    `crates/stapel-cli/assets/skill.md` and `assets/agents/reviewer.md`; the GREEN runs the built
    `stapel init` here so that `init_process::this_repository_has_the_current_files` holds. Must not change:
