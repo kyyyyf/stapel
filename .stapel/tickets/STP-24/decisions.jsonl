@@ -42,3 +42,4 @@
 {"v":1,"id":"d-c5927dc6db03","at":"2026-10-29T10:47:06Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:c5a64cc0f8c03d11b004fc5ea0ab385ca9888a7af98352f3415fec6febbe2f80","via":"grant"}
 {"v":1,"id":"d-a8756a75a8bb","at":"2026-10-29T10:47:06Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:e7642807d7ababd73f9cc22ac9d9766996b4df87910fa678ea6f6ec689bf50b9","via":"grant"}
 {"v":1,"id":"d-a2085acfc825","at":"2026-10-29T10:47:06Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:f29156d2f79463ab6429da51c7c58d4fc6be20e97bcb89c4802357ca43810a2a","via":"grant"}
+{"v":1,"id":"d-313be9c9168c","at":"2026-10-29T12:50:36Z","by":"kyyyyf","action":"close","reason":"built, reviewed in two rounds, check passes"}
