@@ -692,6 +692,63 @@ fn pack_of_round_two() {
     assert!(!pack.contains("R-2"), "{pack}");
 }
 
+#[test]
+fn pack_stat_and_order() {
+    let repo = built_with_spec(&[]);
+    let dir = repo.path();
+    let long = format!("{}.txt", "p".repeat(86));
+    assert_eq!(long.len(), 90);
+    std::fs::write(dir.join(&long), "x\n").unwrap();
+    let many: String = (0..60).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(dir.join("many.txt"), many).unwrap();
+    commit_all(dir, "more files");
+    // The file order of the findings is R-5 then R-2.
+    findings(
+        dir,
+        &[
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-5","severity":"HIGH","claim":"five claim"}"#,
+            r#"{"v":1,"stage":"code-review","round":"1","id":"R-2","severity":"LOW","claim":"two claim"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-2","fate":"patch"}"#,
+            r#"{"v":1,"kind":"triage","id":"R-5","fate":"patch"}"#,
+        ],
+    );
+    start(dir, &["ABC-1", "--round", "2"]).code(0);
+    let base = state_json(dir, "ABC-1")["base"].as_str().unwrap().to_string();
+    let range = format!("{base}..HEAD");
+    let stat = git(
+        dir,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--find-renames",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--stat=120",
+            "--stat-graph-width=20",
+            &range,
+        ],
+    );
+    assert!(stat.contains(&long), "{stat}");
+    let pack = std::fs::read_to_string(dir.join(".stapel/scratch/review/ABC-1-r2/pack.md")).unwrap();
+    for line in stat.lines() {
+        assert!(pack.contains(&format!("{line}\n")), "stat line {line:?} not in\n{pack}");
+    }
+    let five = pack.find("- R-5 (HIGH): five claim").expect(&pack);
+    let two = pack.find("- R-2 (LOW): two claim").expect(&pack);
+    assert!(five < two, "file order: {pack}");
+    let mtime = |name: &str| {
+        std::fs::metadata(dir.join(".stapel/scratch/review/ABC-1-r2").join(name))
+            .unwrap()
+            .modified()
+            .unwrap()
+    };
+    assert!(mtime("pack.md") >= mtime("diff.patch"), "pack.md written before diff.patch");
+}
+
 /// The stdout of `review start ABC-1 --round 1` for a ticket with this Frame text and Plan text.
 fn reviewer_output(frame: &str, plan: &str) -> String {
     let repo = built_with_spec(&[]);
