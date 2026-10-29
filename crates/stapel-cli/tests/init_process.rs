@@ -874,6 +874,33 @@ fn builder_text_forbids_history_rewrites() {
     );
 }
 
+// AC-8: the skill and the reviewer agent name the review pack.
+#[test]
+fn skill_text_names_the_review_pack() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let body = body_of(dir, SKILL);
+    let line = body
+        .lines()
+        .find(|l| l.starts_with("- `code-review`:"))
+        .expect("no code-review line in the skill");
+    let flat_line = collapsed(line);
+    assert!(
+        flat_line.contains("stapel review start KEY --round N"),
+        "{flat_line:?}"
+    );
+    assert!(flat_line.contains("pack.md"), "{flat_line:?}");
+
+    let reviewer = collapsed(&body_of(dir, AGENTS[2]));
+    assert!(
+        reviewer.contains(
+            "Read pack.md of stapel review start first; read files only under the copy it names."
+        ),
+        "reviewer text lacks the pack sentence"
+    );
+}
+
 fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
