@@ -254,6 +254,29 @@ heading line (SR1-10); a decision narrowed (SR1-2).
 - Old tests: in the RED of step 4, the five tests of F-4 change their expected `code-review` line to the
   command, so that they fail at the RED.
 
+### Decisions (as built)
+
+- `crates/stapel-cli/src/review.rs` checks the refusals in the order of the cases table; a legacy
+  `state.json` that also has `closed` reads as legacy, so legacy wins (step 1d).
+- `copy_head` runs `git -c core.autocrlf=false read-tree HEAD` and `checkout-index -a --prefix` with
+  `GIT_INDEX_FILE=<folder>index`, removes that file, and writes `.stapel/scratch/review/.gitignore` (`*`)
+  (step 1f, replacing the `git archive | tar` of step 1b, B-2).
+- `remove_old_copies` runs before the copy; it takes names `<KEY>-r<digits>`, removes a symlink itself and
+  never follows it (step 1c).
+- `crates/stapel-core/src/review.rs` holds `criteria`, `patch_findings`, `pack_text`, `frame_tags`,
+  `reviewers`, `finding_round` and `next_round`; `brief.rs` makes `cells` and `row_number` public.
+- `pack.md`: a title `# Review pack <KEY>, round <N>`, list items for the ticket, round, base and head,
+  the repository-relative paths, the stat in a code fence, one line `- AC-<n>: <criterion>` per Spec row
+  (the test column left out), the round 2 list, then the three checks; the golden files hold the exact
+  text (step 2).
+- The AC-10 refusal reads `ticket.md` after the round 2 check and before the old copies are removed; a
+  comment in `review.rs` holds the full AC-10 text with its `stapel: ` prefix, because `Fail` adds the
+  prefix at print time and the ticket lint looks for the quoted line (step 2c).
+- `frame_tags` ends the tags paragraph at a blank line or a line that starts with `#` or `**` (step 3).
+- `next::Facts` gets `review_round` and `patch_finding`; the CLI `next` computes the round from the
+  records and from `pack_round`, which counts `<KEY>-r<N>` folders holding `pack.md` with `N` written
+  without leading zeros, while the cleanup of AC-9 also removes `r02` (step 4).
+
 ## Proof
 
 | Criterion | Test |
