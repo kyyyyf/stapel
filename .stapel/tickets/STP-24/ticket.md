@@ -98,7 +98,7 @@ Terms:
 | AC-3 | WHEN `review start` runs THE review folder is removed if present and gets `tree/`, the files of HEAD as a checkout with `core.autocrlf=false` writes them (the `.gitattributes` of HEAD apply), with their modes and no `.git`, while the repository's index, working tree and refs stay unchanged; `.stapel/scratch/review/.gitignore` holds `*` so that the copies never make the tree dirty. | `review::copies_head`, `review::rerun_replaces_the_copy`, `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf`, `review::copy_needs_no_tar`, `review::copy_follows_attributes`, `review::copy_keeps_plain_modes` |
 | AC-4 | WHEN `review start` runs THE review folder gets `diff.patch`, the output of `git -c core.quotepath=false diff --no-color --no-ext-diff --no-textconv --find-renames --src-prefix=a/ --dst-prefix=b/ base..HEAD`, and `pack.md` written last: the key, round, base and HEAD commits, the paths of the copy, the ticket in the copy and `diff.patch`, the stat of the same diff with `--stat=120 --stat-graph-width=20`, the criteria rows of the Spec and the three review checks of decision 0002, as the golden file of round 1. | `review::pack_of_round_one`, `review::diff_file`, `review::pack_stat_and_order` |
 | AC-5 | WHEN `--round 2` runs THE pack also lists every patch finding of the working tree's `findings.jsonl` as `- <id> (<current severity>): <claim>` in file order, or `- none`, as the golden file of round 2. | `review::pack_of_round_two` |
-| AC-6 | WHEN `review start` succeeds THE output is `copy: <folder>tree (HEAD <12 hex>)`, `pack: <folder>pack.md`, then one line `reviewer: <agent>, model <model> (role <role>)` per reviewer: for a light ticket or one without tags only `stapel-reviewer` (role `reviewer`); for a tagged one also `stapel-reviewer` (role `external`) and `stapel-drift` (role `drift`) followed by `, on the whole ticket`; a role absent from `[models]` prints `no model` for `model <model>`. | `review::reviewers_by_route_and_tags`, `review::reviewer_without_a_model` |
+| AC-6 | WHEN `review start` succeeds THE output is `copy: <folder>tree (HEAD <12 hex>)`, `pack: <folder>pack.md`, then one line `reviewer: <agent>, model <model> (role <role>)` per reviewer: for a light ticket or one without tags only `stapel-reviewer` (role `reviewer`); for a tagged one also `stapel-reviewer` (role `external`) and `stapel-drift` (role `drift`) followed by `, on the whole ticket`; a role absent from `[models]` prints `no model` for `model <model>`. | `review::reviewers_by_route_and_tags`, `review::reviewer_without_a_model`, `review::tags_paragraph_ends` |
 | AC-7 | WHEN `next` would give `code-review` and the code-review round is 0 THE target is the command `stapel review start <KEY> --round 1`; when it is 1 and a patch finding exists, `stapel review start <KEY> --round 2`; otherwise the ticket path, as before. | `review::next_names_round_one`, `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round` |
 | AC-8 | WHEN `init` writes the skill and the reviewer agent THE skill holds a line that starts ``- `code-review`:`` and holds `stapel review start KEY --round N` and `pack.md`, and the reviewer body holds `Read pack.md of stapel review start first; read files only under the copy it names.` | `init_process::skill_text_names_the_review_pack` |
 | AC-9 | WHEN `review start` runs THE folders directly under `.stapel/scratch/review/` named `<KEY>-r<n>`, with `<n>` a whole number, of the same ticket and another round or of a closed ticket are removed without following symlinks; other open tickets' folders and other names stay. | `review::removes_old_copies`, `review::removes_old_copies_edges` |
@@ -127,7 +127,9 @@ Cases table of the refusals, in the order they are checked (exit 2 unless named)
   than the working tree's; the round 2 refusal reads legacy records like new ones and skips damaged
   lines, as `next` does (D1-5); a temporary `index` left in the round folder when git fails (D1F-2); a
   file or file symlink named like a round folder is removed as well (D1C-1); a failed removal of an old
-  copy stops `review start` with exit 1, and an unreadable `review/` folder is skipped (D1C-2); submodules (a gitlink gives no files); symlinks in
+  copy stops `review start` with exit 1, and an unreadable `review/` folder is skipped (D1C-2); a
+  `**Risk tags:**` line below the Frame is read when the Frame has none (D3-2); a missing or doubled Plan
+  or Description reads as full and untagged (D3-4); submodules (a gitlink gives no files); symlinks in
   HEAD that point outside the copy; `.gitattributes` `export-ignore` (the copy is a checkout, not an
   archive); a Claude Code allow rule for `review start`; two `review start` runs at once.
 
@@ -163,6 +165,7 @@ ticket_drift`.
 | No criteria | a ticket without a Spec section; with two; with a Spec without AC rows: exit 2, the AC-10 text, no review folder (D2-2) | `review::refuses_a_ticket_without_criteria` |
 | Pack, round 2 | round 1 findings R-1 (MEDIUM, triaged `patch`), R-2 (LOW, `defer`), R-3 (HIGH, `patch`, then verdict `false`), R-4 (`patch`, stage `step-drift`): the round 2 list holds only R-1 and equals `review_pack_r2.md`; with no patch finding: `- none` | `review::pack_of_round_two` |
 | Reviewers | an untagged ticket: one line; tags `interface` on a wrapped second line of the paragraph: three lines; the word `guard` without backticks only: one line; `Route: light` with a tag: one line; a tags paragraph followed directly by a `**Non-goals.**` line holding `` `data` ``: one line | `review::reviewers_by_route_and_tags` |
+| Tags paragraph ends | `interface` after a blank line below the tags line: one line; `interface` on a `### Decisions` line right below it: one line; each of `data`, `guard`, `migration` alone in the paragraph: three lines (D3-1, D3-3) | `review::tags_paragraph_ends` |
 | No model | `[models]` without `external`: `reviewer: stapel-reviewer, no model (role external)`, exit 0 | `review::reviewer_without_a_model` |
 | Next, round 1 | after the build, check passing, Review unwritten, no findings: `next: code-review — stapel review start ABC-1 --round 1`; `--json` gives it as `command` | `review::next_names_round_one` |
 | Next, round 2 | a `code-review` finding of round 1 triaged `patch`: `--round 2` | `review::next_names_round_two` |
@@ -259,7 +262,7 @@ heading line (SR1-10); a decision narrowed (SR1-2).
 | AC-3 | `review::copies_head`, `review::rerun_replaces_the_copy`, `review::copy_keeps_the_index`, `review::copy_ignores_autocrlf`, `review::copy_needs_no_tar`, `review::copy_follows_attributes`, `review::copy_keeps_plain_modes` |
 | AC-4 | `review::pack_of_round_one`, `review::diff_file`, `review::pack_stat_and_order` |
 | AC-5 | `review::pack_of_round_two` |
-| AC-6 | `review::reviewers_by_route_and_tags`, `review::reviewer_without_a_model` |
+| AC-6 | `review::reviewers_by_route_and_tags`, `review::reviewer_without_a_model`, `review::tags_paragraph_ends` |
 | AC-7 | `review::next_names_round_one`, `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round` |
 | AC-8 | `init_process::skill_text_names_the_review_pack` |
 | AC-9 | `review::removes_old_copies`, `review::removes_old_copies_edges` |
@@ -305,6 +308,9 @@ Route: full (tag `interface`), auto.
    test that fails is an `intent_gap`.
 2c. A ticket without criteria refused (AC-10, D2-2; test `review::refuses_a_ticket_without_criteria`),
    checked after the other refusals of the cases table. Must not change: steps 1 to 3.
+3b. Coverage after the drift review of step 3 (D3-1, D3-3; AC-6): new `#[test]` function
+   `review::tags_paragraph_ends`. Tests only, each helper nested inside its function, no `cargo fmt`; a
+   test that fails is an `intent_gap`.
 4. The `code-review` target of `next` (AC-7; tests `review::next_names_round_one`,
    `review::next_names_round_two`, `review::next_after_the_rounds`, `review::next_after_a_clean_round`); the old tests as in Design. Must not
    change: the other actions of `next` and their order.
