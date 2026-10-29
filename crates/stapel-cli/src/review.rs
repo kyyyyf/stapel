@@ -1,6 +1,6 @@
 //! `stapel review start KEY --round N` (STP-24): refuses an unknown, closed or legacy ticket, a bad
-//! round, a dirty tree, a bad base commit and a round 2 without round 1 findings or with an
-//! unreadable `state.json` (AC-1, AC-2). A success removes the review folders of other rounds and of
+//! round, a dirty tree, a bad base commit, an unreadable `state.json` and a round 2 without round 1
+//! findings (AC-1, AC-2). A success removes the review folders of other rounds and of
 //! closed tickets, writes the copy of HEAD under `tree/` with the `.gitignore` and `.ignore` of the
 //! review folder (AC-3), writes `diff.patch` and `pack.md` (AC-4, AC-5), and prints one line per
 //! reviewer (AC-6).

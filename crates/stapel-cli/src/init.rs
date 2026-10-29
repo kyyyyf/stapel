@@ -166,7 +166,7 @@ const AGENT_FILES: [AgentFile; 4] = [
     AgentFile {
         name: "drift",
         role: "drift",
-        description: "Checks the diff of one step against its criteria and reports where the code and the criteria differ.",
+        description: "Checks the diff of one step, or the pack.md of the whole ticket, against its criteria and reports where the code and the criteria differ.",
         tools: READ_ONLY_TOOLS,
         default_mode: "default",
         body: include_str!("../assets/agents/drift.md"),
