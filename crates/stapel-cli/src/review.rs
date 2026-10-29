@@ -168,7 +168,6 @@ fn write_pack(
         stapel_core::ticket::Lookup::Found(body) => body,
         _ => "",
     };
-    let criteria = stapel_core::review::criteria(spec);
     let findings = if round == 2 {
         let entries = journal::read(&ticket_dir.join("findings.jsonl")).map_err(Fail::failed)?;
         let records: Vec<_> = entries
@@ -189,7 +188,7 @@ fn write_pack(
         head,
         folder: &relative,
         stat: &String::from_utf8_lossy(&stat),
-        criteria: &criteria,
+        spec,
         findings: findings.as_deref(),
     });
     write("pack.md", pack.as_bytes())

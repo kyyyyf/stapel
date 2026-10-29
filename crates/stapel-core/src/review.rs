@@ -88,7 +88,7 @@ pub struct Pack<'a> {
     pub head: &'a str,
     pub folder: &'a str,
     pub stat: &'a str,
-    pub criteria: &'a [String],
+    pub spec: &'a str,
     pub findings: Option<&'a [PatchFinding]>,
 }
 
@@ -97,17 +97,15 @@ pub fn pack_text(p: &Pack) -> String {
         "# Review pack {key}, round {round}\n\n- ticket: {key}\n- round: {round}\n- base: {base}\n\
          - head: {head}\n\n## Paths\n\n- copy: {folder}/tree\n\
          - ticket: {folder}/tree/.stapel/tickets/{key}/ticket.md\n- diff: {folder}/diff.patch\n\n\
-         ## Stat\n\n```\n{stat}\n```\n\n## Criteria\n\n",
+         ## Stat\n\n```\n{stat}\n```\n\n## Spec\n\n{spec}\n",
         key = p.key,
         round = p.round,
         base = p.base,
         head = p.head,
         folder = p.folder,
         stat = p.stat.trim_end(),
+        spec = p.spec.trim(),
     );
-    for c in p.criteria {
-        out.push_str(&format!("- {c}\n"));
-    }
     if let Some(findings) = p.findings {
         out.push_str("\n## Findings of round 1 with the fate patch\n\n");
         if findings.is_empty() {
