@@ -332,7 +332,7 @@ Route: full (tags `guard`, `interface`), auto.
 2a. The reserved title lifted for `description` (AC-1; test `config::rejects_bad_sections`): the RED adds
    the accepted case for the id `description`, so that the test fails there; the GREEN changes
    `crates/stapel-core/src/config.rs`. Must not change: the refusal for any other id.
-2c. Fix of step 2 (D2-1, D2-2; AC-3; tests `ok_page::criteria_new_and_changed`,
+2c. Fix of step 2 after its drift review (AC-3; tests `ok_page::criteria_new_and_changed`,
    `ok_page::criteria_without_rows`): the RED adds failing cases: a blank line or a re-wrap among the
    other Spec lines gives no count line (logical lines); `+0 -0` none; a removed row; no stored text; a
    4-space `# x`, a heading in a fence or comment; list items; the diff of a Spec without rows. The GREEN
