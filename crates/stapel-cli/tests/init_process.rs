@@ -890,15 +890,41 @@ fn skill_text_names_the_review_pack() {
         flat_line.contains("stapel review start KEY --round N"),
         "{flat_line:?}"
     );
-    assert!(flat_line.contains("pack.md"), "{flat_line:?}");
+    assert!(
+        flat_line.contains("give every reviewer it prints the path of pack.md"),
+        "{flat_line:?}"
+    );
+    assert!(
+        flat_line.contains(
+            "before round 2, add a fix step to the Plan for each finding with the fate patch"
+        ),
+        "{flat_line:?}"
+    );
+    assert!(!collapsed(&body).contains("a copy (`git archive`)"));
 
     let reviewer = collapsed(&body_of(dir, AGENTS[2]));
     assert!(
-        reviewer.contains(
-            "Read pack.md of stapel review start first; read files only under the copy it names."
-        ),
+        reviewer.contains("Read pack.md first; read files only in the review folder it names."),
         "reviewer text lacks the pack sentence"
     );
+    assert!(!reviewer.contains("git archive"), "reviewer names git archive");
+}
+
+// AC-11: the drift agent reviews the whole ticket from a pack and keeps the step-drift line.
+#[test]
+fn drift_text_reviews_the_whole_ticket() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let drift = collapsed(&body_of(dir, AGENTS[1]));
+    assert!(
+        drift.contains(
+            "When the orchestrator gives you a pack.md instead of a step, you review the whole ticket"
+        ),
+        "drift text lacks the pack sentence"
+    );
+    assert!(drift.contains("\"stage\":\"code-review\""), "no code-review line");
+    assert!(drift.contains("\"stage\":\"step-drift\""), "no step-drift line");
 }
 
 fn repo_root() -> &'static Path {
