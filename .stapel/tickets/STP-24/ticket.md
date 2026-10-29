@@ -389,7 +389,23 @@ Route: full (tag `interface`), auto.
 
 ## Review
 
-TODO
+Spec review: one round by `stapel-spec-reviewer` (10 findings, 0 HIGH, 3 MEDIUM; 9 inside, 1 outside, which
+the human took as AC-9). Drift review after every GREEN step and builder records: 28 records, 1 HIGH (D1-1,
+the refusal texts, because the brief does not carry the Spec's cases table), 12 MEDIUM; they became the fix
+steps 1d, 1f, 2c and the coverage steps 1e, 1g, 2b, 3b, 4b. Code review round 1, the first run of `stapel
+review start` on its own ticket (stapel-reviewer, `stapel-reviewer` with the external model, `stapel-drift`
+on the whole ticket): 17 records, 1 HIGH (R-1, the review folder's `.gitignore` hid the copy from Grep;
+confirmed by hand with the embedded ripgrep), 1 MEDIUM outside (E-1, the drift agent text); fixes in steps
+6, 6b, 7. Code review round 2 by the same three: 13 records, 0 HIGH, 0 MEDIUM from the reviewers; five false
+findings (D2-1 before it, R2-2, DR2-1 to DR2-3) came from a pack with AC rows only, so the human had the
+pack carry the whole Spec (O-1, step 8); text fixes in step 9. Steps 8 and 9 had no further review (two
+rounds at most). Two history rewrites, run by the human, of the RED of step 8: `stapel check` counts only
+test functions whose tokens a RED changes, not golden files or comments (O-2, deferred). Deferred: E-5 (the
+lint reads a quoted line from a comment) to item 1.6; O-2 to item 1.11 or 1.12; B-1 and O-3 (builders wrote
+files with heredocs in eight steps although each brief forbade it) to items 1.9 and 1.10. The `rg` part of
+`review::copy_is_searchable` did not run under `cargo test` here (no `rg` on its `PATH`); the R-1 fix was
+checked by hand and by the external reviewer's Grep in round 2. All 70 records and their fates are in
+`findings.jsonl`.
 
 ## Summary
 
