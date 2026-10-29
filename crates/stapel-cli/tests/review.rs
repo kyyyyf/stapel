@@ -873,3 +873,28 @@ fn refuses_a_ticket_without_criteria() {
         "uncommitted changes: stray.txt; commit them before a review round",
     );
 }
+
+#[test]
+fn tags_paragraph_ends() {
+    let full = "Route: full, auto.";
+    let reviewers = |frame: &str| {
+        reviewer_output(frame, full)
+            .lines()
+            .filter(|l| l.starts_with("reviewer:"))
+            .count()
+    };
+    // The paragraph ends at a blank line.
+    assert_eq!(
+        reviewers("**Risk tags:** none.\n\nThe `interface` changes.\n"),
+        1
+    );
+    // The paragraph ends at a line that starts with `#`.
+    assert_eq!(
+        reviewers("**Risk tags:** none.\n### Decisions `interface`\n"),
+        1
+    );
+    // A tag alone in the paragraph.
+    for tag in ["data", "guard", "migration"] {
+        assert_eq!(reviewers(&format!("**Risk tags:** `{tag}`.\n")), 3, "{tag}");
+    }
+}
