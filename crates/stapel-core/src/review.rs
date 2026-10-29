@@ -105,3 +105,64 @@ pub fn pack_text(p: &Pack) -> String {
     );
     out
 }
+
+const KNOWN_TAGS: [&str; 5] = ["security", "guard", "data", "migration", "interface"];
+
+/// The known risk tags in the backtick spans of the paragraph of the Frame that starts with
+/// `**Risk tags:**`. The paragraph ends at a blank line, a heading line or a line that starts a
+/// new bold label (`**`).
+pub fn frame_tags(description: &str) -> Vec<&'static str> {
+    let lines = description
+        .lines()
+        .skip_while(|l| l.trim_end() != "### Frame")
+        .skip(1)
+        .skip_while(|l| !l.starts_with("**Risk tags:**"));
+    let mut tags = Vec::new();
+    let mut first = true;
+    for line in lines {
+        if !first && (line.trim().is_empty() || line.starts_with('#') || line.starts_with("**")) {
+            break;
+        }
+        first = false;
+        for (i, span) in line.split('`').enumerate() {
+            if i % 2 == 1
+                && let Some(tag) = KNOWN_TAGS.iter().find(|t| **t == span)
+                && !tags.contains(tag)
+            {
+                tags.push(*tag);
+            }
+        }
+    }
+    tags
+}
+
+/// One reviewer of a code review round: the agent, the role of `[models]` and whether it reads
+/// the whole ticket.
+#[derive(Debug, PartialEq)]
+pub struct Reviewer {
+    pub agent: &'static str,
+    pub role: &'static str,
+    pub whole_ticket: bool,
+}
+
+/// The reviewers of a round: one for a light or untagged ticket, three for a tagged one.
+pub fn reviewers(light: bool, tags: &[&str]) -> Vec<Reviewer> {
+    let mut out = vec![Reviewer {
+        agent: "stapel-reviewer",
+        role: "reviewer",
+        whole_ticket: false,
+    }];
+    if !light && !tags.is_empty() {
+        out.push(Reviewer {
+            agent: "stapel-reviewer",
+            role: "external",
+            whole_ticket: false,
+        });
+        out.push(Reviewer {
+            agent: "stapel-drift",
+            role: "drift",
+            whole_ticket: true,
+        });
+    }
+    out
+}

@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::Command;
 
 pub fn start(key: &str, round: u64) -> Result<(), Fail> {
-    let (root, _config) = repo::open().map_err(Fail::failed)?;
+    let (root, config) = repo::open().map_err(Fail::failed)?;
     let ticket = resolve(&root, Some(key)).map_err(Fail::refused)?;
     let state = match &ticket.status {
         Status::Open(state) => state,
@@ -72,7 +72,31 @@ pub fn start(key: &str, round: u64) -> Result<(), Fail> {
     }
     remove_old_copies(&root, &ticket.key, round)?;
     copy_head(&root, &ticket.key, round)?;
-    write_pack(&root, &ticket.key, &ticket.dir, round, base, &head)
+    write_pack(&root, &ticket.key, &ticket.dir, round, base, &head)?;
+    let folder = format!(".stapel/scratch/review/{}-r{round}/", ticket.key);
+    say!("copy: {folder}tree (HEAD {})", &head[..head.len().min(12)]);
+    say!("pack: {folder}pack.md");
+    let text = stapel_core::ticket::read(&ticket.dir.join("ticket.md")).map_err(Fail::failed)?;
+    let sections = stapel_core::ticket::parse(&text);
+    let body_of = |title: &str| match stapel_core::ticket::find(&sections, title) {
+        stapel_core::ticket::Lookup::Found(body) => body,
+        _ => "",
+    };
+    let light = stapel_core::next::is_light(body_of("Plan"));
+    let tags = stapel_core::review::frame_tags(body_of("Description"));
+    for r in stapel_core::review::reviewers(light, &tags) {
+        let model = match config.models.get(r.role) {
+            Some(binding) => format!("model {}", binding.model),
+            None => "no model".to_string(),
+        };
+        let tail = if r.whole_ticket {
+            ", on the whole ticket"
+        } else {
+            ""
+        };
+        say!("reviewer: {}, {model} (role {}){tail}", r.agent, r.role);
+    }
+    Ok(())
 }
 
 /// The output of `git diff` of `base..head` in the form AC-4 pins, with `extra` flags.
