@@ -19,10 +19,20 @@
  2 files changed, 4 insertions(+), 2 deletions(-)
 ```
 
-## Criteria
+## Spec
 
-- AC-1: first criterion
-- AC-2: second criterion
+**Terms**
+
+- **Widget**: a thing.
+
+| № | Criterion | Test |
+|---|---|---|
+| AC-1 | first criterion | `t::a` |
+| AC-2 | second criterion | `t::b` |
+
+**Guarantees**
+
+- A widget stays whole.
 
 ## Findings of round 1 with the fate patch
 

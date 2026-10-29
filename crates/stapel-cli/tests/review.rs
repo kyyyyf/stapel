@@ -587,8 +587,8 @@ fn removes_old_copies_edges() {
     assert!(review.join("AB-r1-1/file").exists(), "an open ticket with -r in its key");
 }
 
-const SPEC_TWO: &str = "| № | Criterion | Test |\n|---|---|---|\n\
-| AC-1 | first criterion | `t::a` |\n| AC-2 | second criterion | `t::b` |";
+const SPEC_TWO: &str = "**Terms**\n\n- **Widget**: a thing.\n\n| № | Criterion | Test |\n|---|---|---|\n\
+| AC-1 | first criterion | `t::a` |\n| AC-2 | second criterion | `t::b` |\n\n**Guarantees**\n\n- A widget stays whole.";
 
 /// Like `built()`, with a Spec of two criteria and an extra tracked `files` before the base.
 fn built_with_spec(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -626,6 +626,7 @@ fn golden(name: &str) -> String {
 
 #[test]
 fn pack_of_round_one() {
+    assert!(golden("review_pack_r1.md").contains("## Spec"), "the golden file holds the Spec section");
     let repo = built_with_spec(&[]);
     let dir = repo.path();
     start(dir, &["ABC-1", "--round", "1"]).code(0);
@@ -682,6 +683,7 @@ fn diff_file() {
 
 #[test]
 fn pack_of_round_two() {
+    assert!(golden("review_pack_r2.md").contains("## Spec"), "the golden file holds the Spec section");
     let repo = built_with_spec(&[]);
     let dir = repo.path();
     findings(
