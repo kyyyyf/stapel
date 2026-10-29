@@ -155,7 +155,9 @@ impl Config {
             if !ids.insert(section.id.to_lowercase()) {
                 return Err(format!("sections: duplicate id \"{}\"", section.id));
             }
-            if section.title.trim().eq_ignore_ascii_case("description") {
+            if section.title.trim().eq_ignore_ascii_case("description")
+                && !section.id.eq_ignore_ascii_case("description")
+            {
                 return Err(
                     "sections: the title Description is reserved for the ticket description".into(),
                 );
