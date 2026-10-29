@@ -17,6 +17,7 @@ the file to use; the facts that block an action come first. Do not re-read the w
 - `build-step` and `green-step`: start the agent `stapel-builder` with the ticket path, the step and the
   base commit only; it runs `stapel brief KEY STEP` itself. During the build you do not read the brief;
   before the spec review you run stapel brief only to check each step's size.
+- `code-review`: run `stapel review start KEY --round N`, give each reviewer it prints the path of its `pack.md`.
 - `run-check`: `stapel check KEY`; no other cargo or test run while it runs.
 - Start a new session for each ticket; during the build do not read briefs or reviewer reports yourself
   beyond their findings.

@@ -1,7 +1,7 @@
 ---
 name: stapel
 description: "Carries a development ticket from description to merge with the stapel process."
-# stapel: 0.1.0 sha256:6f6913584621f9e7973f181911b435fa80a6e640f62e8353b597bd7fd3c96c36
+# stapel: 0.1.0 sha256:34ca21a4e6e8b57b4c9e485bd26f8cfa8971f360594cbf550d29525e31383489
 ---
 # The stapel process
 
@@ -22,6 +22,7 @@ the file to use; the facts that block an action come first. Do not re-read the w
 - `build-step` and `green-step`: start the agent `stapel-builder` with the ticket path, the step and the
   base commit only; it runs `stapel brief KEY STEP` itself. During the build you do not read the brief;
   before the spec review you run stapel brief only to check each step's size.
+- `code-review`: run `stapel review start KEY --round N`, give each reviewer it prints the path of its `pack.md`.
 - `run-check`: `stapel check KEY`; no other cargo or test run while it runs.
 - Start a new session for each ticket; during the build do not read briefs or reviewer reports yourself
   beyond their findings.
