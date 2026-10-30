@@ -41,6 +41,26 @@ fn template_has_the_description_section() {
     );
 }
 
+// STP-25 AC-1 (E-1, E-2): the template as shipped gives one `## Description` and a dialog line for it.
+#[test]
+fn new_ticket_has_one_description() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    stapel(dir).args(["new", "First"]).assert().success();
+    let ticket = read(dir, ".stapel/tickets/ABC-1/ticket.md");
+    assert_eq!(
+        ticket.lines().filter(|l| *l == "## Description").count(),
+        1,
+        "{ticket}"
+    );
+    let (reason, _) = common::ask(dir, "stapel ok ABC-1");
+    assert!(reason.contains("\ndescription: new, "), "{reason}");
+}
+
 // AC-2
 #[test]
 fn creates_layout_in_empty_repo() {
