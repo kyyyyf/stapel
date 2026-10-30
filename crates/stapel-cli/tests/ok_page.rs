@@ -93,7 +93,7 @@ fn criteria_new_and_changed() {
     assert!(
         reason.contains(&format!(
             "\nCriteria:\n  | AC-1 | first | `t::a` |\n  | AC-2 | second | `t::b` |\n\
-             spec, other lines: +3 -0\n{ANSWER}"
+             spec, other lines: +1 -0\n{ANSWER}"
         )),
         "{reason}"
     );
@@ -122,6 +122,100 @@ fn criteria_new_and_changed() {
     set_section(dir, "ABC-1", "Design", "The design, revised.");
     let (reason, _) = ask(dir, "stapel ok ABC-1");
     assert!(!reason.contains("Criteria:"), "{reason}");
+
+    // A blank line and a re-wrap among the other lines: logical lines are the same, so no
+    // count line and no Criteria part (+0 -0).
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "intro one\nintro two\n\n| AC-1 | first | `t::a` |",
+    );
+    for id in ["spec", "design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "intro one intro\ntwo\n\n\n  | AC-1 | first | `t::a` |",
+    );
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(!reason.contains("Criteria:"), "{reason}");
+    assert!(!reason.contains("other lines"), "{reason}");
+
+    // A removed row: shown with `- `, and no count line.
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "intro one intro two\n\n| AC-1 | first | `t::a` |\n| AC-2 | second | `t::b` |",
+    );
+    for id in ["spec", "design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "intro one intro two\n\n| AC-1 | first | `t::a` |",
+    );
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains(&format!(
+            "\nCriteria:\n- | AC-2 | second | `t::b` |\n{ANSWER}"
+        )),
+        "{reason}"
+    );
+
+    // A confirmation without stored text: every row and the other lines as new.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Spec", "intro\n\n| AC-1 | first | `t::a` |");
+    for id in ["spec", "design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "intro\n\n| AC-1 | first | `t::a` |\n| AC-2 | second | `t::b` |",
+    );
+    let path = dir.join(".stapel/tickets/ABC-1/state.json");
+    let mut state = state_json(dir, "ABC-1");
+    for c in state["confirmations"].as_array_mut().unwrap() {
+        if c["section"] == "spec" {
+            c.as_object_mut().unwrap().remove("text");
+        }
+    }
+    std::fs::write(path, state.to_string()).unwrap();
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains(&format!(
+            "\nCriteria:\n  | AC-1 | first | `t::a` |\n  | AC-2 | second | `t::b` |\n\
+             spec, other lines: +1 -0\n{ANSWER}"
+        )),
+        "{reason}"
+    );
+
+    // A row inside a fence is not a row; an indented row is.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "```\n| AC-1 | fenced | `t::a` |\n```\n\n   | AC-2 | real | `t::b` |",
+    );
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains(&format!(
+            "\nCriteria:\n  | AC-2 | real | `t::b` |\nspec, other lines: +1 -0\n{ANSWER}"
+        )),
+        "{reason}"
+    );
 }
 
 #[test]
@@ -143,6 +237,55 @@ fn criteria_without_rows() {
     let (reason, _) = ask(dir, "stapel ok ABC-1");
     assert!(
         reason.contains(&format!("\nCriteria:\n  | AC-1x | no row\n  second\n{ANSWER}")),
+        "{reason}"
+    );
+    assert!(!reason.contains("other lines"), "{reason}");
+
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let page = |text: &str| {
+        set_section(dir, "ABC-1", "Spec", text);
+        ask(dir, "stapel ok ABC-1").0
+    };
+
+    // A heading is a line of its own; four spaces of indent make it plain text.
+    let reason = page("para\n   # h\nafter\n    # x\nend");
+    assert!(
+        reason.contains(&format!(
+            "\nCriteria:\n  para\n  # h\n  after # x end\n{ANSWER}"
+        )),
+        "{reason}"
+    );
+
+    // No heading inside a fence or an HTML comment.
+    let reason = page("para\n```\n# x\n```\nafter");
+    assert!(
+        reason.contains(&format!("\nCriteria:\n  para ``` # x ``` after\n{ANSWER}")),
+        "{reason}"
+    );
+    let reason = page("para\n<!--\n# x\n-->\nafter");
+    assert!(
+        reason.contains(&format!("\nCriteria:\n  para <!-- # x --> after\n{ANSWER}")),
+        "{reason}"
+    );
+
+    // List items start a line; `1.x` does not.
+    let reason = page("intro\n- a\n- b\n* c\n1. d\n12. e\n2.x tail");
+    assert!(
+        reason.contains(&format!(
+            "\nCriteria:\n  intro\n  - a\n  - b\n  * c\n  1. d\n  12. e 2.x tail\n{ANSWER}"
+        )),
+        "{reason}"
+    );
+
+    // The diff form: only inserted and deleted logical lines, no count line.
+    set_section(dir, "ABC-1", "Spec", "one\n\ntwo");
+    for id in ["spec", "design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    let reason = page("one\n\nthree");
+    assert!(
+        reason.contains(&format!("\nCriteria:\n- two\n+ three\n{ANSWER}")),
         "{reason}"
     );
     assert!(!reason.contains("other lines"), "{reason}");
