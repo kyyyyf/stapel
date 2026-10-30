@@ -19,7 +19,15 @@ fn default_config_has_roles_and_sections() {
     let sections: Vec<&str> = config.sections.iter().map(|s| s.id.as_str()).collect();
     assert_eq!(
         sections,
-        ["spec", "design", "proof", "plan", "review", "summary"]
+        [
+            "description",
+            "spec",
+            "design",
+            "proof",
+            "plan",
+            "review",
+            "summary"
+        ]
     );
 
     let roles: Vec<&str> = config.models.keys().map(String::as_str).collect();
@@ -95,21 +103,21 @@ fn rejects_bad_sections() {
         (
             "build.requires",
             base.replace(
-                "requires = [\"spec\", \"design\", \"proof\"]",
+                "requires = [\"description\", \"spec\", \"design\", \"proof\"]",
                 "requires = []",
             ),
         ),
         (
             "build.requires",
             base.replace(
-                "requires = [\"spec\", \"design\", \"proof\"]",
+                "requires = [\"description\", \"spec\", \"design\", \"proof\"]",
                 "requires = [\"nope\"]",
             ),
         ),
         (
             "build.requires",
             base.replace(
-                "requires = [\"spec\", \"design\", \"proof\"]",
+                "requires = [\"description\", \"spec\", \"design\", \"proof\"]",
                 "requires = [\"review\"]",
             ),
         ),
@@ -120,15 +128,7 @@ fn rejects_bad_sections() {
         assert!(err.contains(word), "{word}: {err}");
     }
     // STP-25 AC-1: the title Description is accepted for the id description only.
-    let marker = "[[sections]]\nid = \"spec\"";
-    assert!(base.contains(marker), "starter config changed shape");
-    let with = base.replace(
-        marker,
-        &format!(
-            "[[sections]]\nid = \"description\"\ntitle = \"Description\"\nowner = \"product\"\n\n{marker}"
-        ),
-    );
-    let config = Config::parse(&with).unwrap();
+    let config = Config::parse(&base).unwrap();
     assert!(config.section("description").is_some());
 }
 
@@ -148,7 +148,7 @@ fn build_requires_defaults() {
     assert_eq!(config.build.requires, ["spec", "design", "proof"]);
     assert_eq!(
         Config::parse(&base).unwrap().build.requires,
-        ["spec", "design", "proof"]
+        ["description", "spec", "design", "proof"]
     );
 }
 

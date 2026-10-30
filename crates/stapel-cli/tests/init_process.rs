@@ -945,6 +945,25 @@ fn repo_root() -> &'static Path {
         .unwrap()
 }
 
+// STP-25 AC-1: this repository's config has the `description` section first and requires it.
+#[test]
+fn this_repository_confirms_the_description() {
+    let text = std::fs::read_to_string(repo_root().join(".stapel/stapel.toml")).unwrap();
+    let config = stapel_core::config::Config::parse(&text).unwrap();
+    let first = &config.sections[0];
+    assert_eq!(first.id, "description");
+    assert_eq!(first.title, "Description");
+    assert_eq!(first.owner, "product");
+    assert!(first.depends_on.is_empty());
+    for s in &config.sections {
+        assert!(!s.depends_on.iter().any(|d| d == "description"), "{}", s.id);
+    }
+    assert_eq!(
+        config.build.requires,
+        ["description", "spec", "design", "proof"]
+    );
+}
+
 // AC-18: a new repository with this repository's config gets process files equal to this repository's.
 #[test]
 fn this_repository_has_the_current_files() {

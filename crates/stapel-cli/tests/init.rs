@@ -13,6 +13,34 @@ fn key_of(dir: &std::path::Path) -> String {
         .key
 }
 
+// STP-25 AC-1: the template has the `description` section first, and `build.requires` names it.
+#[test]
+fn template_has_the_description_section() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let config = Config::parse(&read(dir, ".stapel/stapel.toml")).unwrap();
+    let first = &config.sections[0];
+    assert_eq!(first.id, "description");
+    assert_eq!(first.title, "Description");
+    assert_eq!(first.owner, "product");
+    assert!(first.depends_on.is_empty());
+    for s in &config.sections {
+        assert!(
+            !s.depends_on.iter().any(|d| d == "description"),
+            "{} depends on description",
+            s.id
+        );
+    }
+    assert_eq!(
+        config.build.requires,
+        ["description", "spec", "design", "proof"]
+    );
+}
+
 // AC-2
 #[test]
 fn creates_layout_in_empty_repo() {

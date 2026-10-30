@@ -86,7 +86,20 @@ pub fn stapel_repo() -> TempDir {
         .args(["init", "--prefix", "ABC"])
         .assert()
         .success();
+    drop_description_section(repo.path());
     repo
+}
+
+/// Removes the template's `description` entry and its `requires` item from the `stapel.toml` that
+/// `init` wrote, so the fixtures keep the old section list (STP-25 step 5).
+fn drop_description_section(dir: &Path) {
+    let path = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let entry = "[[sections]]\nid = \"description\"\ntitle = \"Description\"\nowner = \"product\"\n\n";
+    let text = text
+        .replacen(entry, "", 1)
+        .replacen("[\"description\", \"spec\"", "[\"spec\"", 1);
+    std::fs::write(&path, text).unwrap();
 }
 
 pub fn state_json(dir: &Path, key: &str) -> serde_json::Value {
