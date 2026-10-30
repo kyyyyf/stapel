@@ -118,6 +118,33 @@ fn stores_tracker_link() {
     );
 }
 
+// STP-25 AC-1 (E2-1): the shipped template puts the Tracker line under the one `## Description`.
+#[test]
+fn tracker_line_in_the_description_section() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    stapel(dir)
+        .args(["new", "--tracker", "https://example.com/T-1", "First"])
+        .assert()
+        .success();
+    let ticket = read(dir, ".stapel/tickets/ABC-1/ticket.md");
+    assert_eq!(
+        ticket.lines().filter(|l| *l == "## Description").count(),
+        1,
+        "{ticket}"
+    );
+    let description = ticket.split("## Description\n").nth(1).unwrap();
+    assert_eq!(
+        description.lines().find(|l| !l.is_empty()),
+        Some("Tracker: https://example.com/T-1"),
+        "{ticket}"
+    );
+}
+
 // STP-25 AC-1 (E2-2): an id `Description` in any case gives one `## Description`.
 #[test]
 fn description_id_without_case() {
