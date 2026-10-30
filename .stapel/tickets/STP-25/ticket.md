@@ -16,9 +16,8 @@ the skill sends the person to their own terminal.
 **Risk tags:** `guard` (the text and the grant of the guard's dialog), `interface` (a new section, a
 changed `next` action).
 
-**Non-goals.** The one-section form `stapel ok [KEY] <section>`; the human page in the person's language and
-the autonomy levels (phase 3); `stapel ship` (item 1.7); confirmations of closed tickets; the output of
-`stapel status`.
+**Non-goals.** The one-section form of `stapel ok`; the person's language and autonomy levels (phase 3);
+`stapel ship` (1.7); closed tickets; `stapel status` output.
 
 **Promise (closed list).**
 
@@ -33,8 +32,7 @@ the autonomy levels (phase 3); `stapel ship` (item 1.7); confirmations of closed
    `<id>: new, N lines` (`1 line` when N is 1); section lines past the tenth fold into one line.
 4. The terminal form of `stapel ok KEY` prints the whole page, without the limit, before its `confirmed:`
    lines.
-5. The grant binds the hash of `description` as it binds the other sections; an edit of the Frame or the
-   Decisions after the dialog voids the grant.
+5. The grant binds the hash of `description`; an edit of it after the dialog voids the grant.
 6. `stapel next` gives `close` with the command `stapel close KEY --reason "<text>"`; the skill text says
    the orchestrator runs it with a real reason and the person answers the dialog.
 
@@ -130,10 +128,10 @@ Terms:
 | AC-1 | WHEN `stapel init` writes a new `stapel.toml` THE first `[[sections]]` entry is `id = "description"`, `title = "Description"`, `owner = "product"` without `depends_on`, no section depends on it, and `[build] requires` is `["description", "spec", "design", "proof"]`; this repository's `.stapel/stapel.toml` has the same entry and `requires`; `Config::validate` accepts the title `Description` for the id `description` only. | `init::template_has_the_description_section`, `init_process::this_repository_confirms_the_description`, `config::rejects_bad_sections` |
 | AC-2 | WHEN the guard asks about `stapel ok KEY` THE dialog text is the dialog page of the Terms, and each waiting section has its section line (`<id>: new, 1 line`, `<id>: 2 lines changed (+1 -1)`, `<id>: unchanged`, each followed by `; depends on <id>, which changed` and the other suffixes of the Terms) in place of the STP-17 line with the short hash. | `ok_page::section_lines`, `ok_all::dialog_lists_every_waiting_section`, `ok_all::new_with_reasons_in_terminal_and_dialog`, `ok_all::new_never_shows_the_text_change`, `ok_all::dialog_counts_added_and_removed_apart`, `ok_all::dialog_shows_every_stale_reason` |
 | AC-3 | WHEN `spec` waits THE dialog page holds the Criteria part: every AC row whole, its Test cell included, for a Spec never confirmed with stored text, else only the rows added or removed since, then `spec, other lines: +a -b` when other Spec lines changed; IF the Spec has no AC row THEN the part holds the Spec's logical lines the same way. | `ok_page::criteria_new_and_changed`, `ok_page::criteria_without_rows` |
-| AC-4 | WHEN `description` is configured and waits THE dialog page holds the Frame part, every Description line outside `### Decisions` with the Source paragraph and other headings, and the Decisions part; IF the Description has no `### Decisions` THEN all of it is the Frame part; IF `stapel.toml` has no `description` section THEN neither part appears. | `ok_page::frame_and_decisions_new_and_changed`, `ok_page::description_without_headings`, `ok_page::config_without_description` |
-| AC-5 | WHEN the dialog page would hold more than 22 lines THE shown lines fill the space in the order Frame, Criteria, Decisions, a label only with at least one of its lines after it (so a page may hold 21 lines), and the overflow line stands before the answer line, so that the text holds 22 lines; more than ten waiting sections fold as the Terms say; every line is clean and cut at 100 characters, as the golden file `ok_page_dialog.txt`. | `ok_page::dialog_limit_and_cut`, `ok_page::dialog_exactly_at_the_limit`, `ok_page::many_waiting_sections` |
+| AC-4 | WHEN `description` is configured and waits THE dialog page holds the Frame part, every Description line outside `### Decisions` with the Source paragraph and other headings, and the Decisions part; IF the Description has no `### Decisions` THEN all of it is the Frame part; IF `stapel.toml` has no `description` section THEN neither part appears. | `ok_page::frame_and_decisions_new_and_changed`, `ok_page::description_without_headings`, `ok_page::config_without_description`, `ok_page::decisions_boundaries`, `ok_page::frame_and_decisions_diffs` |
+| AC-5 | WHEN the dialog page would hold more than 22 lines THE shown lines fill the space in the order Frame, Criteria, Decisions, a label only with at least one of its lines after it (so a page may hold 21 lines), and the overflow line stands before the answer line, so that the text holds 22 lines; more than ten waiting sections fold as the Terms say; every line is clean and cut at 100 characters, as the golden file `ok_page_dialog.txt`. | `ok_page::dialog_limit_and_cut`, `ok_page::dialog_exactly_at_the_limit`, `ok_page::many_waiting_sections`, `ok_page::cut_and_limit_boundaries` |
 | AC-6 | WHEN `stapel ok KEY` runs in a terminal or with a grant THE output is the `to confirm:` line, the label and clean shown lines of each part without the limit and the cut, the change blocks of the waiting sections other than `description` as before, then the `confirmed:` lines, as the golden files `ok_page_terminal.txt`, `ok_key_form.txt` and `ok_change_blocks.txt`. | `ok_page::terminal_prints_the_whole_page`, `ok_all::key_form_confirms_every_waiting_section`, `ok_all::change_block_for_each_kind` |
-| AC-7 | IF the Frame or the Decisions change after the dialog of `stapel ok KEY` THEN `stapel ok KEY --grant <token>` exits 1 with the text that the grant does not match and records nothing. | `ok_page::grant_binds_the_description` |
+| AC-7 | IF the Frame or the Decisions change after the dialog of `stapel ok KEY` THEN `stapel ok KEY --grant <token>` exits 1 with the text that the grant does not match and records nothing. | `ok_page::grant_binds_the_description`, `ok_page::grant_passes_when_unchanged` |
 | AC-8 | WHEN `stapel next` gives `close` THE target is the command `stapel close <KEY> --reason "<text>"`. | `next::close_at_the_end`, `next::review_and_summary_edges`, `next::json_after_the_build`, `next::no_plan_section_configured` |
 | AC-9 | WHEN `stapel init` writes the skill THE skill holds `They type no stapel command.`, ``- `close`: run the command that stapel next prints, with `<text>` replaced by one sentence of why the ticket is done; the person answers its permission dialog.`` and `stapel ok and stapel close run only as one plain command whose permission dialog the person answers.`, and no longer holds `the one exception is stapel close` or `stapel close is run by the person`. | `init_process::skill_text_runs_close_through_the_dialog`, `init_process::skill_text_is_consistent`, `init_process::texts_agree_on_close_lint_and_green_step` |
 | AC-10 | IF `description` is configured and the ticket has no `## Description` or two THEN the guard denies `stapel ok KEY` and the command exits 1, both with `section description (## Description) is missing in ticket.md` or `section description (## Description) appears more than once`, as for any section. | `ok_page::description_missing_or_twice` |
@@ -173,8 +171,12 @@ ok_all`, `--test next`, `--test init`, `--test init_process`); before each GREEN
 | At the limit | exactly 22 lines: no overflow line; one criteria line more: `… 1 more line (frame 0, criteria 1, decisions 0); all of them: stapel status ABC-1`, then the answer line; a `Decisions:` label with no room for a line: left out, its two lines give `decisions 2` | `ok_page::dialog_exactly_at_the_limit` |
 | Many sections | 12 waiting sections: ten lines, then `… 2 more waiting sections: s11, s12`; 11: `… 1 more waiting section: s11`; at most 22 lines | `ok_page::many_waiting_sections` |
 | Terminal | the same ticket in a terminal: the whole page without the cut, the control characters as spaces, then the change blocks of spec, design, proof and plan, then the `confirmed:` lines, equal to `ok_page_terminal.txt` | `ok_page::terminal_prints_the_whole_page` |
-| Old terminal goldens | `ok_key_form.txt` and `ok_change_blocks.txt` with the Criteria part of the fixture Spec | `ok_all::key_form_confirms_every_waiting_section`, `ok_all::change_block_for_each_kind` |
+| Old terminal goldens | `ok_change_blocks.txt` with the Criteria part of the fixture Spec; `ok_key_form.txt` unchanged, its Spec does not wait | `ok_all::key_form_confirms_every_waiting_section`, `ok_all::change_block_for_each_kind` |
 | Grant | the dialog, then a Frame edit; again, then a new Decisions line: exit 1, the mismatch text, `state.json` and `decisions.jsonl` unchanged | `ok_page::grant_binds_the_description` |
+| Decisions bounds | `## Next` after Decisions goes back to Frame; `#### sub` stays in Decisions; a fenced `### Decisions` is no heading; an empty `### Decisions` gives no label | `ok_page::decisions_boundaries` |
+| Frame and Decisions diffs | after a confirmation, a Frame line changed and a Decisions line removed: `+ `/`- `; a confirmation without stored text: `  ` | `ok_page::frame_and_decisions_diffs` |
+| Cut and limit bounds | a line of 100 characters stays whole, one of 101 is cut; a part ending with one free line gives a page of 21 lines | `ok_page::cut_and_limit_boundaries` |
+| Grant unchanged | the dialog, no edit: the grant confirms every waiting section | `ok_page::grant_passes_when_unchanged` |
 | Template | `stapel init` in an empty repository: the `description` entry first, no `depends_on` naming it, the `requires` of AC-1; the file parses | `init::template_has_the_description_section` |
 | Reserved title | the title `Description` for the id `design`: still refused; for the id `description`: accepted | `config::rejects_bad_sections` |
 | This repository | `.stapel/stapel.toml` here: the same entry and `requires` | `init_process::this_repository_confirms_the_description` |
@@ -312,10 +314,10 @@ the step order: each fails at its RED for its own behaviour and passes at its GR
 | AC-1 | `init::template_has_the_description_section`, `init_process::this_repository_confirms_the_description`, `config::rejects_bad_sections` |
 | AC-2 | `ok_page::section_lines`, `ok_all::dialog_lists_every_waiting_section`, `ok_all::new_with_reasons_in_terminal_and_dialog`, `ok_all::new_never_shows_the_text_change`, `ok_all::dialog_counts_added_and_removed_apart`, `ok_all::dialog_shows_every_stale_reason` |
 | AC-3 | `ok_page::criteria_new_and_changed`, `ok_page::criteria_without_rows` |
-| AC-4 | `ok_page::frame_and_decisions_new_and_changed`, `ok_page::description_without_headings`, `ok_page::config_without_description` |
-| AC-5 | `ok_page::dialog_limit_and_cut`, `ok_page::dialog_exactly_at_the_limit`, `ok_page::many_waiting_sections` |
+| AC-4 | `ok_page::frame_and_decisions_new_and_changed`, `ok_page::description_without_headings`, `ok_page::config_without_description`, `ok_page::decisions_boundaries`, `ok_page::frame_and_decisions_diffs` |
+| AC-5 | `ok_page::dialog_limit_and_cut`, `ok_page::dialog_exactly_at_the_limit`, `ok_page::many_waiting_sections`, `ok_page::cut_and_limit_boundaries` |
 | AC-6 | `ok_page::terminal_prints_the_whole_page`, `ok_all::key_form_confirms_every_waiting_section`, `ok_all::change_block_for_each_kind` |
-| AC-7 | `ok_page::grant_binds_the_description` |
+| AC-7 | `ok_page::grant_binds_the_description`, `ok_page::grant_passes_when_unchanged` |
 | AC-8 | `next::close_at_the_end`, `next::review_and_summary_edges`, `next::json_after_the_build`, `next::no_plan_section_configured` |
 | AC-9 | `init_process::skill_text_runs_close_through_the_dialog`, `init_process::skill_text_is_consistent`, `init_process::texts_agree_on_close_lint_and_green_step` |
 | AC-10 | `ok_page::description_missing_or_twice` |
@@ -348,10 +350,9 @@ Route: full (tags `guard`, `interface`), auto.
 3c. Fix (AC-3, AC-4; tests `ok_page::criteria_new_and_changed`,
    `ok_page::frame_and_decisions_new_and_changed`): RED: a Spec whose rows all went shows them as `- `;
    `### decisions` is no heading. GREEN: `page.rs`.
-3d. Coverage, no GREEN (AC-4, AC-5; tests `ok_page::description_without_headings`,
-   `ok_page::dialog_exactly_at_the_limit`): Decisions ends at `## Next`, keeps `#### sub`; a fenced
-   `### Decisions`; Frame and Decisions diffs; no stored text; empty Decisions; 100, 101 characters; 21
-   lines.
+3d. Coverage, no GREEN (AC-4, AC-5, AC-7; tests `ok_page::decisions_boundaries`,
+   `ok_page::frame_and_decisions_diffs`, `ok_page::cut_and_limit_boundaries`,
+   `ok_page::grant_passes_when_unchanged`): new functions only, as the Test plan rows say.
 4. The terminal page (AC-6; tests `ok_page::terminal_prints_the_whole_page`,
    `ok_all::change_block_for_each_kind`): the RED adds `ok_page_terminal.txt` and changes
    `ok_change_blocks.txt` so that the tests fail there. Must not change: the one-section output;
