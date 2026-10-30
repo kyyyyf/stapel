@@ -84,6 +84,16 @@ pub fn dialog_page(config: &Config, key: &str, program: &str, waiting: &[Prepare
                 .join(", ")
         ));
     }
+    let description = waiting
+        .iter()
+        .find(|p| p.section.eq_ignore_ascii_case("description"))
+        .map(description_parts);
+    if let Some((frame, _)) = &description
+        && !frame.is_empty()
+    {
+        lines.push("Frame:".into());
+        lines.extend(frame.iter().cloned());
+    }
     for p in waiting
         .iter()
         .filter(|p| p.section.eq_ignore_ascii_case("spec"))
@@ -94,6 +104,12 @@ pub fn dialog_page(config: &Config, key: &str, program: &str, waiting: &[Prepare
             lines.extend(part);
         }
     }
+    if let Some((_, decisions)) = &description
+        && !decisions.is_empty()
+    {
+        lines.push("Decisions:".into());
+        lines.extend(decisions.iter().cloned());
+    }
     lines.push("Answer Yes or No; do not choose \"don't ask again\".".into());
     lines.join("\n")
 }
@@ -102,6 +118,11 @@ pub fn dialog_page(config: &Config, key: &str, program: &str, waiting: &[Prepare
 /// paragraph or list item is joined by spaces, a blank line, a heading or a row ends it, and a
 /// heading is a line of its own. Rows and headings in fences or HTML comments are plain text.
 pub fn spec_lines(text: &str) -> (Vec<String>, Vec<String>) {
+    logical_lines(text, true)
+}
+
+/// The logical lines of `spec_lines`; without `with_rows` an AC row is an ordinary line.
+fn logical_lines(text: &str, with_rows: bool) -> (Vec<String>, Vec<String>) {
     let (mut rows, mut out) = (Vec::new(), Vec::new());
     let mut cur: Vec<String> = Vec::new();
     let flush = |cur: &mut Vec<String>, out: &mut Vec<String>| {
@@ -122,7 +143,7 @@ pub fn spec_lines(text: &str) -> (Vec<String>, Vec<String>) {
         } else if s.heading.is_some() {
             flush(&mut cur, &mut out);
             out.push(line.to_string());
-        } else if !s.in_block && row_number(line).is_some() {
+        } else if with_rows && !s.in_block && row_number(line).is_some() {
             flush(&mut cur, &mut out);
             rows.push(line.to_string());
         } else {
@@ -186,4 +207,46 @@ fn criteria_part(p: &Prepared) -> Vec<String> {
         shown.push(format!("spec, other lines: +{a} -{r}"));
     }
     shown
+}
+
+/// A Description split into the lines outside `### Decisions` (the Frame part) and the lines
+/// under it, up to the next heading of level 3 or less; the `### Decisions` line is dropped.
+fn split_description(text: &str) -> (String, String) {
+    let (mut frame, mut decisions) = (Vec::new(), Vec::new());
+    let mut in_decisions = false;
+    for s in scan(text) {
+        match &s.heading {
+            Some((3, title)) if title.eq_ignore_ascii_case("Decisions") => {
+                in_decisions = true;
+                continue;
+            }
+            Some((level, _)) if *level <= 3 => in_decisions = false,
+            _ => {}
+        }
+        if in_decisions {
+            decisions.push(s.line);
+        } else {
+            frame.push(s.line);
+        }
+    }
+    (frame.join("\n"), decisions.join("\n"))
+}
+
+/// The shown lines of the Frame part and of the Decisions part of a waiting Description.
+fn description_parts(p: &Prepared) -> (Vec<String>, Vec<String>) {
+    let old = latest(&p.state, &p.section)
+        .and_then(|c| c.text.as_deref())
+        .map(split_description);
+    let (frame, decisions) = split_description(&p.text);
+    let show = |old: Option<&String>, new: &String| {
+        let new = logical_lines(new, false).1;
+        match old {
+            None => new.iter().map(|l| format!("  {l}")).collect(),
+            Some(old) => diff_lines(&logical_lines(old, false).1, &new).0,
+        }
+    };
+    (
+        show(old.as_ref().map(|o| &o.0), &frame),
+        show(old.as_ref().map(|o| &o.1), &decisions),
+    )
 }
