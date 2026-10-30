@@ -7,6 +7,11 @@ key = "@PREFIX@-{n}"
 # Sections of ticket.md in order. depends_on: a change in these sections makes a confirmation of this
 # one stale.
 [[sections]]
+id = "description"
+title = "Description"
+owner = "product"
+
+[[sections]]
 id = "spec"
 title = "Spec"
 owner = "product"
@@ -50,7 +55,7 @@ cheap    = { provider = "claude-code", model = "claude-haiku-4-5" }
 
 # Sections whose fresh confirmations together permit code writes.
 [build]
-requires = ["spec", "design", "proof"]
+requires = ["description", "spec", "design", "proof"]
 
 # Write guard: agents may always change these paths; the rest only while a build is allowed.
 [guard]
