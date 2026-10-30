@@ -31,3 +31,4 @@
 {"v":1,"id":"d-6c96e42a3695","at":"2026-10-30T14:48:14Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:71964728d79103ce0545665d4224a49daa48a12e2e9a6c1aedc8e5ad463d3c8e","via":"grant"}
 {"v":1,"id":"d-314497125078","at":"2026-10-30T14:48:14Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:019d051af2895f14ef91dd5a05644c60dd1a9ae2fe8a54c0f2c8fcea6c22d69c","via":"grant"}
 {"v":1,"id":"d-f80a6b0fec5b","at":"2026-10-30T14:48:14Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:0b6de2f3d62abe4dff56fb00df85b459c1fd2038d9660b742763a3d98f06acb7","via":"grant"}
+{"v":1,"id":"d-512026efb24a","at":"2026-10-30T15:36:42Z","by":"kyyyyf","action":"close","reason":"The dialog of stapel ok shows a 22-line page of the Frame, criteria and Decisions, the grant binds the Description, close runs through the dialog; check passes after two code review rounds."}
