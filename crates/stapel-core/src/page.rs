@@ -88,21 +88,7 @@ pub fn dialog_page(config: &Config, key: &str, program: &str, waiting: &[Prepare
                 .join(", ")
         ));
     }
-    let description = waiting
-        .iter()
-        .find(|p| p.section.eq_ignore_ascii_case("description"))
-        .map(description_parts);
-    let (frame, decisions) = description.unwrap_or_default();
-    let criteria: Vec<String> = waiting
-        .iter()
-        .filter(|p| p.section.eq_ignore_ascii_case("spec"))
-        .flat_map(criteria_part)
-        .collect();
-    let parts = [
-        ("Frame:", frame),
-        ("Criteria:", criteria),
-        ("Decisions:", decisions),
-    ];
+    let parts = parts(waiting);
     let total: usize = parts
         .iter()
         .filter(|(_, l)| !l.is_empty())
@@ -150,6 +136,44 @@ pub fn dialog_page(config: &Config, key: &str, program: &str, waiting: &[Prepare
         .map(|l| clean_cut(l))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The Frame, Criteria and Decisions parts of the waiting sections, each with its label.
+fn parts(waiting: &[Prepared]) -> [(&'static str, Vec<String>); 3] {
+    let description = waiting
+        .iter()
+        .find(|p| p.section.eq_ignore_ascii_case("description"))
+        .map(description_parts);
+    let (frame, decisions) = description.unwrap_or_default();
+    let criteria: Vec<String> = waiting
+        .iter()
+        .filter(|p| p.section.eq_ignore_ascii_case("spec"))
+        .flat_map(criteria_part)
+        .collect();
+    [
+        ("Frame:", frame),
+        ("Criteria:", criteria),
+        ("Decisions:", decisions),
+    ]
+}
+
+/// The terminal page: the label and the clean shown lines of each part, no limit and no cut;
+/// every line ends with a newline.
+pub fn terminal_page(waiting: &[Prepared]) -> String {
+    let clean = |l: &str| -> String { l.chars().map(|c| if c.is_control() { ' ' } else { c }).collect() };
+    let mut out = String::new();
+    for (label, part) in parts(waiting) {
+        if part.is_empty() {
+            continue;
+        }
+        out.push_str(label);
+        out.push('\n');
+        for line in &part {
+            out.push_str(&clean(line));
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// A page line with each control character as one space, cut to 99 characters and `…` when

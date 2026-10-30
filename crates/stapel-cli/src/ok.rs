@@ -141,7 +141,11 @@ fn run_key(key: &str, grant: Option<&str>) -> Result<(), String> {
             .collect::<Vec<_>>()
             .join(", ")
     );
-    for p in &waiting {
+    say_raw!("{}", stapel_core::page::terminal_page(&waiting));
+    for p in waiting
+        .iter()
+        .filter(|p| !p.section.eq_ignore_ascii_case("description"))
+    {
         say_raw!("{}", change_block(&config, p));
     }
     let at = now_rfc3339();
