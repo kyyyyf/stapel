@@ -339,9 +339,11 @@ Route: full (tags `guard`, `interface`), auto.
    reads lines, headings and rows by the rules of `ticket::parse`, with no second copy. Must not change: 1.
 2b. Frame and Decisions in the dialog (AC-4; tests `ok_page::frame_and_decisions_new_and_changed`,
    `ok_page::description_without_headings`). Must not change: 1, 2.
-3. The limit, the folding and the cut (AC-5; tests `ok_page::dialog_limit_and_cut`,
-   `ok_page::dialog_exactly_at_the_limit`, `ok_page::many_waiting_sections`); the golden file comes with
-   the RED. Must not change: steps 1 to 2b below the limit.
+3. The limit and the cut (AC-5; tests `ok_page::dialog_limit_and_cut`,
+   `ok_page::dialog_exactly_at_the_limit`); the golden file comes with the RED. Must not change: steps 1
+   to 2b below the limit.
+3b. Coverage, no GREEN (AC-5; test `ok_page::many_waiting_sections`): the fold past ten sections came
+   with step 1, so the test passes at once.
 4. The terminal page (AC-6; tests `ok_page::terminal_prints_the_whole_page`,
    `ok_all::key_form_confirms_every_waiting_section`, `ok_all::change_block_for_each_kind`): the RED adds
    `ok_page_terminal.txt` and changes `ok_key_form.txt` and `ok_change_blocks.txt` so that the tests fail
