@@ -11,6 +11,10 @@ use similar::{ChangeTag, TextDiff};
 /// Section lines shown before the rest fold into one line.
 const MAX_SECTION_LINES: usize = 10;
 
+/// Lines of the dialog page, and characters of one line.
+const MAX_PAGE_LINES: usize = 22;
+const MAX_LINE_CHARS: usize = 100;
+
 /// `1 line` for one, `<N> lines` otherwise.
 pub fn count(n: usize, unit: &str) -> String {
     if n == 1 {
@@ -88,30 +92,81 @@ pub fn dialog_page(config: &Config, key: &str, program: &str, waiting: &[Prepare
         .iter()
         .find(|p| p.section.eq_ignore_ascii_case("description"))
         .map(description_parts);
-    if let Some((frame, _)) = &description
-        && !frame.is_empty()
-    {
-        lines.push("Frame:".into());
-        lines.extend(frame.iter().cloned());
-    }
-    for p in waiting
+    let (frame, decisions) = description.unwrap_or_default();
+    let criteria: Vec<String> = waiting
         .iter()
         .filter(|p| p.section.eq_ignore_ascii_case("spec"))
-    {
-        let part = criteria_part(p);
-        if !part.is_empty() {
-            lines.push("Criteria:".into());
-            lines.extend(part);
+        .flat_map(criteria_part)
+        .collect();
+    let parts = [
+        ("Frame:", frame),
+        ("Criteria:", criteria),
+        ("Decisions:", decisions),
+    ];
+    let total: usize = parts
+        .iter()
+        .filter(|(_, l)| !l.is_empty())
+        .map(|(_, l)| l.len() + 1)
+        .sum();
+    // The answer line is always last; the page holds `MAX_PAGE_LINES` lines.
+    let room = MAX_PAGE_LINES.saturating_sub(lines.len() + 1);
+    if total <= room {
+        for (label, part) in &parts {
+            if !part.is_empty() {
+                lines.push((*label).into());
+                lines.extend(part.iter().cloned());
+            }
         }
-    }
-    if let Some((_, decisions)) = &description
-        && !decisions.is_empty()
-    {
-        lines.push("Decisions:".into());
-        lines.extend(decisions.iter().cloned());
+    } else {
+        let mut room = room.saturating_sub(1);
+        let mut hidden = Vec::new();
+        for (label, part) in &parts {
+            let take = if room >= 2 {
+                part.len().min(room - 1)
+            } else {
+                0
+            };
+            if take > 0 {
+                lines.push((*label).into());
+                lines.extend(part[..take].iter().cloned());
+                room -= take + 1;
+            }
+            hidden.push(part.len() - take);
+        }
+        lines.push(format!(
+            "… {} (frame {}, criteria {}, decisions {}); all of them: stapel status {key}",
+            match hidden.iter().sum::<usize>() {
+                1 => "1 more line".to_string(),
+                n => format!("{n} more lines"),
+            },
+            hidden[0],
+            hidden[1],
+            hidden[2]
+        ));
     }
     lines.push("Answer Yes or No; do not choose \"don't ask again\".".into());
-    lines.join("\n")
+    lines
+        .iter()
+        .map(|l| clean_cut(l))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A page line with each control character as one space, cut to 99 characters and `…` when
+/// longer than 100.
+fn clean_cut(line: &str) -> String {
+    let flat: String = line
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    if flat.chars().count() > MAX_LINE_CHARS {
+        format!(
+            "{}…",
+            flat.chars().take(MAX_LINE_CHARS - 1).collect::<String>()
+        )
+    } else {
+        flat
+    }
 }
 
 /// The AC rows and the other logical lines of a Spec, read as `ticket::parse` reads lines: a
