@@ -1649,7 +1649,7 @@ fn close_at_the_end() {
     set_section(dir, "ABC-1", "Review", "Reviewed: no findings.");
     set_section(dir, "ABC-1", "Summary", "Done.");
     commit(dir, &[], "ABC-1: review and summary");
-    assert_eq!(action(dir), "next: close — stapel close ABC-1");
+    assert_eq!(action(dir), "next: close — stapel close ABC-1 --reason \"<text>\"");
     assert!(facts(dir).is_empty());
 
     // With `[check]`: the commit of Review and Summary makes the record stale, so the check runs
@@ -1662,7 +1662,7 @@ fn close_at_the_end() {
     let head = commit(dir, &[], "ABC-1: review and summary");
     assert_eq!(action(dir), "next: run-check — stapel check ABC-1");
     record(dir, &head, "pass");
-    assert_eq!(action(dir), "next: close — stapel close ABC-1");
+    assert_eq!(action(dir), "next: close — stapel close ABC-1 --reason \"<text>\"");
 }
 
 // AC-1: a run of the command changes nothing, at the `confirm`, `build-step` and `run-check` stages.
@@ -1741,7 +1741,7 @@ fn review_and_summary_edges() {
     std::fs::write(&toml, cut).unwrap();
     commit(dir, &[], "ABC-1: config");
     assert!(facts(dir).is_empty(), "{:?}", facts(dir));
-    assert_eq!(action(dir), "next: close — stapel close ABC-1");
+    assert_eq!(action(dir), "next: close — stapel close ABC-1 --reason \"<text>\"");
 
     // Review `TODO` with Summary written.
     let (repo, _, _) = done(false);
@@ -1859,7 +1859,7 @@ fn json_after_the_build() {
     assert_eq!(
         one_line(dir),
         "{\"v\":1,\"ticket\":\"ABC-1\",\"action\":\"close\",\"subject\":null,\
-         \"command\":\"stapel close ABC-1\",\"path\":null,\"facts\":[]}\n"
+         \"command\":\"stapel close ABC-1 --reason \\\"<text>\\\"\",\"path\":null,\"facts\":[]}\n"
     );
 }
 
@@ -2129,7 +2129,7 @@ fn no_plan_section_configured() {
     let head = commit(dir, &[], "ABC-1: config, review and summary");
     record(dir, &head, "pass");
     assert!(facts(dir).is_empty(), "{:?}", facts(dir));
-    assert_eq!(action(dir), "next: close — stapel close ABC-1");
+    assert_eq!(action(dir), "next: close — stapel close ABC-1 --reason \"<text>\"");
 }
 
 // AC-21 and AC-14: an open RED gives `green-step` although no `plan` section is configured.

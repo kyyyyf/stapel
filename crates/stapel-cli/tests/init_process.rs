@@ -852,7 +852,7 @@ fn skill_text_is_consistent() {
     let flat = collapsed(&body_of(dir, SKILL));
     for sentence in [
         "An untagged ticket gets the ticket lint and one stapel-reviewer; a tagged ticket gets stapel-reviewer, an external reviewer, and stapel-drift after each GREEN step that touches a criterion.",
-        "stapel ok runs only as one plain command whose permission dialog the person answers; stapel close is run by the person.",
+        "stapel ok and stapel close run only as one plain command whose permission dialog the person answers.",
         "During the build you do not read the brief; before the spec review you run stapel brief only to check each step's size.",
         "A ticket tagged guard or security has an Abuse table: each attempt of a careless agent and its outcome.",
     ] {
@@ -1106,6 +1106,28 @@ fn builder_text_for_green_step() {
     assert!(!flat.contains("Run only the test command"));
 }
 
+// STP-25 AC-9: the orchestrator closes through the permission dialog.
+#[test]
+fn skill_text_runs_close_through_the_dialog() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let flat = collapsed(&body_of(dir, SKILL));
+    for sentence in [
+        "They type no stapel command.",
+        "- `close`: run the command that stapel next prints, with `<text>` replaced by one sentence of why the ticket is done; the person answers its permission dialog.",
+        "stapel ok and stapel close run only as one plain command whose permission dialog the person answers.",
+    ] {
+        assert!(flat.contains(sentence), "missing {sentence:?}");
+    }
+    for old in [
+        "the one exception is stapel close",
+        "stapel close is run by the person",
+    ] {
+        assert!(!flat.contains(old), "old sentence {old:?} is still there");
+    }
+}
+
 // AC-25: the skill and the builder agree on the close rule, the ticket lint and the green-step line.
 #[test]
 fn texts_agree_on_close_lint_and_green_step() {
@@ -1114,7 +1136,7 @@ fn texts_agree_on_close_lint_and_green_step() {
     init_in(dir);
     let skill = collapsed(&body_of(dir, SKILL));
     for sentence in [
-        "They type no stapel command; the one exception is stapel close, which the person runs in their own terminal until it goes through a permission dialog.",
+        "They type no stapel command.",
         "The ticket lint fails when a ticket names a test that does not exist, a test exists that no ticket names, a criterion quotes an output line that is not in the code, a ticket names a missing path, a tagged ticket lacks its tables or a dated self-check, a ticket tagged guard or security lacks its Abuse table, the test lists of criteria, Test plan and Proof disagree, or a CLI option is in no Inputs table.",
         "The builder runs the ticket lint before each commit.",
     ] {
