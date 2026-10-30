@@ -672,3 +672,180 @@ fn description_missing_or_twice() {
         assert_eq!(std::fs::read(&state).unwrap_or_default(), before);
     }
 }
+
+#[test]
+fn decisions_boundaries() {
+    let page = |description: &str| {
+        let repo = repo_with_ticket();
+        let dir = repo.path();
+        add_description_section(dir);
+        set_section(dir, "ABC-1", "Description", description);
+        ask(dir, "stapel ok ABC-1").0
+    };
+
+    // A heading of level 3 after Decisions goes back to Frame; `#### sub` stays in Decisions.
+    let reason = page(
+        "Source.\n\n### Decisions\n\n- d1\n\n#### sub\n\n- d2\n\n### Next\n\nback in frame",
+    );
+    assert!(
+        reason.contains(&format!(
+            "\nFrame:\n  Source.\n  ### Next\n  back in frame\nCriteria:\n  The spec.\n\
+             Decisions:\n  - d1\n  #### sub\n  - d2\n{ANSWER}"
+        )),
+        "{reason}"
+    );
+
+    // A heading of level 2 ends the Description: its text is no part of the page.
+    let reason = page("Source.\n\n### Decisions\n\n- d1\n\n## Next\n\nafter the section");
+    assert!(
+        reason.contains(&format!("\nDecisions:\n  - d1\n{ANSWER}")),
+        "{reason}"
+    );
+    assert!(!reason.contains("after the section"), "{reason}");
+
+    // A fenced `### Decisions` is no heading: no Decisions label, the lines stay in Frame.
+    let reason = page("Source.\n\n```\n### Decisions\n- fenced\n```");
+    assert!(!reason.contains("Decisions:"), "{reason}");
+    assert!(
+        reason.contains("\nFrame:\n  Source.\n  ``` ### Decisions - fenced ```\nCriteria:\n"),
+        "{reason}"
+    );
+
+    // An empty `### Decisions` gives no label.
+    let reason = page("Source.\n\n### Decisions\n");
+    assert!(!reason.contains("Decisions:"), "{reason}");
+    assert!(
+        reason.contains(&format!("\nFrame:\n  Source.\nCriteria:\n  The spec.\n{ANSWER}")),
+        "{reason}"
+    );
+}
+
+#[test]
+fn frame_and_decisions_diffs() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    add_description_section(dir);
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "Source.\n\n### Frame\n\nframe one\n\n### Decisions\n\n- d1\n- d2",
+    );
+    for id in ["description", "spec", "design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+
+    // A Frame line changed and a Decisions line removed: `+ ` and `- `.
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "Source.\n\n### Frame\n\nframe two\n\n### Decisions\n\n- d1",
+    );
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains(&format!(
+            "\nFrame:\n- frame one\n+ frame two\nDecisions:\n- - d2\n{ANSWER}"
+        )),
+        "{reason}"
+    );
+    assert!(!reason.contains("Criteria:"), "{reason}");
+
+    // A confirmation without stored text: every line with two spaces.
+    let path = dir.join(".stapel/tickets/ABC-1/state.json");
+    let mut state = state_json(dir, "ABC-1");
+    for c in state["confirmations"].as_array_mut().unwrap() {
+        if c["section"] == "description" {
+            c.as_object_mut().unwrap().remove("text");
+        }
+    }
+    std::fs::write(path, state.to_string()).unwrap();
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains(&format!(
+            "\nFrame:\n  Source.\n  ### Frame\n  frame two\nDecisions:\n  - d1\n{ANSWER}"
+        )),
+        "{reason}"
+    );
+    assert!(!reason.contains("\n- "), "{reason}");
+}
+
+#[test]
+fn cut_and_limit_boundaries() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    independent_sections(dir);
+    for id in ["design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+
+    // A dialog line of 100 characters stays whole, one of 101 is cut to 99 and `…`.
+    let hundred = "x".repeat(98);
+    let over = "y".repeat(99);
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        &format!("{hundred}\n\n{over}"),
+    );
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let lines: Vec<&str> = reason.lines().collect();
+    assert!(lines.contains(&format!("  {hundred}").as_str()), "{reason}");
+    assert_eq!(lines.iter().filter(|l| l.chars().count() == 100).count(), 2);
+    let cut = format!("  {}…", "y".repeat(97));
+    assert!(lines.contains(&cut.as_str()), "{reason}");
+    assert!(!reason.contains(&over), "{reason}");
+
+    // Frame ends with 15 lines and Criteria has three shown lines (two rows, the old Spec line
+    // counted as other lines): the overflow line takes one of the two free lines, the Criteria
+    // label has no line after it, so the page holds 21 lines.
+    confirm(dir, "spec");
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| AC-1 | one | `t::a` |\n| AC-2 | two | `t::b` |",
+    );
+    set_section(dir, "ABC-1", "Description", &items("f", 15));
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert_eq!(reason.lines().count(), 21, "{reason}");
+    assert!(
+        reason.ends_with(&format!(
+            "\n  - f15\n… 3 more lines (frame 0, criteria 3, decisions 0); all of them: stapel \
+             status ABC-1\n{ANSWER}"
+        )),
+        "{reason}"
+    );
+    assert!(!reason.contains("Criteria:"), "{reason}");
+}
+
+#[test]
+fn grant_passes_when_unchanged() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    add_description_section(dir);
+    set_section(dir, "ABC-1", "Description", "Source.\n\n### Decisions\n\n- d1");
+    let (_, replaced) = ask(dir, "stapel ok ABC-1");
+    let out = stapel(dir)
+        .args(["ok", "ABC-1", "--grant", &common::token_of(&replaced)])
+        .env("CLAUDECODE", "1")
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    for id in ["description", "spec", "design", "proof", "plan"] {
+        assert!(
+            stdout.contains(&format!("confirmed: ABC-1 {id} (")),
+            "{stdout}"
+        );
+    }
+    let state = state_json(dir, "ABC-1");
+    let confirmed: Vec<&str> = state["confirmations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["section"].as_str().unwrap())
+        .collect();
+    for id in ["description", "spec", "design", "proof", "plan"] {
+        assert!(confirmed.contains(&id), "{id} missing in {confirmed:?}");
+    }
+}
