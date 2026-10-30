@@ -290,3 +290,86 @@ fn criteria_without_rows() {
     );
     assert!(!reason.contains("other lines"), "{reason}");
 }
+
+/// Inserts the template's `description` entry as the first `[[sections]]` entry.
+fn add_description_section(dir: &Path) {
+    let path = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let at = text.find("[[sections]]").unwrap();
+    let entry = "[[sections]]\nid = \"description\"\ntitle = \"Description\"\nowner = \"product\"\n\n";
+    std::fs::write(&path, format!("{}{entry}{}", &text[..at], &text[at..])).unwrap();
+}
+
+#[test]
+fn frame_and_decisions_new_and_changed() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    add_description_section(dir);
+    let body = "Source: the chat.\n\n### Frame\n\n**Problem.** It hurts\nover two lines.\n\n\
+                - first item\n- second item\n\n### Decisions\n\n- decide one\n- decide two";
+    set_section(dir, "ABC-1", "Description", body);
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains(&format!(
+            "\nFrame:\n  Source: the chat.\n  ### Frame\n  **Problem.** It hurts over two lines.\n  \
+             - first item\n  - second item\nCriteria:\n  The spec.\n\
+             Decisions:\n  - decide one\n  - decide two\n{ANSWER}"
+        )),
+        "{reason}"
+    );
+
+    // After a confirmation, one Decisions item added: only that item, no Frame part.
+    for id in ["description", "spec", "design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        &format!("{body}\n- decide three"),
+    );
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains(&format!("\nDecisions:\n+ - decide three\n{ANSWER}")),
+        "{reason}"
+    );
+    assert!(!reason.contains("Frame:"), "{reason}");
+}
+
+#[test]
+fn description_without_headings() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    add_description_section(dir);
+
+    // No `### Frame`: every line outside `### Decisions` is the Frame part.
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "Plain paragraph\nwrapped.\n\n- an item\n\n### Decisions\n\n- d1",
+    );
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains("\nFrame:\n  Plain paragraph wrapped.\n  - an item\nCriteria:\n"),
+        "{reason}"
+    );
+    assert!(
+        reason.contains(&format!("\nDecisions:\n  - d1\n{ANSWER}")),
+        "{reason}"
+    );
+
+    // No `### Decisions`: all of it is the Frame part, and no Decisions label.
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "Plain paragraph.\n\n### Frame\n\nframe text",
+    );
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains("\nFrame:\n  Plain paragraph.\n  ### Frame\n  frame text\nCriteria:\n"),
+        "{reason}"
+    );
+    assert!(!reason.contains("Decisions:"), "{reason}");
+}
