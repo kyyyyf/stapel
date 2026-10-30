@@ -586,3 +586,89 @@ fn terminal_prints_the_whole_page() {
     .unwrap();
     assert_eq!(normalized, golden);
 }
+
+#[test]
+fn grant_binds_the_description() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    add_description_section(dir);
+    set_section(dir, "ABC-1", "Description", "Source.\n\n### Decisions\n\n- d1");
+    let decisions = dir.join(".stapel/tickets/ABC-1/decisions.jsonl");
+    let state = dir.join(".stapel/tickets/ABC-1/state.json");
+    let files = || {
+        (
+            std::fs::read(&state).unwrap_or_default(),
+            std::fs::read(&decisions).unwrap_or_default(),
+        )
+    };
+    let grant_fails = |token: &str| {
+        let before = files();
+        stapel(dir)
+            .args(["ok", "ABC-1", "--grant", token])
+            .env("CLAUDECODE", "1")
+            .assert()
+            .code(1)
+            .stderr(predicates::str::contains("the grant does not match"));
+        assert_eq!(files(), before);
+    };
+
+    // A Frame edit after the dialog.
+    let (_, replaced) = ask(dir, "stapel ok ABC-1");
+    set_section(dir, "ABC-1", "Description", "Source, edited.\n\n### Decisions\n\n- d1");
+    grant_fails(&common::token_of(&replaced));
+
+    // A new Decisions line after the dialog.
+    let (_, replaced) = ask(dir, "stapel ok ABC-1");
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "Source, edited.\n\n### Decisions\n\n- d1\n- d2",
+    );
+    grant_fails(&common::token_of(&replaced));
+}
+
+#[test]
+fn config_without_description() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Description", "Source text.\n\n### Decisions\n\n- d1");
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(reason.contains("\nCriteria:\n  The spec.\n"), "{reason}");
+    assert!(!reason.contains("Frame:"), "{reason}");
+    assert!(!reason.contains("Decisions:"), "{reason}");
+    assert!(!reason.contains("Source text"), "{reason}");
+}
+
+#[test]
+fn description_missing_or_twice() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    add_description_section(dir);
+    let path = dir.join(".stapel/tickets/ABC-1/ticket.md");
+    let original = std::fs::read_to_string(&path).unwrap();
+    let cases = [
+        (
+            original.replace("## Description\n", "## Notes\n"),
+            "section description (## Description) is missing in ticket.md",
+        ),
+        (
+            format!("{original}\n## Description\n\nagain\n"),
+            "section description (## Description) appears more than once",
+        ),
+    ];
+    for (text, reason) in cases {
+        std::fs::write(&path, text).unwrap();
+        let state = dir.join(".stapel/tickets/ABC-1/state.json");
+        let before = std::fs::read(&state).unwrap_or_default();
+        common::hook_bash(dir, "stapel ok ABC-1", "auto")
+            .code(2)
+            .stderr(predicates::str::contains(reason));
+        stapel(dir)
+            .args(["ok", "ABC-1"])
+            .assert()
+            .code(1)
+            .stderr(predicates::str::contains(reason));
+        assert_eq!(std::fs::read(&state).unwrap_or_default(), before);
+    }
+}
