@@ -282,8 +282,9 @@ spec of the next item may be written in a second worktree while the current tick
   STP-12). The merge stays with the person in the forge; `close` follows the merge.
 - 1.8 one dialog per ticket: `stapel ok KEY` shows the human page (the Frame, the criteria, the Decisions
   lines, with their diff since the last confirmation) and confirms every section; Design, Proof and Plan
-  appear as one line each (`design: 42 lines changed`), in full only with `--full`; `stapel close` through
-  the dialog with its grant, as `ok` (today it needs the person's terminal).
+  appear as one line each (`design: 42 lines changed`); `stapel close` through the dialog with its grant,
+  as `ok` (today it needs the person's terminal). Narrowed on 2026-10-30 (ledger, STP-25): no `--full`;
+  the dialog holds a short page of at most 22 lines, the terminal form the whole page.
 - 1.9 the guard denies Bash commands that write into `crates/` (label STP-20, text in the phase-0 list).
 - 1.10 the guard denies a compound command, a pipe or a redirection that holds a confirm or record command
   (label STP-21). Taken with 1.9 as one guard ticket (ledger 2026-10-22).
