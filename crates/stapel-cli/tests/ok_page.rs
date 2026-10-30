@@ -373,3 +373,99 @@ fn description_without_headings() {
     );
     assert!(!reason.contains("Decisions:"), "{reason}");
 }
+
+/// Drops every `depends_on` line of `.stapel/stapel.toml`, so a changed Spec makes no other
+/// section stale, and adds the `description` section.
+fn independent_sections(dir: &Path) {
+    let path = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.starts_with("depends_on"))
+        .collect();
+    std::fs::write(&path, kept.join("\n") + "\n").unwrap();
+    add_description_section(dir);
+}
+
+/// `- <prefix>01` to `- <prefix>NN`, one list item per line.
+fn items(prefix: &str, n: usize) -> String {
+    (1..=n)
+        .map(|i| format!("- {prefix}{i:02}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn dialog_limit_and_cut() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    independent_sections(dir);
+    for id in ["design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    let long = format!("| AC-1 | {}é{} | `t::a` |", "a".repeat(87), "b".repeat(200));
+    let mut spec = vec![long, "| AC-2 | red\x1b[31m and\ttab | `t::b` |".to_string()];
+    spec.extend((3..=10).map(|i| format!("| AC-{i} | row {i} | `t::{i}` |")));
+    set_section(dir, "ABC-1", "Spec", &spec.join("\n"));
+    let description = format!(
+        "{}\n\n### Decisions\n\n{}",
+        items("frame ", 12),
+        items("decide ", 3)
+    );
+    set_section(dir, "ABC-1", "Description", &description);
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let golden = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ok_page_dialog.txt"),
+    )
+    .unwrap();
+    assert_eq!(reason, golden.trim_end_matches('\n'));
+    assert_eq!(reason.lines().count(), 22);
+    assert!(reason.lines().all(|l| l.chars().count() <= 100), "{reason}");
+}
+
+#[test]
+fn dialog_exactly_at_the_limit() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    independent_sections(dir);
+    for id in ["design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    let overflow =
+        "… 1 more line (frame 0, criteria 1, decisions 0); all of them: stapel status ABC-1";
+
+    // Frame label and 15 lines, Criteria label and one line: exactly 22 lines, no overflow line.
+    set_section(dir, "ABC-1", "Description", &items("f", 15));
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert_eq!(reason.lines().count(), 22, "{reason}");
+    assert!(!reason.contains("more line"), "{reason}");
+    assert!(
+        reason.ends_with(&format!("\n  - f15\nCriteria:\n  The spec.\n{ANSWER}")),
+        "{reason}"
+    );
+
+    // One more Frame line: the Criteria part has no room, its one line is counted.
+    set_section(dir, "ABC-1", "Description", &items("f", 16));
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert_eq!(reason.lines().count(), 22, "{reason}");
+    assert!(
+        reason.ends_with(&format!("\n  - f16\n{overflow}\n{ANSWER}")),
+        "{reason}"
+    );
+    assert!(!reason.contains("Criteria:"), "{reason}");
+
+    // A Decisions label with no room for a line is left out; its two lines are counted.
+    confirm(dir, "spec");
+    let description = format!("{}\n\n### Decisions\n\n{}", items("f", 17), items("d", 2));
+    set_section(dir, "ABC-1", "Description", &description);
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert_eq!(reason.lines().count(), 22, "{reason}");
+    assert!(
+        reason.ends_with(&format!(
+            "\n  - f17\n… 2 more lines (frame 0, criteria 0, decisions 2); all of them: stapel \
+             status ABC-1\n{ANSWER}"
+        )),
+        "{reason}"
+    );
+    assert!(!reason.contains("Decisions:"), "{reason}");
+}
