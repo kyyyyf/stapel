@@ -33,7 +33,8 @@ pub fn run(title: &str, tracker: Option<&str>) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", dir.display()))?;
 
     // A configured `description` section is the Description; without one, write it here.
-    let has_description = config.sections.iter().any(|s| s.id == "description");
+    let is_description = |id: &str| id.eq_ignore_ascii_case("description");
+    let has_description = config.sections.iter().any(|s| is_description(&s.id));
     let mut text = format!("# {key} — {title}\n");
     let tracker_line = tracker.map(|url| format!("Tracker: {url}\n\n"));
     if !has_description {
@@ -43,7 +44,7 @@ pub fn run(title: &str, tracker: Option<&str>) -> Result<(), String> {
     }
     for section in &config.sections {
         text.push_str(&format!("\n## {}\n\n", section.title));
-        if section.id == "description" {
+        if is_description(&section.id) {
             text.push_str(tracker_line.as_deref().unwrap_or(""));
         }
         text.push_str("TODO\n");
