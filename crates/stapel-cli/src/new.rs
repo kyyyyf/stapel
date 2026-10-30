@@ -32,13 +32,21 @@ pub fn run(title: &str, tracker: Option<&str>) -> Result<(), String> {
         .and_then(|()| std::fs::create_dir(&dir))
         .map_err(|e| format!("{}: {e}", dir.display()))?;
 
-    let mut text = format!("# {key} — {title}\n\n## Description\n\n");
-    if let Some(url) = tracker {
-        text.push_str(&format!("Tracker: {url}\n\n"));
+    // A configured `description` section is the Description; without one, write it here.
+    let has_description = config.sections.iter().any(|s| s.id == "description");
+    let mut text = format!("# {key} — {title}\n");
+    let tracker_line = tracker.map(|url| format!("Tracker: {url}\n\n"));
+    if !has_description {
+        text.push_str("\n## Description\n\n");
+        text.push_str(tracker_line.as_deref().unwrap_or(""));
+        text.push_str("TODO\n");
     }
-    text.push_str("TODO\n");
     for section in &config.sections {
-        text.push_str(&format!("\n## {}\n\nTODO\n", section.title));
+        text.push_str(&format!("\n## {}\n\n", section.title));
+        if section.id == "description" {
+            text.push_str(tracker_line.as_deref().unwrap_or(""));
+        }
+        text.push_str("TODO\n");
     }
     std::fs::write(dir.join("ticket.md"), text).map_err(|e| format!("ticket.md: {e}"))?;
 

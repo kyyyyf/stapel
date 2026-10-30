@@ -1,5 +1,6 @@
 //! The page the dialog of `stapel ok KEY` shows (STP-25): the header, one line per waiting
-//! section, and the answer line.
+//! section (folded past the tenth), the Frame, the criteria and the Decisions with their changed
+//! lines, the line that counts lines over the limit, and the answer line.
 
 use crate::brief::row_number;
 use crate::config::Config;
