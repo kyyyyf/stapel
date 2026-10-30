@@ -407,8 +407,56 @@ Route: full (tags `guard`, `interface`), auto.
 
 ## Review
 
-TODO
+Spec review: two rounds by `stapel-spec-reviewer` (round 1: 11 findings, 1 HIGH, SR1-1, the reserved
+title `Description` in `Config::validate`; round 2: 9 findings, 1 HIGH, SR2-1, the lift scheduled after the
+steps that need it). The human chose no third round. Drift review after every GREEN step: 21 records, 6
+MEDIUM (physical counts and a second copy of the heading rules in step 2, removed rows in step 2c, untested
+Decisions bounds and diffs in step 2b, a grant without a positive control in step 4); they became the fix
+steps 2c, 3c and the coverage steps 3b, 3d. Code review round 1 (`stapel-reviewer`, `stapel-reviewer` with
+the external model, `stapel-drift` on the whole ticket): 9 records, 1 HIGH (E-1, `stapel new` wrote `##
+Description` twice with the shipped template, reproduced by hand), 1 MEDIUM (E-2, no test on the shipped
+template: `common::stapel_repo` drops the section); fix step 7, and a ledger decision narrowed item 1.8
+(E-8, no `--full`). Code review round 2 by the same three: 10 records, 0 HIGH, 2 MEDIUM (E2-1 the tracker
+line untested, E2-2 the id compared with case); fix step 8 and coverage 8b, with a drift review and no
+third round. The three `core::config` tests that pin the template were missed by the RED of step 5 and
+changed after its GREEN; with the human's consent the history was rewritten so the change is in that RED.
+Deferred LOW: R-1, E-4, E-7, R2-1, R2-3, E2-3, E2-5, E2-6, D1-2, D1-3, D3-3, D4-2, D8-1. All 61 records
+and their fates are in `findings.jsonl`.
 
 ## Summary
 
-TODO
+`stapel ok KEY` shows the person what they confirm. The guard's dialog holds a page of at most 22 lines:
+the header, one line per waiting section (`<id>: new, N lines`, `<id>: N lines changed (+a -b)` or
+`unchanged`, with stale reasons; past ten sections one fold line), then the Frame (the Description outside
+`### Decisions`), the criteria rows and the Decisions, in full when new and as `+`/`-` lines after, with
+one line that counts what does not fit; every line is cleaned and cut at 100 characters. The terminal form
+prints the whole page before the change blocks. `description` is a confirmable section in `build.requires`
+of the template and of this repository, so the grant binds the Frame and the Decisions; `stapel new`
+writes it once. `stapel next` names `stapel close KEY --reason "<text>"`, and the skill has the
+orchestrator run it through the dialog.
+
+Measures against STP-24 (the skill, rule 8):
+
+- Escaped defects of STP-24 found after its close: none known.
+- Code review HIGH and MEDIUM inside the promise: 4 over two rounds (STP-24: 1): E-1 (HIGH), E-2, E2-1,
+  E2-2; rule: author self-check (E-1), Test plan on the shipped configuration (E-2, E2-1), none (E2-2).
+  All four come from one blind spot: the shared test fixture removes the new section.
+- `ticket.md`: 40.3 KB before this section (STP-24: 39.9 KB).
+- Size: about 410 source and 1 118 test lines added (68 and 35 removed) against an estimate of 350 and
+  800.
+- Tokens, measured: orchestrator output 116k, cache read 49.7M (STP-24: 130k / 47.6M); author (the spec
+  draft) 16k / 10.7M; builder 26k / 7.0M (STP-24: 41k / 7.4M); drift 20k / 0.8M; external 31k / 1.4M;
+  reviewer (spec and code) 35k / 1.8M.
+- Wall time: 2026-10-29 about 13:10 UTC (the session) to 2026-10-30 about 15:15 UTC.
+
+Approval dialogs: about 13 (STP-24: about 15): `stapel ok` 11 (three expired grants), one ledger decision
+(one expired grant), and two short commands the human ran (the probe hook, `stapel.toml`); questions in
+the chat are not counted. No findings import or token import asked.
+
+What improved: the first real dialog probe found the 25-line limit before the build, and the dialog now
+shows the page it confirms; inside changes during the build were batched (seven confirmations after the
+spec instead of eleven); builders stopped twice on an `intent_gap` instead of guessing. What did not:
+code review found four inside defects against one, all hidden by a fixture that strips the new section; the
+RED of step 5 missed tests in another crate, which cost a history rewrite; builders used heredocs or
+scripts in four steps although the brief forbade it (items 1.9, 1.10); grants expired three times while
+the person was away; the installed `stapel` had to be rebuilt by hand after step 2a.
