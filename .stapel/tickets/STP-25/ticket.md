@@ -125,7 +125,7 @@ Terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN `stapel init` writes a new `stapel.toml` THE first `[[sections]]` entry is `id = "description"`, `title = "Description"`, `owner = "product"` without `depends_on`, no section depends on it, and `[build] requires` is `["description", "spec", "design", "proof"]`; this repository's `.stapel/stapel.toml` has the same entry and `requires`; `Config::validate` accepts the title `Description` for the id `description` only. | `init::template_has_the_description_section`, `init_process::this_repository_confirms_the_description`, `config::rejects_bad_sections` |
+| AC-1 | WHEN `stapel init` writes a new `stapel.toml` THE first `[[sections]]` entry is `id = "description"`, `title = "Description"`, `owner = "product"` without `depends_on`, no section depends on it, and `[build] requires` is `["description", "spec", "design", "proof"]`; this repository's `.stapel/stapel.toml` has the same entry and `requires`; `Config::validate` accepts the title `Description` for the id `description` only. | `init::template_has_the_description_section`, `init_process::this_repository_confirms_the_description`, `core::config::rejects_bad_sections` |
 | AC-2 | WHEN the guard asks about `stapel ok KEY` THE dialog text is the dialog page of the Terms, and each waiting section has its section line (`<id>: new, 1 line`, `<id>: 2 lines changed (+1 -1)`, `<id>: unchanged`, each followed by `; depends on <id>, which changed` and the other suffixes of the Terms) in place of the STP-17 line with the short hash. | `ok_page::section_lines`, `ok_all::dialog_lists_every_waiting_section`, `ok_all::new_with_reasons_in_terminal_and_dialog`, `ok_all::new_never_shows_the_text_change`, `ok_all::dialog_counts_added_and_removed_apart`, `ok_all::dialog_shows_every_stale_reason` |
 | AC-3 | WHEN `spec` waits THE dialog page holds the Criteria part: every AC row whole, its Test cell included, for a Spec never confirmed with stored text, else only the rows added or removed since, then `spec, other lines: +a -b` when other Spec lines changed; IF the Spec has no AC row THEN the part holds the Spec's logical lines the same way. | `ok_page::criteria_new_and_changed`, `ok_page::criteria_without_rows` |
 | AC-4 | WHEN `description` is configured and waits THE dialog page holds the Frame part, every Description line outside `### Decisions` with the Source paragraph and other headings, and the Decisions part; IF the Description has no `### Decisions` THEN all of it is the Frame part; IF `stapel.toml` has no `description` section THEN neither part appears. | `ok_page::frame_and_decisions_new_and_changed`, `ok_page::description_without_headings`, `ok_page::config_without_description`, `ok_page::decisions_boundaries`, `ok_page::frame_and_decisions_diffs` |
@@ -178,7 +178,7 @@ ok_all`, `--test next`, `--test init`, `--test init_process`); before each GREEN
 | Cut and limit bounds | a line of 100 characters stays whole, one of 101 is cut; a part ending with one free line gives a page of 21 lines | `ok_page::cut_and_limit_boundaries` |
 | Grant unchanged | the dialog, no edit: the grant confirms every waiting section | `ok_page::grant_passes_when_unchanged` |
 | Template | `stapel init` in an empty repository: the `description` entry first, no `depends_on` naming it, the `requires` of AC-1; the file parses | `init::template_has_the_description_section` |
-| Reserved title | the title `Description` for the id `design`: still refused; for the id `description`: accepted | `config::rejects_bad_sections` |
+| Reserved title | the title `Description` for the id `design`: still refused; for the id `description`: accepted | `core::config::rejects_bad_sections` |
 | This repository | `.stapel/stapel.toml` here: the same entry and `requires` | `init_process::this_repository_confirms_the_description` |
 | Next close | the four `next` tests expect `stapel close ABC-1 --reason "<text>"`, also as the JSON `command` | `next::close_at_the_end`, `next::review_and_summary_edges`, `next::json_after_the_build`, `next::no_plan_section_configured` |
 | Skill text | the AC-9 sentences, with the one about `<text>`, in the skill written by `init`; the old close sentences absent | `init_process::skill_text_runs_close_through_the_dialog`, `init_process::skill_text_is_consistent`, `init_process::texts_agree_on_close_lint_and_green_step` |
@@ -190,7 +190,7 @@ ok_all`, `--test next`, `--test init`, `--test init_process`); before each GREEN
 | `KEY` of `stapel ok` | ticket key | — | as STP-17 | as STP-17 | as `resolve` | `ok_all::dialog_lists_every_waiting_section` |
 | `description` entry of `[[sections]]` | `stapel.toml` table | — | absent: no Frame or Decisions part | as `Config::parse_at` | exact id | `ok_page::config_without_description` |
 | Description text | Markdown | — | `TODO`: one logical line | no `### Decisions`: all of it is the Frame part; no `## Description` or two: AC-10 | logical lines | `ok_page::description_without_headings`, `ok_page::description_missing_or_twice` |
-| Spec text | Markdown | — | no AC row: logical lines | an `AC-` row without ` \|` after the number is not a row | as `brief::row_number` | `ok_page::criteria_without_rows` |
+| Spec text | Markdown | — | no AC row: logical lines | an `AC-` row without ` \|` after the number is not a row | as `row_number` in `brief.rs` | `ok_page::criteria_without_rows` |
 | A page line | text | 0 / any characters | an empty logical line is never made | control characters: one space each | 100 Unicode scalar values | `ok_page::dialog_limit_and_cut` |
 | Page length | lines | 3 / 22 in the dialog | no part: header, section lines, answer line | — | exact | `ok_page::dialog_exactly_at_the_limit` |
 | Waiting sections | count | 1 / any; past ten, one line | none: no dialog (STP-17) | — | exact | `ok_page::many_waiting_sections` |
@@ -236,7 +236,7 @@ step that changes it).
 1: AC-1; item 2: AC-3, AC-4, AC-5; item 3: AC-2; item 4: AC-6; item 5: AC-7; item 6: AC-8, AC-9); each
 input has its empty and invalid case; the rows were checked against `confirm::prepare_waiting`,
 `confirm::change_block`, `dialog::waiting_line`, `dialog::ok_key_facts`, `review::criteria`,
-`brief::row_number`, `next.rs` (the close action), `crates/stapel-core/src/stapel.toml` and
+`row_number` of `brief.rs`, `next.rs` (the close action), `crates/stapel-core/src/stapel.toml` and
 `config::validate`.
 2026-10-29, after spec review round 1 (stapel-spec-reviewer): 11 findings, 1 HIGH, 6 MEDIUM; 10 inside,
 1 outside, not taken by the human (SR1-11). One change: the reserved title `Description` is lifted for
@@ -273,7 +273,7 @@ the step order: each fails at its RED for its own behaviour and passes at its GR
   `description` waits in every fixture ticket: `tests/hook.rs::confirmed_repo`, `tests/next.rs::confirm_all`
   and the STP-17 tests that list the waiting sections exactly expect it.
 - F-6: `Config::validate` refuses any section titled `Description` with `sections: the title Description is
-  reserved for the ticket description` (`crates/stapel-core/src/config.rs`); `config::rejects_bad_sections`
+  reserved for the ticket description` (`crates/stapel-core/src/config.rs`); `core::config::rejects_bad_sections`
   (`crates/stapel-core/tests/config.rs`) tests it for the id `design`.
 - F-7: the stale reasons of `stage::Reason::describe` other than the text change: `depends on <id>, which
   changed`, `depends on <id>, which is no longer configured`, `depends on <id>, which is missing`,
@@ -290,7 +290,7 @@ the step order: each fails at its RED for its own behaviour and passes at its GR
 - The line diff of the shown lines is `similar::TextDiff::from_lines` over the logical lines joined by
   newlines; the stored text is the confirmation's `text` of the part's section.
 - Step 2a lifts the rule of F-6 for the id `description` only, before steps 2b to 4b configure that
-  section in their tests; its RED adds the accepted case to `config::rejects_bad_sections`, which fails
+  section in their tests; its RED adds the accepted case to `core::config::rejects_bad_sections`, which fails
   there.
 - The template change of step 5 would make `description` wait in every ticket that `common::stapel_repo`
   builds. These test files and golden files depend on the old section list: `tests/ok.rs`,
@@ -311,7 +311,7 @@ the step order: each fails at its RED for its own behaviour and passes at its GR
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `init::template_has_the_description_section`, `init_process::this_repository_confirms_the_description`, `config::rejects_bad_sections` |
+| AC-1 | `init::template_has_the_description_section`, `init_process::this_repository_confirms_the_description`, `core::config::rejects_bad_sections` |
 | AC-2 | `ok_page::section_lines`, `ok_all::dialog_lists_every_waiting_section`, `ok_all::new_with_reasons_in_terminal_and_dialog`, `ok_all::new_never_shows_the_text_change`, `ok_all::dialog_counts_added_and_removed_apart`, `ok_all::dialog_shows_every_stale_reason` |
 | AC-3 | `ok_page::criteria_new_and_changed`, `ok_page::criteria_without_rows` |
 | AC-4 | `ok_page::frame_and_decisions_new_and_changed`, `ok_page::description_without_headings`, `ok_page::config_without_description`, `ok_page::decisions_boundaries`, `ok_page::frame_and_decisions_diffs` |
@@ -332,7 +332,7 @@ Route: full (tags `guard`, `interface`), auto.
    `ok_all::dialog_shows_every_stale_reason`); the old five fail at the RED. Must not change: grant facts.
 2. The Criteria part in the dialog (AC-3; tests `ok_page::criteria_new_and_changed`,
    `ok_page::criteria_without_rows`). Must not change: step 1.
-2a. The reserved title lifted for `description` (AC-1; test `config::rejects_bad_sections`): the RED adds
+2a. The reserved title lifted for `description` (AC-1; test `core::config::rejects_bad_sections`): the RED adds
    the accepted case for the id `description`, so that the test fails there; the GREEN changes
    `crates/stapel-core/src/config.rs`. Must not change: the refusal for any other id.
 2c. Fix of step 2 after its drift review (AC-3; tests `ok_page::criteria_new_and_changed`,
@@ -365,6 +365,10 @@ Route: full (tags `guard`, `interface`), auto.
    and makes `common::stapel_repo` drop the entry as Design says; the GREEN changes
    `crates/stapel-core/src/stapel.toml` and `.stapel/stapel.toml`. Must not change: `default_requires`;
    the old tests and golden files Design lists.
+5b. Repair of step 5, tests only (AC-1; tests `core::config::build_requires_defaults`,
+   `core::config::default_config_has_roles_and_sections`, `core::config::rejects_bad_sections`): these
+   old tests pin the template and fail since the GREEN of step 5, which its RED missed; they now expect
+   the `description` entry and `requires`. Must not change: any other test.
 6. Close through the dialog (AC-8, AC-9; tests `next::close_at_the_end`,
    `next::review_and_summary_edges`, `next::json_after_the_build`, `next::no_plan_section_configured`,
    `init_process::skill_text_runs_close_through_the_dialog`, `init_process::skill_text_is_consistent`,
