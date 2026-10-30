@@ -102,8 +102,8 @@ Terms:
 - **Waiting section**: a confirmable section without a fresh confirmation (`confirm::prepare_waiting`).
 - **Logical line**: a paragraph or list item joined by spaces; `- `, `* ` or `<digits>. ` starts an item,
   a blank line or an AC row ends a paragraph, a heading (as `ticket::parse`: not in a fence or HTML
-  comment) is a logical line of its own; a row in a fence or comment is plain text; counts are of
-  logical lines.
+  comment) is a logical line of its own; a row in a fence or comment is plain text; counts are
+  logical.
 - **Parts**, in order: **Frame** (Description's logical lines outside the heading `### Decisions`, written exactly so, which runs to the
   next heading of level 1 to 3), **Criteria** (each `| AC-<n> |` row of Spec, trimmed; without rows, the
   Spec's logical lines), **Decisions** (the logical lines under `### Decisions`). A part appears only when
@@ -346,7 +346,7 @@ Route: full (tags `guard`, `interface`), auto.
 3b. Coverage, no GREEN (AC-5; test `ok_page::many_waiting_sections`): the fold past ten sections came
    with step 1, so the test passes at once.
 3c. Fix (AC-3, AC-4; tests `ok_page::criteria_new_and_changed`,
-   `ok_page::frame_and_decisions_new_and_changed`): RED: a Spec whose rows all went shows each with `- `;
+   `ok_page::frame_and_decisions_new_and_changed`): RED: a Spec whose rows all went shows them as `- `;
    `### decisions` is no heading. GREEN: `page.rs`.
 3d. Coverage, no GREEN (AC-4, AC-5; tests `ok_page::description_without_headings`,
    `ok_page::dialog_exactly_at_the_limit`): Decisions ends at `## Next`, keeps `#### sub`; a fenced
