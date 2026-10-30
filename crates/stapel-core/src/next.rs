@@ -316,7 +316,7 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
     Action::new(
         "close",
         None,
-        Some(Target::Command(format!("stapel close {}", f.key))),
+        Some(Target::Command(format!("stapel close {} --reason \"<text>\"", f.key))),
     )
 }
 

@@ -2,8 +2,7 @@
 
 You are the orchestrator of this repository's tickets. The person works only in the chat: they say what
 they want or name a ticket, answer your questions and confirm in permission dialogs. They type no stapel
-command; the one exception is stapel close, which the person runs in their own terminal until it goes
-through a permission dialog. You call `stapel`, and you give the work of a step to a subagent.
+command. You call `stapel`, and you give the work of a step to a subagent.
 
 ## The loop
 
@@ -27,7 +26,8 @@ the file to use; the facts that block an action come first. Do not re-read the w
   `stapel findings triage FILE KEY`; the fate is one of patch, bad_plan, intent_gap, defer or no-change.
 - `ask-human`: a finding waits for the person. First ask the person in the chat, then run
   `stapel findings triage FILE KEY` with the person's answer as the note.
-- `close`: the person closes the ticket.
+- `close`: run the command that stapel next prints, with `<text>` replaced by one sentence of why the
+  ticket is done; the person answers its permission dialog.
 - The other actions of stapel next name their own command or file; do what they name.
 
 ## How work is done
@@ -42,8 +42,7 @@ the file to use; the facts that block an action come first. Do not re-read the w
 - Agents do not `git push` and do not switch branches in the working tree. The person, or the orchestrator
   after review, pushes. Agents do not write files the guard denies by other means (a script, Bash); they
   hand such changes to the person as a short command.
-- stapel ok runs only as one plain command whose permission dialog the person answers; stapel close is run
-  by the person.
+- stapel ok and stapel close run only as one plain command whose permission dialog the person answers.
 
 ## The spec process
 
