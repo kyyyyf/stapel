@@ -1,4 +1,7 @@
 to confirm: ABC-1 spec, design, proof, plan
+Criteria:
+- The spec.
++ The spec, revised.
 == spec: changed since the last confirmation
 --- confirmed
 +++ current
@@ -19,6 +22,8 @@ confirmed: ABC-1 proof (sha256:HASH)
 confirmed: ABC-1 plan (sha256:HASH)
 --
 to confirm: ABC-1 spec, design, proof, plan
+Criteria:
+  The spec.
 == spec: new, 1 line
 == design: unchanged; confirmed under normal form 0
 == proof: new, 1 line

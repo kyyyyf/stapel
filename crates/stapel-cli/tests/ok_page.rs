@@ -554,3 +554,35 @@ fn many_waiting_sections() {
     );
     assert_eq!(lines[11], "… 1 more waiting section: s11");
 }
+
+#[test]
+fn terminal_prints_the_whole_page() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    independent_sections(dir);
+    let long = format!("| AC-1 | {}é{} | `t::a` |", "a".repeat(87), "b".repeat(200));
+    let mut spec = vec![long, "| AC-2 | red\x1b[31m and\ttab | `t::b` |".to_string()];
+    spec.extend((3..=10).map(|i| format!("| AC-{i} | row {i} | `t::{i}` |")));
+    set_section(dir, "ABC-1", "Spec", &spec.join("\n"));
+    let description = format!(
+        "{}\n\n### Decisions\n\n{}",
+        items("frame ", 12),
+        items("decide ", 3)
+    );
+    set_section(dir, "ABC-1", "Description", &description);
+    let out = stapel(dir).args(["ok", "ABC-1"]).assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    // Each hash is `sha256:` and hex digits up to the closing bracket.
+    let normalized: String = stdout
+        .lines()
+        .map(|l| match (l.starts_with("confirmed:"), l.find("sha256:")) {
+            (true, Some(i)) => format!("{}sha256:HASH)\n", &l[..i]),
+            _ => format!("{l}\n"),
+        })
+        .collect();
+    let golden = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ok_page_terminal.txt"),
+    )
+    .unwrap();
+    assert_eq!(normalized, golden);
+}

@@ -1,0 +1,38 @@
+to confirm: ABC-1 description, spec, design, proof, plan
+Frame:
+  - frame 01
+  - frame 02
+  - frame 03
+  - frame 04
+  - frame 05
+  - frame 06
+  - frame 07
+  - frame 08
+  - frame 09
+  - frame 10
+  - frame 11
+  - frame 12
+Criteria:
+  | AC-1 | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaébbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | `t::a` |
+  | AC-2 | red [31m and tab | `t::b` |
+  | AC-3 | row 3 | `t::3` |
+  | AC-4 | row 4 | `t::4` |
+  | AC-5 | row 5 | `t::5` |
+  | AC-6 | row 6 | `t::6` |
+  | AC-7 | row 7 | `t::7` |
+  | AC-8 | row 8 | `t::8` |
+  | AC-9 | row 9 | `t::9` |
+  | AC-10 | row 10 | `t::10` |
+Decisions:
+  - decide 01
+  - decide 02
+  - decide 03
+== spec: new, 10 lines
+== design: new, 1 line
+== proof: new, 1 line
+== plan: new, 1 line
+confirmed: ABC-1 description (sha256:HASH)
+confirmed: ABC-1 spec (sha256:HASH)
+confirmed: ABC-1 design (sha256:HASH)
+confirmed: ABC-1 proof (sha256:HASH)
+confirmed: ABC-1 plan (sha256:HASH)
