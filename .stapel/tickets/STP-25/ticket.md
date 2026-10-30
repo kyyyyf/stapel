@@ -399,10 +399,11 @@ Route: full (tags `guard`, `interface`), auto.
    adds the test: `stapel init`, `stapel new` and the dialog of `stapel ok` on the template as shipped give
    one `## Description` and `description: new, …`; it fails there. The GREEN changes `new.rs` so that the
    configured `description` section is written once, and the module doc of `page.rs` (E-5).
-8. Fix after code review round 2 (E2-1, E2-2; AC-1; tests `new::tracker_line_in_the_description_section`,
-   `new::description_id_without_case`): the RED adds both tests on the template as shipped, without
-   `common::stapel_repo`; the id test fails there. The GREEN compares the id `description` without case
-   in `new.rs`, as `Config::section` does.
+8. Fix after code review round 2 (E2-2; AC-1; test `new::description_id_without_case`): the RED adds the
+   test on the template as shipped with `id = "Description"`, without `common::stapel_repo`; it fails
+   there. The GREEN compares the id `description` without case in `new.rs`, as `Config::section` does.
+8b. Coverage, no GREEN (E2-1; AC-1; test `new::tracker_line_in_the_description_section`): the shipped
+   template and `--tracker`; it passes at once (step 7 wrote the branch).
 
 ## Review
 
