@@ -118,6 +118,32 @@ fn stores_tracker_link() {
     );
 }
 
+// STP-25 AC-1 (E2-2): an id `Description` in any case gives one `## Description`.
+#[test]
+fn description_id_without_case() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let path = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("id = \"description\""));
+    std::fs::write(&path, text.replacen("id = \"description\"", "id = \"Description\"", 1))
+        .unwrap();
+    stapel(dir)
+        .args(["new", "--tracker", "https://example.com/T-2", "First"])
+        .assert()
+        .success();
+    let ticket = read(dir, ".stapel/tickets/ABC-1/ticket.md");
+    assert_eq!(
+        ticket.lines().filter(|l| *l == "## Description").count(),
+        1,
+        "{ticket}"
+    );
+}
+
 #[test]
 fn refuses_bad_tracker_url() {
     let repo = stapel_repo();
