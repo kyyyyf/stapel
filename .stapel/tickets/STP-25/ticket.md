@@ -307,6 +307,26 @@ the step order: each fails at its RED for its own behaviour and passes at its GR
 
 ### Decisions (as built)
 
+- `crates/stapel-core/src/page.rs` holds the page: `section_line`, `dialog_page`, `terminal_page`, and
+  `parts`, which both forms share; `dialog.rs` calls `dialog_page`, `ok.rs` prints `terminal_page` after
+  `to confirm:` and leaves out the change block of `description`.
+- `ticket::scan` (step 2c) is the one reader of lines, headings of levels 1 to 6, fences and HTML
+  comments; `ticket::parse` uses it and still takes only level-2 headings as sections. `page.rs` reads
+  logical lines, headings and AC rows through it (drift findings D2-1, D2-2, D2-4).
+- An AC row ends a paragraph; the rows form of the Criteria part is used when the old or the new Spec has
+  rows, so removed rows show with `- ` (D2c-1). `### Decisions` matches exactly (D2b-3).
+- A level-2 heading ends the Description section, so text after `## Next` is not on the page at all;
+  `ok_page::decisions_boundaries` tests `### Next` for the return to the Frame part.
+- The fold of section lines past the tenth came with step 1, so `ok_page::many_waiting_sections` is the
+  coverage step 3b (D1-1).
+- `ok_key_form.txt` is unchanged: in its fixture the Spec does not wait, so the page has no part.
+- The RED of step 5 also changes `core::config::build_requires_defaults`,
+  `default_config_has_roles_and_sections` and `rejects_bad_sections`, which pin the template. They were
+  first missed and changed in a separate commit after the GREEN; with the human's consent (2026-10-30)
+  the history was rewritten so that the change is part of the RED, where the tests fail.
+- The installed `stapel` binary must be rebuilt after step 2a: an older binary refuses the new
+  `stapel.toml` (`the title Description is reserved`).
+
 ## Proof
 
 | Criterion | Test |
@@ -363,12 +383,9 @@ Route: full (tags `guard`, `interface`), auto.
 5. The `description` section in the template (AC-1; tests `init::template_has_the_description_section`,
    `init_process::this_repository_confirms_the_description`): the RED adds the tests, which fail there,
    and makes `common::stapel_repo` drop the entry as Design says; the GREEN changes
-   `crates/stapel-core/src/stapel.toml` and `.stapel/stapel.toml`. Must not change: `default_requires`;
+   `crates/stapel-core/src/stapel.toml` and `.stapel/stapel.toml`; the RED also changes the three
+   `core::config` tests that pin the template. Must not change: `default_requires`;
    the old tests and golden files Design lists.
-5b. Repair of step 5, tests only (AC-1; tests `core::config::build_requires_defaults`,
-   `core::config::default_config_has_roles_and_sections`, `core::config::rejects_bad_sections`): these
-   old tests pin the template and fail since the GREEN of step 5, which its RED missed; they now expect
-   the `description` entry and `requires`. Must not change: any other test.
 6. Close through the dialog (AC-8, AC-9; tests `next::close_at_the_end`,
    `next::review_and_summary_edges`, `next::json_after_the_build`, `next::no_plan_section_configured`,
    `init_process::skill_text_runs_close_through_the_dialog`, `init_process::skill_text_is_consistent`,
