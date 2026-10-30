@@ -469,3 +469,48 @@ fn dialog_exactly_at_the_limit() {
     );
     assert!(!reason.contains("Decisions:"), "{reason}");
 }
+
+#[test]
+fn many_waiting_sections() {
+    let repo = common::stapel_repo();
+    let dir = repo.path();
+    let path = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let from = text.find("[[sections]]").unwrap();
+    let to = text.find("# Role -> model").unwrap();
+    let sections: String = (1..=12)
+        .map(|i| format!("[[sections]]\nid = \"s{i}\"\ntitle = \"S{i}\"\nowner = \"product\"\n\n"))
+        .collect();
+    let rest = text[to..].replace(
+        "requires = [\"spec\", \"design\", \"proof\"]",
+        "requires = [\"s1\"]",
+    );
+    std::fs::write(&path, format!("{}{sections}{rest}", &text[..from])).unwrap();
+    stapel(dir).args(["new", "First"]).assert().success();
+    for i in 1..=12 {
+        set_section(dir, "ABC-1", &format!("S{i}"), &format!("text {i}"));
+    }
+
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let lines: Vec<&str> = reason.lines().collect();
+    assert_eq!(lines.len(), 13, "{reason}");
+    assert_eq!(
+        lines[0],
+        "stapel: confirm 12 waiting sections of ABC-1; runs: stapel"
+    );
+    assert_eq!(lines[1], "s1: new, 1 line");
+    assert_eq!(lines[10], "s10: new, 1 line");
+    assert_eq!(lines[11], "… 2 more waiting sections: s11, s12");
+    assert_eq!(lines[12], ANSWER);
+
+    // Eleven waiting sections: one folded.
+    confirm(dir, "s12");
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let lines: Vec<&str> = reason.lines().collect();
+    assert_eq!(lines.len(), 13, "{reason}");
+    assert_eq!(
+        lines[0],
+        "stapel: confirm 11 waiting sections of ABC-1; runs: stapel"
+    );
+    assert_eq!(lines[11], "… 1 more waiting section: s11");
+}
