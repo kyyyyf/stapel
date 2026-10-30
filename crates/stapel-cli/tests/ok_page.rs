@@ -216,6 +216,27 @@ fn criteria_new_and_changed() {
         )),
         "{reason}"
     );
+
+    // Every row went: the removed rows are shown with `- `.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "intro\n\n| AC-1 | first | `t::a` |\n| AC-2 | second | `t::b` |",
+    );
+    for id in ["spec", "design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    set_section(dir, "ABC-1", "Spec", "intro");
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains(&format!(
+            "\nCriteria:\n- | AC-1 | first | `t::a` |\n- | AC-2 | second | `t::b` |\n{ANSWER}"
+        )),
+        "{reason}"
+    );
 }
 
 #[test]
@@ -334,6 +355,25 @@ fn frame_and_decisions_new_and_changed() {
         "{reason}"
     );
     assert!(!reason.contains("Frame:"), "{reason}");
+
+    // `### decisions` is no heading: its lines stay in the Frame part.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    add_description_section(dir);
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "Source.\n\n### decisions\n\n- x\n\n### Decisions\n\n- d",
+    );
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert!(
+        reason.contains(&format!(
+            "\nFrame:\n  Source.\n  ### decisions\n  - x\nCriteria:\n  The spec.\n\
+             Decisions:\n  - d\n{ANSWER}"
+        )),
+        "{reason}"
+    );
 }
 
 #[test]
