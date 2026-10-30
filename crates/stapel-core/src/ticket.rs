@@ -25,15 +25,28 @@ pub fn read(path: &Path) -> Result<String, String> {
     crate::state::read_bounded(path)
 }
 
-pub fn parse(text: &str) -> Vec<Section> {
+/// One line of a text as `parse` sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scanned {
+    /// The line without its line break.
+    pub line: String,
+    /// The level (1 to 6) and title of an ATX heading outside fences and HTML comment blocks.
+    pub heading: Option<(usize, String)>,
+    /// The line opens, closes or lies inside a fenced code block or an HTML comment block.
+    pub in_block: bool,
+}
+
+/// The lines of `text` with the heading and block rules of `parse`.
+pub fn scan(text: &str) -> Vec<Scanned> {
     // Lone CR (old Mac editors) ends a line too.
     let text = &text.replace("\r\n", "\n").replace('\r', "\n");
-    let mut sections: Vec<Section> = Vec::new();
+    let mut out = Vec::new();
     let mut fence: Option<(char, usize)> = None;
     let mut in_comment = false;
 
     for line in text.split('\n') {
         let line_nl = line.strip_suffix('\r').unwrap_or(line);
+        let mut in_block = true;
         let heading = if let Some((ch, len)) = fence {
             if closes_fence(line_nl, ch, len) {
                 fence = None;
@@ -51,17 +64,29 @@ pub fn parse(text: &str) -> Vec<Section> {
             in_comment = !rest.contains("-->");
             None
         } else {
-            heading_title(line_nl)
+            in_block = false;
+            atx_heading(line_nl)
         };
+        out.push(Scanned {
+            line: line.to_string(),
+            heading,
+            in_block,
+        });
+    }
+    out
+}
 
-        match heading {
-            Some(title) => sections.push(Section {
+pub fn parse(text: &str) -> Vec<Section> {
+    let mut sections: Vec<Section> = Vec::new();
+    for scanned in scan(text) {
+        match scanned.heading {
+            Some((2, title)) => sections.push(Section {
                 title,
                 body: String::new(),
             }),
-            None => {
+            _ => {
                 if let Some(current) = sections.last_mut() {
-                    current.body.push_str(line);
+                    current.body.push_str(&scanned.line);
                     current.body.push('\n');
                 }
             }
@@ -103,8 +128,13 @@ fn closes_fence(line: &str, ch: char, len: usize) -> bool {
     run >= len && rest[run..].trim().is_empty()
 }
 
-fn heading_title(line: &str) -> Option<String> {
-    let rest = indented_at_most_3(line).strip_prefix("##")?;
+fn atx_heading(line: &str) -> Option<(usize, String)> {
+    let rest = indented_at_most_3(line);
+    let level = rest.bytes().take_while(|b| *b == b'#').count();
+    if !(1..=6).contains(&level) {
+        return None;
+    }
+    let rest = &rest[level..];
     if !rest.starts_with([' ', '\t']) {
         return None;
     }
@@ -115,7 +145,7 @@ fn heading_title(line: &str) -> Option<String> {
     } else {
         without_closing
     };
-    (!title.is_empty()).then(|| title.to_string())
+    (!title.is_empty()).then(|| (level, title.to_string()))
 }
 
 impl<'a> Lookup<'a> {
