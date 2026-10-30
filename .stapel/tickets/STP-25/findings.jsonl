@@ -88,3 +88,4 @@
 {"kind":"triage","ticket": "STP-25", "id": "E2-3", "fate": "defer", "note": "heading variants as ticket::parse reads them","imported_by":{"by":"agent","user":"kyyyyf"}}
 {"kind":"triage","ticket": "STP-25", "id": "E2-5", "fate": "defer", "note": "one shared clean function in a later ticket","imported_by":{"by":"agent","user":"kyyyyf"}}
 {"kind":"triage","ticket": "STP-25", "id": "E2-6", "fate": "defer", "note": "as the round 1 deferrals","imported_by":{"by":"agent","user":"kyyyyf"}}
+{"id": "D8-1", "ticket": "STP-25", "stage": "step-drift", "round": "step-8", "role": "drift", "severity": "LOW", "promise": "inside", "claim": "description_id_without_case counts headings only; it does not check that the Tracker line sits under the Description heading for id Description.", "catchable_at": "test-plan", "fate": "defer", "note": "one is_description closure serves both places; a later test", "rule": "none","imported_by":{"by":"agent","user":"kyyyyf"}}
