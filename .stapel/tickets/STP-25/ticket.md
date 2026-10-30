@@ -125,7 +125,7 @@ Terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN `stapel init` writes a new `stapel.toml` THE first `[[sections]]` entry is `id = "description"`, `title = "Description"`, `owner = "product"` without `depends_on`, no section depends on it, and `[build] requires` is `["description", "spec", "design", "proof"]`; this repository's `.stapel/stapel.toml` has the same entry and `requires`; `Config::validate` accepts the title `Description` for the id `description` only; `stapel new` writes one `## Description`. | `init::template_has_the_description_section`, `init_process::this_repository_confirms_the_description`, `core::config::rejects_bad_sections`, `init::new_ticket_has_one_description` |
+| AC-1 | WHEN `stapel init` writes a new `stapel.toml` THE first `[[sections]]` entry is `id = "description"`, `title = "Description"`, `owner = "product"` without `depends_on`, no section depends on it, and `[build] requires` is `["description", "spec", "design", "proof"]`; this repository's `.stapel/stapel.toml` has the same entry and `requires`; `Config::validate` accepts the title `Description` for the id `description` only; `stapel new` writes one `## Description`, for an id `description` in any case, with the `Tracker:` line in it. | `init::template_has_the_description_section`, `init_process::this_repository_confirms_the_description`, `core::config::rejects_bad_sections`, `init::new_ticket_has_one_description`, `new::tracker_line_in_the_description_section`, `new::description_id_without_case` |
 | AC-2 | WHEN the guard asks about `stapel ok KEY` THE dialog text is the dialog page of the Terms, and each waiting section has its section line (`<id>: new, 1 line`, `<id>: 2 lines changed (+1 -1)`, `<id>: unchanged`, each followed by `; depends on <id>, which changed` and the other suffixes of the Terms) in place of the STP-17 line with the short hash. | `ok_page::section_lines`, `ok_all::dialog_lists_every_waiting_section`, `ok_all::new_with_reasons_in_terminal_and_dialog`, `ok_all::new_never_shows_the_text_change`, `ok_all::dialog_counts_added_and_removed_apart`, `ok_all::dialog_shows_every_stale_reason` |
 | AC-3 | WHEN `spec` waits THE dialog page holds the Criteria part: every AC row whole, its Test cell included, for a Spec never confirmed with stored text, else only the rows added or removed since, then `spec, other lines: +a -b` when other Spec lines changed; IF the Spec has no AC row THEN the part holds the Spec's logical lines the same way. | `ok_page::criteria_new_and_changed`, `ok_page::criteria_without_rows` |
 | AC-4 | WHEN `description` is configured and waits THE dialog page holds the Frame part, every Description line outside `### Decisions` with the Source paragraph and other headings, and the Decisions part; IF the Description has no `### Decisions` THEN all of it is the Frame part; IF `stapel.toml` has no `description` section THEN neither part appears. | `ok_page::frame_and_decisions_new_and_changed`, `ok_page::description_without_headings`, `ok_page::config_without_description`, `ok_page::decisions_boundaries`, `ok_page::frame_and_decisions_diffs` |
@@ -173,10 +173,11 @@ ok_all`, `--test next`, `--test init`, `--test init_process`); before each GREEN
 | Terminal | the same ticket in a terminal: the whole page without the cut, the control characters as spaces, then the change blocks of spec, design, proof and plan, then the `confirmed:` lines, equal to `ok_page_terminal.txt` | `ok_page::terminal_prints_the_whole_page` |
 | Old terminal goldens | `ok_change_blocks.txt` with the Criteria part of the fixture Spec; `ok_key_form.txt` unchanged, its Spec does not wait | `ok_all::key_form_confirms_every_waiting_section`, `ok_all::change_block_for_each_kind` |
 | Grant | the dialog, then a Frame edit; again, then a new Decisions line: exit 1, the mismatch text, `state.json` and `decisions.jsonl` unchanged | `ok_page::grant_binds_the_description` |
-| Decisions bounds | `## Next` after Decisions goes back to Frame; `#### sub` stays in Decisions; a fenced `### Decisions` is no heading; an empty `### Decisions` gives no label | `ok_page::decisions_boundaries` |
+| Decisions bounds | `### Next` after Decisions goes back to Frame (a `## Next` ends the section); `#### sub` stays in Decisions; a fenced `### Decisions` is no heading; an empty `### Decisions` gives no label | `ok_page::decisions_boundaries` |
 | Frame and Decisions diffs | after a confirmation, a Frame line changed and a Decisions line removed: `+ `/`- `; a confirmation without stored text: `  ` | `ok_page::frame_and_decisions_diffs` |
 | Cut and limit bounds | a line of 100 characters stays whole, one of 101 is cut; a part ending with one free line gives a page of 21 lines | `ok_page::cut_and_limit_boundaries` |
 | Shipped template | `stapel init`, `stapel new First`, the dialog of `stapel ok ABC-1`: one `## Description` in `ticket.md`, the line `description: new, …` (E-1, E-2) | `init::new_ticket_has_one_description` |
+| Tracker and id case | the shipped template, `stapel new --tracker URL First`: `Tracker: URL` under the one `## Description`; a `stapel.toml` with `id = "Description"`: one `## Description` (E2-1, E2-2) | `new::tracker_line_in_the_description_section`, `new::description_id_without_case` |
 | Grant unchanged | the dialog, no edit: the grant confirms every waiting section | `ok_page::grant_passes_when_unchanged` |
 | Template | `stapel init` in an empty repository: the `description` entry first, no `depends_on` naming it, the `requires` of AC-1; the file parses | `init::template_has_the_description_section` |
 | Reserved title | the title `Description` for the id `design`: still refused; for the id `description`: accepted | `core::config::rejects_bad_sections` |
@@ -332,7 +333,7 @@ the step order: each fails at its RED for its own behaviour and passes at its GR
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `init::template_has_the_description_section`, `init_process::this_repository_confirms_the_description`, `core::config::rejects_bad_sections`, `init::new_ticket_has_one_description` |
+| AC-1 | `init::template_has_the_description_section`, `init_process::this_repository_confirms_the_description`, `core::config::rejects_bad_sections`, `init::new_ticket_has_one_description`, `new::tracker_line_in_the_description_section`, `new::description_id_without_case` |
 | AC-2 | `ok_page::section_lines`, `ok_all::dialog_lists_every_waiting_section`, `ok_all::new_with_reasons_in_terminal_and_dialog`, `ok_all::new_never_shows_the_text_change`, `ok_all::dialog_counts_added_and_removed_apart`, `ok_all::dialog_shows_every_stale_reason` |
 | AC-3 | `ok_page::criteria_new_and_changed`, `ok_page::criteria_without_rows` |
 | AC-4 | `ok_page::frame_and_decisions_new_and_changed`, `ok_page::description_without_headings`, `ok_page::config_without_description`, `ok_page::decisions_boundaries`, `ok_page::frame_and_decisions_diffs` |
@@ -398,6 +399,10 @@ Route: full (tags `guard`, `interface`), auto.
    adds the test: `stapel init`, `stapel new` and the dialog of `stapel ok` on the template as shipped give
    one `## Description` and `description: new, …`; it fails there. The GREEN changes `new.rs` so that the
    configured `description` section is written once, and the module doc of `page.rs` (E-5).
+8. Fix after code review round 2 (E2-1, E2-2; AC-1; tests `new::tracker_line_in_the_description_section`,
+   `new::description_id_without_case`): the RED adds both tests on the template as shipped, without
+   `common::stapel_repo`; the id test fails there. The GREEN compares the id `description` without case
+   in `new.rs`, as `Config::section` does.
 
 ## Review
 
