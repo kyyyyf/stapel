@@ -353,9 +353,9 @@ Route: full (tags `guard`, `interface`), auto.
    `### Decisions`; Frame and Decisions diffs; no stored text; empty Decisions; 100, 101 characters; 21
    lines.
 4. The terminal page (AC-6; tests `ok_page::terminal_prints_the_whole_page`,
-   `ok_all::key_form_confirms_every_waiting_section`, `ok_all::change_block_for_each_kind`): the RED adds
-   `ok_page_terminal.txt` and changes `ok_key_form.txt` and `ok_change_blocks.txt` so that the tests fail
-   there. Must not change: the one-section output.
+   `ok_all::change_block_for_each_kind`): the RED adds `ok_page_terminal.txt` and changes
+   `ok_change_blocks.txt` so that the tests fail there. Must not change: the one-section output;
+   `ok_key_form.txt` (its Spec does not wait).
 4b. Coverage, no GREEN (AC-4, AC-7, AC-10; tests `ok_page::grant_binds_the_description`,
    `ok_page::config_without_description`, `ok_page::description_missing_or_twice`). Tests only, each
    helper nested inside its function, no `cargo fmt`; a test that fails is an `intent_gap`.
