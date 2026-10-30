@@ -239,7 +239,9 @@ fn diff_lines(old: &[String], new: &[String]) -> (Vec<String>, usize, usize) {
 fn criteria_part(p: &Prepared) -> Vec<String> {
     let old = latest(&p.state, &p.section).and_then(|c| c.text.as_deref());
     let (rows, other) = spec_lines(&p.text);
-    if rows.is_empty() {
+    // Rows that went still count: the Spec had rows, so the rows form is used.
+    let had_rows = old.is_some_and(|o| !spec_lines(o).0.is_empty());
+    if rows.is_empty() && !had_rows {
         return match old {
             None => other.iter().map(|l| format!("  {l}")).collect(),
             Some(old) => diff_lines(&spec_lines(old).1, &other).0,
@@ -271,7 +273,7 @@ fn split_description(text: &str) -> (String, String) {
     let mut in_decisions = false;
     for s in scan(text) {
         match &s.heading {
-            Some((3, title)) if title.eq_ignore_ascii_case("Decisions") => {
+            Some((3, title)) if title == "Decisions" => {
                 in_decisions = true;
                 continue;
             }
