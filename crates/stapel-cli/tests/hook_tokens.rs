@@ -670,3 +670,155 @@ fn window_ends_at_the_last_complete_message() {
     assert_eq!(rs[1]["partial"], 1, "{}", rs[1]);
     assert_eq!(rs[1]["from"], "2026-01-01T11:00:15.000Z", "{}", rs[1]);
 }
+
+#[test]
+fn unreadable_transcript_gives_a_gap_record() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repo_with_ticket();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let dir = elsewhere.path();
+    let missing = dir.join("missing.jsonl");
+    let folder = dir.join("folder");
+    std::fs::create_dir(&folder).unwrap();
+    let no_session = dir.join("no-session.jsonl");
+    std::fs::write(&no_session, "{\"type\":\"user\"}\n").unwrap();
+    let locked = dir.join("locked.jsonl");
+    std::fs::write(&locked, "{\"sessionId\":\"s\"}\n").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let mut cases = vec![
+        (missing, "missing"),
+        (folder, "not a file"),
+        (no_session, "no sessionId"),
+    ];
+    // A process that may read any file cannot make a file unreadable.
+    if std::fs::File::open(&locked).is_err() {
+        cases.push((locked, "not readable"));
+    }
+    for (n, (path, reason)) in cases.iter().enumerate() {
+        subagent_stop(repo.path(), dir, "stapel-builder", path)
+            .success()
+            .stdout("");
+        let rs = records(repo.path(), "ABC-1");
+        assert_eq!(rs.len(), n + 1, "{rs:?}");
+        let r = &rs[n];
+        assert_eq!(r["source"], "estimate", "{r}");
+        assert_eq!(r["estimate"], 0, "{r}");
+        assert_eq!(r["model"], "unknown", "{r}");
+        assert_eq!(r["role"], "builder", "{r}");
+        assert_eq!(r["hook"], "subagent-stop", "{r}");
+        assert_eq!(r["ticket"], "ABC-1", "{r}");
+        assert_eq!(r["transcript"], path.to_str().unwrap(), "{r}");
+        assert_eq!(r["note"], format!("transcript not read: {reason}"), "{r}");
+    }
+    // The same input again adds nothing.
+    let before = std::fs::read(tokens_path(repo.path(), "ABC-1")).unwrap();
+    for (path, _) in &cases {
+        subagent_stop(repo.path(), dir, "stapel-builder", path)
+            .success()
+            .stdout("");
+    }
+    assert_eq!(std::fs::read(tokens_path(repo.path(), "ABC-1")).unwrap(), before);
+
+    // `stapel tokens` shows the estimate 0 in the role's row.
+    let shown = stapel(repo.path()).args(["tokens", "ABC-1"]).assert().success();
+    let out = String::from_utf8(shown.get_output().stdout.clone()).unwrap();
+    let row: Vec<&str> = out
+        .lines()
+        .find(|l| l.starts_with("builder"))
+        .unwrap_or_else(|| panic!("{out}"))
+        .split_whitespace()
+        .collect();
+    assert_eq!(row[1], "unknown", "{out}");
+    assert_eq!(row[6], "0", "{out}");
+
+    // A main transcript hook writes its gap with the role `orchestrator`.
+    main_hook(repo.path(), dir, "session-end", "s-hook", &dir.join("gone.jsonl"));
+    let rs = records(repo.path(), "ABC-1");
+    let r = rs.last().unwrap();
+    assert_eq!(r["role"], "orchestrator", "{r}");
+    assert_eq!(r["hook"], "session-end", "{r}");
+    assert_eq!(r["note"], "transcript not read: missing", "{r}");
+
+    // No open ticket: nothing is written, not even to a closed ticket.
+    let closed = repo_with_ticket();
+    stapel(closed.path())
+        .args(["close", "ABC-1", "--reason", "merged"])
+        .assert()
+        .success();
+    subagent_stop(closed.path(), dir, "stapel-builder", &dir.join("missing.jsonl"))
+        .success()
+        .stdout("");
+    assert!(!tokens_path(closed.path(), "ABC-1").exists());
+}
+
+#[test]
+fn bad_input_writes_nothing() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let dir = elsewhere.path();
+    let good = transcript(
+        dir,
+        "sub.jsonl",
+        &[("m1", S, "2026-01-01T11:00:05.000Z", [10, 20, 100, 5], true)],
+    );
+    let run = |repo: &Path, root_env: bool, stdin: &str| {
+        let mut cmd = stapel(dir);
+        if root_env {
+            cmd.env("CLAUDE_PROJECT_DIR", repo);
+        }
+        cmd.args(["hook", "subagent-stop"])
+            .write_stdin(stdin.to_string())
+            .assert()
+            .success()
+            .stdout("");
+    };
+    let valid = |cwd: &Path| {
+        serde_json::json!({
+            "cwd": cwd, "agent_type": "stapel-builder", "agent_transcript_path": good,
+        })
+    };
+
+    // Input that is not JSON or lacks a field.
+    let repo = repo_with_ticket();
+    let before = common::snapshot(repo.path());
+    run(repo.path(), true, "not json");
+    run(repo.path(), true, "{}");
+    let mut no_type = valid(dir);
+    no_type.as_object_mut().unwrap().remove("agent_type");
+    run(repo.path(), true, &no_type.to_string());
+    let mut no_path = valid(dir);
+    no_path.as_object_mut().unwrap().remove("agent_transcript_path");
+    run(repo.path(), true, &no_path.to_string());
+    // No `CLAUDE_PROJECT_DIR` and a `cwd` outside any stapel repository.
+    run(repo.path(), false, &valid(dir).to_string());
+    assert_eq!(common::snapshot(repo.path()), before);
+
+    // A stapel repository that is not a git repository.
+    let no_git = repo_with_ticket();
+    std::fs::remove_dir_all(no_git.path().join(".git")).unwrap();
+    let before = common::snapshot(no_git.path());
+    run(no_git.path(), true, &valid(dir).to_string());
+    assert_eq!(common::snapshot(no_git.path()), before);
+
+    // A broken `stapel.toml`.
+    let broken = repo_with_ticket();
+    std::fs::write(broken.path().join(".stapel/stapel.toml"), "[[[ not toml").unwrap();
+    let before = common::snapshot(broken.path());
+    run(broken.path(), true, &valid(dir).to_string());
+    assert_eq!(common::snapshot(broken.path()), before);
+
+    // The open ticket's `tokens.jsonl` is a folder.
+    let folder = repo_with_ticket();
+    std::fs::create_dir(tokens_path(folder.path(), "ABC-1")).unwrap();
+    let before = common::snapshot(folder.path());
+    run(folder.path(), true, &valid(dir).to_string());
+    assert_eq!(common::snapshot(folder.path()), before);
+
+    // Control: the same input in a sound repository still writes, so the checks above hold
+    // because of the input, not because the hook does nothing.
+    let sound = repo_with_ticket();
+    let missing = serde_json::json!({
+        "cwd": dir, "agent_type": "stapel-builder", "agent_transcript_path": dir.join("gone.jsonl"),
+    });
+    run(sound.path(), true, &missing.to_string());
+    assert_eq!(records(sound.path(), "ABC-1").len(), 1);
+}
