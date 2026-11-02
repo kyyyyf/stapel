@@ -822,3 +822,37 @@ fn bad_input_writes_nothing() {
     run(sound.path(), true, &missing.to_string());
     assert_eq!(records(sound.path(), "ABC-1").len(), 1);
 }
+
+#[test]
+fn report_counts_hook_records() {
+    let repo = repo_with_ticket();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = transcript(
+        elsewhere.path(),
+        "sub.jsonl",
+        &[("m1", S, "2026-01-01T11:00:05.000Z", [10, 20, 100, 5], true)],
+    );
+    subagent_stop(repo.path(), elsewhere.path(), "general-purpose", &path)
+        .success()
+        .stdout("");
+    let rs = records(repo.path(), "ABC-1");
+    assert_eq!(rs.len(), 1, "{rs:?}");
+    assert_eq!(rs[0]["hook"], "subagent-stop", "{}", rs[0]);
+    assert_eq!(rs[0]["note"], "agent type general-purpose", "{}", rs[0]);
+    let out = stapel(repo.path())
+        .args(["tokens", "ABC-1"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(out).unwrap();
+    let row: Vec<&str> = out
+        .lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>())
+        .find(|c| c.first() == Some(&"research"))
+        .unwrap_or_else(|| panic!("no research row in {out}"));
+    assert_eq!(row[1], S, "{out}");
+    assert_eq!(row[2], "10", "{out}");
+    assert_eq!(row[3], "20", "{out}");
+}
