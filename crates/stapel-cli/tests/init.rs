@@ -340,3 +340,29 @@ fn writes_commented_check_otherwise() {
     assert!(text.lines().any(|l| l.starts_with("# [check]")), "{text}");
     assert!(!text.lines().any(|l| l.trim() == "[check]"), "{text}");
 }
+
+// STP-26 AC-12: a new `stapel.toml` holds the `[roles]` table with the four default rows.
+#[test]
+fn template_has_the_roles_table() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let text = read(dir, ".stapel/stapel.toml");
+    Config::parse(&text).unwrap();
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let at = lines
+        .iter()
+        .position(|l| *l == "[roles]")
+        .unwrap_or_else(|| panic!("no [roles] table: {text}"));
+    for row in [
+        "stapel-builder = \"builder\"",
+        "stapel-drift = \"drift\"",
+        "stapel-reviewer = \"reviewer\"",
+        "stapel-spec-reviewer = \"reviewer\"",
+    ] {
+        assert!(lines[at..].contains(&row), "{row} missing: {text}");
+    }
+}

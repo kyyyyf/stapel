@@ -1781,3 +1781,23 @@ fn drift_and_kind_order_texts() {
         "{skill:?}"
     );
 }
+
+// STP-26 AC-12: this repository's config holds the four default `[roles]` rows.
+#[test]
+fn this_repository_has_the_roles_table() {
+    let text = std::fs::read_to_string(repo_root().join(".stapel/stapel.toml")).unwrap();
+    stapel_core::config::Config::parse(&text).unwrap();
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let at = lines
+        .iter()
+        .position(|l| *l == "[roles]")
+        .unwrap_or_else(|| panic!("no [roles] table: {text}"));
+    for row in [
+        "stapel-builder = \"builder\"",
+        "stapel-drift = \"drift\"",
+        "stapel-reviewer = \"reviewer\"",
+        "stapel-spec-reviewer = \"reviewer\"",
+    ] {
+        assert!(lines[at..].contains(&row), "{row} missing");
+    }
+}

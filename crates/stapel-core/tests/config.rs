@@ -248,3 +248,27 @@ fn check_cargo_key_is_validated() {
         assert!(e.contains("check.cargo"), "{bad:?}: {e}");
     }
 }
+
+// STP-26 AC-3: a `[roles]` key or value of 1 to 64 bytes without control characters is accepted.
+#[test]
+fn rejects_bad_roles() {
+    let base = default_toml("STP");
+    // The starter file has the `[roles]` table (AC-12); the rows under test join its rows.
+    let parse =
+        |rows: &str| Config::parse(&base.replace("[roles]\n", &format!("[roles]\n{rows}\n")));
+    let long = "k".repeat(65);
+    for rows in [
+        "\"\" = \"x\"".to_string(),
+        "a = \"\"".to_string(),
+        format!("\"{long}\" = \"x\""),
+        "a = \"x\\ty\"".to_string(),
+    ] {
+        let e = parse(&rows).expect_err(&format!("{rows:?} was accepted"));
+        assert!(
+            e.contains("must be 1 to 64 bytes without control characters") && e.contains("roles:"),
+            "{rows:?}: {e}"
+        );
+    }
+    let ok = "k".repeat(64);
+    parse(&format!("\"{ok}\" = \"{ok}\"")).expect("64 bytes are accepted");
+}
