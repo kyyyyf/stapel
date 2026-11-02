@@ -200,3 +200,235 @@ fn roles_without_a_table() {
     assert_eq!(r["role"], "research", "{r}");
     assert_eq!(r["note"], "agent type general-purpose", "{r}");
 }
+
+const IDENTITY: &str = "s-hook/agent-hook";
+
+fn tokens_path(dir: &Path, key: &str) -> PathBuf {
+    dir.join(format!(".stapel/tickets/{key}/tokens.jsonl"))
+}
+
+fn new_ticket(dir: &Path, title: &str) {
+    stapel(dir).args(["new", title]).assert().success();
+}
+
+/// Closes `key`, then sets the time of the close.
+fn close_at(dir: &Path, key: &str, at: &str) {
+    stapel(dir)
+        .args(["close", key, "--reason", "merged"])
+        .assert()
+        .success();
+    let path = dir.join(format!(".stapel/tickets/{key}/state.json"));
+    let mut state: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    state["closed"]["at"] = serde_json::json!(at);
+    std::fs::write(&path, state.to_string()).unwrap();
+}
+
+/// A planted record of this transcript.
+fn planted(id: &str, model: &str, to: serde_json::Value) -> String {
+    serde_json::json!({
+        "v": 1, "id": id, "at": "2026-01-01T12:00:00Z", "ticket": "ABC-1", "role": "builder",
+        "model": model, "source": "measured", "transcript": IDENTITY, "input": 1,
+        "from": "2026-01-01T11:00:05.000Z", "to": to, "messages": 1,
+    })
+    .to_string()
+}
+
+const S: &str = "claude-sonnet-5-5";
+const O: &str = "claude-opus-5-5";
+
+#[test]
+fn repeated_call_adds_nothing() {
+    let repo = repo_with_ticket();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = transcript(
+        elsewhere.path(),
+        "sub.jsonl",
+        &[
+            ("m1", S, "2026-01-01T11:00:05.000Z", [10, 20, 100, 5], true),
+            ("m2", O, "2026-01-01T11:00:10.000Z", [1, 2, 3, 4], true),
+        ],
+    );
+    subagent_stop(repo.path(), elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    let first = std::fs::read(tokens_path(repo.path(), "ABC-1")).unwrap();
+    assert_eq!(records(repo.path(), "ABC-1").len(), 2);
+    subagent_stop(repo.path(), elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    assert_eq!(std::fs::read(tokens_path(repo.path(), "ABC-1")).unwrap(), first);
+}
+
+#[test]
+fn cursor_across_tickets() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    new_ticket(dir, "Second");
+    close_at(dir, "ABC-1", "2026-01-01T12:00:00Z");
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = transcript(
+        elsewhere.path(),
+        "sub.jsonl",
+        &[
+            ("o1", O, "2026-01-01T11:00:06.000Z", [2, 9, 50, 0], true),
+            ("m1", S, "2026-01-01T11:00:05.000Z", [1, 1, 1, 1], true),
+            ("m2", S, "2026-01-01T11:00:10.000Z", [1, 1, 1, 1], true),
+            ("m3", S, "2026-01-01T11:00:15.000Z", [1, 1, 1, 1], true),
+            ("m4", S, "2026-01-01T11:00:20.000Z", [10, 20, 30, 40], true),
+            ("m5", S, "2026-01-01T11:00:25.000Z", [1, 2, 3, 4], true),
+        ],
+    );
+    // A record of this transcript for model S only, in the closed ticket; another session's record is no cursor.
+    let mut text = planted("t-planted1", S, serde_json::json!("2026-01-01T11:00:15.000Z"));
+    text.push('\n');
+    text.push_str(&planted("t-planted2", O, serde_json::json!("2026-01-01T11:59:00.000Z")).replace(IDENTITY, "other/agent"));
+    text.push('\n');
+    std::fs::write(tokens_path(dir, "ABC-1"), text).unwrap();
+    subagent_stop(dir, elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    let rs = records(dir, "ABC-2");
+    assert_eq!(rs.len(), 2, "{rs:?}");
+    let s = by_model(&rs, S);
+    assert_eq!(s["messages"], 2, "{s}");
+    assert_eq!(s["input"], 11, "{s}");
+    assert_eq!(s["from"], "2026-01-01T11:00:20.000Z", "{s}");
+    let o = by_model(&rs, O);
+    assert_eq!(o["messages"], 1, "{o}");
+    assert_eq!(o["from"], "2026-01-01T11:00:06.000Z", "{o}");
+    assert_eq!(records(dir, "ABC-1").len(), 2);
+}
+
+#[test]
+fn broken_line_does_not_stop_the_hooks() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    new_ticket(dir, "Second");
+    new_ticket(dir, "Third");
+    close_at(dir, "ABC-2", "2026-01-01T12:00:00Z");
+    close_at(dir, "ABC-3", "2026-01-01T12:00:00Z");
+    // Another ticket: a good cursor at message 2, then lines that are no cursor.
+    let other = [
+        planted("t-good", S, serde_json::json!("2026-01-01T11:00:10.000Z")),
+        "not json".to_string(),
+        planted("t-five", S, serde_json::json!(5)),
+        planted("t-bad-time", S, serde_json::json!("yesterday")),
+        String::new(),
+        "[1,2]".to_string(),
+    ]
+    .join("\n");
+    std::fs::write(tokens_path(dir, "ABC-2"), other + "\n").unwrap();
+    // A ticket whose `tokens.jsonl` cannot be read.
+    std::fs::create_dir(tokens_path(dir, "ABC-3")).unwrap();
+    // The target ends in a line cut short, without a newline.
+    std::fs::write(tokens_path(dir, "ABC-1"), "{\"v\":1,\"id\"").unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = transcript(
+        elsewhere.path(),
+        "sub.jsonl",
+        &[
+            ("m1", S, "2026-01-01T11:00:05.000Z", [1, 1, 1, 1], true),
+            ("m2", S, "2026-01-01T11:00:10.000Z", [1, 1, 1, 1], true),
+            ("m3", S, "2026-01-01T11:00:15.000Z", [10, 20, 30, 40], true),
+            ("m4", S, "2026-01-01T11:00:20.000Z", [1, 2, 3, 4], true),
+        ],
+    );
+    subagent_stop(dir, elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    let text = std::fs::read_to_string(tokens_path(dir, "ABC-1")).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert_eq!(lines[0], "{\"v\":1,\"id\"", "{text}");
+    let r: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+    assert_eq!(r["messages"], 2, "{r}");
+    assert_eq!(r["from"], "2026-01-01T11:00:15.000Z", "{r}");
+    assert_eq!(r["input"], 11, "{r}");
+    // A second call adds nothing.
+    subagent_stop(dir, elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    assert_eq!(std::fs::read_to_string(tokens_path(dir, "ABC-1")).unwrap(), text);
+}
+
+/// A transcript with sonnet at 11:00:05 and 11:00:10 and opus at 11:30:00.
+fn window_transcript(dir: &Path) -> PathBuf {
+    transcript(
+        dir,
+        "sub.jsonl",
+        &[
+            ("m1", S, "2026-01-01T11:00:05.000Z", [1, 2, 3, 4], true),
+            ("m2", S, "2026-01-01T11:00:10.000Z", [1, 2, 3, 4], true),
+            ("o1", O, "2026-01-01T11:30:00.000Z", [2, 9, 50, 0], true),
+        ],
+    )
+}
+
+#[test]
+fn tail_after_close() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = window_transcript(elsewhere.path());
+    // One closed ticket, closed after the window's first message.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    close_at(dir, "ABC-1", "2026-01-01T11:00:07Z");
+    subagent_stop(dir, elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    assert_eq!(records(dir, "ABC-1").len(), 2);
+
+    // Two closed in the window: the later one.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    new_ticket(dir, "Second");
+    close_at(dir, "ABC-1", "2026-01-01T11:10:00Z");
+    close_at(dir, "ABC-2", "2026-01-01T11:20:00Z");
+    subagent_stop(dir, elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    assert_eq!(records(dir, "ABC-1").len(), 0);
+    assert_eq!(records(dir, "ABC-2").len(), 2);
+
+    // Model O starts after the close, model S before it: both records go to the closed ticket.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    close_at(dir, "ABC-1", "2026-01-01T11:15:00Z");
+    subagent_stop(dir, elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    let rs = records(dir, "ABC-1");
+    assert_eq!(rs.len(), 2, "{rs:?}");
+    assert_eq!(by_model(&rs, O)["ticket"], "ABC-1");
+}
+
+#[test]
+fn no_target_ticket() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = window_transcript(elsewhere.path());
+    // The same setup with a ticket closed in the window writes.
+    let repo = repo_with_ticket();
+    close_at(repo.path(), "ABC-1", "2026-01-01T11:00:07Z");
+    subagent_stop(repo.path(), elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    assert_eq!(records(repo.path(), "ABC-1").len(), 2);
+
+    // The only closed ticket closed before the window.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    close_at(dir, "ABC-1", "2026-01-01T10:59:59Z");
+    subagent_stop(dir, elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    assert!(!tokens_path(dir, "ABC-1").exists());
+
+    // Two open tickets.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    new_ticket(dir, "Second");
+    subagent_stop(dir, elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    assert!(!tokens_path(dir, "ABC-1").exists());
+    assert!(!tokens_path(dir, "ABC-2").exists());
+}
