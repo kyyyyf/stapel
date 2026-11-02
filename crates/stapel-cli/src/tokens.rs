@@ -859,6 +859,40 @@ fn cursors(root: &Path, identity: &str) -> std::collections::HashMap<String, u64
     cursors
 }
 
+/// The OS lock on `tokens.lock` in the git common folder; released on drop.
+struct TokensLock(std::fs::File);
+
+impl Drop for TokensLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+/// Takes the lock, waiting at most 20 s; `None` when it stays held or cannot be made.
+fn take_tokens_lock(root: &Path) -> Option<TokensLock> {
+    let dir = stapel_core::worktree::stapel_dir(root).ok()?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.join("tokens.lock"))
+        .ok()?;
+    let start = std::time::Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Some(TokensLock(file)),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if start.elapsed() >= std::time::Duration::from_secs(20) {
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
 /// The hook entry of the token journal (STP-26): the records of every model for the part of the
 /// transcript after its cursor, into the target ticket. `None` when nothing could be written.
 pub fn hook_records(
@@ -870,6 +904,8 @@ pub fn hook_records(
 ) -> Option<()> {
     let t = stapel_core::tokens::read_transcript(transcript).ok()?;
     let identity = t.identity()?;
+    // One hook at a time: cursors are read and records appended under `tokens.lock` (AC-15).
+    let _lock = take_tokens_lock(root)?;
     let cursors = cursors(root, &identity);
     let window: Vec<_> = t
         .messages
