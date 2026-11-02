@@ -93,7 +93,12 @@ fn hooks_merge_with_foreign_settings() {
         ])
     );
     assert_eq!(s["model"], foreign["model"]);
-    assert_eq!(s["hooks"]["Stop"], foreign["hooks"]["Stop"]);
+    assert_eq!(s["hooks"]["Stop"][0], foreign["hooks"]["Stop"][0]);
+    assert_eq!(s["hooks"]["Stop"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        s["hooks"]["Stop"][1]["hooks"][0]["command"],
+        "command -v stapel >/dev/null 2>&1 || exit 0; stapel hook stop 2>/dev/null || exit 0"
+    );
     let pre = s["hooks"]["PreToolUse"].as_array().unwrap();
     assert!(pre.contains(&foreign["hooks"]["PreToolUse"][0]), "{s:#}");
     assert_eq!(pre.len(), 2);
@@ -566,7 +571,18 @@ fn adds_the_post_hook_to_an_existing_install() {
 
         let s = settings(dir);
         assert_eq!(s["model"], "opus", "{s:#}");
-        assert_eq!(s["hooks"]["Stop"], foreign_stop, "{s:#}");
+        let mut stop_expected = foreign_stop.as_array().unwrap().clone();
+        stop_expected.push(json!({
+            "hooks": [{
+                "type": "command",
+                "command": "command -v stapel >/dev/null 2>&1 || exit 0; stapel hook stop 2>/dev/null || exit 0",
+                "timeout": 30
+            }]
+        }));
+        assert_eq!(s["hooks"]["Stop"], json!(stop_expected), "{s:#}");
+        for event in ["SubagentStop", "SessionEnd"] {
+            assert_eq!(s["hooks"][event].as_array().unwrap().len(), 1, "{event}");
+        }
         let pre_all = s["hooks"]["PreToolUse"].as_array().unwrap();
         assert!(pre_all.contains(&foreign_pre), "{s:#}");
         assert_eq!(pre_all.len(), 2, "{s:#}");
@@ -636,4 +652,42 @@ fn refuses_a_non_array_hook_event() {
         assert!(!dir.join(".gitignore").exists(), "{event}");
         assert!(!dir.join(".git/hooks/pre-push").exists(), "{event}");
     }
+}
+
+// STP-26 AC-11: init installs the three token hooks once, without a matcher.
+#[test]
+fn token_hooks_installed() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let first = settings(dir);
+    stapel(dir).arg("init").assert().success();
+    let s = settings(dir);
+    assert_eq!(s, first, "a second run changed the settings");
+    for (event, name) in [
+        ("SubagentStop", "subagent-stop"),
+        ("Stop", "stop"),
+        ("SessionEnd", "session-end"),
+    ] {
+        let entries = s["hooks"][event].as_array().unwrap_or_else(|| panic!("{event}: {s:#}"));
+        assert_eq!(entries.len(), 1, "{event}: {s:#}");
+        assert!(entries[0].get("matcher").is_none(), "{event}");
+        assert_eq!(entries[0]["hooks"].as_array().unwrap().len(), 1);
+        let hook = &entries[0]["hooks"][0];
+        assert_eq!(hook["type"], "command");
+        assert_eq!(
+            hook["command"],
+            format!(
+                "command -v stapel >/dev/null 2>&1 || exit 0; stapel hook {name} 2>/dev/null || exit 0"
+            )
+        );
+        assert_eq!(hook["timeout"], 30, "{event}");
+    }
+    for event in ["PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionStart"] {
+        assert!(s["hooks"][event].is_array(), "{event}");
+    }
+    assert_eq!(s["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
 }

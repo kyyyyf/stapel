@@ -1801,3 +1801,19 @@ fn this_repository_has_the_roles_table() {
         assert!(lines[at..].contains(&row), "{row} missing");
     }
 }
+
+// STP-26 AC-13: the skill reads tokens recorded by the hooks and asks for no import.
+#[test]
+fn skill_text_names_the_token_hooks() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let flat = collapsed(&body_of(dir, SKILL));
+    assert!(
+        flat.contains(
+            "8. **Measures after the close.** Read the measured tokens with stapel tokens KEY; the hooks record them."
+        ),
+        "missing the token hooks sentence"
+    );
+    assert!(!flat.contains("Import the measured tokens"));
+}
