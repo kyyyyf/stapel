@@ -38,6 +38,14 @@ const SESSION_HOOK_COMMAND: &str = "stapel hook session-start";
 const SESSION_HOOK_LINE: &str =
     "command -v stapel >/dev/null 2>&1 || exit 0; stapel hook session-start 2>/dev/null || exit 0";
 const SESSION_HOOK_MATCHER: &str = "startup|clear|compact";
+/// The token hooks: event, hook name. No matcher; the entry waits up to 30 seconds because
+/// `SessionEnd` has a timeout of 1.5 seconds by default.
+const TOKEN_HOOKS: [(&str, &str); 3] = [
+    ("SubagentStop", "subagent-stop"),
+    ("Stop", "stop"),
+    ("SessionEnd", "session-end"),
+];
+const TOKEN_HOOK_TIMEOUT: u64 = 30;
 /// Marks the pre-push hook as ours.
 const PRE_PUSH_MARKER: &str = "# stapel: pre-push guard";
 /// Second layer against agent pushes: Claude Code sets CLAUDECODE in the shell it gives the
@@ -555,6 +563,9 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         "PostToolUse",
         "PostToolUseFailure",
         "SessionStart",
+        "SubagentStop",
+        "Stop",
+        "SessionEnd",
     ] {
         if hooks.get(event).is_some_and(|v| !v.is_array()) {
             return Err(format!(
@@ -585,6 +596,21 @@ fn plan_hooks(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         }
         missing
     };
+    let mut token_added = false;
+    for (event, name) in TOKEN_HOOKS {
+        let entries = hook_array(hooks, event);
+        let command = format!("stapel hook {name}");
+        if !has_command(entries, &command) {
+            let line = format!(
+                "command -v stapel >/dev/null 2>&1 || exit 0; {command} 2>/dev/null || exit 0"
+            );
+            entries.push(json!({
+                "hooks": [{ "type": "command", "command": line, "timeout": TOKEN_HOOK_TIMEOUT }]
+            }));
+            token_added = true;
+        }
+    }
+    let session_added = session_added || token_added;
     if !pre_upgraded && !pre_added && !post_added && !session_added && !allow_added {
         return Ok(());
     }

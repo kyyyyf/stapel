@@ -99,7 +99,7 @@ list must not only grow.
    of LOW ones, with no fixed maximum. Each finding gets `catchable_at` (`spec`, `design`, `test-plan`,
    `code`), `promise` (`inside` or `outside`) and `rule`: the rule of this process that should have caught
    it, or `none`.
-8. **Measures after the close.** Import the measured tokens and compare with the previous ticket: escaped
+8. **Measures after the close.** Read the measured tokens with stapel tokens KEY; the hooks record them. Compare with the previous ticket: escaped
    defects (found after the close) as the main measure; HIGH and MEDIUM inside-promise findings of code
    review; the size of `ticket.md`; tokens by role; wall time. The summary says what improved and what did
    not.

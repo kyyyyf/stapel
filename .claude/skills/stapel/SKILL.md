@@ -1,7 +1,7 @@
 ---
 name: stapel
 description: "Carries a development ticket from description to merge with the stapel process."
-# stapel: 0.1.0 sha256:52b2eefcd253ff273d6a0bc3ee974ed7b8bae29825d687dee1b3d7a5916b047b
+# stapel: 0.1.0 sha256:4775d12c642f782eaabc0ae122bf111f91ad4d1ae59e3e7952a5558c7de60b82
 ---
 # The stapel process
 
@@ -104,7 +104,7 @@ list must not only grow.
    of LOW ones, with no fixed maximum. Each finding gets `catchable_at` (`spec`, `design`, `test-plan`,
    `code`), `promise` (`inside` or `outside`) and `rule`: the rule of this process that should have caught
    it, or `none`.
-8. **Measures after the close.** Import the measured tokens and compare with the previous ticket: escaped
+8. **Measures after the close.** Read the measured tokens with stapel tokens KEY; the hooks record them. Compare with the previous ticket: escaped
    defects (found after the close) as the main measure; HIGH and MEDIUM inside-promise findings of code
    review; the size of `ticket.md`; tokens by role; wall time. The summary says what improved and what did
    not.
