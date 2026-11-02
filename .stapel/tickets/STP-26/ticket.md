@@ -106,7 +106,7 @@ Terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN `stapel hook subagent-stop` gets an input with `agent_type` and `agent_transcript_path` THE hook appends one hook record per model of the window to the target ticket's `tokens.jsonl`, with the role of the role map, prints nothing on stdout and exits 0. | `hook_tokens::subagent_stop_records_each_model`, `hook_tokens::partial_messages_as_import` |
+| AC-1 | WHEN `stapel hook subagent-stop` gets an input with `agent_type` and `agent_transcript_path` THE hook appends one hook record per model of the window to the target ticket's `tokens.jsonl`, with the role of the role map, prints nothing on stdout and exits 0. | `hook_tokens::subagent_stop_records_each_model`, `hook_tokens::partial_messages_as_import`, `hook_tokens::report_counts_hook_records` |
 | AC-2 | WHEN the agent type has no row in the role map THE role is `research` and the record has `note: "agent type <shown type>"`; WHEN `stapel.toml` has a `[roles]` table THE default rows do not apply. | `hook_tokens::roles_from_the_table`, `hook_tokens::roles_without_a_table` |
 | AC-3 | IF a `[roles]` key or value is empty, longer than 64 bytes or holds a control character THEN `Config::parse` refuses with `roles: <key> must be 1 to 64 bytes without control characters`. | `core::config::rejects_bad_roles` |
 | AC-4 | WHEN `stapel hook stop` runs THE hook appends the window of `transcript_path` with the role `orchestrator` only when no record of any ticket has the transcript's identity as `transcript`, or the newest such record's `at` is 10 minutes or more before now. | `hook_tokens::stop_waits_ten_minutes` |
@@ -131,7 +131,9 @@ Terms:
   (the last `Stop` record stands); a clock that runs back, or a record `at` in the future (`stop` waits);
   two tickets closed at the same time in one window (either one); a session working in a second worktree
   (its records go to the tickets of `CLAUDE_PROJECT_DIR`); a sign that a hook found no target ticket
-  (SR1-13, outside the promise).
+  (SR1-13, outside the promise); `stapel tokens` and `import-records` on a ticket whose `tokens.jsonl`
+  holds a line cut by a killed hook (they refuse as before, until a person removes the line); a file
+  system without file locks (the hooks write nothing).
 
 ## Test plan
 
@@ -146,6 +148,7 @@ hook_tokens -- --test-threads=3` (and `--test hooks_install`, `--test init`, `--
 | Category | Cases | Tests |
 |---|---|---|
 | Subagent records | a subagent transcript with two models (3 and 1 messages), type `stapel-builder`: two records, role `builder`, `hook: "subagent-stop"`, counts as `tokens import` gives, stdout empty, exit 0 | `hook_tokens::subagent_stop_records_each_model` |
+| Report | a `subagent-stop` record with `hook` and `note`: `stapel tokens` shows its input and output in the `research` row, as for an imported record (E-3) | `hook_tokens::report_counts_hook_records` |
 | Partial | a message without a final line: `partial: 1`, its output left out, as `tokens import` | `hook_tokens::partial_messages_as_import` |
 | Role table | `[roles]` with `Explore = "research2"` and no `stapel-builder` row: `Explore` gives `research2`; `stapel-builder` gives `research` with `note: "agent type stapel-builder"` | `hook_tokens::roles_from_the_table` |
 | No table | a `stapel.toml` without `[roles]`: `stapel-spec-reviewer` gives `reviewer`; `general-purpose` gives `research` and its note | `hook_tokens::roles_without_a_table` |
@@ -243,18 +246,21 @@ hooks and `init`.
   coverage commit; the `cwd` source of the Hook root came with the fix step 2d (D2-1).
 - The hooks become live in this repository with step 6, the last step; from then on this session's records
   land in STP-26's `tokens.jsonl`, so the close does not import those windows by hand (SR2-L5).
-- `stop` reads the transcript's lines until the first `sessionId` for the identity, then the records, and
-  leaves before reading the rest when the newest record is younger than 10 minutes.
+- `stop` parses the transcript, then reads the records, and writes nothing when the newest record is
+  younger than 10 minutes (as built, D4-1; an early exit after the first `sessionId` was planned and not
+  built).
 - Every hook body runs in `catch_unwind` with a silent panic hook, as `session-start`; a panic writes
   nothing, because the one write comes last (SR1-7).
 - This repository's `.stapel/stapel.toml` gets the `[roles]` table in the GREEN of its step; `stapel init`
-  here installs the hooks and the skill, as `init_process::this_repository_has_the_current_files` requires.
+  here installs the hooks and the skill; `init_process::this_repository_has_the_current_files` pins the
+  skill and the agents, not this repository's `.claude/settings.json`, so the token hook entries here are
+  pinned by no test (E-2).
 
 ## Proof
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `hook_tokens::subagent_stop_records_each_model`, `hook_tokens::partial_messages_as_import` |
+| AC-1 | `hook_tokens::subagent_stop_records_each_model`, `hook_tokens::partial_messages_as_import`, `hook_tokens::report_counts_hook_records` |
 | AC-2 | `hook_tokens::roles_from_the_table`, `hook_tokens::roles_without_a_table` |
 | AC-3 | `core::config::rejects_bad_roles` |
 | AC-4 | `hook_tokens::stop_waits_ten_minutes` |
@@ -303,6 +309,8 @@ Route: full (tags `data`, `interface`), auto.
    runs `stapel init` here. The RED also changes two older install tests, the one that merges with foreign
    settings and the one that adds the post hook to an existing install, so that they expect the new
    entries and fail there. Must not change: the four existing hook entries.
+7. Coverage after code review round 1, no GREEN (AC-1; test `hook_tokens::report_counts_hook_records`):
+   the report already reads hook records, so the test passes at once (E-3).
 
 ## Review
 
