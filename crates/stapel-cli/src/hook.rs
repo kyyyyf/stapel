@@ -143,12 +143,19 @@ const DEFAULT_ROLES: [(&str, &str); 4] = [
     ("stapel-spec-reviewer", "reviewer"),
 ];
 
-/// The root of the hook repository: `CLAUDE_PROJECT_DIR`, else the working directory.
-fn token_root() -> Option<PathBuf> {
+/// The root of the hook repository: `CLAUDE_PROJECT_DIR`, else the input's `cwd`, else the working directory.
+fn token_root(payload: &serde_json::Value) -> Option<PathBuf> {
     let here = std::env::current_dir().ok()?;
     let source = match std::env::var_os("CLAUDE_PROJECT_DIR").filter(|d| !d.is_empty()) {
         Some(dir) => here.join(dir),
-        None => here,
+        None => match payload
+            .get("cwd")
+            .and_then(|c| c.as_str())
+            .filter(|c| !c.is_empty())
+        {
+            Some(cwd) => here.join(cwd),
+            None => here,
+        },
     };
     stapel_root(&source)
 }
@@ -172,7 +179,7 @@ pub fn subagent_stop() -> ExitCode {
         let payload: serde_json::Value = serde_json::from_str(&text).ok()?;
         let agent_type = payload.get("agent_type")?.as_str()?;
         let path = PathBuf::from(payload.get("agent_transcript_path")?.as_str()?);
-        let root = token_root()?;
+        let root = token_root(&payload)?;
         let config = crate::repo::load(&root).ok()?;
         let (role, note) = match &config.roles {
             Some(table) => table.get(agent_type).map(|r| (r.as_str(), false)),
