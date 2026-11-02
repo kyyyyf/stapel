@@ -119,3 +119,49 @@ fn partial_messages_as_import() {
     assert_eq!(r["input"], 12, "{r}");
     assert_eq!(r["cache_read"], 300, "{r}");
 }
+
+const DEFAULT_ROLES: &str = "[roles]\nstapel-builder = \"builder\"\nstapel-drift = \"drift\"\nstapel-reviewer = \"reviewer\"\nstapel-spec-reviewer = \"reviewer\"\n";
+
+/// The one record that `subagent-stop` writes for `agent_type` in a repository whose `[roles]`
+/// table is replaced by `roles` (an empty text removes the table).
+fn one_record(roles: &str, agent_type: &str) -> serde_json::Value {
+    let repo = repo_with_ticket();
+    let config = repo.path().join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(text.contains(DEFAULT_ROLES), "{text}");
+    std::fs::write(&config, text.replacen(DEFAULT_ROLES, roles, 1)).unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = transcript(
+        elsewhere.path(),
+        "sub.jsonl",
+        &[("m1", "claude-sonnet-5-5", "2026-01-01T11:00:05.000Z", [1, 2, 3, 4], true)],
+    );
+    subagent_stop(repo.path(), elsewhere.path(), agent_type, &path)
+        .success()
+        .stdout("");
+    let mut rs = records(repo.path(), "ABC-1");
+    assert_eq!(rs.len(), 1, "{rs:?}");
+    rs.remove(0)
+}
+
+#[test]
+fn roles_from_the_table() {
+    let table = "[roles]\nExplore = \"research2\"\n";
+    let r = one_record(table, "Explore");
+    assert_eq!(r["role"], "research2", "{r}");
+    assert!(r.get("note").is_none(), "{r}");
+    // The default rows do not apply when the table exists.
+    let r = one_record(table, "stapel-builder");
+    assert_eq!(r["role"], "research", "{r}");
+    assert_eq!(r["note"], "agent type stapel-builder", "{r}");
+    // An empty type has no row.
+    let r = one_record(table, "");
+    assert_eq!(r["role"], "research", "{r}");
+    // A control character shows as a space, and the note shows 64 characters.
+    let long = format!("a\tb{}", "c".repeat(77));
+    assert_eq!(long.chars().count(), 80);
+    let r = one_record(table, &long);
+    assert_eq!(r["role"], "research", "{r}");
+    let shown = format!("a b{}", "c".repeat(61));
+    assert_eq!(r["note"], format!("agent type {shown}"), "{r}");
+}
