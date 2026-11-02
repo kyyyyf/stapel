@@ -153,6 +153,15 @@ fn token_root() -> Option<PathBuf> {
     stapel_root(&source)
 }
 
+/// The agent type as shown in a note: each control character as one space, cut to 64 characters.
+fn shown_type(agent_type: &str) -> String {
+    agent_type
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(64)
+        .collect()
+}
+
 /// `stapel hook subagent-stop` (STP-26): one `measured` record per model for the subagent
 /// transcript, into the one open ticket. Prints nothing and exits 0 in every case.
 pub fn subagent_stop() -> ExitCode {
@@ -173,7 +182,7 @@ pub fn subagent_stop() -> ExitCode {
                 .map(|(_, r)| (*r, false)),
         }
         .unwrap_or(("research", true));
-        let note = note.then(|| format!("agent type {agent_type}"));
+        let note = note.then(|| format!("agent type {}", shown_type(agent_type)));
         crate::tokens::hook_records(&root, &path, role, note.as_deref(), "subagent-stop")
     });
     ExitCode::SUCCESS
