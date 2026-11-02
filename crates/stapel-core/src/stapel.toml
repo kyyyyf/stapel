@@ -53,6 +53,13 @@ external = { provider = "anthropic-api", model = "claude-fable-5-1", required = 
 drift    = { provider = "claude-code", model = "claude-sonnet-5-5" }
 cheap    = { provider = "claude-code", model = "claude-haiku-4-5" }
 
+# Agent type -> role of its token records (STP-26); a type without a row is recorded as `research`.
+[roles]
+stapel-builder = "builder"
+stapel-drift = "drift"
+stapel-reviewer = "reviewer"
+stapel-spec-reviewer = "reviewer"
+
 # Sections whose fresh confirmations together permit code writes.
 [build]
 requires = ["description", "spec", "design", "proof"]

@@ -56,6 +56,13 @@ orchestrator = { provider = "claude-code", model = "claude-opus-5-5" }
 research     = { provider = "claude-code", model = "claude-opus-5-5" }
 translator   = { provider = "claude-code", model = "claude-sonnet-5-5" }
 
+# Agent type -> role of its token records (STP-26); a type without a row is recorded as `research`.
+[roles]
+stapel-builder = "builder"
+stapel-drift = "drift"
+stapel-reviewer = "reviewer"
+stapel-spec-reviewer = "reviewer"
+
 # Sections whose fresh confirmations together permit code writes.
 [build]
 requires = ["description", "spec", "design", "proof"]

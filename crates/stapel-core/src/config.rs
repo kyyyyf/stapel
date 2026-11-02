@@ -37,6 +37,9 @@ pub struct Config {
     pub build: Build,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check: Option<Check>,
+    /// `[roles]`: agent type to token role (STP-26); absent means the default rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roles: Option<BTreeMap<String, String>>,
 }
 
 /// `[check]`: how `stapel check` runs a ticket's tests (STP-4 AC-7).
@@ -191,6 +194,17 @@ impl Config {
                     ));
                 }
                 Some(_) => {}
+            }
+        }
+        if let Some(roles) = &self.roles {
+            for (key, value) in roles {
+                for text in [key, value] {
+                    if text.is_empty() || text.len() > 64 || text.chars().any(char::is_control) {
+                        return Err(format!(
+                            "roles: {key} must be 1 to 64 bytes without control characters"
+                        ));
+                    }
+                }
             }
         }
         if let Some(check) = &self.check {
