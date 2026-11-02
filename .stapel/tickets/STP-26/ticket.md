@@ -314,7 +314,17 @@ Route: full (tags `data`, `interface`), auto.
 
 ## Review
 
-TODO
+Spec review: two rounds by `stapel-spec-reviewer` (round 1: 13 findings, 1 HIGH, SR1-1, one cut
+`tokens.jsonl` line would silence every hook; SR1-13 outside the promise, deferred by the human; round 2:
+3 MEDIUM, the lock test as a race, AC-14 without a RED of its own, the target ticket per model). Drift
+review after every GREEN step: 12 records, 2 MEDIUM (D2-1 the input `cwd` missing from the Hook root, fix
+step 2d; D4-1 `stop` parses the whole transcript, measured 0.28 s on 36 MB, Design as built). Code review
+round 1 (`stapel-reviewer`, `stapel-reviewer` with the external model, `stapel-drift` on the whole ticket):
+8 records, 0 HIGH, 3 MEDIUM (E-1 false, the full check ran `tests/tokens.rs`; E-2 a false Design claim on
+this repository's settings, text fixed; E-3 no test of hook records in the report, coverage step 7). Code
+review round 2 by the same three: 2 records, 0 HIGH, 1 MEDIUM (E2-1 false, the check at 13be2c3 ran the
+step 7 test). Deferred: R-1 (the `init` label for token hooks), SR1-13. All 39 records and their fates
+are in `findings.jsonl`.
 
 ## Summary
 
