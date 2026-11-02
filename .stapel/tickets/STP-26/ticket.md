@@ -328,4 +328,43 @@ are in `findings.jsonl`.
 
 ## Summary
 
-TODO
+Token records now come from hooks. `stapel hook subagent-stop` appends one `measured` record per model for
+the part of a subagent's transcript not yet recorded, with the role from the new `[roles]` table of
+`stapel.toml` (default rows for the four `stapel-*` agents; any other type is `research` with its type in
+`note`). `stapel hook stop` records the main session's unrecorded part as `orchestrator` when the last
+record of that transcript is 10 minutes old or more, and `stapel hook session-end` records the rest. The
+cursor is per model over every ticket's records; the target is the one open ticket, else the ticket closed
+in the window; an unreadable transcript gives an `estimate` record of 0 with its reason; a lock in the git
+common folder orders parallel hooks; every hook exits 0 and prints nothing. `stapel init` installs the
+three hooks with `timeout` 30, and rule 8 of the skill reads the tokens instead of importing them.
+
+Measures against STP-25 (the skill, rule 8):
+
+- Escaped defects of STP-25 found after its close: none known.
+- Code review HIGH and MEDIUM inside the promise: 2 real over two rounds (STP-25: 4): E-2 (a false Design
+  claim), E-3 (a guarantee without a test); E-1 and E2-1 were false (the full check had run the tests).
+  Spec review caught 1 HIGH and 14 MEDIUM before the build; drift review 2 MEDIUM during it (D2-1 fixed by
+  step 2d, D4-1 recorded as built).
+- `ticket.md`: 27.3 KB before this section (STP-25: 40.3 KB).
+- Size: about 400 source and 1 000 test lines added (91 and 2 removed) against an estimate of 400 and 700.
+- Tokens, measured, imported by hand (the hooks were not live, see below): orchestrator output 113k, cache
+  read 33.2M (STP-25: 116k / 49.7M; phase 1 target under 19.75M); builder ≥33k / 4.0M (STP-25: 26k / 7.0M);
+  drift ≥16k / 0.5M; external ≥48k / 1.7M; reviewer (spec and code) ≥23k / 0.6M; research 1.3M cache read.
+- Wall time: 2026-10-30 about 15:47 UTC to 2026-11-02 about 08:25 UTC, with a weekend between the spec and
+  the build.
+
+Approval dialogs: 7 `stapel ok` (one expired grant), no ledger decision; findings imports, triage and the
+token import asked nothing.
+
+Not verified: the hooks did not run in this session. The `stapel` on PATH is the build of 2026-10-30,
+which has no `hook subagent-stop`, so the installed lines exit 0 silently; the Assumption on the hook input
+(`agent_type`, `agent_transcript_path`, `CLAUDE_PROJECT_DIR`) stands on the docs and on a subagent's
+`meta.json` only. It is checked after `cargo install` at the start of the next session: one subagent run
+must leave a record. A `stapel init` that installs hooks for commands the binary on PATH lacks is a gap of
+its own.
+
+Process notes: four builders (steps 3, 3b, 6, 7) wrote files under `crates/` through a Python script or
+`cat >>`, three of them after the brief named Edit only; two (steps 1, 2) ran `cargo fmt` on the workspace
+and reverted unrelated files; one chained `git commit` after a failing lint with `;`. This is evidence for
+item 1.9. The human asked, during this ticket, that the next ticket be the discussion, research and
+implementation of parallel work on tickets without a dependency.
