@@ -231,6 +231,8 @@ enum HookCommand {
     PostToolUse,
     /// At session start: the skill line and `stapel next` in a stapel repository, else silent.
     SessionStart,
+    /// When a subagent stops: its token records into the ticket's journal; silent, exit 0.
+    SubagentStop,
 }
 
 fn main() -> ExitCode {
@@ -316,6 +318,7 @@ fn main() -> ExitCode {
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),
         Command::Hook(HookCommand::PostToolUse) => return hook::post_tool_use(),
         Command::Hook(HookCommand::SessionStart) => return hook::session_start(),
+        Command::Hook(HookCommand::SubagentStop) => return hook::subagent_stop(),
         Command::Check { key, list, history } => {
             return check::run(key.as_deref(), list, history);
         }

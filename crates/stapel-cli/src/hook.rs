@@ -134,3 +134,47 @@ fn deny(reason: &str) -> ExitCode {
     warn!("stapel: {reason}");
     ExitCode::from(DENY)
 }
+
+/// The default `[roles]` rows, used when `stapel.toml` has no table (STP-26).
+const DEFAULT_ROLES: [(&str, &str); 4] = [
+    ("stapel-builder", "builder"),
+    ("stapel-drift", "drift"),
+    ("stapel-reviewer", "reviewer"),
+    ("stapel-spec-reviewer", "reviewer"),
+];
+
+/// The root of the hook repository: `CLAUDE_PROJECT_DIR`, else the working directory.
+fn token_root() -> Option<PathBuf> {
+    let here = std::env::current_dir().ok()?;
+    let source = match std::env::var_os("CLAUDE_PROJECT_DIR").filter(|d| !d.is_empty()) {
+        Some(dir) => here.join(dir),
+        None => here,
+    };
+    stapel_root(&source)
+}
+
+/// `stapel hook subagent-stop` (STP-26): one `measured` record per model for the subagent
+/// transcript, into the one open ticket. Prints nothing and exits 0 in every case.
+pub fn subagent_stop() -> ExitCode {
+    std::panic::set_hook(Box::new(|_| {}));
+    let _ = std::panic::catch_unwind(|| -> Option<()> {
+        let mut text = String::new();
+        std::io::stdin().read_to_string(&mut text).ok()?;
+        let payload: serde_json::Value = serde_json::from_str(&text).ok()?;
+        let agent_type = payload.get("agent_type")?.as_str()?;
+        let path = PathBuf::from(payload.get("agent_transcript_path")?.as_str()?);
+        let root = token_root()?;
+        let config = crate::repo::load(&root).ok()?;
+        let (role, note) = match &config.roles {
+            Some(table) => table.get(agent_type).map(|r| (r.as_str(), false)),
+            None => DEFAULT_ROLES
+                .iter()
+                .find(|(t, _)| *t == agent_type)
+                .map(|(_, r)| (*r, false)),
+        }
+        .unwrap_or(("research", true));
+        let note = note.then(|| format!("agent type {agent_type}"));
+        crate::tokens::hook_records(&root, &path, role, note.as_deref(), "subagent-stop")
+    });
+    ExitCode::SUCCESS
+}

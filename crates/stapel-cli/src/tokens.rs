@@ -161,57 +161,75 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Sums of one model over the counted messages.
-struct Sum {
-    model: String,
-    from: String,
-    to: String,
-    from_ms: u64,
-    to_ms: u64,
-    messages: u64,
-    fields: [(&'static str, Option<u64>); 4],
-    /// Messages without a final line: their output is not known (STP-5 AC-1).
-    partial: u64,
-}
-
-pub fn import(a: Import) -> Result<(), String> {
-    let (root, config) = repo::open()?;
-    short_text("role", &a.role)?;
-    let since = window_end("since", &a.since)?.unwrap_or(0);
-    let until = window_end("until", &a.until)?;
-    if until.is_some_and(|u| u <= since) {
-        return Err("--until must be later than --since".into());
+/// The id and the record `tokens import` writes for one model's sum; the hooks add `hook`.
+pub fn measured_record(
+    ticket: &str,
+    transcript: &str,
+    role: &str,
+    s: &Sum,
+) -> (String, Map<String, Value>) {
+    let mut digest = sha2::Sha256::new();
+    for part in [ticket, transcript, &s.model, &s.from, &s.to] {
+        digest.update(part.as_bytes());
+        digest.update([0u8]);
     }
-
-    let modified = std::fs::metadata(&a.transcript)
-        .and_then(|m| m.modified())
-        .map_err(|e| format!("{}: {e}", a.transcript.display()))?;
-    let quiet_for = modified.elapsed().map(|d| d.as_secs()).unwrap_or(0);
-    if quiet_for < QUIET_SECS {
-        match until {
-            None => {
-                return Err("the transcript is still being written; give --until at least 5 minutes before now".into());
-            }
-            Some(u) if u / 1000 + QUIET_SECS > now_secs() => {
-                return Err("the transcript is still being written; --until must be at least 5 minutes before now".into());
-            }
-            Some(_) => {}
+    let hex: String = digest
+        .finalize()
+        .iter()
+        .take(6)
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let id = format!("t-{hex}");
+    let mut record = Map::new();
+    for (k, v) in [
+        ("v", json!(1)),
+        ("id", json!(id)),
+        ("at", json!(now_rfc3339())),
+        ("ticket", json!(ticket)),
+        ("role", json!(role)),
+        ("model", json!(s.model)),
+        ("source", json!("measured")),
+    ] {
+        record.insert(k.into(), v);
+    }
+    for (name, value) in s.fields {
+        if let Some(v) = value {
+            record.insert(name.into(), json!(v));
         }
     }
+    record.insert("transcript".into(), json!(transcript));
+    record.insert("from".into(), json!(s.from));
+    record.insert("to".into(), json!(s.to));
+    record.insert("messages".into(), json!(s.messages));
+    if s.partial > 0 {
+        record.insert("partial".into(), json!(s.partial));
+    }
+    // Every record of this importer says `importer: 2`, so the report can tell it from the
+    // subagent records written before STP-5, whose output may be partial.
+    record.insert("importer".into(), json!(2));
+    (id, record)
+}
 
-    let ticket = journal_ticket(&root, a.key.as_deref())?;
-    let t = stapel_core::tokens::read_transcript(&a.transcript)?;
-    let transcript = t.identity().ok_or(
-        "the transcript has no sessionId, so its records could not be told from another file's",
-    )?;
-    warn_unconfigured(&config, &a.role);
+/// Sums of one model over the counted messages.
+pub struct Sum {
+    pub model: String,
+    pub from: String,
+    pub to: String,
+    pub from_ms: u64,
+    pub to_ms: u64,
+    pub messages: u64,
+    pub fields: [(&'static str, Option<u64>); 4],
+    /// Messages without a final line: their output is not known (STP-5 AC-1).
+    pub partial: u64,
+}
 
+/// The sums per model of the counted messages, sorted by model; a model with no tokens is left
+/// out (STP-5). Shared by `tokens import` and the token hooks (STP-26).
+pub fn sum_window<'a>(
+    messages: impl Iterator<Item = &'a stapel_core::tokens::Message>,
+) -> Vec<Sum> {
     let mut sums: Vec<Sum> = Vec::new();
-    for m in t
-        .messages
-        .iter()
-        .filter(|m| m.time_ms >= since && until.is_none_or(|u| m.time_ms < u))
-    {
+    for m in messages {
         let sum = match sums.iter().position(|s| s.model == m.model) {
             Some(i) => &mut sums[i],
             None => {
@@ -269,6 +287,47 @@ pub fn import(a: Import) -> Result<(), String> {
     sums.retain(|s| s.fields.iter().any(|(_, v)| v.is_some_and(|n| n > 0)));
     sums.sort_by(|a, b| a.model.cmp(&b.model));
 
+    sums
+}
+
+pub fn import(a: Import) -> Result<(), String> {
+    let (root, config) = repo::open()?;
+    short_text("role", &a.role)?;
+    let since = window_end("since", &a.since)?.unwrap_or(0);
+    let until = window_end("until", &a.until)?;
+    if until.is_some_and(|u| u <= since) {
+        return Err("--until must be later than --since".into());
+    }
+
+    let modified = std::fs::metadata(&a.transcript)
+        .and_then(|m| m.modified())
+        .map_err(|e| format!("{}: {e}", a.transcript.display()))?;
+    let quiet_for = modified.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+    if quiet_for < QUIET_SECS {
+        match until {
+            None => {
+                return Err("the transcript is still being written; give --until at least 5 minutes before now".into());
+            }
+            Some(u) if u / 1000 + QUIET_SECS > now_secs() => {
+                return Err("the transcript is still being written; --until must be at least 5 minutes before now".into());
+            }
+            Some(_) => {}
+        }
+    }
+
+    let ticket = journal_ticket(&root, a.key.as_deref())?;
+    let t = stapel_core::tokens::read_transcript(&a.transcript)?;
+    let transcript = t.identity().ok_or(
+        "the transcript has no sessionId, so its records could not be told from another file's",
+    )?;
+    warn_unconfigured(&config, &a.role);
+
+    let sums = sum_window(
+        t.messages
+            .iter()
+            .filter(|m| m.time_ms >= since && until.is_none_or(|u| m.time_ms < u)),
+    );
+
     say!("skipped: {} error lines", t.error_lines);
     say!("skipped: {} unreadable lines", t.unreadable_lines);
     if sums.is_empty() {
@@ -324,51 +383,7 @@ pub fn import(a: Import) -> Result<(), String> {
         ));
     }
     for s in &sums {
-        let mut digest = sha2::Sha256::new();
-        for part in [
-            ticket.key.as_str(),
-            transcript.as_str(),
-            &s.model,
-            &s.from,
-            &s.to,
-        ] {
-            digest.update(part.as_bytes());
-            digest.update([0u8]);
-        }
-        let hex: String = digest
-            .finalize()
-            .iter()
-            .take(6)
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        let id = format!("t-{hex}");
-        let mut record = Map::new();
-        for (k, v) in [
-            ("v", json!(1)),
-            ("id", json!(id)),
-            ("at", json!(now_rfc3339())),
-            ("ticket", json!(ticket.key)),
-            ("role", json!(a.role)),
-            ("model", json!(s.model)),
-            ("source", json!("measured")),
-        ] {
-            record.insert(k.into(), v);
-        }
-        for (name, value) in s.fields {
-            if let Some(v) = value {
-                record.insert(name.into(), json!(v));
-            }
-        }
-        record.insert("transcript".into(), json!(transcript));
-        record.insert("from".into(), json!(s.from));
-        record.insert("to".into(), json!(s.to));
-        record.insert("messages".into(), json!(s.messages));
-        if s.partial > 0 {
-            record.insert("partial".into(), json!(s.partial));
-        }
-        // Every record of this importer says `importer: 2`, so the report can tell it from the
-        // subagent records written before STP-5, whose output may be partial.
-        record.insert("importer".into(), json!(2));
+        let (id, record) = measured_record(&ticket.key, &transcript, &a.role, s);
         append(&ticket.dir.join("tokens.jsonl"), &Value::Object(record))?;
         if s.partial > 0 {
             say!(
@@ -814,4 +829,31 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
     } else {
         std::process::ExitCode::FAILURE
     })
+}
+
+/// The hook entry of the token journal (STP-26): the records of every model of the whole
+/// transcript, into the one open ticket. `None` when nothing could be written.
+pub fn hook_records(
+    root: &Path,
+    transcript: &Path,
+    role: &str,
+    note: Option<&str>,
+    hook: &str,
+) -> Option<()> {
+    let ticket = stapel_core::tickets::list(root)
+        .into_iter()
+        .filter(|t| matches!(t.status, stapel_core::tickets::Status::Open(_)))
+        .collect::<Vec<_>>();
+    let [ticket] = <[Ticket; 1]>::try_from(ticket).ok()?;
+    let t = stapel_core::tokens::read_transcript(transcript).ok()?;
+    let identity = t.identity()?;
+    for s in &sum_window(t.messages.iter()) {
+        let (_, mut record) = measured_record(&ticket.key, &identity, role, s);
+        record.insert("hook".into(), json!(hook));
+        if let Some(note) = note {
+            record.insert("note".into(), json!(note));
+        }
+        append(&ticket.dir.join("tokens.jsonl"), &Value::Object(record)).ok()?;
+    }
+    Some(())
 }
