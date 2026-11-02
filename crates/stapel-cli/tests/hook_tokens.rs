@@ -476,3 +476,197 @@ fn two_hooks_at_once() {
         .stdout("");
     assert_eq!(records(repo.path(), "ABC-1").len(), 2);
 }
+
+/// A main transcript of session `s-hook`: no agent id, the same message tuples.
+fn main_transcript(dir: &Path, name: &str, messages: &[Msg]) -> PathBuf {
+    let mut text = String::from(
+        "{\"type\":\"user\",\"timestamp\":\"2026-01-01T11:00:00.000Z\",\"sessionId\":\"s-hook\"}\n",
+    );
+    for (id, model, time, u, last) in messages {
+        let stop = if *last { ",\"stop_reason\":\"end_turn\"" } else { "" };
+        text.push_str(&format!(
+            "{{\"type\":\"assistant\",\"timestamp\":\"{time}\",\"sessionId\":\"s-hook\",\"message\":{{\"id\":\"{id}\",\"model\":\"{model}\",\"usage\":{{\"input_tokens\":{},\"output_tokens\":{},\"cache_read_input_tokens\":{},\"cache_creation_input_tokens\":{}}}{stop}}}}}\n",
+            u[0], u[1], u[2], u[3]
+        ));
+    }
+    let path = dir.join(name);
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
+/// Runs `stapel hook <name>` (`stop` or `session-end`) for the main transcript `path`.
+fn main_hook(repo: &Path, elsewhere: &Path, name: &str, session: &str, path: &Path) {
+    let input = serde_json::json!({
+        "hook_event_name": if name == "stop" { "Stop" } else { "SessionEnd" },
+        "session_id": session,
+        "cwd": elsewhere,
+        "transcript_path": path,
+    });
+    stapel(elsewhere)
+        .env("CLAUDE_PROJECT_DIR", repo)
+        .args(["hook", name])
+        .write_stdin(input.to_string())
+        .assert()
+        .success()
+        .stdout("");
+}
+
+/// A planted record of `transcript` for model `S` ending at `to`, made `age_secs` ago.
+fn planted_at(transcript: &str, to: &str, age_secs: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut r: serde_json::Value = serde_json::from_str(&planted("t-age", S, serde_json::json!(to))).unwrap();
+    r["at"] = serde_json::json!(stapel_core::time::rfc3339(now - age_secs));
+    r["transcript"] = serde_json::json!(transcript);
+    r.to_string() + "\n"
+}
+
+fn four_messages(dir: &Path) -> PathBuf {
+    main_transcript(
+        dir,
+        "main.jsonl",
+        &[
+            ("m1", S, "2026-01-01T11:00:05.000Z", [1, 1, 1, 1], true),
+            ("m2", S, "2026-01-01T11:00:10.000Z", [1, 1, 1, 1], true),
+            ("m3", S, "2026-01-01T11:00:15.000Z", [10, 20, 30, 40], true),
+            ("m4", S, "2026-01-01T11:00:20.000Z", [1, 2, 3, 4], true),
+        ],
+    )
+}
+
+#[test]
+fn stop_waits_ten_minutes() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = four_messages(elsewhere.path());
+    let to = "2026-01-01T11:00:10.000Z";
+
+    // No record: everything is written.
+    let repo = repo_with_ticket();
+    main_hook(repo.path(), elsewhere.path(), "stop", "s-hook", &path);
+    let rs = records(repo.path(), "ABC-1");
+    assert_eq!(rs.len(), 1, "{rs:?}");
+    assert_eq!(rs[0]["role"], "orchestrator", "{}", rs[0]);
+    assert_eq!(rs[0]["hook"], "stop", "{}", rs[0]);
+    assert_eq!(rs[0]["transcript"], "s-hook", "{}", rs[0]);
+    assert_eq!(rs[0]["messages"], 4, "{}", rs[0]);
+
+    // A record 9 minutes ago: nothing.
+    let repo = repo_with_ticket();
+    let file = tokens_path(repo.path(), "ABC-1");
+    let text = planted_at("s-hook", to, 9 * 60);
+    std::fs::write(&file, &text).unwrap();
+    main_hook(repo.path(), elsewhere.path(), "stop", "s-hook", &path);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+
+    // A record 10 minutes ago (an imported record has no `hook`, as planted): written from after its `to`.
+    let repo = repo_with_ticket();
+    let file = tokens_path(repo.path(), "ABC-1");
+    std::fs::write(&file, planted_at("s-hook", to, 10 * 60 + 2)).unwrap();
+    main_hook(repo.path(), elsewhere.path(), "stop", "s-hook", &path);
+    let rs = records(repo.path(), "ABC-1");
+    assert_eq!(rs.len(), 2, "{rs:?}");
+    assert_eq!(rs[1]["messages"], 2, "{}", rs[1]);
+    assert_eq!(rs[1]["from"], "2026-01-01T11:00:15.000Z", "{}", rs[1]);
+    assert_eq!(rs[1]["hook"], "stop", "{}", rs[1]);
+
+    // A record of another session 20 minutes ago does not count; a differing `session_id` is ignored.
+    let repo = repo_with_ticket();
+    let file = tokens_path(repo.path(), "ABC-1");
+    std::fs::write(&file, planted_at("other", to, 20 * 60)).unwrap();
+    main_hook(repo.path(), elsewhere.path(), "stop", "another-session", &path);
+    let rs = records(repo.path(), "ABC-1");
+    assert_eq!(rs.len(), 2, "{rs:?}");
+    assert_eq!(rs[1]["messages"], 4, "{}", rs[1]);
+    assert_eq!(rs[1]["transcript"], "s-hook", "{}", rs[1]);
+}
+
+#[test]
+fn session_end_records_the_rest() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = main_transcript(
+        elsewhere.path(),
+        "main.jsonl",
+        &[
+            ("m1", S, "2026-01-01T11:00:05.000Z", [1, 1, 1, 1], true),
+            ("m2", S, "2026-01-01T11:00:10.000Z", [1, 1, 1, 1], true),
+            ("m3", S, "2026-01-01T11:00:15.000Z", [10, 20, 30, 40], true),
+            ("m4", S, "2026-01-01T11:00:20.000Z", [2, 500, 4, 0], false),
+        ],
+    );
+    let repo = repo_with_ticket();
+    let file = tokens_path(repo.path(), "ABC-1");
+    let text = planted_at("s-hook", "2026-01-01T11:00:10.000Z", 60);
+    std::fs::write(&file, &text).unwrap();
+    // `stop` waits, `session-end` does not.
+    main_hook(repo.path(), elsewhere.path(), "stop", "s-hook", &path);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+    main_hook(repo.path(), elsewhere.path(), "session-end", "s-hook", &path);
+    let rs = records(repo.path(), "ABC-1");
+    assert_eq!(rs.len(), 2, "{rs:?}");
+    let r = &rs[1];
+    assert_eq!(r["hook"], "session-end", "{r}");
+    assert_eq!(r["role"], "orchestrator", "{r}");
+    assert_eq!(r["messages"], 2, "{r}");
+    assert_eq!(r["partial"], 1, "{r}");
+    assert_eq!(r["output"], 20, "{r}");
+    assert_eq!(r["from"], "2026-01-01T11:00:15.000Z", "{r}");
+    assert_eq!(r["to"], "2026-01-01T11:00:20.000Z", "{r}");
+}
+
+#[test]
+fn window_ends_at_the_last_complete_message() {
+    let elsewhere = tempfile::tempdir().unwrap();
+
+    // The last two messages have no final line: `stop` ends at the message before them.
+    let path = main_transcript(
+        elsewhere.path(),
+        "lag.jsonl",
+        &[
+            ("m1", S, "2026-01-01T11:00:05.000Z", [1, 1, 1, 1], true),
+            ("m2", S, "2026-01-01T11:00:10.000Z", [1, 1, 1, 1], true),
+            ("m3", S, "2026-01-01T11:00:15.000Z", [1, 1, 1, 1], true),
+            ("m4", S, "2026-01-01T11:00:20.000Z", [1, 2, 3, 4], false),
+            ("m5", S, "2026-01-01T11:00:25.000Z", [1, 2, 3, 4], false),
+        ],
+    );
+    let repo = repo_with_ticket();
+    main_hook(repo.path(), elsewhere.path(), "stop", "s-hook", &path);
+    let rs = records(repo.path(), "ABC-1");
+    assert_eq!(rs.len(), 1, "{rs:?}");
+    assert_eq!(rs[0]["messages"], 3, "{}", rs[0]);
+    assert_eq!(rs[0]["to"], "2026-01-01T11:00:15.000Z", "{}", rs[0]);
+    assert!(rs[0].get("partial").is_none(), "{}", rs[0]);
+    main_hook(repo.path(), elsewhere.path(), "session-end", "s-hook", &path);
+    let rs = records(repo.path(), "ABC-1");
+    assert_eq!(rs.len(), 2, "{rs:?}");
+    assert_eq!(rs[1]["messages"], 2, "{}", rs[1]);
+    assert_eq!(rs[1]["partial"], 2, "{}", rs[1]);
+    assert_eq!(rs[1]["from"], "2026-01-01T11:00:20.000Z", "{}", rs[1]);
+
+    // A message without a final line shares the millisecond of the last complete one:
+    // the window ends before both.
+    let path = main_transcript(
+        elsewhere.path(),
+        "same.jsonl",
+        &[
+            ("m1", S, "2026-01-01T11:00:05.000Z", [1, 1, 1, 1], true),
+            ("m2", S, "2026-01-01T11:00:10.000Z", [1, 1, 1, 1], true),
+            ("m3", S, "2026-01-01T11:00:15.000Z", [1, 1, 1, 1], true),
+            ("m4", S, "2026-01-01T11:00:15.000Z", [1, 2, 3, 4], false),
+        ],
+    );
+    let repo = repo_with_ticket();
+    main_hook(repo.path(), elsewhere.path(), "stop", "s-hook", &path);
+    let rs = records(repo.path(), "ABC-1");
+    assert_eq!(rs.len(), 1, "{rs:?}");
+    assert_eq!(rs[0]["messages"], 2, "{}", rs[0]);
+    assert_eq!(rs[0]["to"], "2026-01-01T11:00:10.000Z", "{}", rs[0]);
+    main_hook(repo.path(), elsewhere.path(), "session-end", "s-hook", &path);
+    let rs = records(repo.path(), "ABC-1");
+    assert_eq!(rs.len(), 2, "{rs:?}");
+    assert_eq!(rs[1]["messages"], 2, "{}", rs[1]);
+    assert_eq!(rs[1]["partial"], 1, "{}", rs[1]);
+    assert_eq!(rs[1]["from"], "2026-01-01T11:00:15.000Z", "{}", rs[1]);
+}
