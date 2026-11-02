@@ -231,11 +231,16 @@ hooks and `init`.
 
 ### Decisions (before the build)
 
-- A new module `crates/stapel-cli/src/token_hook.rs` holds the three hooks; the sum and the record of
-  `tokens::import` move into a function both call, so `tokens import` output stays the same.
+- The three hooks share one path; the sum and the record of `tokens::import` move into a function both
+  call, so `tokens import` output stays the same. As built: the hook entry points are in `hook.rs`, the
+  windows, cursors, target ticket, lock and records in `tokens.rs`; no new module.
 - Each hook takes an exclusive lock (`File::try_lock` in a loop, at most 20 s, below the 30 s timeout) on
   `tokens.lock` in the git common folder, next to `check.lock`, from reading the cursor to the append;
   there it is outside the tree, so no `.gitignore` line is needed (SR1-11, SR2-2). Rust 1.93 here.
+- As built: `stop` parses the whole transcript, then checks the 10-minute rule; measured 0.28 s on the
+  largest main transcript here (36 MB), so the early exit above was not built (D4-1).
+- As built: `subagent-stop` with no `[roles]` row and the default rows came with step 2, so step 2c is a
+  coverage commit; the `cwd` source of the Hook root came with the fix step 2d (D2-1).
 - The hooks become live in this repository with step 6, the last step; from then on this session's records
   land in STP-26's `tokens.jsonl`, so the close does not import those windows by hand (SR2-L5).
 - `stop` reads the transcript's lines until the first `sessionId` for the identity, then the records, and
@@ -295,7 +300,9 @@ Route: full (tags `data`, `interface`), auto.
    `hook_tokens::bad_input_writes_nothing`). Must not change: steps 2 to 4.
 6. Install and skill text (AC-11, AC-13; tests `hooks_install::token_hooks_installed`,
    `init_process::skill_text_names_the_token_hooks`): the GREEN changes `init.rs`, `assets/skill.md`, and
-   runs `stapel init` here. Must not change: the four existing hook entries.
+   runs `stapel init` here. The RED also changes two older install tests, the one that merges with foreign
+   settings and the one that adds the post hook to an existing install, so that they expect the new
+   entries and fail there. Must not change: the four existing hook entries.
 
 ## Review
 
