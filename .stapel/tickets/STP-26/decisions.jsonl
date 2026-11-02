@@ -12,3 +12,4 @@
 {"v":1,"id":"d-88e471204812","at":"2026-11-02T07:56:56Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:2658b62c3de3ac552f9d2c036308edbf2839e5e4d3834187195245d1cadeaa2e","via":"grant"}
 {"v":1,"id":"d-669510df96fa","at":"2026-11-02T07:56:56Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:a2b3a6a8c2dbdc0caf5ecbf8eac9c3687ec006c15ac18e8d131956b732313958","via":"grant"}
 {"v":1,"id":"d-1776f0c078a4","at":"2026-11-02T07:56:56Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:36d3c4386e1d2833038b75717d38579a42d10bcfcc0a6e4a2025f8c662acc355","via":"grant"}
+{"v":1,"id":"d-66b7c1666f6d","at":"2026-11-02T08:43:18Z","by":"kyyyyf","action":"close","reason":"The three token hooks, the roles table and their install are built, reviewed in two rounds and checked at HEAD; the live hook run waits for the new binary."}
