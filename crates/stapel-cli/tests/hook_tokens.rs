@@ -165,3 +165,13 @@ fn roles_from_the_table() {
     let shown = format!("a b{}", "c".repeat(61));
     assert_eq!(r["note"], format!("agent type {shown}"), "{r}");
 }
+
+#[test]
+fn roles_without_a_table() {
+    let r = one_record("", "stapel-spec-reviewer");
+    assert_eq!(r["role"], "reviewer", "{r}");
+    assert!(r.get("note").is_none(), "{r}");
+    let r = one_record("", "general-purpose");
+    assert_eq!(r["role"], "research", "{r}");
+    assert_eq!(r["note"], "agent type general-purpose", "{r}");
+}
