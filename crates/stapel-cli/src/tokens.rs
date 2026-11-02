@@ -923,6 +923,71 @@ fn take_tokens_lock(root: &Path) -> Option<TokensLock> {
     }
 }
 
+/// The transcript and its identity, or the reason it cannot be read (STP-26 AC-9).
+fn read_for_hook(path: &Path) -> Result<(stapel_core::tokens::Transcript, String), &'static str> {
+    match std::fs::metadata(path) {
+        Ok(m) if m.is_file() => {}
+        Ok(_) => return Err("not a file"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err("missing"),
+        Err(_) => return Err("not readable"),
+    }
+    let t = stapel_core::tokens::read_transcript(path).map_err(|_| "not readable")?;
+    let identity = t.identity().ok_or("no sessionId")?;
+    Ok((t, identity))
+}
+
+/// A gap record for an unreadable transcript, into the one open ticket and never into a closed
+/// one; once for the same ticket, path and reason (STP-26 AC-9).
+fn gap_record(root: &Path, transcript: &Path, role: &str, hook: &str, reason: &str) -> Option<()> {
+    let _lock = take_tokens_lock(root)?;
+    let tickets = stapel_core::tickets::list(root);
+    let mut open = tickets
+        .iter()
+        .filter(|t| matches!(t.status, stapel_core::tickets::Status::Open(_)));
+    let (Some(ticket), None) = (open.next(), open.next()) else {
+        return None;
+    };
+    let shown = transcript.to_string_lossy();
+    let mut digest = sha2::Sha256::new();
+    for part in ["gap", ticket.key.as_str(), shown.as_ref(), reason] {
+        digest.update(part.as_bytes());
+        digest.update([0u8]);
+    }
+    let hex: String = digest
+        .finalize()
+        .iter()
+        .take(6)
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let id = format!("t-{hex}");
+    let path = ticket.dir.join("tokens.jsonl");
+    if path.exists() {
+        let entries = read(&path).ok()?;
+        let seen = entries.iter().any(|(_, entry)| match entry {
+            Entry::V1(map) | Entry::Legacy(map) => map.get("id").and_then(Value::as_str) == Some(&id),
+            _ => false,
+        });
+        if seen {
+            return Some(());
+        }
+    }
+    let record = json!({
+        "v": 1,
+        "id": id,
+        "at": now_rfc3339(),
+        "ticket": ticket.key,
+        "role": role,
+        "model": "unknown",
+        "source": "estimate",
+        "estimate": 0,
+        "hook": hook,
+        "transcript": shown,
+        "note": format!("transcript not read: {reason}"),
+    });
+    stapel_core::journal::append_all(&path, &[serde_json::to_string(&record).ok()?]).ok()?;
+    Some(())
+}
+
 /// The hook entry of the token journal (STP-26): the records of every model for the part of the
 /// transcript after its cursor, into the target ticket. `None` when nothing could be written.
 pub fn hook_records(
@@ -933,8 +998,10 @@ pub fn hook_records(
     hook: &str,
     reach: Reach,
 ) -> Option<()> {
-    let t = stapel_core::tokens::read_transcript(transcript).ok()?;
-    let identity = t.identity()?;
+    let (t, identity) = match read_for_hook(transcript) {
+        Ok(read) => read,
+        Err(reason) => return gap_record(root, transcript, role, hook, reason),
+    };
     // One hook at a time: cursors are read and records appended under `tokens.lock` (AC-15).
     let _lock = take_tokens_lock(root)?;
     let (cursors, newest) = cursors(root, &identity);
