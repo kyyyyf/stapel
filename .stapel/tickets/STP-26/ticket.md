@@ -273,10 +273,11 @@ Route: full (tags `data`, `interface`), auto.
    `init::template_has_the_roles_table`, `init_process::this_repository_has_the_roles_table`): the GREEN
    changes `config.rs`, the template and this repository's `.stapel/stapel.toml`. Must not change: a
    `stapel.toml` without `[roles]` parses as before.
-2. `subagent-stop` with roles (AC-1, AC-2; tests `hook_tokens::subagent_stop_records_each_model`,
-   `hook_tokens::partial_messages_as_import`, `hook_tokens::roles_from_the_table`,
-   `hook_tokens::roles_without_a_table`): the shared sum of `tokens::import`. Must not change: `tokens
-   import` output and records.
+2. `subagent-stop` records (AC-1; tests `hook_tokens::subagent_stop_records_each_model`,
+   `hook_tokens::partial_messages_as_import`): the shared sum of `tokens::import`, roles from the default
+   rows. Must not change: `tokens import` output and records.
+2b. Roles of `subagent-stop` (AC-2; tests `hook_tokens::roles_from_the_table`,
+   `hook_tokens::roles_without_a_table`). Must not change: step 2.
 3. Cursor, repeat, target ticket and broken lines (AC-7, AC-8, AC-14; tests
    `hook_tokens::repeated_call_adds_nothing`, `hook_tokens::cursor_across_tickets`,
    `hook_tokens::tail_after_close`, `hook_tokens::no_target_ticket`,
