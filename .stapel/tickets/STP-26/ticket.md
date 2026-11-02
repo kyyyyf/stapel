@@ -161,7 +161,7 @@ hook_tokens -- --test-threads=3` (and `--test hooks_install`, `--test init`, `--
 | No target | two open tickets; no open ticket and the only closed one closed before the window: nothing written, exit 0 | `hook_tokens::no_target_ticket` |
 | Gap | a missing transcript path; a folder; a file without `sessionId`; a file without read permission: one gap record each with its reason and `transcript`; the same input again: no second record; `stapel tokens` shows `estimate` 0 in the role's row; no open ticket: nothing written | `hook_tokens::unreadable_transcript_gives_a_gap_record` |
 | Bad input | stdin `not json`; `{}`; no `agent_type`; no `agent_transcript_path`; no `CLAUDE_PROJECT_DIR` and a `cwd` outside any stapel repository; a stapel repository that is not a git repository; a broken `stapel.toml`; the open ticket's `tokens.jsonl` a folder: no file changed, stdout empty, exit 0 | `hook_tokens::bad_input_writes_nothing` |
-| Root order | `CLAUDE_PROJECT_DIR` at the repository and `cwd` at `/tmp`: written to the repository | `hook_tokens::subagent_stop_records_each_model` |
+| Root order | `CLAUDE_PROJECT_DIR` at the repository and `cwd` at `/tmp`: written to the repository; no `CLAUDE_PROJECT_DIR`, `cwd` at the repository and the process in `/tmp`: written to the repository (D2-1) | `hook_tokens::subagent_stop_records_each_model` |
 | Shown type | an unmapped type with a tab and 80 characters: the note holds a space and the first 64 | `hook_tokens::roles_from_the_table` |
 | Install | `stapel init` twice in an empty repository: one entry per event, the line and the timeout of AC-11, no matcher; the other events unchanged | `hooks_install::token_hooks_installed` |
 | Template | `stapel init`: the `[roles]` table with the four rows; the file parses | `init::template_has_the_roles_table` |
@@ -276,8 +276,13 @@ Route: full (tags `data`, `interface`), auto.
 2. `subagent-stop` records (AC-1; tests `hook_tokens::subagent_stop_records_each_model`,
    `hook_tokens::partial_messages_as_import`): the shared sum of `tokens::import`, roles from the default
    rows. Must not change: `tokens import` output and records.
-2b. Roles of `subagent-stop` (AC-2; tests `hook_tokens::roles_from_the_table`,
-   `hook_tokens::roles_without_a_table`). Must not change: step 2.
+2b. The shown type in the note (AC-2; test `hook_tokens::roles_from_the_table`). Must not change: step 2.
+2c. Coverage, no GREEN (AC-2; test `hook_tokens::roles_without_a_table`): the default rows came with step
+   2, so the test passes at once.
+2d. Fix after the drift review of step 2 (AC-1; test `hook_tokens::subagent_stop_records_each_model`): the
+   RED adds the case without `CLAUDE_PROJECT_DIR`, the input's `cwd` at the repository and the process's
+   working directory elsewhere; the GREEN adds the `cwd` source of the Hook root (D2-1). Must not change:
+   steps 2 to 2c.
 3. Cursor, repeat, target ticket and broken lines (AC-7, AC-8, AC-14; tests
    `hook_tokens::repeated_call_adds_nothing`, `hook_tokens::cursor_across_tickets`,
    `hook_tokens::tail_after_close`, `hook_tokens::no_target_ticket`,
