@@ -432,3 +432,47 @@ fn no_target_ticket() {
     assert!(!tokens_path(dir, "ABC-1").exists());
     assert!(!tokens_path(dir, "ABC-2").exists());
 }
+
+#[test]
+fn two_hooks_at_once() {
+    let repo = repo_with_ticket();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = transcript(
+        elsewhere.path(),
+        "sub.jsonl",
+        &[
+            ("m1", S, "2026-01-01T11:00:05.000Z", [10, 20, 100, 5], true),
+            ("m2", O, "2026-01-01T11:00:10.000Z", [1, 2, 3, 4], true),
+        ],
+    );
+    let lock_path = repo.path().join(".git/stapel/tokens.lock");
+    std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+    let held = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .unwrap();
+    held.lock().unwrap();
+    let (repo_dir, else_dir, file) = (
+        repo.path().to_path_buf(),
+        elsewhere.path().to_path_buf(),
+        path.clone(),
+    );
+    let runner = std::thread::spawn(move || {
+        subagent_stop(&repo_dir, &else_dir, "stapel-builder", &file)
+            .success()
+            .stdout("");
+    });
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    assert!(!runner.is_finished(), "the hook did not wait for the lock");
+    assert!(records(repo.path(), "ABC-1").is_empty());
+    held.unlock().unwrap();
+    drop(held);
+    runner.join().unwrap();
+    assert_eq!(records(repo.path(), "ABC-1").len(), 2);
+    subagent_stop(repo.path(), elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    assert_eq!(records(repo.path(), "ABC-1").len(), 2);
+}
