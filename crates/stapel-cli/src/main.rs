@@ -233,6 +233,10 @@ enum HookCommand {
     SessionStart,
     /// When a subagent stops: its token records into the ticket's journal; silent, exit 0.
     SubagentStop,
+    /// When a turn ends: the main transcript's token records, at most every 10 minutes; silent, exit 0.
+    Stop,
+    /// When a session ends: the rest of the main transcript's token records; silent, exit 0.
+    SessionEnd,
 }
 
 fn main() -> ExitCode {
@@ -319,6 +323,8 @@ fn main() -> ExitCode {
         Command::Hook(HookCommand::PostToolUse) => return hook::post_tool_use(),
         Command::Hook(HookCommand::SessionStart) => return hook::session_start(),
         Command::Hook(HookCommand::SubagentStop) => return hook::subagent_stop(),
+        Command::Hook(HookCommand::Stop) => return hook::stop(),
+        Command::Hook(HookCommand::SessionEnd) => return hook::session_end(),
         Command::Check { key, list, history } => {
             return check::run(key.as_deref(), list, history);
         }

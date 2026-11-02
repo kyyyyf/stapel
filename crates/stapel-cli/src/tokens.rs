@@ -833,8 +833,13 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
 
 /// The latest `to` per model among the records of every ticket's `tokens.jsonl` that name this
 /// transcript; a line or a file that cannot be read is no cursor (STP-26).
-fn cursors(root: &Path, identity: &str) -> std::collections::HashMap<String, u64> {
+/// The newest `at` among those records is returned with them, in milliseconds.
+fn cursors(
+    root: &Path,
+    identity: &str,
+) -> (std::collections::HashMap<String, u64>, Option<u64>) {
     let mut cursors = std::collections::HashMap::new();
+    let mut newest: Option<u64> = None;
     for ticket in stapel_core::tickets::list(root) {
         let Ok(entries) = read(&ticket.dir.join("tokens.jsonl")) else {
             continue;
@@ -844,19 +849,44 @@ fn cursors(root: &Path, identity: &str) -> std::collections::HashMap<String, u64
                 continue;
             };
             let text = |key: &str| map.get(key).and_then(Value::as_str);
-            let (Some(model), Some(to)) = (text("model"), text("to")) else {
-                continue;
-            };
             if text("transcript") != Some(identity) {
                 continue;
             }
+            if let Some(at) = text("at").and_then(parse_cli_time) {
+                newest = Some(newest.map_or(at, |n| n.max(at)));
+            }
+            let (Some(model), Some(to)) = (text("model"), text("to")) else {
+                continue;
+            };
             if let Some(ms) = parse_cli_time(to) {
                 let at = cursors.entry(model.to_string()).or_insert(ms);
                 *at = (*at).max(ms);
             }
         }
     }
-    cursors
+    (cursors, newest)
+}
+
+/// How far a hook call reads a transcript (STP-26).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// Every message; one without a final line is `partial`.
+    All,
+    /// Up to the last complete message, and only when the transcript's last record is old.
+    Stop,
+}
+
+/// A `stop` call waits this long after the last record of the transcript.
+const STOP_WAIT_MS: u64 = 10 * 60 * 1000;
+
+/// The time up to which `stop` reads: the last message with a final line, moved back while a later
+/// message has the same time. `None` when no message is complete; the bool is true when the end is
+/// exclusive.
+fn stop_end(messages: &[stapel_core::tokens::Message]) -> Option<(u64, bool)> {
+    let last = messages.iter().rposition(|m| m.complete)?;
+    let at = messages[last].time_ms;
+    let lagging = messages[last + 1..].iter().any(|m| m.time_ms == at);
+    Some((at, lagging))
 }
 
 /// The OS lock on `tokens.lock` in the git common folder; released on drop.
@@ -901,16 +931,35 @@ pub fn hook_records(
     role: &str,
     note: Option<&str>,
     hook: &str,
+    reach: Reach,
 ) -> Option<()> {
     let t = stapel_core::tokens::read_transcript(transcript).ok()?;
     let identity = t.identity()?;
     // One hook at a time: cursors are read and records appended under `tokens.lock` (AC-15).
     let _lock = take_tokens_lock(root)?;
-    let cursors = cursors(root, &identity);
+    let (cursors, newest) = cursors(root, &identity);
+    let end = match reach {
+        Reach::Stop => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_millis() as u64;
+            if newest.is_some_and(|at| now.saturating_sub(at) < STOP_WAIT_MS) {
+                return Some(());
+            }
+            Some(stop_end(&t.messages)?)
+        }
+        Reach::All => None,
+    };
     let window: Vec<_> = t
         .messages
         .iter()
         .filter(|m| cursors.get(&m.model).is_none_or(|&c| m.time_ms > c))
+        .filter(|m| match end {
+            Some((at, true)) => m.time_ms < at,
+            Some((at, false)) => m.time_ms <= at,
+            None => true,
+        })
         .collect();
     let first = window.iter().map(|m| m.time_ms).min()?;
     let tickets = stapel_core::tickets::list(root);

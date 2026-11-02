@@ -190,7 +190,40 @@ pub fn subagent_stop() -> ExitCode {
         }
         .unwrap_or(("research", true));
         let note = note.then(|| format!("agent type {}", shown_type(agent_type)));
-        crate::tokens::hook_records(&root, &path, role, note.as_deref(), "subagent-stop")
+        crate::tokens::hook_records(
+            &root,
+            &path,
+            role,
+            note.as_deref(),
+            "subagent-stop",
+            crate::tokens::Reach::All,
+        )
     });
     ExitCode::SUCCESS
+}
+
+/// `stapel hook stop` and `stapel hook session-end` (STP-26): the main transcript's unrecorded
+/// part with the role `orchestrator`. `stop` waits 10 minutes after the transcript's last record
+/// and ends at the last complete message; `session-end` takes everything. Prints nothing and
+/// exits 0 in every case.
+fn main_transcript_hook(name: &str, reach: crate::tokens::Reach) -> ExitCode {
+    std::panic::set_hook(Box::new(|_| {}));
+    let _ = std::panic::catch_unwind(|| -> Option<()> {
+        let mut text = String::new();
+        std::io::stdin().read_to_string(&mut text).ok()?;
+        let payload: serde_json::Value = serde_json::from_str(&text).ok()?;
+        let path = PathBuf::from(payload.get("transcript_path")?.as_str()?);
+        let root = token_root(&payload)?;
+        crate::repo::load(&root).ok()?;
+        crate::tokens::hook_records(&root, &path, "orchestrator", None, name, reach)
+    });
+    ExitCode::SUCCESS
+}
+
+pub fn stop() -> ExitCode {
+    main_transcript_hook("stop", crate::tokens::Reach::Stop)
+}
+
+pub fn session_end() -> ExitCode {
+    main_transcript_hook("session-end", crate::tokens::Reach::All)
 }
