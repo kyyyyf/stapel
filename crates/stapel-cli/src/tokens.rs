@@ -831,8 +831,36 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
     })
 }
 
-/// The hook entry of the token journal (STP-26): the records of every model of the whole
-/// transcript, into the one open ticket. `None` when nothing could be written.
+/// The latest `to` per model among the records of every ticket's `tokens.jsonl` that name this
+/// transcript; a line or a file that cannot be read is no cursor (STP-26).
+fn cursors(root: &Path, identity: &str) -> std::collections::HashMap<String, u64> {
+    let mut cursors = std::collections::HashMap::new();
+    for ticket in stapel_core::tickets::list(root) {
+        let Ok(entries) = read(&ticket.dir.join("tokens.jsonl")) else {
+            continue;
+        };
+        for (_, entry) in entries {
+            let (Entry::V1(map) | Entry::Legacy(map)) = entry else {
+                continue;
+            };
+            let text = |key: &str| map.get(key).and_then(Value::as_str);
+            let (Some(model), Some(to)) = (text("model"), text("to")) else {
+                continue;
+            };
+            if text("transcript") != Some(identity) {
+                continue;
+            }
+            if let Some(ms) = parse_cli_time(to) {
+                let at = cursors.entry(model.to_string()).or_insert(ms);
+                *at = (*at).max(ms);
+            }
+        }
+    }
+    cursors
+}
+
+/// The hook entry of the token journal (STP-26): the records of every model for the part of the
+/// transcript after its cursor, into the target ticket. `None` when nothing could be written.
 pub fn hook_records(
     root: &Path,
     transcript: &Path,
@@ -840,20 +868,47 @@ pub fn hook_records(
     note: Option<&str>,
     hook: &str,
 ) -> Option<()> {
-    let ticket = stapel_core::tickets::list(root)
-        .into_iter()
-        .filter(|t| matches!(t.status, stapel_core::tickets::Status::Open(_)))
-        .collect::<Vec<_>>();
-    let [ticket] = <[Ticket; 1]>::try_from(ticket).ok()?;
     let t = stapel_core::tokens::read_transcript(transcript).ok()?;
     let identity = t.identity()?;
-    for s in &sum_window(t.messages.iter()) {
+    let cursors = cursors(root, &identity);
+    let window: Vec<_> = t
+        .messages
+        .iter()
+        .filter(|m| cursors.get(&m.model).is_none_or(|&c| m.time_ms > c))
+        .collect();
+    let first = window.iter().map(|m| m.time_ms).min()?;
+    let tickets = stapel_core::tickets::list(root);
+    let mut open = tickets
+        .iter()
+        .filter(|t| matches!(t.status, stapel_core::tickets::Status::Open(_)));
+    let ticket = match (open.next(), open.next()) {
+        (Some(t), None) => t,
+        (Some(_), Some(_)) => return None,
+        // No open ticket: the one closed latest, not before the window's first message.
+        (None, _) => tickets
+            .iter()
+            .filter_map(|t| match &t.status {
+                stapel_core::tickets::Status::Closed(s) => {
+                    let at = parse_cli_time(&s.closed.as_ref()?.at)?;
+                    (at >= first).then_some((at, t))
+                }
+                _ => None,
+            })
+            .max_by_key(|(at, _)| *at)?
+            .1,
+    };
+    let mut lines = Vec::new();
+    for s in &sum_window(window.into_iter()) {
         let (_, mut record) = measured_record(&ticket.key, &identity, role, s);
         record.insert("hook".into(), json!(hook));
         if let Some(note) = note {
             record.insert("note".into(), json!(note));
         }
-        append(&ticket.dir.join("tokens.jsonl"), &Value::Object(record)).ok()?;
+        lines.push(serde_json::to_string(&Value::Object(record)).ok()?);
     }
+    if lines.is_empty() {
+        return Some(());
+    }
+    stapel_core::journal::append_all(&ticket.dir.join("tokens.jsonl"), &lines).ok()?;
     Some(())
 }
