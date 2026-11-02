@@ -92,6 +92,31 @@ fn subagent_stop_records_each_model() {
     assert_eq!(o["messages"], 1, "{o}");
     assert_eq!(o["output"], 9, "{o}");
     assert_eq!(o["hook"], "subagent-stop", "{o}");
+
+    // D2-1: no CLAUDE_PROJECT_DIR, the input's cwd at the repository, the process elsewhere.
+    let repo2 = repo_with_ticket();
+    let path2 = transcript(
+        elsewhere.path(),
+        "sub2.jsonl",
+        &[("n1", "claude-sonnet-5-5", "2026-01-01T11:00:05.000Z", [1, 2, 3, 4], true)],
+    );
+    let input = serde_json::json!({
+        "hook_event_name": "SubagentStop",
+        "session_id": "s-hook",
+        "cwd": repo2.path(),
+        "agent_type": "stapel-builder",
+        "agent_transcript_path": path2,
+    });
+    stapel(elsewhere.path())
+        .env_remove("CLAUDE_PROJECT_DIR")
+        .args(["hook", "subagent-stop"])
+        .write_stdin(input.to_string())
+        .assert()
+        .success()
+        .stdout("");
+    let rs2 = records(repo2.path(), "ABC-1");
+    assert_eq!(rs2.len(), 1, "{rs2:?}");
+    assert_eq!(rs2[0]["role"], "builder", "{}", rs2[0]);
 }
 
 #[test]
