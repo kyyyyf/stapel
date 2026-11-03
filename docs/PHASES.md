@@ -238,7 +238,8 @@ read per ticket is under half of STP-19 (39.5M).
 **Items, in order.** Order changed on 2026-10-21 (ledger): 1.3, 1.5, 1.8, 1.4, 1.6, 1.7, 1.9 to 1.12, so
 that the items that cut the person's approval dialogs come first; the numbers stay as labels. Changed on
 2026-10-22 (ledger): 1.9 and 1.10 are one ticket; 1.11 takes the light route or joins 1.12; the frame and
-spec of the next item may be written in a second worktree while the current ticket builds.
+spec of the next item may be written in a second worktree while the current ticket builds. Changed on
+2026-11-02 (ledger): the new item 1.13 is taken before 1.6, and it replaces the second-worktree rule.
 
 - 1.1 (STP-20) `stapel next [KEY]`: the next action computed from `state.json`, the Plan steps, `check --history`,
   `runs.jsonl` and `findings.jsonl`; one line of action plus the command or the path (`--json` for the
@@ -295,6 +296,13 @@ spec of the next item may be written in a second worktree while the current tick
 - 1.12 the `junit` runner: `[check] runner = "junit"`, `command` (a template with `{tests}`), `report`
   (the XML path), a timeout; test identity `<file>::<name>`; the outcomes of STP-4 and STP-14 unchanged;
   `lint` finds TypeScript tests by name.
+- 1.13 two ticket builds at once (ledger 2026-11-02): one ticket per session, each on its own branch and
+  worktree; keys that do not repeat across worktrees and branches; commands and hooks without KEY take the
+  ticket of the current branch; the build permit only for that ticket; one machine-wide cargo lock with a
+  queue; independence checked by stapel, not by the person: named and changed files, a dependency agent
+  before the build, a re-run of `stapel check` after the other ticket merges; a dependency found stops the
+  later ticket until the earlier one closes; after `stapel close` the orchestrator merges the branch into
+  main locally, with no push.
 
 Not taken from the old phase 1: `stapel build` as an orchestrator with `claude -p` (the chat is the
 orchestrator); the Anthropic API provider (every role runs as a Claude Code subagent on the subscription;
@@ -420,7 +428,8 @@ where the index pays. Included: `stapel-index` with adapters for TypeScript and 
 `refs`, `callers`, `tests`, `impact`); blast radius, which also feeds the review map of `ship`; selective
 test runs per step with a full run before `ship`; the MCP server with the same queries; context packs
 assembled within a budget. Taken as three tickets (ledger 2026-10-22): the index with `stapel q` first,
-then `impact` with selective runs, then MCP with context packs. The selective-runs ticket also decides the
+then `impact` with selective runs, then MCP with context packs. The `impact` ticket also feeds the dependency check of
+item 1.13 (ledger 2026-11-02). The selective-runs ticket also decides the
 frequency of the full `stapel check` (ledger 2026-10-22: the builder runs the whole suite before GREEN; a
 full check after a step only when it changes existing tests or shared test helpers; otherwise before code
 review and before the close). Acceptance criteria as before: `impact` matches a manual sample, imprecise
