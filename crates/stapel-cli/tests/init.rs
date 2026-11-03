@@ -116,7 +116,47 @@ fn appends_to_existing_gitignore() {
 
     assert_eq!(
         read(repo.path(), ".gitignore"),
-        "/target\n/.stapel/index/\n"
+        "/target\n/.stapel/index/\n/.claude/worktrees/\n"
+    );
+}
+
+// STP-27 AC-1: worktrees are ignored and both journals merge as union; a second run adds none.
+#[test]
+fn worktrees_ignored_and_journals_union() {
+    let repo = git_repo();
+    let dir = repo.path();
+    std::fs::write(dir.join(".gitattributes"), "*.png binary").unwrap();
+
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+
+    let count = |text: &str, line: &str| text.lines().filter(|l| *l == line).count();
+    let ignore = read(dir, ".gitignore");
+    let attrs = read(dir, ".gitattributes");
+    assert_eq!(count(&ignore, "/.claude/worktrees/"), 1, "{ignore}");
+    assert!(attrs.starts_with("*.png binary\n"), "{attrs}");
+    for line in [
+        ".stapel/process-ledger.jsonl merge=union",
+        ".stapel/sessions.jsonl merge=union",
+    ] {
+        assert_eq!(count(&attrs, line), 1, "{attrs}");
+    }
+
+    stapel(dir).arg("init").assert().success();
+    assert_eq!(read(dir, ".gitignore"), ignore);
+    assert_eq!(read(dir, ".gitattributes"), attrs);
+
+    let empty = git_repo();
+    stapel(empty.path())
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let attrs = read(empty.path(), ".gitattributes");
+    assert_eq!(
+        attrs,
+        ".stapel/process-ledger.jsonl merge=union\n.stapel/sessions.jsonl merge=union\n"
     );
 }
 
