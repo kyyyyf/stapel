@@ -8,7 +8,11 @@ use std::process::Command;
 
 const CONFIG: &str = ".stapel/stapel.toml";
 const ALLOWLIST: &str = "# Reviewer false positives that were decided not to fix.\n";
-const IGNORE_LINE: &str = "/.stapel/index/";
+const IGNORE_LINES: [&str; 2] = ["/.stapel/index/", "/.claude/worktrees/"];
+const UNION_LINES: [&str; 2] = [
+    ".stapel/process-ledger.jsonl merge=union",
+    ".stapel/sessions.jsonl merge=union",
+];
 const SETTINGS: &str = ".claude/settings.json";
 /// The narrow allow rules of the dialog-free commands, in the order `init` appends them.
 const ALLOW_RULES: [&str; 4] = [
@@ -485,26 +489,43 @@ fn plan_create(root: &Path, rel: &'static str, content: String, plan: &mut Vec<S
 }
 
 fn plan_ignore_index(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
-    let mut text = match std::fs::read(root.join(".gitignore")) {
+    plan_append_lines(root, ".gitignore", &IGNORE_LINES, plan)?;
+    plan_append_lines(root, ".gitattributes", &UNION_LINES, plan)
+}
+
+/// Plans appending the lines of `lines` that `rel` lacks; a file that is not UTF-8 stays untouched.
+fn plan_append_lines(
+    root: &Path,
+    rel: &'static str,
+    lines: &[&str],
+    plan: &mut Vec<Step>,
+) -> Result<(), String> {
+    let mut text = match std::fs::read(root.join(rel)) {
         Ok(bytes) => String::from_utf8(bytes)
-            .map_err(|_| ".gitignore is not UTF-8; the file was not touched".to_string())?,
+            .map_err(|_| format!("{rel} is not UTF-8; the file was not touched"))?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!(".gitignore: {e}")),
+        Err(e) => return Err(format!("{rel}: {e}")),
     };
-    if text.lines().any(|l| l.trim_end() == IGNORE_LINE) {
-        return Ok(());
-    }
-    if !text.is_empty() && !text.ends_with('\n') {
+    let mut changed = false;
+    for line in lines {
+        if text.lines().any(|l| l.trim_end() == *line) {
+            continue;
+        }
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(line);
         text.push('\n');
+        changed = true;
     }
-    text.push_str(IGNORE_LINE);
-    text.push('\n');
-    plan.push(Step {
-        rel: ".gitignore".into(),
-        content: text,
-        label: "appended: .gitignore".into(),
-        executable: false,
-    });
+    if changed {
+        plan.push(Step {
+            rel: rel.into(),
+            content: text,
+            label: format!("appended: {rel}"),
+            executable: false,
+        });
+    }
     Ok(())
 }
 
