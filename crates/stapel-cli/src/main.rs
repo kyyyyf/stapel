@@ -243,7 +243,9 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Init { prefix } => init::run(prefix),
-        Command::New { title, tracker } => new::run(&title, tracker.as_deref()),
+        Command::New { title, tracker } => {
+            return fail::finish(new::run(&title, tracker.as_deref()));
+        }
         Command::Tokens { action, key } => match action {
             Some(TokensAction::Add {
                 key,

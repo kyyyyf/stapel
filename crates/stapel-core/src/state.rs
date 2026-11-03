@@ -39,6 +39,9 @@ pub struct State {
     /// The full id of HEAD when the ticket was created; absent in a repository without commits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
+    /// The branch checked out where `stapel new` ran; absent without a branch ticket.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_branch: Option<String>,
     #[serde(default)]
     pub confirmations: Vec<Confirmation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -91,6 +94,7 @@ impl State {
             title: title.to_string(),
             tracker: None,
             base: None,
+            base_branch: None,
             confirmations: Vec::new(),
             closed: None,
             extra: Map::new(),
