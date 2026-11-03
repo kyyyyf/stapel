@@ -188,3 +188,112 @@ fn unborn_head_and_ticket_branch() {
     stapel(dir).args(["new", "Fifth ticket"]).assert().success();
     let _ = branch;
 }
+
+/// One checkout with two open tickets ABC-1 and ABC-2, committed, on a base branch.
+fn two_tickets_in_one_checkout() -> tempfile::TempDir {
+    let repo = stapel_repo();
+    let dir = repo.path();
+    stapel(dir).args(["new", "First"]).assert().success();
+    stapel(dir).args(["new", "Second"]).assert().success();
+    for key in ["ABC-1", "ABC-2"] {
+        common::set_section(dir, key, "Spec", "The spec.");
+    }
+    commit_all(dir);
+    repo
+}
+
+#[test]
+fn branch_names_the_ticket() {
+    let repo = two_tickets_in_one_checkout();
+    let dir = repo.path();
+    let base = git_out(dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
+
+    // On the base branch: refused as before.
+    stapel(dir)
+        .arg("status")
+        .assert()
+        .code(1)
+        .stderr(contains("several open tickets, name one: ABC-1, ABC-2"));
+
+    // A branch with no folder: the old rule.
+    git(dir, &["checkout", "-q", "-b", "ABC-7"]);
+    stapel(dir)
+        .arg("next")
+        .assert()
+        .code(2)
+        .stderr(contains("several open tickets, name one: ABC-1, ABC-2"));
+
+    for branch in ["ABC-2", "abc-2"] {
+        git(dir, &["checkout", "-q", &base]);
+        git(dir, &["checkout", "-q", "-b", branch]);
+        stapel(dir).arg("status").assert().success().stdout(contains("ABC-2"));
+        stapel(dir).arg("next").assert().success().stdout(contains("ABC-2"));
+        stapel(dir)
+            .args(["ok", "spec"])
+            .assert()
+            .success()
+            .stdout(contains("confirmed: ABC-2 spec"));
+        let out = stapel(dir)
+            .args(["review", "start", "--round", "1"])
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!err.contains("several open tickets"), "{branch}: {err}");
+        git(dir, &["checkout", "-q", "-f", &base]);
+        git(dir, &["branch", "-q", "-D", branch]);
+    }
+
+    // A closed branch ticket: `next` still takes it.
+    git(dir, &["checkout", "-q", "-b", "ABC-2"]);
+    let mut state = state_json(dir, "ABC-2");
+    state["closed"] =
+        serde_json::json!({"by": "test-user", "at": "2026-10-19T10:00:00Z", "reason": "done"});
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-2/state.json"),
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+    stapel(dir)
+        .arg("next")
+        .assert()
+        .success()
+        .stdout(contains("ABC-2"))
+        .stdout(contains("next: closed"));
+}
+
+#[test]
+fn key_must_match_the_branch() {
+    let repo = two_tickets_in_one_checkout();
+    let dir = repo.path();
+    let base = git_out(dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    git(dir, &["checkout", "-q", "-b", "ABC-2"]);
+
+    let text = format!(
+        "ABC-1 is not the ticket of branch ABC-2; run it in .claude/worktrees/ABC-1"
+    );
+    for args in [
+        vec!["check", "ABC-1"],
+        vec!["ok", "ABC-1", "spec"],
+        vec!["close", "ABC-1", "--reason", "done"],
+    ] {
+        stapel(dir)
+            .args(&args)
+            .assert()
+            .code(2)
+            .stderr(contains(format!("stapel: {text}")));
+    }
+
+    // The branch ticket itself is not refused for that reason.
+    let out = stapel(dir).args(["check", "ABC-2"]).output().unwrap();
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("is not the ticket of branch"));
+
+    // On the base branch: no refusal.
+    git(dir, &["checkout", "-q", &base]);
+    stapel(dir).args(["ok", "ABC-1", "spec"]).assert().success();
+    let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("is not the ticket of branch"));
+    stapel(dir)
+        .args(["close", "ABC-1", "--reason", "done"])
+        .assert()
+        .success();
+}
