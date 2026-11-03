@@ -53,3 +53,21 @@ pub fn finish(result: Result<(), Fail>) -> ExitCode {
         }
     }
 }
+
+/// The AC-7 refusal (exit 2) of a command that names a ticket other than the branch ticket. With
+/// `maybe_section` the word may be a section id, which no ticket is named by.
+pub fn branch_refusal(key: Option<&str>, maybe_section: bool) -> Option<ExitCode> {
+    let (root, config) = crate::repo::open().ok()?;
+    if maybe_section {
+        let word = key?;
+        let is_key = matches!(
+            stapel_core::confirm::target(&root, &config, word),
+            Ok(stapel_core::confirm::Target::Key(_))
+        );
+        if !is_key {
+            return None;
+        }
+    }
+    let message = stapel_core::tickets::match_branch(&root, key).err()?;
+    Some(finish(Err(Fail::refused(message))))
+}

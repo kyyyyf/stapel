@@ -941,11 +941,18 @@ fn read_for_hook(path: &Path) -> Result<(stapel_core::tokens::Transcript, String
 fn gap_record(root: &Path, transcript: &Path, role: &str, hook: &str, reason: &str) -> Option<()> {
     let _lock = take_tokens_lock(root)?;
     let tickets = stapel_core::tickets::list(root);
+    let by_branch = stapel_core::tickets::branch_ticket(root)
+        .filter(|t| matches!(t.status, stapel_core::tickets::Status::Open(_)))
+        .and_then(|b| tickets.iter().find(|t| t.key == b.key));
     let mut open = tickets
         .iter()
         .filter(|t| matches!(t.status, stapel_core::tickets::Status::Open(_)));
-    let (Some(ticket), None) = (open.next(), open.next()) else {
-        return None;
+    let ticket = match by_branch {
+        Some(t) => t,
+        None => match (open.next(), open.next()) {
+            (Some(t), None) => t,
+            _ => return None,
+        },
     };
     let shown = transcript.to_string_lossy();
     let mut digest = sha2::Sha256::new();
@@ -1033,7 +1040,10 @@ pub fn hook_records(
     let mut open = tickets
         .iter()
         .filter(|t| matches!(t.status, stapel_core::tickets::Status::Open(_)));
+    let by_branch = stapel_core::tickets::branch_ticket(root)
+        .and_then(|b| tickets.iter().find(|t| t.key == b.key));
     let ticket = match (open.next(), open.next()) {
+        _ if by_branch.is_some() => by_branch?,
         (Some(t), None) => t,
         (Some(_), Some(_)) => return None,
         // No open ticket: the one closed latest, not before the window's first message.

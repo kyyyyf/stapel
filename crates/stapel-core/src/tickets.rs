@@ -101,8 +101,37 @@ pub fn list(root: &Path) -> Vec<Ticket> {
     tickets
 }
 
-/// The ticket a command acts on: the given key (without case), or the only open ticket.
+/// The ticket of the current checkout, open or closed, whose key the current branch names
+/// (without case); none on a base branch, a detached HEAD or an unborn HEAD (STP-27 AC-6).
+pub fn branch_ticket(root: &Path) -> Option<Ticket> {
+    let branch = crate::parallel::current_branch(root)?;
+    list(root)
+        .into_iter()
+        .find(|t| t.key.eq_ignore_ascii_case(&branch))
+}
+
+/// Refuses `key` when the checkout has a branch ticket and `key` names another ticket (STP-27 AC-7).
+pub fn match_branch(root: &Path, key: Option<&str>) -> Result<(), String> {
+    let (Some(key), Some(ticket)) = (key, branch_ticket(root)) else {
+        return Ok(());
+    };
+    if ticket.key.eq_ignore_ascii_case(key) {
+        return Ok(());
+    }
+    let branch = crate::parallel::current_branch(root).unwrap_or_default();
+    Err(format!(
+        "{key} is not the ticket of branch {branch}; run it in .claude/worktrees/{key}"
+    ))
+}
+
+/// The ticket a command acts on: the given key (without case), the branch ticket, or the only open
+/// ticket.
 pub fn resolve(root: &Path, key: Option<&str>) -> Result<Ticket, String> {
+    if key.is_none() {
+        if let Some(ticket) = branch_ticket(root) {
+            return Ok(ticket);
+        }
+    }
     let tickets = list(root);
     match key {
         Some(key) => {

@@ -165,6 +165,7 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
         (ok_facts(&p), reason, tail)
     } else {
         let (key, reason_text) = close_args(inv)?;
+        crate::tickets::match_branch(&root, key.as_deref())?;
         let ticket = resolve(&root, key.as_deref())?;
         if !matches!(ticket.status, Status::Open(_)) {
             return Err(format!("ticket {} is not open", ticket.key));

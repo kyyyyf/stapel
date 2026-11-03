@@ -108,6 +108,9 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         Ok(v) => v,
         Err(e) => return refuse(e),
     };
+    if let Err(e) = stapel_core::tickets::match_branch(&root, key) {
+        return refuse(e);
+    }
     let ticket = match resolve(&root, key) {
         Ok(t) => t,
         Err(e) => return refuse(e),

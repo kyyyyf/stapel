@@ -297,13 +297,22 @@ fn main() -> ExitCode {
             },
         },
         Command::Close { key, reason, grant } => {
+            if let Some(refusal) = fail::branch_refusal(key.as_deref(), false) {
+                return refusal;
+            }
             close::run(key.as_deref(), &reason, grant.as_deref())
         }
-        Command::Ok { args, grant } => match args.as_slice() {
-            [arg] => ok::run_one(arg, grant.as_deref()),
-            [key, section] => ok::run(Some(key), section, grant.as_deref()),
-            _ => unreachable!("clap limits the arguments"),
-        },
+        Command::Ok { args, grant } => {
+            let first = args.first().map(String::as_str);
+            if let Some(refusal) = fail::branch_refusal(first, args.len() == 1) {
+                return refusal;
+            }
+            match args.as_slice() {
+                [arg] => ok::run_one(arg, grant.as_deref()),
+                [key, section] => ok::run(Some(key), section, grant.as_deref()),
+                _ => unreachable!("clap limits the arguments"),
+            }
+        }
         Command::Findings(FindingsAction::Import { file, key }) => {
             return fail::finish(findings::import(&file, key.as_deref()));
         }

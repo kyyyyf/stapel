@@ -28,6 +28,7 @@ pub fn prepare(
     key: Option<&str>,
     section: &str,
 ) -> Result<Prepared, String> {
+    crate::tickets::match_branch(root, key)?;
     let ticket = resolve(root, key)?;
     let (ticket_key, dir, state) = open_ticket(ticket)?;
     let confirmable = confirmable_ids(config);
@@ -130,6 +131,7 @@ pub fn target(root: &Path, config: &Config, arg: &str) -> Result<Target, String>
 /// Every confirmable section of the ticket without a fresh confirmation, in `stapel.toml`
 /// order, each prepared as `prepare` does; the first refusal wins (STP-17 AC-1, AC-3).
 pub fn prepare_waiting(root: &Path, config: &Config, key: &str) -> Result<Vec<Prepared>, String> {
+    crate::tickets::match_branch(root, Some(key))?;
     let (key, dir, state) = open_ticket(resolve(root, Some(key))?)?;
     let sections = parse(&read(&dir.join("ticket.md"))?);
     let mut waiting = Vec::new();

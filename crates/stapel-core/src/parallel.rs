@@ -17,6 +17,14 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// The branch checked out at `root`; none on a detached HEAD or without git. An unborn HEAD names
+/// its branch.
+pub fn current_branch(root: &Path) -> Option<String> {
+    let name = git(root, &["symbolic-ref", "-q", "--short", "HEAD"])?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 /// A listed worktree: its folder and whether git marks it prunable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Worktree {

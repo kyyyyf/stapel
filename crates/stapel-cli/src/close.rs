@@ -24,6 +24,7 @@ pub fn run(key: Option<&str>, reason: &str, grant: Option<&str>) -> Result<(), S
     }
     let (root, config) = repo::open()?;
     let by = user_name(&root)?;
+    stapel_core::tickets::match_branch(&root, key)?;
     let ticket = resolve(&root, key)?;
     let mut state = match ticket.status {
         Status::Open(state) => state,
