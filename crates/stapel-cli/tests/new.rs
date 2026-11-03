@@ -248,7 +248,7 @@ fn records_the_base_commit() {
         .args(["new", "Second"])
         .assert()
         .success();
-    let state = state_json(repo.path(), "ABC-2");
+    let state = state_json(&repo.path().join(".claude/worktrees/ABC-2"), "ABC-2");
     assert_eq!(state["base"], head.as_str());
     assert_eq!(head.len(), 40);
 }

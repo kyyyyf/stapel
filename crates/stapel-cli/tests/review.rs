@@ -445,12 +445,43 @@ fn copy_needs_no_tar() {
     assert_eq!(std::fs::read(tree(dir, 1).join("code.txt")).unwrap(), b"one\n");
 }
 
+/// `stapel new` makes a branch and a worktree; this moves the new ticket into the checkout at
+/// `dir` and drops the worktree and the branch, so a ticket here stands beside the others.
+fn new_here(dir: &Path, title: &str) {
+    let before: Vec<_> = std::fs::read_dir(dir.join(".stapel/tickets"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    stapel(dir).args(["new", title]).assert().success();
+    let worktrees = dir.join(".claude/worktrees");
+    for entry in std::fs::read_dir(&worktrees).unwrap() {
+        let key = entry.unwrap().file_name();
+        let wt = worktrees.join(&key);
+        let folder = wt.join(".stapel/tickets").join(&key);
+        if before.contains(&key) || !folder.is_dir() {
+            continue;
+        }
+        std::fs::rename(&folder, dir.join(".stapel/tickets").join(&key)).unwrap();
+        let git = |args: &[&str]| {
+            let st = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .status()
+                .unwrap();
+            assert!(st.success(), "{args:?}");
+        };
+        git(&["worktree", "remove", "--force", wt.to_str().unwrap()]);
+        git(&["branch", "-D", key.to_str().unwrap()]);
+        commit_all(dir, "new ticket");
+    }
+}
+
 #[test]
 fn removes_old_copies() {
     let repo = built();
     let dir = repo.path();
     for title in ["Second", "Third"] {
-        stapel(dir).args(["new", title]).assert().success();
+        new_here(dir, title);
     }
     let mut state = state_json(dir, "ABC-2");
     state["closed"] =
@@ -553,7 +584,7 @@ fn copy_is_searchable() {
 fn removes_old_copies_edges() {
     let repo = built();
     let dir = repo.path();
-    stapel(dir).args(["new", "Second"]).assert().success();
+    new_here(dir, "Second");
     let odd = dir.join(".stapel/tickets/AB-r1-1");
     std::fs::create_dir_all(&odd).unwrap();
     for entry in std::fs::read_dir(dir.join(".stapel/tickets/ABC-2")).unwrap() {
