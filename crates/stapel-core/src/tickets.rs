@@ -20,16 +20,35 @@ pub fn key_number(config: &Config, name: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
-/// The key of the next ticket: one more than the largest number among existing ticket folders.
-pub fn next_key(config: &Config, root: &Path) -> String {
-    let largest = std::fs::read_dir(tickets_dir(root))
+fn largest_in_folder(config: &Config, dir: &Path) -> u64 {
+    std::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .filter_map(|e| key_number(config, &e.file_name().to_string_lossy()))
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
+
+/// The key of the next ticket: one more than the largest number among the ticket folders here, in
+/// each worktree that is not prunable, in each local and remote-tracking branch, and in the names
+/// of those branches.
+pub fn next_key(config: &Config, root: &Path) -> String {
+    let mut largest = largest_in_folder(config, &tickets_dir(root));
+    for wt in crate::parallel::worktrees(root) {
+        if !wt.prunable {
+            largest = largest.max(largest_in_folder(config, &tickets_dir(&wt.path)));
+        }
+    }
+    for branch in crate::parallel::branches(root) {
+        let names = crate::parallel::branch_ticket_names(root, &branch.full_ref);
+        largest = names
+            .iter()
+            .chain(std::iter::once(&branch.name))
+            .filter_map(|n| key_number(config, n))
+            .fold(largest, u64::max);
+    }
     config
         .tickets
         .key
