@@ -52,12 +52,10 @@ pub fn pre_tool_use() -> ExitCode {
 pub fn session_start() -> ExitCode {
     std::panic::set_hook(Box::new(|_| {}));
     let root = std::panic::catch_unwind(|| {
-        let here = std::env::current_dir().ok()?;
-        let source = match std::env::var_os("CLAUDE_PROJECT_DIR").filter(|d| !d.is_empty()) {
-            Some(dir) => here.join(dir),
-            None => here,
-        };
-        stapel_root(&source)
+        let mut text = String::new();
+        let _ = std::io::stdin().read_to_string(&mut text);
+        let payload = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        token_root(&payload)
     });
     let Ok(Some(root)) = root else {
         return ExitCode::SUCCESS;
@@ -143,19 +141,22 @@ const DEFAULT_ROLES: [(&str, &str); 4] = [
     ("stapel-spec-reviewer", "reviewer"),
 ];
 
-/// The root of the hook repository: `CLAUDE_PROJECT_DIR`, else the input's `cwd`, else the working directory.
+/// The root of the hook repository: the stapel root of the input's `cwd`, else of
+/// `CLAUDE_PROJECT_DIR`, else of the working directory. An empty source is absent; a `cwd`
+/// outside a stapel repository gives way to the next source, the other sources do not.
 fn token_root(payload: &serde_json::Value) -> Option<PathBuf> {
     let here = std::env::current_dir().ok()?;
+    let from_cwd = payload
+        .get("cwd")
+        .and_then(|c| c.as_str())
+        .filter(|c| !c.is_empty())
+        .and_then(|c| stapel_root(&here.join(c)));
+    if from_cwd.is_some() {
+        return from_cwd;
+    }
     let source = match std::env::var_os("CLAUDE_PROJECT_DIR").filter(|d| !d.is_empty()) {
         Some(dir) => here.join(dir),
-        None => match payload
-            .get("cwd")
-            .and_then(|c| c.as_str())
-            .filter(|c| !c.is_empty())
-        {
-            Some(cwd) => here.join(cwd),
-            None => here,
-        },
+        None => here,
     };
     stapel_root(&source)
 }
