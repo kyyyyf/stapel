@@ -125,6 +125,38 @@ pub fn pack_text(p: &Pack) -> String {
     out
 }
 
+/// What `pack.md` of a merge round is made of.
+pub struct MergePack<'a> {
+    pub key: &'a str,
+    pub round: &'a str,
+    pub base_branch: &'a str,
+    pub head: &'a str,
+    pub folder: &'a str,
+    pub stat: &'a str,
+    pub spec: &'a str,
+}
+
+/// The text of `pack.md` of a merge round: the ticket diff against the base branch and the merge diff.
+pub fn merge_pack_text(p: &MergePack) -> String {
+    format!(
+        "# Review pack {key}, round {round}\n\n- ticket: {key}\n- round: {round}\n\
+         - base branch: {base}\n- head: {head}\n\n## Paths\n\n- copy: {folder}/tree\n\
+         - ticket: {folder}/tree/.stapel/tickets/{key}/ticket.md\n\
+         - diff: {folder}/diff.patch (the ticket against {base})\n\
+         - merge diff: {folder}/merge.patch (what the merge of {base} brought)\n\n\
+         ## Stat\n\n```\n{stat}\n```\n\n## Spec\n\n{spec}\n\n## Checks\n\n\
+- Merge check: for each change of the merge diff, say whether it breaks a claim or a test of this ticket.\n\
+- Claims check: try to falsify each checkable claim of the criteria against the merged code.\n",
+        key = p.key,
+        round = p.round,
+        base = p.base_branch,
+        head = p.head,
+        folder = p.folder,
+        stat = p.stat.trim_end(),
+        spec = p.spec.trim(),
+    )
+}
+
 const KNOWN_TAGS: [&str; 5] = ["security", "guard", "data", "migration", "interface"];
 
 /// The known risk tags in the backtick spans of the paragraph of the Frame that starts with

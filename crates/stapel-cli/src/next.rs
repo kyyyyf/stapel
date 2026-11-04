@@ -164,6 +164,7 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         dirty,
         brief: None,
         merge_main: stapel_core::parallel::merge_main_needed(root),
+        merge_review: stapel_core::parallel::merge_review_due(root, &ticket.dir),
     })
 }
 

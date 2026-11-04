@@ -212,9 +212,9 @@ enum ReviewAction {
     Start {
         /// The ticket key.
         key: String,
-        /// The round, 1 or 2.
+        /// The round: 1, 2 or `merge`.
         #[arg(long)]
-        round: u64,
+        round: review::Round,
     },
 }
 

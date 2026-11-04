@@ -147,6 +147,54 @@ pub fn merge_main_needed(root: &Path) -> Option<String> {
         .then_some(base)
 }
 
+/// The latest commit of `HEAD` that merged the base branch of the branch ticket and brought the
+/// close of another ticket (STP-27 AC-19).
+pub fn merge_commit(root: &Path) -> Option<String> {
+    let own = branch_ticket(root)?;
+    let base = state_of(&own)?.base_branch.clone()?;
+    let base_ref = format!("refs/heads/{base}");
+    let merges = git(root, &["rev-list", "--merges", "HEAD"])?;
+    for sha in merges.lines() {
+        let line = git(root, &["rev-list", "--parents", "-n", "1", sha])?;
+        let parents: Vec<&str> = line.split_whitespace().skip(1).collect();
+        let [first, second, ..] = parents[..] else {
+            continue;
+        };
+        if git(root, &["merge-base", "--is-ancestor", second, &base_ref]).is_none() {
+            continue;
+        }
+        let brought = branch_ticket_names(root, sha).iter().any(|key| {
+            !key.eq_ignore_ascii_case(&own.key)
+                && closed_at(root, sha, key)
+                && !closed_at(root, first, key)
+        });
+        if brought {
+            return Some(sha.to_string());
+        }
+    }
+    None
+}
+
+/// The merge round of a merge commit: `merge:` and the first 8 hex digits.
+pub fn merge_round(sha: &str) -> String {
+    format!("merge:{}", sha.chars().take(8).collect::<String>())
+}
+
+/// The merge round of `HEAD` when the code review of it has no finding record yet (STP-27 AC-19).
+pub fn merge_review_due(root: &Path, ticket_dir: &Path) -> Option<String> {
+    let round = merge_round(&merge_commit(root)?);
+    let entries = crate::journal::read(&ticket_dir.join("findings.jsonl")).unwrap_or_default();
+    let done = entries.into_iter().any(|(_, entry)| match entry {
+        crate::journal::Entry::V1(m) | crate::journal::Entry::Legacy(m) => {
+            !m.contains_key("kind")
+                && m.get("stage").and_then(|s| s.as_str()) == Some("code-review")
+                && m.get("round").and_then(|r| r.as_str()) == Some(round.as_str())
+        }
+        crate::journal::Entry::Problem(_) => false,
+    });
+    (!done).then_some(round)
+}
+
 /// A stop that blocks the branch ticket: it waits for `earlier`, for `reason`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wait {

@@ -16,7 +16,31 @@ use stapel_core::worktree::dirty_paths;
 use std::path::Path;
 use std::process::Command;
 
-pub fn start(key: &str, round: u64) -> Result<(), Fail> {
+/// The round of `review start`: a number or the review of the merge of the base branch.
+#[derive(Clone, Copy, Debug)]
+pub enum Round {
+    Number(u64),
+    Merge,
+}
+
+impl std::str::FromStr for Round {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        if s == "merge" {
+            return Ok(Round::Merge);
+        }
+        s.parse::<u64>()
+            .map(Round::Number)
+            .map_err(|_| format!("`{s}` is not a number or `merge`"))
+    }
+}
+
+pub fn start(key: &str, round: Round) -> Result<(), Fail> {
+    let number = match round {
+        Round::Number(n) => Some(n),
+        Round::Merge => None,
+    };
     let (root, config) = repo::open().map_err(Fail::failed)?;
     let ticket = resolve(&root, Some(key)).map_err(Fail::refused)?;
     let state = match &ticket.status {
@@ -35,7 +59,7 @@ pub fn start(key: &str, round: u64) -> Result<(), Fail> {
         }
         Status::Unreadable(reason) => return Err(Fail::failed(reason.clone())),
     };
-    if !(1..=2).contains(&round) {
+    if number.is_some_and(|n| !(1..=2).contains(&n)) {
         return Err(Fail::refused(
             "--round must be 1 or 2; after round 2 the person decides",
         ));
@@ -56,7 +80,7 @@ pub fn start(key: &str, round: u64) -> Result<(), Fail> {
         )));
     };
     check_base(&root, base, &head).map_err(Fail::failed)?;
-    if round == 2 {
+    if number == Some(2) {
         let path = ticket.dir.join("findings.jsonl");
         let entries = journal::read(&path).map_err(Fail::failed)?;
         let has_round_one = entries.into_iter().any(|(_, entry)| match entry {
@@ -89,10 +113,31 @@ pub fn start(key: &str, round: u64) -> Result<(), Fail> {
             ticket.key
         )));
     }
-    remove_old_copies(&root, &ticket.key, round)?;
-    copy_head(&root, &ticket.key, round)?;
-    write_pack(&root, &ticket.key, &ticket.dir, round, base, &head)?;
-    let folder = format!(".stapel/scratch/review/{}-r{round}/", ticket.key);
+    let label = match number {
+        Some(n) => format!("r{n}"),
+        None => "rmerge".to_string(),
+    };
+    if let Some(n) = number {
+        remove_old_copies(&root, &ticket.key, n)?;
+        copy_head(&root, &ticket.key, &label)?;
+        write_pack(&root, &ticket.key, &ticket.dir, n, base, &head)?;
+    } else {
+        let Some(base_branch) = &state.base_branch else {
+            return Err(Fail::failed(format!(
+                "state.json of {} has no base branch",
+                ticket.key
+            )));
+        };
+        let Some(merge) = stapel_core::parallel::merge_commit(&root) else {
+            return Err(Fail::refused(format!(
+                "HEAD holds no merge of {base_branch} that brought a close; \
+                 a merge review needs one"
+            )));
+        };
+        copy_head(&root, &ticket.key, &label)?;
+        write_merge_pack(&root, &ticket.key, &ticket.dir, base_branch, &merge, &head)?;
+    }
+    let folder = format!(".stapel/scratch/review/{}-{label}/", ticket.key);
     say!("copy: {folder}tree (HEAD {})", &head[..head.len().min(12)]);
     say!("pack: {folder}pack.md");
     let text = stapel_core::ticket::read(&ticket.dir.join("ticket.md")).map_err(Fail::failed)?;
@@ -194,6 +239,44 @@ fn write_pack(
     write("pack.md", pack.as_bytes())
 }
 
+/// Writes `diff.patch` (the ticket against the base branch), `merge.patch` (the merge diff) and
+/// `pack.md` into the review folder of the merge round (STP-27 AC-19).
+fn write_merge_pack(
+    root: &Path,
+    key: &str,
+    ticket_dir: &Path,
+    base_branch: &str,
+    merge: &str,
+    head: &str,
+) -> Result<(), Fail> {
+    let relative = format!(".stapel/scratch/review/{key}-rmerge");
+    let folder = root.join(&relative);
+    let write = |name: &str, bytes: &[u8]| {
+        let path = folder.join(name);
+        std::fs::write(&path, bytes).map_err(|e| Fail::failed(format!("{}: {e}", path.display())))
+    };
+    let base_ref = format!("refs/heads/{base_branch}");
+    write("diff.patch", &diff(root, &[], &base_ref, head)?)?;
+    let stat = diff(root, &["--stat=120", "--stat-graph-width=20"], &base_ref, head)?;
+    write("merge.patch", &diff(root, &[], &format!("{merge}^1"), merge)?)?;
+    let text = stapel_core::ticket::read(&ticket_dir.join("ticket.md")).map_err(Fail::failed)?;
+    let sections = stapel_core::ticket::parse(&text);
+    let spec = match stapel_core::ticket::find(&sections, "Spec") {
+        stapel_core::ticket::Lookup::Found(body) => body,
+        _ => "",
+    };
+    let pack = stapel_core::review::merge_pack_text(&stapel_core::review::MergePack {
+        key,
+        round: &stapel_core::parallel::merge_round(merge),
+        base_branch,
+        head,
+        folder: &relative,
+        stat: &String::from_utf8_lossy(&stat),
+        spec,
+    });
+    write("pack.md", pack.as_bytes())
+}
+
 /// Removes the folders `<KEY>-r<n>` directly under `.stapel/scratch/review/` of this ticket with
 /// another round and of closed tickets. A symlink is removed itself, never followed.
 fn remove_old_copies(root: &Path, key: &str, round: u64) -> Result<(), Fail> {
@@ -231,9 +314,9 @@ fn remove_old_copies(root: &Path, key: &str, round: u64) -> Result<(), Fail> {
 /// Replaces `.stapel/scratch/review/<KEY>-r<N>/tree/` with the files of HEAD as a checkout with
 /// `core.autocrlf=false` writes them: a temporary index of the folder, `read-tree`, `checkout-index`.
 /// The index of the repository is not touched.
-fn copy_head(root: &Path, key: &str, round: u64) -> Result<(), Fail> {
+fn copy_head(root: &Path, key: &str, label: &str) -> Result<(), Fail> {
     let review = root.join(".stapel/scratch/review");
-    let folder = review.join(format!("{key}-r{round}"));
+    let folder = review.join(format!("{key}-{label}"));
     let tree = folder.join("tree");
     let io = |path: &Path, e: std::io::Error| Fail::failed(format!("{}: {e}", path.display()));
     if folder.exists() {

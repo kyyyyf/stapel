@@ -94,6 +94,8 @@ pub struct History {
     pub brief: Option<(String, Option<String>)>,
     /// The base branch when it holds a close that `HEAD` lacks (STP-27 AC-18).
     pub merge_main: Option<String>,
+    /// The merge round of `HEAD` that has no code review record yet (STP-27 AC-19).
+    pub merge_review: Option<String>,
 }
 
 /// Whether `subject` is `<KEY> <label> <word>: …` with a word other than `RED:` and `GREEN:`
@@ -309,7 +311,24 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
             Some(Target::Command(format!("stapel check {}", f.key))),
         );
     }
+    let merge_review = || {
+        h.merge_review.as_ref().map(|_| {
+            Action::new(
+                "code-review",
+                None,
+                Some(Target::Command(format!(
+                    "stapel review start {} --round merge",
+                    f.key
+                ))),
+            )
+        })
+    };
     for (id, name) in [("review", "code-review"), ("summary", "write-summary")] {
+        if id == "summary"
+            && let Some(action) = merge_review()
+        {
+            return action;
+        }
         if let Some(def) = f.config.section(id)
             && !written(f.sections, &def.title)
         {
@@ -321,6 +340,9 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
             };
             return Action::new(name, None, Some(target));
         }
+    }
+    if let Some(action) = merge_review() {
+        return action;
     }
     Action::new(
         "close",

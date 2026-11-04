@@ -58,6 +58,13 @@ pub fn run(key: Option<&str>, reason: &str, grant: Option<&str>) -> Result<(), S
             ));
         }
     }
+    if let Some(round) = stapel_core::parallel::merge_review_due(&root, &ticket.dir) {
+        return Err(format!(
+            "close needs the merge review of {round}: run stapel review start {} --round merge \
+             and import its findings first",
+            ticket.key
+        ));
+    }
     if let Some(token) = grant {
         consume(&root, token, &close_facts(&ticket.key, reason))?;
     }
