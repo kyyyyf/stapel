@@ -1455,3 +1455,60 @@ fn bare_cargo_denied() {
         bash(repo.path(), command).success();
     }
 }
+
+// STP-27 AC-14: a subagent runs only allowed git commands inside its own worktree.
+#[test]
+fn subagent_git_guard() {
+    let repo = initialized_repo();
+    let dir = repo.path();
+    let call = |command: &str, agent: bool| {
+        let mut payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "cwd": dir,
+            "tool_name": "Bash",
+            "tool_input": { "command": command },
+        });
+        if agent {
+            payload["agent_id"] = json!("agent-1");
+        }
+        stapel(dir)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+    };
+    let denied = [
+        "git checkout main",
+        "git switch -c x",
+        "git stash",
+        "git restore .",
+        "git branch -D x",
+        "git worktree prune",
+        "git merge main",
+        "git -c core.worktree=/x status",
+        "git --git-dir=/x log",
+        "git -C /other status",
+        "git -C ../.. status",
+        "git diff --output=/tmp/x",
+        // GIT_DIR itself is denied for the main session too (the bypass rule), so use another.
+        "GIT_INDEX_FILE=/x git commit -m x",
+        "cd ../.. && git commit -am x",
+        "cd .claude/worktrees/STP-1 && git status",
+    ];
+    for command in denied {
+        call(command, true).code(DENY).stderr(contains(
+            "subagents run only these git commands in their own worktree: status",
+        ));
+        call(command, false).success();
+    }
+    for command in [
+        "git -C crates status",
+        "cd crates && git status",
+        "git status",
+        "git diff",
+        "git add -A",
+        "git commit -m x",
+    ] {
+        call(command, true).success();
+    }
+}
