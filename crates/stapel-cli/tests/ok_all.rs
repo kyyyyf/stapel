@@ -447,10 +447,6 @@ fn dialog_lists_every_waiting_section() {
     for (command, program) in [
         ("stapel ok ABC-1", "stapel"),
         ("stapel ok abc-1", "stapel"),
-        (
-            "cargo run -q -p stapel-cli -- ok ABC-1",
-            "cargo run -q -p stapel-cli --",
-        ),
     ] {
         let (reason, replaced) = ask(dir, command);
         assert!(
@@ -476,9 +472,15 @@ fn dialog_lists_every_waiting_section() {
         );
         assert_eq!(common::token_of(&replaced).len(), 32);
     }
+    // STP-27 AC-13: the `cargo run` form is bare cargo; it is denied and gets no dialog.
+    hook_bash(dir, "cargo run -q -p stapel-cli -- ok ABC-1", "auto")
+        .code(DENY)
+        .stderr(predicates::str::contains(
+            "cargo runs only through `stapel cargo`, which waits for the machine-wide cargo lock",
+        ));
     assert_eq!(
         std::fs::read_dir(grants_dir(dir)).unwrap().count(),
-        3,
+        2,
         "one grant file per dialog"
     );
 

@@ -1055,21 +1055,17 @@ fn dialog_for_ledger_add() {
     );
 
     // The `cargo run` form as written.
-    let (reason, replaced) = common::ask(
+    // STP-27 AC-13: it is bare cargo; it is denied and gets no dialog.
+    common::hook_bash(
         dir,
         "cargo run -q -p stapel-cli -- ledger add --kind decision --note x",
-    );
-    assert!(
-        reason.ends_with(&format!("; runs: cargo run -q -p stapel-cli --. {TAIL}")),
-        "{reason}"
-    );
-    assert!(
-        replaced.starts_with(
-            "cargo run -q -p stapel-cli -- ledger add --kind decision --note x ABC-1 --grant "
-        ),
-        "{replaced}"
-    );
-    assert_eq!(grant_files(dir), 3);
+        "auto",
+    )
+    .code(DENY)
+    .stderr(predicates::str::contains(
+        "cargo runs only through `stapel cargo`, which waits for the machine-wide cargo lock",
+    ));
+    assert_eq!(grant_files(dir), 2);
 
     // A closed ticket by its key.
     close_ticket(dir, "ABC-1");
@@ -1475,10 +1471,20 @@ fn dialog_for_findings_import() {
     for command in [
         "stapel findings import in.jsonl",
         "stapel findings import in.jsonl abc-1",
-        "cargo run -q -p stapel-cli -- findings import in.jsonl",
     ] {
         allowed_without_dialog(dir, command);
     }
+    // STP-27 AC-13: the `cargo run` form is bare cargo; it is denied.
+    common::hook_bash(
+        dir,
+        "cargo run -q -p stapel-cli -- findings import in.jsonl",
+        "auto",
+    )
+    .code(DENY)
+    .stderr(predicates::str::contains(
+        "cargo runs only through `stapel cargo`, which waits for the machine-wide cargo lock",
+    ));
+    assert_eq!(grant_files(dir), 0);
     // A closed ticket by its key.
     close_ticket(dir, "ABC-1");
     allowed_without_dialog(dir, "stapel findings import in.jsonl ABC-1");

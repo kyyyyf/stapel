@@ -11,6 +11,10 @@ use std::path::Path;
 /// Exit code with which Claude Code blocks a tool call and shows stderr to the agent.
 const DENY: i32 = 2;
 
+/// The reason the guard gives for bare cargo (STP-27 AC-13).
+const CARGO_TEXT: &str =
+    "cargo runs only through `stapel cargo`, which waits for the machine-wide cargo lock";
+
 fn initialized_repo() -> tempfile::TempDir {
     let repo = git_repo();
     stapel(repo.path())
@@ -79,11 +83,14 @@ fn allows_non_push_commands() {
         "echo 'git push' > notes.txt",
         "git commit -m 'push later'",
         "git stash push -m wip",
-        "cargo test push",
         "ls pushd",
     ] {
         bash(repo.path(), command).success();
     }
+    // STP-27 AC-13: bare cargo is denied, with the cargo reason and not the push reason.
+    bash(repo.path(), "cargo test push")
+        .code(DENY)
+        .stderr(contains(CARGO_TEXT));
 }
 
 // AC-10
@@ -263,7 +270,6 @@ fn denies_git_push_in_compound_forms() {
 fn allows_lookalikes_after_round_one() {
     let repo = initialized_repo();
     for command in [
-        "timeout 30 cargo test",
         "nice git status",
         "echo '$(git push)'",
         "echo '`git push`'",
@@ -273,6 +279,10 @@ fn allows_lookalikes_after_round_one() {
     ] {
         bash(repo.path(), command).success();
     }
+    // STP-27 AC-13: bare cargo is denied, with the cargo reason.
+    bash(repo.path(), "timeout 30 cargo test")
+        .code(DENY)
+        .stderr(contains(CARGO_TEXT));
 }
 
 // E-1, F-5: machine files are written only by stapel, never by an agent's write tool.
@@ -433,16 +443,23 @@ fn allows_lookalikes_after_round_two() {
     for command in [
         "git commit -m 'git push later'",
         "git commit -m \"see $(date) before push\"",
-        "timeout 5 cargo build",
         "echo ls | sh",
         "git submodule update --init",
         "git subtree add --prefix=a o m",
-        "git rebase --exec 'cargo test' HEAD~2",
         "find . -name '*.rs' -exec rustfmt {} \\;",
-        "cargo test \\\n  --workspace",
         "echo $(git rev-parse HEAD)",
     ] {
         bash(repo.path(), command).success();
+    }
+    // STP-27 AC-13: bare cargo is denied, with the cargo reason.
+    for command in [
+        "timeout 5 cargo build",
+        "git rebase --exec 'cargo test' HEAD~2",
+        "cargo test \\\n  --workspace",
+    ] {
+        bash(repo.path(), command)
+            .code(DENY)
+            .stderr(contains(CARGO_TEXT));
     }
 }
 
@@ -621,14 +638,21 @@ fn allows_lookalikes_after_round_three() {
     for command in [
         "echo \"CLAUDECODE=$CLAUDECODE\"",
         "printenv CLAUDECODE",
-        "env RUST_LOG=debug cargo test",
-        "cargo test -- --nocapture",
         "git status --short",
         "git rebase main",
         "git submodule update --init --recursive",
-        "watch -n 5 'cargo check'",
     ] {
         bash(repo.path(), command).success();
+    }
+    // STP-27 AC-13: bare cargo is denied, with the cargo reason.
+    for command in [
+        "env RUST_LOG=debug cargo test",
+        "cargo test -- --nocapture",
+        "watch -n 5 'cargo check'",
+    ] {
+        bash(repo.path(), command)
+            .code(DENY)
+            .stderr(contains(CARGO_TEXT));
     }
 }
 
@@ -676,11 +700,18 @@ fn allows_lookalikes_after_round_four() {
         "env FOO=1 ls -li",
         "env FOO=1 grep -rin foo .",
         "sudo env FOO=1 grep -i x f",
-        "exec cargo test --color always",
-        "exec cargo test -- --nocapture",
         "env FOO=1 printenv CLAUDECODE",
     ] {
         bash(repo.path(), command).success();
+    }
+    // STP-27 AC-13: bare cargo is denied, with the cargo reason.
+    for command in [
+        "exec cargo test --color always",
+        "exec cargo test -- --nocapture",
+    ] {
+        bash(repo.path(), command)
+            .code(DENY)
+            .stderr(contains(CARGO_TEXT));
     }
 }
 
@@ -919,11 +950,10 @@ fn asks_for_plain_stapel_ok() {
 #[test]
 fn asks_for_cargo_run_ok() {
     let repo = repo_with_ticket();
-    let (_, replaced) = ask(repo.path(), "cargo run -q -p stapel-cli -- ok spec");
-    assert!(
-        replaced.starts_with("cargo run -q -p stapel-cli -- ok ABC-1 spec --grant "),
-        "{replaced}"
-    );
+    // STP-27 AC-13: bare cargo is denied with the cargo reason; no ask is made.
+    hook_bash(repo.path(), "cargo run -q -p stapel-cli -- ok spec", "auto")
+        .code(DENY)
+        .stderr(contains(CARGO_TEXT));
 }
 
 #[test]
@@ -980,7 +1010,6 @@ fn allows_mentions_of_stapel_ok() {
         "echo \"stapel ok\"",
         "git commit -m 'STP-2 step 6: stapel ok refuses in agent shell'",
         "grep -rn \"stapel ok\" crates",
-        "cargo test ok::records_confirmation",
         "grep -rn -- --grant crates/",
         "echo --grant-me",
     ] {
@@ -995,6 +1024,10 @@ fn allows_mentions_of_stapel_ok() {
             String::from_utf8_lossy(&out)
         );
     }
+    // STP-27 AC-13: bare cargo is denied, with the cargo reason and not the ok reason.
+    hook_bash(repo.path(), "cargo test ok::records_confirmation", "auto")
+        .code(DENY)
+        .stderr(contains(CARGO_TEXT));
 }
 
 #[test]
@@ -1402,4 +1435,23 @@ fn permit_only_for_the_branch_ticket() {
     code_write(&wt).code(DENY);
     // On the base branch ABC-1 still permits.
     code_write(dir).success();
+}
+
+// STP-27 AC-13: cargo runs only through `stapel cargo`.
+#[test]
+fn bare_cargo_denied() {
+    let repo = initialized_repo();
+    let text = CARGO_TEXT;
+    for command in [
+        "cargo test",
+        "env FOO=1 cargo test",
+        "sh -c \"cargo build\"",
+        "eval cargo fmt",
+        "STAPEL_CARGO_LOCK_HELD=1 stapel cargo test",
+    ] {
+        bash(repo.path(), command).code(DENY).stderr(contains(text));
+    }
+    for command in ["stapel cargo test -p x", "echo cargo"] {
+        bash(repo.path(), command).success();
+    }
 }

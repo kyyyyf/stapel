@@ -1165,21 +1165,17 @@ fn dialog_for_import() {
     let (reason, replaced) = common::ask(dir, "stapel TOKENS Import-Records in.jsonl abc-1");
     assert!(reason.starts_with("stapel: import 3 token records from in.jsonl into ABC-1: "));
     assert!(replaced.starts_with("stapel tokens import-records in.jsonl ABC-1 --grant "));
-    let (reason, replaced) = common::ask(
+    // STP-27 AC-13: the `cargo run` form is bare cargo; it is denied and gets no dialog.
+    common::hook_bash(
         dir,
         "cargo run -q -p stapel-cli -- tokens import-records in.jsonl",
-    );
-    assert!(
-        reason.ends_with(&format!("; runs: cargo run -q -p stapel-cli --. {TAIL}")),
-        "{reason}"
-    );
-    assert!(
-        replaced.starts_with(
-            "cargo run -q -p stapel-cli -- tokens import-records in.jsonl ABC-1 --grant "
-        ),
-        "{replaced}"
-    );
-    assert_eq!(grant_files(dir), 3);
+        "auto",
+    )
+    .code(DENY)
+    .stderr(predicates::str::contains(
+        "cargo runs only through `stapel cargo`, which waits for the machine-wide cargo lock",
+    ));
+    assert_eq!(grant_files(dir), 2);
 
     // No estimate record: the estimate sum is 0.
     put(dir, "m.jsonl", &line(&measured("x-1")));
