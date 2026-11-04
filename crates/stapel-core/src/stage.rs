@@ -131,11 +131,20 @@ pub fn read_bounded(path: &Path) -> Option<String> {
     crate::state::read_bounded(path).ok()
 }
 
+/// The tickets that can give the permit: the branch ticket alone on a ticket branch, else every
+/// ticket (STP-27 AC-9).
+fn permit_candidates(root: &Path) -> Vec<crate::tickets::Ticket> {
+    match crate::tickets::branch_ticket(root) {
+        Some(ticket) => vec![ticket],
+        None => list(root),
+    }
+}
+
 /// Per open ticket, which required sections are not confirmed or are stale, for the guard's
 /// denial (STP-2 AC-11).
 pub fn permit_report(root: &Path, config: &Config) -> String {
     let mut parts = Vec::new();
-    for ticket in list(root) {
+    for ticket in permit_candidates(root) {
         let Status::Open(state) = &ticket.status else {
             continue;
         };
@@ -170,7 +179,7 @@ pub fn permit_report(root: &Path, config: &Config) -> String {
 pub fn build_permit(root: &Path, config: Option<&Config>) -> Option<Permit> {
     let dir = crate::tickets::tickets_dir(root);
     if let Some(config) = config {
-        for ticket in list(root) {
+        for ticket in permit_candidates(root) {
             let Status::Open(state) = &ticket.status else {
                 continue;
             };
@@ -200,7 +209,11 @@ pub fn build_permit(root: &Path, config: Option<&Config>) -> Option<Permit> {
         .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
         .collect();
     names.sort();
+    let branch = crate::tickets::branch_ticket(root).map(|t| t.key);
     names.into_iter().find_map(|(key, path)| {
+        if branch.as_ref().is_some_and(|b| *b != key) {
+            return None;
+        }
         let text = read_bounded(&path.join("state.json"))?;
         let v: serde_json::Value = serde_json::from_str(&text).ok()?;
         (v["build"]["allowed"] == true && v.get("closed").is_none()).then_some(Permit::ByHand(key))
