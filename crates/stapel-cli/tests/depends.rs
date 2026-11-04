@@ -1,0 +1,397 @@
+//! STP-27 AC-20 and AC-22: the dependency review of parallel tickets and the stops it writes.
+
+mod common;
+
+use common::{Pair, git_in, set_section, stapel, two_ticket_worktrees};
+use serde_json::{Value, json};
+use std::path::{Path, PathBuf};
+
+/// Writes `text` to `rel` in `dir` and commits it with git, outside any hook.
+fn write_commit(dir: &Path, rel: &str, text: &str) {
+    let path = dir.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+    git_in(dir, &["add", "-A"]);
+    git_in(dir, &["commit", "-q", "-m", "wip"]);
+}
+
+/// `stapel next` in `dir`: its stdout.
+fn next(dir: &Path) -> String {
+    let out = stapel(dir).arg("next").assert().success().get_output().stdout.clone();
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The pre-tool-use hook for a Write of `rel` in `dir`: the assertion on its answer.
+fn write_hook(dir: &Path, rel: &str) -> assert_cmd::assert::Assert {
+    let payload = json!({
+        "tool_name": "Write",
+        "cwd": dir,
+        "permission_mode": "auto",
+        "tool_input": { "file_path": dir.join(rel), "content": "x" },
+    });
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(payload.to_string())
+        .assert()
+}
+
+/// Writes the five sections of `key` in `dir`, confirms them, sets `[check]` and commits a Plan step
+/// closed by a word commit: the next action is then `run-check`.
+fn build_ready(dir: &Path, key: &str) {
+    set_section(dir, key, "Description", "### Frame\n\nThe problem.");
+    set_section(dir, key, "Spec", "The spec.");
+    set_section(dir, key, "Design", "The design.");
+    set_section(dir, key, "Proof", "The proof.");
+    set_section(dir, key, "Plan", "Route: light, auto.\n\n1. One.");
+    let toml = dir.join(".stapel/stapel.toml");
+    let mut text = std::fs::read_to_string(&toml).unwrap();
+    text.push_str("\n[check]\nrunner = \"cargo\"\ntimeout_secs = 900\n");
+    std::fs::write(&toml, text).unwrap();
+    for section in ["spec", "design", "proof", "plan"] {
+        stapel(dir).args(["ok", section]).assert().success();
+    }
+    write_commit(dir, "src/note.txt", "note\n");
+    git_in(
+        dir,
+        &["commit", "-q", "--allow-empty", "-m", &format!("{key} step 1 skip: nothing")],
+    );
+}
+
+const DEPEND_B: &str = "next: dependency-review — stapel depends ABC-2";
+const RUN_CHECK_B: &str = "next: run-check — stapel check ABC-2";
+
+/// The stop file of the pair: ABC-2 waits for ABC-1.
+fn stop_file(pair: &Pair) -> PathBuf {
+    pair.repo
+        .path()
+        .join(".git/stapel/stops/ABC-2/ABC-1-dependency.json")
+}
+
+/// The `round:` line of `stapel depends` in `dir`, without its label.
+fn round_of(dir: &Path) -> String {
+    let out = stapel(dir).arg("depends").assert().success().get_output().stdout.clone();
+    let text = String::from_utf8(out).unwrap();
+    text.lines()
+        .find_map(|l| l.strip_prefix("round: "))
+        .unwrap_or_else(|| panic!("no round line: {text}"))
+        .to_string()
+}
+
+/// A dependency record of ABC-2.
+fn record(id: &str, round: &str, severity: &str, waits: Option<&str>, claim: &str) -> Value {
+    let mut v = json!({
+        "id": id,
+        "ticket": "ABC-2",
+        "stage": "dependency",
+        "round": round,
+        "role": "depends",
+        "severity": severity,
+        "promise": "inside",
+        "claim": claim,
+        "catchable_at": "spec",
+        "fate": "defer",
+    });
+    if let Some(waits) = waits {
+        v["waits"] = json!(waits);
+    }
+    v
+}
+
+/// `stapel findings <verb> FILE` in `dir` with the lines of `records`, the file outside the tree.
+fn put_records(dir: &Path, verb: &str, records: &[Value]) {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("in.jsonl");
+    let text: String = records.iter().map(|r| format!("{r}\n")).collect();
+    std::fs::write(&file, text).unwrap();
+    stapel(dir)
+        .args(["findings", verb])
+        .arg(&file)
+        .assert()
+        .success();
+}
+
+/// The review of the pair's current round returned `records`.
+fn review_returns(pair: &Pair, records: &[Value]) {
+    put_records(&pair.b, "import", records);
+}
+
+/// A LOW record that finds no dependency.
+fn nothing_found(id: &str, round: &str) -> Value {
+    record(id, round, "LOW", None, "no dependency found")
+}
+
+fn stop_kind(pair: &Pair) -> String {
+    let text = std::fs::read_to_string(stop_file(pair)).expect("the stop file");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert!(v["files"].is_array(), "{text}");
+    assert!(v["at"].is_string(), "{text}");
+    v["kind"].as_str().unwrap().to_string()
+}
+
+/// Replaces the hash of the `spec` confirmation of `key` in `dir`.
+fn set_hash(dir: &Path, key: &str, hash: &str) {
+    let path = dir.join(format!(".stapel/tickets/{key}/state.json"));
+    let mut state: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    state["confirmations"][0]["hash"] = json!(hash);
+    std::fs::write(&path, state.to_string()).unwrap();
+}
+
+#[test]
+fn dependency_review_named() {
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let b = pair.b.as_path();
+
+    // No record of the round: the action, and a denied code write; `.stapel/` stays open.
+    let said = next(b);
+    assert!(said.lines().any(|l| l == DEPEND_B), "{said}");
+    assert!(!said.contains("run-check"), "{said}");
+    write_hook(b, "crates/x.rs")
+        .code(2)
+        .stderr(predicates::str::contains("dependency review"));
+    write_hook(b, ".stapel/note.md").success();
+
+    // `stapel depends` without KEY takes the branch ticket and prints the pack and the round.
+    let out = stapel(b).arg("depends").assert().success().get_output().stdout.clone();
+    let text = String::from_utf8(out).unwrap();
+    assert!(
+        text.lines()
+            .any(|l| l == "pack: .stapel/scratch/depends/ABC-2-ABC-1/pack.md"),
+        "{text}"
+    );
+    let state = common::state_json(b, "ABC-2");
+    let hash = state["confirmations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rfind(|c| c["section"] == "spec")
+        .unwrap()["hash"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let hex: String = hash
+        .trim_start_matches("sha256:")
+        .chars()
+        .take(8)
+        .collect();
+    assert!(
+        text.lines().any(|l| l == format!("round: ABC-1:h:{hex}")),
+        "{text}"
+    );
+    assert!(b.join(".stapel/scratch/depends/ABC-2-ABC-1/pack.md").is_file());
+
+    // A record of the round: the action goes away and the write passes.
+    let round = round_of(b);
+    review_returns(&pair, &[nothing_found("D-1", &round)]);
+    let said = next(b);
+    assert!(said.lines().any(|l| l == RUN_CHECK_B), "{said}");
+    assert!(!said.contains("dependency-review"), "{said}");
+    write_hook(b, "crates/x.rs").success();
+
+    // The earlier ticket has no earlier parallel ticket: the refusal, exit 2.
+    stapel(&pair.a)
+        .arg("depends")
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("ABC-1 has no earlier parallel ticket"));
+    stapel(&pair.a)
+        .args(["depends", "ABC-1"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("ABC-1 has no earlier parallel ticket"));
+
+    // A KEY of another ticket than the branch ticket is refused.
+    stapel(b).args(["depends", "ABC-1"]).assert().code(2);
+}
+
+#[test]
+fn pack_holds_both_tickets() {
+    let pair = two_ticket_worktrees();
+    let (a, b) = (pair.a.as_path(), pair.b.as_path());
+    set_section(a, "ABC-1", "Description", "### Frame\n\nProblem of the first.");
+    set_section(
+        a,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | WHEN a THE first criterion holds. | `t::a` |",
+    );
+    set_section(
+        a,
+        "ABC-1",
+        "Plan",
+        "Route: light, auto.\n\n1. Change `src/shared.txt` and `crates/zzz/lib.rs` (AC-1; test `t::a`).",
+    );
+    set_section(b, "ABC-2", "Description", "### Frame\n\nProblem of the second.");
+    set_section(
+        b,
+        "ABC-2",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | WHEN b THE second criterion holds. | `t::b` |",
+    );
+    set_section(
+        b,
+        "ABC-2",
+        "Plan",
+        "Route: light, auto.\n\n1. Change `src/main.rs` (AC-1).",
+    );
+    write_commit(
+        a,
+        "src/shared.txt",
+        &(1..=10)
+            .map(|i| if i == 2 { "from a\n".to_string() } else { format!("line {i}\n") })
+            .collect::<String>(),
+    );
+    write_commit(
+        b,
+        "src/main.rs",
+        &(1..=20)
+            .map(|i| if i == 1 { "from b\n".to_string() } else { format!("line {i}\n") })
+            .collect::<String>(),
+    );
+
+    let out = stapel(b).arg("depends").assert().success().get_output().stdout.clone();
+    let text = String::from_utf8(out).unwrap();
+    let path = text
+        .lines()
+        .find_map(|l| l.strip_prefix("pack: "))
+        .unwrap_or_else(|| panic!("no pack line: {text}"));
+    assert!(text.contains("round: ABC-1:h:h"), "{text}");
+    let pack = std::fs::read_to_string(b.join(path)).unwrap();
+
+    // Both Frames, criteria and Plans.
+    for needle in [
+        "Problem of the first.",
+        "Problem of the second.",
+        "WHEN a THE first criterion holds.",
+        "WHEN b THE second criterion holds.",
+        "Change `src/shared.txt` and `crates/zzz/lib.rs`",
+        "Change `src/main.rs`",
+    ] {
+        assert!(pack.contains(needle), "{needle}: {pack}");
+    }
+    // The named files of both Plans, each from its own checkout; a test name is no file.
+    assert!(pack.contains("from a"), "{pack}");
+    assert!(pack.contains("from b"), "{pack}");
+    assert!(pack.contains("src/shared.txt"), "{pack}");
+    assert!(pack.contains("src/main.rs"), "{pack}");
+    assert!(pack.contains("crates/zzz/lib.rs"), "{pack}");
+    // The earlier ticket's diff against the base branch.
+    assert!(pack.contains("diff --git a/src/shared.txt b/src/shared.txt"), "{pack}");
+    assert!(pack.contains("+from a"), "{pack}");
+    assert!(!pack.contains("+from b"), "{pack}");
+
+    // The pack folder leaves no change in the tree.
+    let status = git_in(b, &["status", "--porcelain", "--untracked-files=all"]);
+    assert!(!status.contains("scratch"), "{status}");
+}
+
+#[test]
+fn confirmed_dependency_stops() {
+    // A MEDIUM record with `waits`: the kind of the stop is that of its waits; both give `merge`.
+    for (waits, kind) in [
+        (vec!["spec"], "spec"),
+        (vec!["merge"], "merge"),
+        (vec!["spec", "merge"], "merge"),
+    ] {
+        let pair = two_ticket_worktrees();
+        build_ready(&pair.b, "ABC-2");
+        let round = round_of(&pair.b);
+        assert!(!stop_file(&pair).exists());
+        let records: Vec<Value> = waits
+            .iter()
+            .enumerate()
+            .map(|(i, w)| record(&format!("D-{i}"), &round, "MEDIUM", Some(w), "a dependency"))
+            .collect();
+        review_returns(&pair, &records);
+        assert_eq!(stop_kind(&pair), kind, "{waits:?}");
+    }
+
+    // A verdict of the triage grades the record: `medium` keeps the stop.
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let round = round_of(&pair.b);
+    review_returns(&pair, &[record("D-1", &round, "HIGH", Some("spec"), "a dependency")]);
+    put_records(
+        &pair.b,
+        "triage",
+        &[json!({"id": "D-1", "ticket": "ABC-2", "fate": "defer", "verdict": "medium"})],
+    );
+    assert_eq!(stop_kind(&pair), "spec");
+
+    // Only LOW records: no stop.
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let round = round_of(&pair.b);
+    review_returns(&pair, &[nothing_found("D-1", &round)]);
+    assert!(!stop_file(&pair).exists());
+    let said = next(&pair.b);
+    assert!(said.lines().any(|l| l == RUN_CHECK_B), "{said}");
+
+    // The earlier spec confirmed again: a new round, and the review is asked again.
+    set_hash(&pair.a, "ABC-1", "feedfacefeedface");
+    let said = next(&pair.b);
+    assert!(said.lines().any(|l| l == DEPEND_B), "{said}");
+    assert_ne!(round_of(&pair.b), round);
+    write_hook(&pair.b, "crates/x.rs").code(2);
+}
+
+#[test]
+fn false_verdict_lifts_the_stop() {
+    // A triage with the verdict `false` and a refutation removes the stop.
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let round = round_of(&pair.b);
+    review_returns(&pair, &[record("D-1", &round, "MEDIUM", Some("merge"), "a dependency")]);
+    assert_eq!(stop_kind(&pair), "merge");
+    put_records(
+        &pair.b,
+        "triage",
+        &[json!({
+            "id": "D-1",
+            "ticket": "ABC-2",
+            "fate": "no-change",
+            "verdict": "false",
+            "evidence": "the two tickets touch no common file",
+        })],
+    );
+    assert!(!stop_file(&pair).exists());
+    let said = next(&pair.b);
+    assert!(said.lines().any(|l| l == RUN_CHECK_B), "{said}");
+
+    // One false and one kept record: the stop stays, with the kind of the kept record.
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let round = round_of(&pair.b);
+    review_returns(
+        &pair,
+        &[
+            record("D-1", &round, "MEDIUM", Some("merge"), "a dependency"),
+            record("D-2", &round, "MEDIUM", Some("spec"), "another dependency"),
+        ],
+    );
+    assert_eq!(stop_kind(&pair), "merge");
+    put_records(
+        &pair.b,
+        "triage",
+        &[json!({
+            "id": "D-1",
+            "ticket": "ABC-2",
+            "fate": "no-change",
+            "verdict": "false",
+            "evidence": "the two tickets touch no common file",
+        })],
+    );
+    assert_eq!(stop_kind(&pair), "spec");
+
+    // A new round with only `no dependency found`: the stop is removed.
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let round = round_of(&pair.b);
+    review_returns(&pair, &[record("D-1", &round, "HIGH", Some("merge"), "a dependency")]);
+    assert_eq!(stop_kind(&pair), "merge");
+    set_hash(&pair.a, "ABC-1", "feedfacefeedface");
+    let new_round = round_of(&pair.b);
+    assert_ne!(new_round, round);
+    review_returns(&pair, &[nothing_found("D-2", &new_round)]);
+    assert!(!stop_file(&pair).exists());
+}

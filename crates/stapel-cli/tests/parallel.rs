@@ -317,6 +317,43 @@ fn build_ready(dir: &Path, key: &str) {
 }
 
 const RUN_CHECK_B: &str = "next: run-check — stapel check ABC-2";
+const DEPEND_B: &str = "next: dependency-review — stapel depends ABC-2";
+
+/// The dependency review of ABC-2 against ABC-1 is asked for and then done: `stapel depends` names
+/// the round and one LOW record `no dependency found` of that round is imported (STP-27 AC-20).
+fn dependency_done(pair: &Pair) {
+    let b = pair.b.as_path();
+    let out = stapel(b).arg("depends").assert().success().get_output().stdout.clone();
+    let text = String::from_utf8(out).unwrap();
+    let round = text
+        .lines()
+        .find_map(|l| l.strip_prefix("round: "))
+        .unwrap_or_else(|| panic!("no round line: {text}"))
+        .to_string();
+    let record = serde_json::json!({
+        "id": format!("D-{round}"),
+        "ticket": "ABC-2",
+        "stage": "dependency",
+        "round": round,
+        "role": "depends",
+        "severity": "LOW",
+        "promise": "inside",
+        "claim": "no dependency found",
+        "catchable_at": "spec",
+        "fate": "no-change",
+    });
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("in.jsonl");
+    std::fs::write(&file, format!("{record}\n")).unwrap();
+    stapel(b).args(["findings", "import"]).arg(&file).assert().success();
+}
+
+/// The later ticket first has no record of its dependency round: the action, then the record.
+fn dependency_asked_and_done(pair: &Pair) {
+    let said = next(&pair.b, None);
+    assert!(said.lines().any(|l| l == DEPEND_B), "{said}");
+    dependency_done(pair);
+}
 
 /// The stop file `ABC-2/ABC-1-dependency.json` with `body`.
 fn put_dependency_stop(pair: &Pair, body: &str) -> PathBuf {
@@ -381,6 +418,7 @@ fn stopped_ticket_waits() {
     let pair = two_ticket_worktrees();
     build_ready(&pair.b, "ABC-2");
     let b = &pair.b;
+    dependency_asked_and_done(&pair);
 
     // Without a stop: no wait, and a code write passes.
     let said = next(b, None);
@@ -430,6 +468,7 @@ fn stopped_ticket_waits() {
     std::fs::remove_file(pair.repo.path().join(".git/stapel/stops/ABC-2/ABC-1-dependency.json"))
         .unwrap();
     spec_confirmation(&pair.a, "ABC-1", true);
+    dependency_done(&pair);
     conflicting_commits(&pair);
     put_dependency_stop(&pair, &spec_stop_body());
     let said = next(b, None);
@@ -448,10 +487,13 @@ fn spec_kind_waits_for_the_spec() {
     let pair = two_ticket_worktrees();
     build_ready(&pair.b, "ABC-2");
     let b = &pair.b;
-    put_dependency_stop(&pair, &spec_stop_body());
+    dependency_asked_and_done(&pair);
 
-    // The earlier spec is fresh: no wait.
+    // The earlier spec is fresh: no wait. Each new confirmation of the earlier spec is a new
+    // dependency round, done before the stop of the test is put in place.
     spec_confirmation(&pair.a, "ABC-1", true);
+    dependency_done(&pair);
+    put_dependency_stop(&pair, &spec_stop_body());
     let said = next(b, None);
     assert!(said.contains(RUN_CHECK_B), "{said}");
     assert!(!said.contains("waits for"), "{said}");
@@ -459,6 +501,8 @@ fn spec_kind_waits_for_the_spec() {
 
     // The earlier spec is stale: the wait.
     spec_confirmation(&pair.a, "ABC-1", false);
+    dependency_done(&pair);
+    put_dependency_stop(&pair, &spec_stop_body());
     let said = next(b, None);
     assert!(said.contains(WAIT_LINE), "{said}");
     assert!(said.lines().any(|l| l == "next: wait — ABC-1"), "{said}");
@@ -535,6 +579,7 @@ fn merge_main_before_close() {
     // The base branch gains only a `docs/` commit: no `merge-main`.
     let pair = two_ticket_worktrees();
     build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
     commit_on_base(&pair, "docs/note.md", "a note\n");
     let said = next(&pair.b, None);
     assert!(said.contains(RUN_CHECK_B), "{said}");
