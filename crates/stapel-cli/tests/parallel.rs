@@ -2,7 +2,8 @@
 
 mod common;
 
-use common::{Pair, git_in, set_spec_time, stapel, two_ticket_worktrees};
+use common::{Pair, git_in, set_section, set_spec_time, stapel, two_ticket_worktrees};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// Writes `text` to `rel` in `dir` and commits it with git, outside any hook.
@@ -289,4 +290,253 @@ fn next_runs_the_trial_merge() {
         std::fs::read(stop_path(&pair, "ABC-2", "ABC-1")).unwrap(),
         before
     );
+}
+
+// ---- STP-27 AC-17 and AC-18: a stopped ticket waits; the base branch is merged before close ----
+
+/// Writes the five sections of `key` in `dir`, confirms them, sets `[check]` and commits a Plan step
+/// closed by a word commit: the next action is then `run-check`.
+fn build_ready(dir: &Path, key: &str) {
+    set_section(dir, key, "Description", "### Frame\n\nThe problem.");
+    set_section(dir, key, "Spec", "The spec.");
+    set_section(dir, key, "Design", "The design.");
+    set_section(dir, key, "Proof", "The proof.");
+    set_section(dir, key, "Plan", "Route: light, auto.\n\n1. One.");
+    let toml = dir.join(".stapel/stapel.toml");
+    let mut text = std::fs::read_to_string(&toml).unwrap();
+    text.push_str("\n[check]\nrunner = \"cargo\"\ntimeout_secs = 900\n");
+    std::fs::write(&toml, text).unwrap();
+    for section in ["spec", "design", "proof", "plan"] {
+        stapel(dir).args(["ok", section]).assert().success();
+    }
+    write_commit(dir, "src/note.txt", "note\n");
+    git_in(
+        dir,
+        &["commit", "-q", "--allow-empty", "-m", &format!("{key} step 1 skip: nothing")],
+    );
+}
+
+const RUN_CHECK_B: &str = "next: run-check — stapel check ABC-2";
+
+/// The stop file `ABC-2/ABC-1-dependency.json` with `body`.
+fn put_dependency_stop(pair: &Pair, body: &str) -> PathBuf {
+    let path = pair
+        .repo
+        .path()
+        .join(".git/stapel/stops/ABC-2/ABC-1-dependency.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, body).unwrap();
+    path
+}
+
+fn merge_stop_body() -> String {
+    serde_json::json!({
+        "kind": "merge",
+        "files": ["src/shared.txt"],
+        "at": "2026-01-01T10:00:00Z",
+    })
+    .to_string()
+}
+
+fn spec_stop_body() -> String {
+    serde_json::json!({"kind": "spec", "files": [], "at": "2026-01-01T10:00:00Z"}).to_string()
+}
+
+/// The pre-tool-use hook for a Write of `rel` in `dir`: the assertion on its answer.
+fn write_hook(dir: &Path, rel: &str) -> assert_cmd::assert::Assert {
+    let payload = serde_json::json!({
+        "tool_name": "Write",
+        "cwd": dir,
+        "permission_mode": "auto",
+        "tool_input": { "file_path": dir.join(rel), "content": "x" },
+    });
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(payload.to_string())
+        .assert()
+}
+
+/// Gives `key` in `dir` a Spec whose confirmation is fresh (`fresh`) or stale.
+fn spec_confirmation(dir: &Path, key: &str, fresh: bool) {
+    set_section(dir, key, "Spec", "The spec.");
+    let digest = Sha256::digest(b"The spec.");
+    let hash: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    let path = dir.join(format!(".stapel/tickets/{key}/state.json"));
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    state["confirmations"] = serde_json::json!([{
+        "section": "spec",
+        "by": "test-user",
+        "at": "2026-01-01T10:00:00Z",
+        "hash": if fresh { format!("sha256:{hash}") } else { "sha256:old".to_string() },
+        "normal_form": 1,
+    }]);
+    std::fs::write(&path, state.to_string()).unwrap();
+}
+
+const WAIT_LINE: &str = "blocked: ABC-2 waits for ABC-1 (";
+
+#[test]
+fn stopped_ticket_waits() {
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let b = &pair.b;
+
+    // Without a stop: no wait, and a code write passes.
+    let said = next(b, None);
+    assert!(said.contains(RUN_CHECK_B), "{said}");
+    assert!(!said.contains("waits for"), "{said}");
+    write_hook(b, "crates/x.rs").success();
+
+    // A `merge` stop, the earlier ticket not closed on the base branch: the fact and the action.
+    put_dependency_stop(&pair, &merge_stop_body());
+    let said = next(b, None);
+    assert!(said.contains("blocked: ABC-2 waits for ABC-1 (dependency)"), "{said}");
+    assert!(said.lines().any(|l| l == "next: wait — ABC-1"), "{said}");
+    assert!(!said.contains("run-check"), "{said}");
+    let json = {
+        let out = stapel(b).args(["next", "--json"]).assert().success();
+        String::from_utf8(out.get_output().stdout.clone()).unwrap()
+    };
+    assert!(json.contains("\"action\":\"wait\""), "{json}");
+
+    // The guard denies a code write and keeps `.stapel/` and `docs/` open.
+    write_hook(b, "crates/x.rs")
+        .code(2)
+        .stderr(predicates::str::contains("ABC-2 waits for ABC-1"));
+    write_hook(b, ".stapel/note.md").success();
+    write_hook(b, "docs/note.md").success();
+
+    // A stop file that is not JSON, and one over 4 KiB: the same wait, the earlier key from the name.
+    let big = serde_json::json!({
+        "kind": "merge",
+        "files": ["x".repeat(5 * 1024)],
+        "at": "2026-01-01T10:00:00Z",
+    })
+    .to_string();
+    for body in ["{".to_string(), big] {
+        put_dependency_stop(&pair, &body);
+        let said = next(b, None);
+        assert!(
+            said.contains("blocked: ABC-2 waits for ABC-1 (unreadable stop file)"),
+            "{said}"
+        );
+        assert!(said.lines().any(|l| l == "next: wait — ABC-1"), "{said}");
+        write_hook(b, "crates/x.rs").code(2);
+    }
+
+    // A real conflict stop and a `spec` dependency stop of one pair, the earlier spec fresh: the
+    // conflict still waits.
+    std::fs::remove_file(pair.repo.path().join(".git/stapel/stops/ABC-2/ABC-1-dependency.json"))
+        .unwrap();
+    spec_confirmation(&pair.a, "ABC-1", true);
+    conflicting_commits(&pair);
+    put_dependency_stop(&pair, &spec_stop_body());
+    let said = next(b, None);
+    assert!(stop_path(&pair, "ABC-2", "ABC-1").is_file(), "{said}");
+    assert!(
+        said.contains("blocked: ABC-2 waits for ABC-1 (conflict in src/shared.txt)"),
+        "{said}"
+    );
+    assert_eq!(said.matches(WAIT_LINE).count(), 1, "{said}");
+    assert!(said.lines().any(|l| l == "next: wait — ABC-1"), "{said}");
+    write_hook(b, "crates/x.rs").code(2);
+}
+
+#[test]
+fn spec_kind_waits_for_the_spec() {
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let b = &pair.b;
+    put_dependency_stop(&pair, &spec_stop_body());
+
+    // The earlier spec is fresh: no wait.
+    spec_confirmation(&pair.a, "ABC-1", true);
+    let said = next(b, None);
+    assert!(said.contains(RUN_CHECK_B), "{said}");
+    assert!(!said.contains("waits for"), "{said}");
+    write_hook(b, "crates/x.rs").success();
+
+    // The earlier spec is stale: the wait.
+    spec_confirmation(&pair.a, "ABC-1", false);
+    let said = next(b, None);
+    assert!(said.contains(WAIT_LINE), "{said}");
+    assert!(said.lines().any(|l| l == "next: wait — ABC-1"), "{said}");
+    write_hook(b, "crates/x.rs").code(2);
+    write_hook(b, ".stapel/note.md").success();
+
+    // The earlier ticket has no spec confirmation: the wait.
+    set_spec_time(&pair.a, "ABC-1", None);
+    let said = next(b, None);
+    assert!(said.contains(WAIT_LINE), "{said}");
+
+    // Fresh again: no wait.
+    spec_confirmation(&pair.a, "ABC-1", true);
+    let said = next(b, None);
+    assert!(!said.contains("waits for"), "{said}");
+}
+
+/// The branch checked out in the main checkout.
+fn base_name(pair: &Pair) -> String {
+    git_in(pair.repo.path(), &["symbolic-ref", "--short", "HEAD"])
+        .trim()
+        .to_string()
+}
+
+/// Commits `rel` with `text` in the main checkout, adding only that file.
+fn commit_on_base(pair: &Pair, rel: &str, text: &str) {
+    let dir = pair.repo.path();
+    let path = dir.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, text).unwrap();
+    git_in(dir, &["add", rel]);
+    git_in(dir, &["commit", "-q", "-m", "base work"]);
+}
+
+#[test]
+fn merge_main_before_close() {
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let b = &pair.b;
+    let base = base_name(&pair);
+    let stop = put_dependency_stop(&pair, &merge_stop_body());
+
+    // The base branch gains the earlier ticket's close: `merge-main`, no wait, before the check.
+    let closed = serde_json::json!({
+        "key": "ABC-1",
+        "closed": {"by": "test-user", "at": "2026-01-02T10:00:00Z", "reason": "done"},
+    })
+    .to_string();
+    commit_on_base(&pair, ".stapel/tickets/ABC-1/state.json", &closed);
+    let said = next(b, None);
+    assert!(
+        said.lines().any(|l| l == format!("next: merge-main — git merge {base}")),
+        "{said}"
+    );
+    assert!(!said.contains("waits for"), "{said}");
+    assert!(!said.contains("run-check"), "{said}");
+
+    // `close` is refused with the text of AC-18.
+    stapel(b)
+        .args(["close", "ABC-2", "--reason", "done"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(format!(
+            "close needs {base} merged: run git merge {base} and stapel check ABC-2 first"
+        )));
+
+    // After the merge: `run-check`, and the stop file is gone.
+    git_in(b, &["merge", "-q", "--no-edit", &base]);
+    let said = next(b, None);
+    assert!(said.contains(RUN_CHECK_B), "{said}");
+    assert!(!said.contains("merge-main"), "{said}");
+    assert!(!stop.exists(), "the stop of a closed earlier ticket stays");
+
+    // The base branch gains only a `docs/` commit: no `merge-main`.
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    commit_on_base(&pair, "docs/note.md", "a note\n");
+    let said = next(&pair.b, None);
+    assert!(said.contains(RUN_CHECK_B), "{said}");
+    assert!(!said.contains("merge-main"), "{said}");
 }
