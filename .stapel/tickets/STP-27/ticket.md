@@ -124,8 +124,9 @@ Terms:
   a stop counts as a `merge` stop of the pair its name gives (`unreadable stop file`). Each stop blocks on
   its own; AC-16, AC-18 and AC-22 remove them.
 - **Cargo lock**: an OS file lock on `$HOME/.cache/stapel/cargo.lock`; its file holds the **holder line**
-  `<branch ticket or ->, pid <pid>, since <RFC 3339 time>, <command>`, written to a temporary file and
-  renamed after the lock is taken; before that a waiter shows `an unknown holder`.
+  `<branch ticket or ->, pid <pid>, since <RFC 3339 time>, <command>`, written in place on the locked file
+  after the lock is taken (a rename would replace the locked file); a waiter that reads it empty shows
+  `an unknown holder`.
 - **Held mark**: the variable `STAPEL_CARGO_LOCK_HELD=<pid>` that the lock holder sets for its children.
 - **Spec hash**: the hash of the section `spec` in a ticket's last confirmation of it.
 - **Dependency round**: `<EARLIER>:<first 8 hex of the earlier spec hash>:<first 8 hex of the later spec
@@ -137,17 +138,17 @@ Terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN `stapel init` runs THE `.gitignore` holds `/.claude/worktrees/` and `.gitattributes` holds `.stapel/process-ledger.jsonl merge=union` and `.stapel/sessions.jsonl merge=union`; a second run adds none. | `init::worktrees_ignored_and_journals_union` |
+| AC-1 | WHEN `stapel init` runs THE `.gitignore` holds `/.claude/worktrees/` and `.gitattributes` holds `.stapel/process-ledger.jsonl merge=union` and `.stapel/sessions.jsonl merge=union`; a second run adds none. | `init::worktrees_ignored_and_journals_union`, `init::union_lines_edges` |
 | AC-2 | WHEN `stapel new` takes a key THE number is one above the largest key number in the local tickets folder, in the tickets folder of each listed worktree that is not prunable, in `.stapel/tickets/` of each local and remote-tracking branch, and in each local or remote-tracking ticket branch name. | `new_branch::key_above_every_worktree_and_branch` |
 | AC-3 | WHEN `stapel new` runs on a base branch with a commit and a clean tree THE command creates the branch `<KEY>` at HEAD and the worktree `.claude/worktrees/<KEY>` under the main checkout, writes the ticket there with `base` set to HEAD and `base_branch` to the current branch, and prints `created: <KEY>`, `branch: <KEY> from <base branch> at <short hash>` and `worktree: .claude/worktrees/<KEY>`. | `new_branch::new_creates_branch_and_worktree` |
 | AC-4 | WHEN two `stapel new` start at once in the main checkout THE keys differ and both branches and worktrees exist. | `new_branch::two_new_at_once` |
-| AC-5 | IF HEAD has no commit THEN `stapel new` writes the ticket in the current checkout as before and prints `note: no commit yet; the ticket stays in this checkout`; IF the current branch is a ticket branch THEN it refuses with `stapel new runs on the base branch, not on the ticket branch <branch>` and exit 2; IF the tree has changes outside machine files THEN it refuses with `commit the changes of <paths> first; the new worktree starts at HEAD` and exit 2. | `new_branch::unborn_head_and_ticket_branch` |
-| AC-6 | WHEN a command that takes an optional KEY (`status`, `check`, `close`, `next`, `ok`, `findings`, `ledger add`, `tokens import-records`, `review start`, `depends`) or a token hook runs without KEY on a ticket branch THE ticket is the branch ticket; elsewhere the rule of one open ticket stays. | `new_branch::branch_names_the_ticket` |
+| AC-5 | IF HEAD has no commit THEN `stapel new` writes the ticket in the current checkout as before and prints `note: no commit yet; the ticket stays in this checkout`; IF the current branch is a ticket branch THEN it refuses with `stapel new runs on the base branch, not on the ticket branch <branch>` and exit 2; IF the tree has changes outside machine files THEN it refuses with `commit the changes of <paths> first; the new worktree starts at HEAD` and exit 2. | `new_branch::unborn_head_and_ticket_branch`, `new_branch::new_edges` |
+| AC-6 | WHEN a command that takes an optional KEY (`status`, `check`, `close`, `next`, `ok`, `findings`, `ledger add`, `tokens import-records`, `review start`, `depends`) or a token hook runs without KEY on a ticket branch THE ticket is the branch ticket; elsewhere the rule of one open ticket stays. | `new_branch::branch_names_the_ticket`, `hook_tokens::token_hooks_on_a_branch`, `new_branch::commands_on_a_branch` |
 | AC-7 | IF `check`, `ok` or `close` gets a KEY other than the branch ticket while a branch ticket exists THEN it refuses with `<KEY> is not the ticket of branch <branch>; run it in .claude/worktrees/<KEY>` and exit 2. | `new_branch::key_must_match_the_branch` |
-| AC-8 | WHEN any stapel hook (the guard, post-tool-use, session-start, the token hooks) gets an input whose `cwd` is inside a stapel repository THE hook root is that `cwd`'s root, before `CLAUDE_PROJECT_DIR`. | `hook_session::root_from_input_cwd`, `hook_tokens::root_from_input_cwd` |
-| AC-9 | WHEN the guard decides a code write in a checkout on a ticket branch THE build permit comes only from the branch ticket; on any other branch the rule of STP-18 stays. | `hook::permit_only_for_the_branch_ticket` |
+| AC-8 | WHEN any stapel hook (the guard, post-tool-use, session-start, the token hooks) gets an input whose `cwd` is inside a stapel repository THE hook root is that `cwd`'s root, before `CLAUDE_PROJECT_DIR`. | `hook_session::root_from_input_cwd`, `hook_tokens::root_from_input_cwd`, `hook_post::root_from_input_cwd`, `hook::hook_root_edges` |
+| AC-9 | WHEN the guard decides a code write in a checkout on a ticket branch THE build permit comes only from the branch ticket; on any other branch the rule of STP-18 stays. | `hook::permit_only_for_the_branch_ticket`, `hook::permit_edges` |
 | AC-10 | WHEN `stapel cargo <args>` runs without the held mark THE command takes the cargo lock, waiting with no time limit, writes its holder line, runs `cargo <args>` with the same stdio and the held mark, and exits with cargo's code, or 128 plus the signal number when cargo dies by a signal; IF `HOME` is empty or unset THEN it refuses with `no folder for the cargo lock: HOME is not set` and exit 1. | `cargo_lock::wrapper_runs_cargo` |
-| AC-11 | WHILE another process holds the cargo lock THE waiting `stapel cargo` or `stapel check` prints once on stderr `waiting for the cargo lock: held by <holder line or an unknown holder>` and goes on when the lock is free; IF the holder is killed THEN the lock is free once its cargo child ends, for `stapel cargo` and for `stapel check`. | `cargo_lock::second_waits_and_names_the_holder`, `cargo_lock::killed_holder_frees_the_lock` |
+| AC-11 | WHILE another process holds the cargo lock THE waiting `stapel cargo` or `stapel check` prints once on stderr `waiting for the cargo lock: held by <holder line or an unknown holder>` and goes on when the lock is free; IF the holder is killed THEN the lock is free once its cargo child ends, for `stapel cargo` and for `stapel check`. | `cargo_lock::second_waits_and_names_the_holder`, `cargo_lock::killed_holder_frees_the_lock`, `cargo_lock::lock_edges` |
 | AC-12 | WHEN `stapel check` runs without the held mark THE check takes the cargo lock before its first cargo run and passes the held mark to cargo; with the held mark, `stapel check` and `stapel cargo` take no lock. | `cargo_lock::check_takes_the_lock`, `cargo_lock::held_mark_takes_no_lock` |
 | AC-13 | IF an agent's Bash command runs `cargo` as a program, also behind a wrapper, `sh -c` or `eval`, or sets `STAPEL_CARGO_LOCK_HELD` THEN the guard denies it with ``cargo runs only through `stapel cargo`, which waits for the machine-wide cargo lock``; `stapel cargo …` passes. | `hook::bare_cargo_denied` |
 | AC-14 | IF a subagent's Bash command (input with `agent_id`) runs `git` with a word outside `status`, `diff`, `log`, `show`, `add`, `commit`, `rev-parse`, `ls-files`, `grep`, `blame`, `merge-base`, `cat-file`, or with `-c`, `--git-dir`, `--work-tree`, `--output`, or `-C` to a path not inside its worktree, or sets a `GIT_*` variable, or runs `cd` to a path not inside its worktree THEN the guard denies it with `subagents run only these git commands in their own worktree: <list>`; the main session is not denied. | `hook::subagent_git_guard` |
@@ -215,6 +216,14 @@ build runs; the holder is a child process the test starts and kills. Light tests
 | Merge branch | a closed ticket in its worktree with the close uncommitted: `commit-close`; committed, branch not in main: `merge-branch` with the main checkout path; the main checkout on another branch or with a changed `src/a.rs`: the fact first | `parallel::merge_branch_after_close` |
 | Notice | on `main` after the earlier ticket's branch merged, a worktree ticket with a stop: the notice line first, then `new-ticket` | `parallel::can_go_on_notice` |
 | Install | `stapel init`: the agent file with read-only tools, the `[roles]` row, the skill sentences; this repository's files the same | `init_process::depends_agent_installed`, `init_process::skill_text_names_parallel_builds` |
+| Union edges | a `.gitattributes` with one of the two lines: only the other appended; a file without a final newline: a newline, then the lines; a second run after a first run created both files: no change (D1-3) | `init::union_lines_edges` |
+| New edges | the main checkout has no folder of the new key; `new` from a second base worktree puts the worktree under the main checkout; the dirty refusal leaves no branch or worktree; an untracked `docs/b.md` and a renamed file count as changes (D3-4) | `new_branch::new_edges` |
+| Hooks on a branch | two open tickets, branch `ABC-2`: a `subagent-stop` record and a gap record go to `ABC-2` (D4-1) | `hook_tokens::token_hooks_on_a_branch` |
+| Commands on a branch | two open tickets, branch `ABC-2`: `check`, `close`, `findings import`, `ledger add --kind finding` and `tokens import-records` without KEY take `ABC-2`; `ok ABC-1` without a section and the close dialog for `ABC-1` are refused (D4-3, D4-4) | `new_branch::commands_on_a_branch` |
+| Post root | post-tool-use with `cwd` at a ticket worktree and `CLAUDE_PROJECT_DIR` at main: the worktree's facts; `cwd` outside any stapel repository: `CLAUDE_PROJECT_DIR`'s (D5-1) | `hook_post::root_from_input_cwd` |
+| Root edges | the guard with `cwd` at a ticket worktree decides by the worktree's ticket; a relative `cwd`; an empty `cwd`: the next source; no `cwd` and no `CLAUDE_PROJECT_DIR`: the working directory (D5-2, D5-4) | `hook::hook_root_edges` |
+| Permit edges | `ABC-2` confirmed on branch `ABC-2` while `ABC-1` is not: the write allowed; `ABC-1` with `build.allowed` on branch `ABC-2`: denied; branch `ABC-7` without a folder: the old rule; the denial names only the branch ticket (D6-1 to D6-3) | `hook::permit_edges` |
+| Lock edges | an empty held mark: the lock taken; a killed `stapel cargo` holder with a `stapel check` waiter: the waiter goes on after the child ends and its wait line names the holder (D7-4) | `cargo_lock::lock_edges` |
 
 ### Inputs
 
@@ -337,6 +346,12 @@ token hooks and `init`.
   `--no-ff`, so a merge of the base branch is a merge commit (SR1-16).
 - The dependency agent `stapel-depends` has Read, Grep and Glob only, so `stapel depends` puts the earlier
   ticket's diff into its pack; it returns findings in the STP-23 format with `waits`.
+- As built (drift reviews of steps 3 to 7): a detached HEAD keeps the old `new` without a note; `.json` and
+  `.jsonl` files under `.stapel/` are machine files for the dirty test; a failed ticket write after
+  `worktree add` leaves the branch (not promised, D3-3); a gap record goes only to an open branch ticket,
+  a hook record also to a closed one (D4-2, STP-26 AC-8 and AC-9); the cargo lock file is emptied when the
+  lock is dropped, and a killed holder's line is never shown because the lock is free (D7-3); the lock fd
+  is inherited by every child (close-on-exec cleared through `libc`).
 - STP-27 is built on main by the old rules with the installed binary; builders run bare cargo through
   the whole build; `stapel init` with the new skill and builder text runs in step 17; the binary is
   reinstalled after the close (SR1-9).
@@ -345,17 +360,17 @@ token hooks and `init`.
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `init::worktrees_ignored_and_journals_union` |
+| AC-1 | `init::worktrees_ignored_and_journals_union`, `init::union_lines_edges` |
 | AC-2 | `new_branch::key_above_every_worktree_and_branch` |
 | AC-3 | `new_branch::new_creates_branch_and_worktree` |
 | AC-4 | `new_branch::two_new_at_once` |
-| AC-5 | `new_branch::unborn_head_and_ticket_branch` |
-| AC-6 | `new_branch::branch_names_the_ticket` |
+| AC-5 | `new_branch::unborn_head_and_ticket_branch`, `new_branch::new_edges` |
+| AC-6 | `new_branch::branch_names_the_ticket`, `hook_tokens::token_hooks_on_a_branch`, `new_branch::commands_on_a_branch` |
 | AC-7 | `new_branch::key_must_match_the_branch` |
-| AC-8 | `hook_session::root_from_input_cwd`, `hook_tokens::root_from_input_cwd` |
-| AC-9 | `hook::permit_only_for_the_branch_ticket` |
+| AC-8 | `hook_session::root_from_input_cwd`, `hook_tokens::root_from_input_cwd`, `hook_post::root_from_input_cwd`, `hook::hook_root_edges` |
+| AC-9 | `hook::permit_only_for_the_branch_ticket`, `hook::permit_edges` |
 | AC-10 | `cargo_lock::wrapper_runs_cargo` |
-| AC-11 | `cargo_lock::second_waits_and_names_the_holder`, `cargo_lock::killed_holder_frees_the_lock` |
+| AC-11 | `cargo_lock::second_waits_and_names_the_holder`, `cargo_lock::killed_holder_frees_the_lock`, `cargo_lock::lock_edges` |
 | AC-12 | `cargo_lock::check_takes_the_lock`, `cargo_lock::held_mark_takes_no_lock` |
 | AC-13 | `hook::bare_cargo_denied` |
 | AC-14 | `hook::subagent_git_guard` |
@@ -392,12 +407,13 @@ Route: full (tags `guard`, `data`, `interface`), auto.
    the permit on a base branch.
 7. The cargo lock and `stapel cargo` (AC-10, AC-11; tests `cargo_lock::wrapper_runs_cargo`,
    `cargo_lock::second_waits_and_names_the_holder`, `cargo_lock::killed_holder_frees_the_lock`):
-   `cargo_lock.rs`, `crates/stapel-cli/src/cargo.rs`. Must not change: `stapel check`.
+   `crates/stapel-cli/src/cargo.rs`; as built also `stapel check` takes the lock (D7-1). Must not change:
+   check outcomes.
 8. The cargo lock in `stapel check` and the held mark (AC-11, AC-12; tests
-   `cargo_lock::check_takes_the_lock`, `cargo_lock::held_mark_takes_no_lock`,
-   `cargo_lock::killed_holder_frees_the_lock`, `cargo_lock::second_waits_and_names_the_holder`): `runner.rs`, `check.rs`;
-   the RED adds the `stapel check` cases to `cargo_lock::killed_holder_frees_the_lock` and
-   `cargo_lock::second_waits_and_names_the_holder`. Must not change: check outcomes, step 7.
+   `cargo_lock::check_takes_the_lock`, `cargo_lock::held_mark_takes_no_lock`): `runner.rs`, `check.rs`;
+   the RED also changes `check::cargo_runs_with_the_allow_list_only` and
+   `check::cargo_runs_see_every_allowed_variable_and_one_cargo` to expect the held mark. Must not change:
+   check outcomes, step 7.
 9. The guard denies bare cargo (AC-13; test `hook::bare_cargo_denied`). Must not change: other Bash
    decisions.
 10. The git guard for subagents (AC-14; test `hook::subagent_git_guard`). Must not change: the main
@@ -421,6 +437,22 @@ Route: full (tags `guard`, `data`, `interface`), auto.
     `init_process::skill_text_names_parallel_builds`): `assets/agents/depends.md`, `assets/skill.md`,
     `init.rs`, this repository's `stapel init`, `CLAUDE.md` "The plan" and the builder text on `stapel cargo`.
     Must not change: the four agent files except the builder's cargo line.
+18. Fixes of `stapel new` after the drift reviews (AC-2, AC-4, AC-7; tests
+    `new_branch::two_new_at_once`, `new_branch::key_above_every_worktree_and_branch`,
+    `new_branch::key_must_match_the_branch`): the RED makes the race test hold `new.lock` and expect the
+    second `new` to wait (D3-1), adds a file `ABC-30.md` in a branch tree that must not count (D2-1), and a
+    lower-case KEY whose refusal names the folder's key (D4-5). Must not change: steps 2 to 4.
+19. Fixes of init and the hooks (AC-1, AC-8; tests `init::worktrees_ignored_and_journals_union`,
+    `hook_post::root_from_input_cwd`): the RED expects `created:` for a new `.gitattributes` and
+    `.gitignore` (D1-2) and the post-tool-use root with the fallback (D5-1); the GREEN also fixes the doc
+    comment of `session_start` (D5-3). Must not change: steps 1 and 5.
+20. Coverage of init and `new`, no GREEN (AC-1, AC-5, AC-6; tests `init::union_lines_edges`,
+    `new_branch::new_edges`, `new_branch::commands_on_a_branch`): the gaps of D1-3, D3-4 and D4-3; a test
+    that fails is a defect and gets a fix step. Must not change: any code.
+21. Coverage of the hooks, no GREEN (AC-6, AC-8; tests `hook_tokens::token_hooks_on_a_branch`,
+    `hook::hook_root_edges`): the gaps of D4-1 and D5-2. Must not change: any code.
+22. Coverage of the permit and the lock, no GREEN (AC-9, AC-11; tests `hook::permit_edges`,
+    `cargo_lock::lock_edges`): the gaps of D6-1 and D7-4. Must not change: any code.
 
 ## Review
 
