@@ -92,6 +92,8 @@ pub struct History {
     /// The brief of the step the action names, when the caller has assembled it (STP-21 AC-16):
     /// the label and the refusal text, `None` when the brief assembles.
     pub brief: Option<(String, Option<String>)>,
+    /// The base branch when it holds a close that `HEAD` lacks (STP-27 AC-18).
+    pub merge_main: Option<String>,
 }
 
 /// Whether `subject` is `<KEY> <label> <word>: …` with a word other than `RED:` and `GREEN:`
@@ -291,6 +293,13 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
             "commit",
             None,
             Some(Target::Command("git status".to_string())),
+        );
+    }
+    if let Some(base) = &h.merge_main {
+        return Action::new(
+            "merge-main",
+            None,
+            Some(Target::Command(format!("git merge {base}"))),
         );
     }
     if h.check_configured && !h.check_pass {

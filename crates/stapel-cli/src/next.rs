@@ -163,6 +163,7 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         open_red: open_red_label,
         dirty,
         brief: None,
+        merge_main: stapel_core::parallel::merge_main_needed(root),
     })
 }
 
@@ -244,6 +245,7 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
     let mut decision = decide(&facts);
     // The history is read only when no rule before the build applies (AC-10).
     let (gathered, with_brief);
+    let at_build = decision.needs_history;
     if decision.needs_history {
         gathered = gather(&root, &config, &ticket)?;
         facts.history = Some(&gathered);
@@ -283,6 +285,20 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
     for trial in stapel_core::parallel::trial_merges(&root) {
         if let stapel_core::parallel::Trial::NotRun(reason) = trial {
             decision.facts.push(format!("trial merge not run: {reason}"));
+        }
+    }
+    // A stopped ticket waits for the earlier one from the build on (STP-27 AC-17).
+    if at_build {
+        let waits = stapel_core::parallel::waits(&root);
+        if let Some(first) = waits.first() {
+            decision
+                .facts
+                .extend(waits.iter().map(|w| format!("blocked: {}", w.line())));
+            decision.action = Action {
+                name: "wait",
+                subject: None,
+                target: Some(Target::Command(first.earlier.clone())),
+            };
         }
     }
     if json {

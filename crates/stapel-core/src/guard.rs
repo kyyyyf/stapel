@@ -198,6 +198,13 @@ fn decide_write(target: &Path) -> Decision {
     {
         return Decision::Allow;
     }
+    if let Some(wait) = crate::parallel::waits(&root).first() {
+        return Decision::Deny(format!(
+            "writing {} is denied: {}; code waits until the earlier ticket is merged",
+            rel.display(),
+            wait.line()
+        ));
+    }
     if crate::stage::build_permit(&root, config.as_ref()).is_some() {
         return Decision::Allow;
     }

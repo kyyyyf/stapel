@@ -118,12 +118,167 @@ fn state_of(ticket: &Ticket) -> Option<&State> {
     }
 }
 
-/// Whether the base branch's `state.json` of `key` holds `closed`.
-fn closed_on_base(root: &Path, base: &str, key: &str) -> bool {
-    let spec = format!("refs/heads/{base}:.stapel/tickets/{key}/state.json");
+/// Whether the `state.json` of `key` at `rev` holds `closed`.
+fn closed_at(root: &Path, rev: &str, key: &str) -> bool {
+    let spec = format!("{rev}:.stapel/tickets/{key}/state.json");
     git(root, &["show", &spec])
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
         .is_some_and(|v| v.get("closed").is_some_and(|c| !c.is_null()))
+}
+
+/// Whether the base branch's `state.json` of `key` holds `closed`.
+fn closed_on_base(root: &Path, base: &str, key: &str) -> bool {
+    closed_at(root, &format!("refs/heads/{base}"), key)
+}
+
+/// The base branch of the branch ticket at `root` when that branch holds a close that `HEAD` lacks
+/// (STP-27 AC-18); other commits of the base branch ask for nothing.
+pub fn merge_main_needed(root: &Path) -> Option<String> {
+    let own = branch_ticket(root)?;
+    let base = state_of(&own)?.base_branch.clone()?;
+    let names = branch_ticket_names(root, &format!("refs/heads/{base}"));
+    names
+        .iter()
+        .any(|key| {
+            !key.eq_ignore_ascii_case(&own.key)
+                && closed_on_base(root, &base, key)
+                && !closed_at(root, "HEAD", key)
+        })
+        .then_some(base)
+}
+
+/// A stop that blocks the branch ticket: it waits for `earlier`, for `reason`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wait {
+    pub later: String,
+    pub earlier: String,
+    pub reason: String,
+}
+
+impl Wait {
+    /// `<LATER> waits for <EARLIER> (<reason>)`.
+    pub fn line(&self) -> String {
+        format!("{} waits for {} ({})", self.later, self.earlier, self.reason)
+    }
+}
+
+/// The largest stop file that is read; a bigger one is an unreadable stop.
+const STOP_LIMIT: u64 = 4096;
+
+enum StopKind {
+    Merge,
+    Spec,
+}
+
+/// What a stop file says: its kind and the reason text; an unreadable file is a `merge` stop.
+fn read_stop(path: &Path, reason: &str) -> (StopKind, String) {
+    let unreadable = || (StopKind::Merge, "unreadable stop file".to_string());
+    let small = std::fs::metadata(path).is_ok_and(|m| m.len() <= STOP_LIMIT);
+    let Some(v) = small
+        .then(|| std::fs::read_to_string(path).ok())
+        .flatten()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    else {
+        return unreadable();
+    };
+    match v.get("kind").and_then(|k| k.as_str()) {
+        Some("spec") => (StopKind::Spec, reason.to_string()),
+        Some("merge") => {
+            let files: Vec<&str> = v
+                .get("files")
+                .and_then(|f| f.as_array())
+                .map(|a| a.iter().filter_map(|f| f.as_str()).collect())
+                .unwrap_or_default();
+            if reason == "conflict" && !files.is_empty() {
+                (StopKind::Merge, format!("conflict in {}", files.join(", ")))
+            } else {
+                (StopKind::Merge, reason.to_string())
+            }
+        }
+        _ => unreadable(),
+    }
+}
+
+/// Whether the `spec` confirmation of the parallel ticket `earlier` is fresh. A ticket that no
+/// worktree holds counts as stale.
+fn earlier_spec_fresh(root: &Path, own: &Ticket, earlier: &str) -> bool {
+    let Some(config) = std::fs::read_to_string(root.join(".stapel/stapel.toml"))
+        .ok()
+        .and_then(|t| crate::config::Config::parse(&t).ok())
+    else {
+        return false;
+    };
+    let Some((ticket, _)) = parallel_tickets(root, own)
+        .into_iter()
+        .find(|(t, _)| t.key.eq_ignore_ascii_case(earlier))
+    else {
+        return false;
+    };
+    let Some(state) = state_of(&ticket) else {
+        return false;
+    };
+    let Some(text) = crate::stage::read_bounded(&ticket.dir.join("ticket.md")) else {
+        return false;
+    };
+    crate::stage::is_fresh(&config, &crate::ticket::parse(&text), state, "spec")
+}
+
+/// The stops that block the branch ticket at `root` (STP-27 AC-17). A stop whose earlier ticket is
+/// closed in `HEAD` is removed (AC-18); one whose earlier ticket is closed on the base branch does
+/// not block. A `merge` stop blocks otherwise; a `spec` stop blocks while the earlier spec is stale.
+pub fn waits(root: &Path) -> Vec<Wait> {
+    let mut found = Vec::new();
+    let Some(own) = branch_ticket(root) else {
+        return found;
+    };
+    let Some(stops) = stops_dir(root) else {
+        return found;
+    };
+    let base = state_of(&own).and_then(|s| s.base_branch.clone());
+    let mut files: Vec<PathBuf> = std::fs::read_dir(stops.join(&own.key))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    files.sort();
+    for path in files {
+        let Some(name) = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_suffix(".json"))
+        else {
+            continue;
+        };
+        let Some((earlier, reason)) = name.rsplit_once('-') else {
+            continue;
+        };
+        if earlier.is_empty() || reason.is_empty() {
+            continue;
+        }
+        if closed_at(root, "HEAD", earlier) {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        }
+        if base
+            .as_deref()
+            .is_some_and(|b| closed_on_base(root, b, earlier))
+        {
+            continue;
+        }
+        let (kind, reason) = read_stop(&path, reason);
+        let reason = match kind {
+            StopKind::Merge => reason,
+            StopKind::Spec if earlier_spec_fresh(root, &own, earlier) => continue,
+            StopKind::Spec => format!("spec of {earlier} is stale"),
+        };
+        found.push(Wait {
+            later: own.key.clone(),
+            earlier: earlier.to_string(),
+            reason,
+        });
+    }
+    found
 }
 
 /// The parallel tickets of `own`, each with the branch of its worktree: the branch tickets of the

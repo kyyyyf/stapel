@@ -43,6 +43,12 @@ pub fn run(key: Option<&str>, reason: &str, grant: Option<&str>) -> Result<(), S
         }
         Status::Unreadable(r) => return Err(r),
     };
+    if let Some(base) = stapel_core::parallel::merge_main_needed(&root) {
+        return Err(format!(
+            "close needs {base} merged: run git merge {base} and stapel check {} first",
+            ticket.key
+        ));
+    }
     if config.check.is_some() {
         let line = stapel_core::checkstate::current(&root, &config, &ticket.dir);
         if !matches!(line, stapel_core::checkstate::CheckLine::Pass(_)) {
