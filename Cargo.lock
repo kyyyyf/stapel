@@ -636,6 +636,7 @@ version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "clap",
+ "libc",
  "predicates",
  "proptest",
  "serde_json",

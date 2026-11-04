@@ -1,6 +1,7 @@
 #[macro_use]
 mod out;
 mod brief;
+mod cargo;
 mod check;
 mod close;
 mod fail;
@@ -104,6 +105,12 @@ enum Command {
         /// Print the outcomes history alone gives, without cargo; other steps read `needs-run`.
         #[arg(long, conflicts_with = "list")]
         history: bool,
+    },
+    /// Run `cargo` under the machine-wide cargo lock; agents run cargo only this way.
+    Cargo {
+        /// The arguments of `cargo`, passed as given.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
+        args: Vec<String>,
     },
     /// Review findings kept in a ticket's findings.jsonl.
     #[command(subcommand)]
@@ -339,6 +346,7 @@ fn main() -> ExitCode {
         Command::Check { key, list, history } => {
             return check::run(key.as_deref(), list, history);
         }
+        Command::Cargo { args } => return cargo::run(&args),
         Command::Brief { key, step } => return fail::finish(brief::run(&key, &step)),
         Command::Next { key, json } => return fail::finish(next::run(key.as_deref(), json)),
         Command::Status { key } => match status::run(key.as_deref()) {

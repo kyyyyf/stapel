@@ -13,6 +13,7 @@ stapel-core = { path = "../stapel-core" }
 clap = { version = "4", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
+libc = "0.2"
 
 [dev-dependencies]
 proptest = "1"

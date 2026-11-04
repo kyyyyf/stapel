@@ -228,6 +228,11 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
             }
         }
     }
+    // One cargo run at a time on the machine; the lock lives until the check ends (STP-27 AC-11).
+    let _cargo_lock = match crate::cargo::take("stapel check") {
+        Ok(l) => l,
+        Err(e) => return refuse(e),
+    };
     let target = dir.join("check-target");
     let timeout = Duration::from_secs(check.timeout_secs);
     // A configuration above the worktree is found before any cargo run (AC-7).
