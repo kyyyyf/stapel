@@ -39,7 +39,7 @@ fn write_hook(dir: &Path, rel: &str) -> assert_cmd::assert::Assert {
 /// closed by a word commit: the next action is then `run-check`.
 fn build_ready(dir: &Path, key: &str) {
     set_section(dir, key, "Description", "### Frame\n\nThe problem.");
-    set_section(dir, key, "Spec", "The spec.");
+    set_section(dir, key, "Spec", "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | The spec. | t |");
     set_section(dir, key, "Design", "The design.");
     set_section(dir, key, "Proof", "The proof.");
     set_section(dir, key, "Plan", "Route: light, auto.\n\n1. One.");
@@ -394,4 +394,119 @@ fn false_verdict_lifts_the_stop() {
     assert_ne!(new_round, round);
     review_returns(&pair, &[nothing_found("D-2", &new_round)]);
     assert!(!stop_file(&pair).exists());
+}
+
+#[test]
+fn merge_review_after_merge_main() {
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let b = pair.b.as_path();
+    let main = pair.repo.path();
+    let round = round_of(b);
+    review_returns(&pair, &[nothing_found("D-1", &round)]);
+
+    // The base branch gains a close of ABC-1; ABC-2 merges it.
+    let base = git_in(main, &["symbolic-ref", "--short", "HEAD"]).trim().to_string();
+    let close_on_base = |key: &str| {
+        let rel = format!(".stapel/tickets/{key}/state.json");
+        let path = main.join(&rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let closed = json!({
+            "key": key,
+            "closed": {"by": "test-user", "at": "2026-01-02T10:00:00Z", "reason": "done"},
+        });
+        std::fs::write(&path, closed.to_string()).unwrap();
+        git_in(main, &["add", &rel]);
+        git_in(main, &["commit", "-q", "-m", "close"]);
+    };
+    let pass_at_head = || {
+        let head = git_in(b, &["rev-parse", "HEAD"]).trim().to_string();
+        let rec = json!({
+            "v": 1, "kind": "check", "id": "c1", "at": "2026-10-19T10:00:00Z",
+            "ticket": "ABC-2", "head": head, "result": "pass", "steps": [],
+        });
+        std::fs::write(b.join(".stapel/tickets/ABC-2/runs.jsonl"), format!("{rec}\n")).unwrap();
+    };
+    let merge_round = || {
+        let merge = git_in(b, &["rev-list", "--merges", "-n", "1", "HEAD"]);
+        format!("merge:{}", &merge.trim()[..8])
+    };
+    close_on_base("ABC-1");
+    git_in(b, &["merge", "-q", "--no-edit", &base]);
+    let first = merge_round();
+
+    // The code review was done before the merge and stays valid.
+    set_section(b, "ABC-2", "Review", "Reviewed: no findings.");
+    set_section(b, "ABC-2", "Summary", "Done.");
+    git_in(b, &["add", "-A"]);
+    git_in(b, &["commit", "-q", "-m", "ABC-2: review and summary"]);
+    pass_at_head();
+    let ask = |round: &str| format!("next: code-review — stapel review start ABC-2 --round {round}");
+    let said = next(b);
+    assert!(said.lines().any(|l| l == ask("merge")), "{said}");
+
+    // `close` refuses until the merge round has an import.
+    stapel(b)
+        .args(["close", "ABC-2", "--reason", "done"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("merge review"));
+
+    // The pack holds the ticket diff against the base branch and the merge diff.
+    stapel(b)
+        .args(["review", "start", "ABC-2", "--round", "merge"])
+        .assert()
+        .success();
+    let folder = b.join(".stapel/scratch/review/ABC-2-rmerge");
+    let pack = std::fs::read_to_string(folder.join("pack.md")).unwrap();
+    assert!(pack.contains(&first), "{pack}");
+    let ticket_diff = std::fs::read_to_string(folder.join("diff.patch")).unwrap();
+    assert!(ticket_diff.contains("src/note.txt"), "{ticket_diff}");
+    assert!(!ticket_diff.contains("tickets/ABC-1/state.json"), "{ticket_diff}");
+    let merge_diff = std::fs::read_to_string(folder.join("merge.patch")).unwrap();
+    assert!(merge_diff.contains("tickets/ABC-1/state.json"), "{merge_diff}");
+    assert!(!merge_diff.contains("src/note.txt"), "{merge_diff}");
+    assert!(std::fs::read_to_string(b.join(".stapel/scratch/review/ABC-2-rmerge/pack.md")).is_ok());
+    let said = next(b);
+    assert!(said.lines().any(|l| l == ask("merge")), "{said}");
+
+    // An import of that merge round: the close is allowed.
+    let mut found = nothing_found("M-1", &first);
+    found["stage"] = json!("code-review");
+    found["role"] = json!("reviewer");
+    put_records(b, "import", &[found]);
+    let said = next(b);
+    assert!(
+        said.lines().any(|l| l.starts_with("next: close — ")),
+        "{said}"
+    );
+    assert!(!said.contains("--round merge"), "{said}");
+
+    // A second merge of main with a third ticket's close asks again.
+    close_on_base("ABC-3");
+    git_in(b, &["merge", "-q", "--no-edit", &base]);
+    let second = merge_round();
+    assert_ne!(first, second);
+    pass_at_head();
+    let said = next(b);
+    assert!(said.lines().any(|l| l == ask("merge")), "{said}");
+    stapel(b)
+        .args(["close", "ABC-2", "--reason", "done"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("merge review"));
+    stapel(b)
+        .args(["review", "start", "ABC-2", "--round", "merge"])
+        .assert()
+        .success();
+    let pack = std::fs::read_to_string(folder.join("pack.md")).unwrap();
+    assert!(pack.contains(&second), "{pack}");
+    let mut found = nothing_found("M-2", &second);
+    found["stage"] = json!("code-review");
+    found["role"] = json!("reviewer");
+    put_records(b, "import", &[found]);
+    stapel(b)
+        .args(["close", "ABC-2", "--reason", "done"])
+        .assert()
+        .success();
 }
