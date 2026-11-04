@@ -198,6 +198,14 @@ fn decide_write(target: &Path) -> Decision {
     {
         return Decision::Allow;
     }
+    if let Some(open) = crate::depends::pending(&root).first() {
+        return Decision::Deny(format!(
+            "writing {} is denied: {}; run stapel depends {} first",
+            rel.display(),
+            open.line(),
+            open.later
+        ));
+    }
     if let Some(wait) = crate::parallel::waits(&root).first() {
         return Decision::Deny(format!(
             "writing {} is denied: {}; code waits until the earlier ticket is merged",

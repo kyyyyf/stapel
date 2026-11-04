@@ -4,6 +4,7 @@ pub mod build_inputs;
 pub mod checkstate;
 pub mod config;
 pub mod confirm;
+pub mod depends;
 pub mod dialog;
 pub mod grant;
 pub mod guard;

@@ -9,12 +9,24 @@ use stapel_core::records::{importer_json, plan_findings};
 use stapel_core::triage::plan_triage;
 use std::path::Path;
 
+/// The dependency stops of the ticket after its records changed (STP-27 AC-22). A stop that cannot
+/// be written is reported; the records stay.
+fn sync_stops(root: &Path, key: &str) {
+    let Ok(ticket) = stapel_core::tickets::resolve(root, Some(key)) else {
+        return;
+    };
+    if let Err(e) = stapel_core::depends::sync_stops(root, &ticket) {
+        warn!("stapel: dependency stop not updated: {e}");
+    }
+}
+
 pub fn import(file: &str, key: Option<&str>) -> Result<(), Fail> {
     let (root, _config) = repo::open().map_err(Fail::failed)?;
     let user = user_name(&root).map_err(Fail::failed)?;
     let importer = importer_json(in_agent_shell(), &user);
     let plan = plan_findings(&root, Path::new(""), file, key, &importer).map_err(Fail::refused)?;
     append_all(&plan.target, &plan.findings.lines).map_err(Fail::refused)?;
+    sync_stops(&root, &plan.key);
     say!(
         "imported: {} findings into {}",
         plan.findings.lines.len(),
@@ -30,6 +42,7 @@ pub fn triage(file: &str, key: Option<&str>) -> Result<(), Fail> {
     let importer = importer_json(in_agent_shell(), &user);
     let plan = plan_triage(&root, Path::new(""), file, key, &importer).map_err(Fail::refused)?;
     append_all(&plan.target, &plan.findings.lines).map_err(Fail::refused)?;
+    sync_stops(&root, &plan.key);
     say!(
         "triaged: {} findings of {}",
         plan.findings.lines.len(),

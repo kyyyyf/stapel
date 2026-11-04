@@ -690,7 +690,7 @@ fn is_heading(line: &str) -> bool {
 
 /// The lines of the `### Frame` subsection of a Description up to the next heading, without each
 /// paragraph that starts with `**Prior art.**` or `**Size.**`, trimmed; empty when there is none.
-fn frame_of(description: &str) -> String {
+pub fn frame_of(description: &str) -> String {
     let mut lines = description.lines().skip_while(|l| {
         !(is_heading(l)
             && l.trim()

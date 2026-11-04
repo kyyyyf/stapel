@@ -4,6 +4,7 @@ mod brief;
 mod cargo;
 mod check;
 mod close;
+mod depends;
 mod fail;
 mod findings;
 mod hook;
@@ -75,6 +76,11 @@ enum Command {
         key: String,
         /// The Plan step, such as `2` or `2c`.
         step: String,
+    },
+    /// Write the dependency review pack of a ticket against each earlier parallel ticket.
+    Depends {
+        /// The ticket key; without it, the branch ticket.
+        key: Option<String>,
     },
     /// Close a ticket: its confirmations stop permitting code writes. Only a person closes.
     Close {
@@ -348,6 +354,7 @@ fn main() -> ExitCode {
         }
         Command::Cargo { args } => return cargo::run(&args),
         Command::Brief { key, step } => return fail::finish(brief::run(&key, &step)),
+        Command::Depends { key } => return fail::finish(depends::run(key.as_deref())),
         Command::Next { key, json } => return fail::finish(next::run(key.as_deref(), json)),
         Command::Status { key } => match status::run(key.as_deref()) {
             Ok(code) => return code,

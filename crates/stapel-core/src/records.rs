@@ -54,7 +54,7 @@ pub fn journal_ticket(root: &Path, key: Option<&str>) -> Result<Ticket, String> 
 }
 
 /// The first 8 hex digits of the hash of the last confirmation of the section `spec`.
-fn spec_hash8(state: &crate::state::State) -> Option<String> {
+pub(crate) fn spec_hash8(state: &crate::state::State) -> Option<String> {
     let c = state.confirmations.iter().rfind(|c| c.section == "spec")?;
     let hex = c.hash.strip_prefix("sha256:").unwrap_or(&c.hash);
     Some(hex.chars().take(8).collect())
@@ -63,32 +63,10 @@ fn spec_hash8(state: &crate::state::State) -> Option<String> {
 /// The current dependency rounds of `own` (STP-27 AC-21), one per earlier parallel ticket:
 /// `<EARLIER>:<8 hex of the earlier spec hash>:<8 hex of the own spec hash>`.
 pub fn dependency_rounds(root: &Path, own: &Ticket) -> Vec<String> {
-    use crate::parallel::{key_order, parallel_tickets, spec_time};
-    let state = |t: &Ticket| match &t.status {
-        Status::Open(s) | Status::Closed(s) => Some(s.clone()),
-        _ => None,
-    };
-    let Some(own_state) = state(own) else {
-        return Vec::new();
-    };
-    let (Some(own_at), Some(own_hash)) = (spec_time(&own_state), spec_hash8(&own_state)) else {
-        return Vec::new();
-    };
-    let rank = |at: &str, key: &str| (crate::time::parse_utc(at), key_order(key));
-    let mut rounds = Vec::new();
-    for (other, _) in parallel_tickets(root, own) {
-        let Some(other_state) = state(&other) else {
-            continue;
-        };
-        let (Some(other_at), Some(other_hash)) = (spec_time(&other_state), spec_hash8(&other_state))
-        else {
-            continue;
-        };
-        if rank(other_at, &other.key) < rank(own_at, &own.key) {
-            rounds.push(format!("{}:{other_hash}:{own_hash}", other.key));
-        }
-    }
-    rounds
+    crate::depends::earlier_pairs(root, own)
+        .into_iter()
+        .map(|pair| pair.round)
+        .collect()
 }
 
 /// A findings import that passed every check.

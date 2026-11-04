@@ -288,9 +288,20 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
         }
     }
     // A stopped ticket waits for the earlier one from the build on (STP-27 AC-17).
+    // The dependency review of each earlier parallel ticket comes first (STP-27 AC-20).
     if at_build {
+        let pending = stapel_core::depends::pending_for(&root, &ticket);
         let waits = stapel_core::parallel::waits(&root);
-        if let Some(first) = waits.first() {
+        if !pending.is_empty() {
+            decision
+                .facts
+                .extend(pending.iter().map(|p| format!("blocked: {}", p.line())));
+            decision.action = Action {
+                name: "dependency-review",
+                subject: None,
+                target: Some(Target::Command(format!("stapel depends {}", ticket.key))),
+            };
+        } else if let Some(first) = waits.first() {
             decision
                 .facts
                 .extend(waits.iter().map(|w| format!("blocked: {}", w.line())));

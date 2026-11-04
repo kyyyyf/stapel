@@ -327,7 +327,7 @@ pub enum Trial {
 }
 
 /// The `.../stapel/stops` folder of the repository at `root`.
-fn stops_dir(root: &Path) -> Option<PathBuf> {
+pub(crate) fn stops_dir(root: &Path) -> Option<PathBuf> {
     let common = git(
         root,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -345,12 +345,17 @@ pub(crate) fn key_order(key: &str) -> (u64, String) {
 }
 
 fn write_stop(path: &Path, files: &[String]) -> std::io::Result<()> {
+    write_stop_kind(path, "merge", files)
+}
+
+/// Writes a stop file of `kind` (`merge` or `spec`) to a temporary file and renames it.
+pub(crate) fn write_stop_kind(path: &Path, kind: &str, files: &[String]) -> std::io::Result<()> {
     let dir = path.parent().expect("stop folder");
     std::fs::create_dir_all(dir)?;
     let name = path.file_name().expect("stop name").to_string_lossy();
     let tmp = dir.join(format!("{name}.{}.tmp", std::process::id()));
     let body = serde_json::json!({
-        "kind": "merge",
+        "kind": kind,
         "files": files,
         "at": crate::time::now_rfc3339(),
     });
