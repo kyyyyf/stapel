@@ -1372,3 +1372,34 @@ fn allow_rule_prefix_needs_word_boundary() {
         }
     }
 }
+
+// STP-27 AC-9: on a ticket branch only the branch ticket gives the permit.
+#[test]
+fn permit_only_for_the_branch_ticket() {
+    let repo = confirmed_repo();
+    let dir = repo.path();
+    let git = |cwd: &Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(dir, &["config", "user.email", "test-user"]);
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "base"]);
+    let outside = tempfile::tempdir().unwrap();
+    let wt = outside.path().join("wt");
+    git(dir, &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "ABC-2"]);
+    set_state(&wt, "ABC-2", r#"{"key":"ABC-2"}"#);
+
+    // The branch ticket ABC-2 is not confirmed: ABC-1 does not open the write.
+    code_write(&wt).code(DENY);
+    // On the base branch ABC-1 still permits.
+    code_write(dir).success();
+}
