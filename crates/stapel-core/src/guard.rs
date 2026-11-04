@@ -68,6 +68,10 @@ const GRANT_REASON: &str = "a --grant comes only from the permission dialog; sta
                             close, stapel findings import, stapel ledger add and stapel tokens \
                             import-records may not carry one of their own or words filled in \
                             at run time";
+const CARGO_REASON: &str =
+    "cargo runs only through `stapel cargo`, which waits for the machine-wide cargo lock";
+/// The variable with which `stapel cargo` marks a held lock; an agent may not set it.
+const CARGO_LOCK_HELD_WORD: &str = "STAPEL_CARGO_LOCK_HELD";
 const HOOK_SELF_REASON: &str = "stapel hook is run only by Claude Code; an agent may not run the \
                                 hook entry point itself";
 
@@ -297,6 +301,8 @@ pub fn check_command(command: &str) -> Option<&'static str> {
         Some(GRANT_REASON)
     } else if found.push {
         Some(PUSH_REASON)
+    } else if found.cargo {
+        Some(CARGO_REASON)
     } else {
         None
     }
@@ -332,6 +338,8 @@ struct Found {
     grant: bool,
     /// The agent runs the hook entry point itself.
     hook: bool,
+    /// Bare `cargo`, or a word that sets the cargo lock mark (STP-27 AC-13).
+    cargo: bool,
     /// A `git … commit` call (STP-14); it decides nothing for PreToolUse.
     commit: bool,
     /// Units of work left; nested scripts can multiply the work, so it is capped.
@@ -449,6 +457,9 @@ fn check_words(words: &[String], found: &mut Found) {
         let lower = word.to_ascii_lowercase();
         if HOOK_WORDS.iter().any(|w| lower.contains(w)) {
             found.bypass = true;
+        }
+        if word.contains(CARGO_LOCK_HELD_WORD) {
+            found.cargo = true;
         }
         if HOOKLESS_PUSH_WORDS.iter().any(|w| lower.contains(w)) {
             found.push = true;
@@ -584,6 +595,9 @@ fn check_program(words: &[String], full: &str, depth: usize, under_xargs: bool, 
         found.inject = true;
     }
     check_stapel(name, args, found);
+    if name == "cargo" {
+        found.cargo = true;
+    }
     if WRAPPERS.contains(&name) {
         for arg in args.iter().filter(|a| a.contains(char::is_whitespace)) {
             scan(arg, full, depth + 1, found);
