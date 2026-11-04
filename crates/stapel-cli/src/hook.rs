@@ -82,7 +82,23 @@ pub fn post_tool_use() -> ExitCode {
         let mut text = String::new();
         std::io::stdin().read_to_string(&mut text).ok()?;
         let (event, root) = hook_repository(&text)?;
-        let lines = crate::check::hook_faults(&root)?;
+        let mut lines = crate::check::hook_faults(&root).unwrap_or_default();
+        for trial in stapel_core::parallel::trial_merges(&root) {
+            if let stapel_core::parallel::Trial::Conflict {
+                later,
+                earlier,
+                files,
+            } = trial
+            {
+                lines.push(format!(
+                    "stapel: {later} conflicts with {earlier} in {}; {later} waits for {earlier}",
+                    files.join(", ")
+                ));
+            }
+        }
+        if lines.is_empty() {
+            return None;
+        }
         Some(serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": event,

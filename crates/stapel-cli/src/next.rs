@@ -1,4 +1,4 @@
-//! `stapel next [KEY]`: the next action of a ticket, from the facts on disk (STP-20). Read-only.
+//! `stapel next [KEY]`: the next action of a ticket, from the facts on disk (STP-20). It changes only the stops of the trial merge (STP-27).
 
 use crate::check::{base_of, history_report, read_head, shallow_refusal};
 use crate::fail::Fail;
@@ -277,6 +277,12 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
             };
             facts.history = Some(&with_brief);
             decision = decide(&facts);
+        }
+    }
+    // The trial merge with each parallel ticket writes or removes the stops (STP-27 AC-16).
+    for trial in stapel_core::parallel::trial_merges(&root) {
+        if let stapel_core::parallel::Trial::NotRun(reason) = trial {
+            decision.facts.push(format!("trial merge not run: {reason}"));
         }
     }
     if json {
