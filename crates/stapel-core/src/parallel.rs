@@ -335,7 +335,7 @@ fn stops_dir(root: &Path) -> Option<PathBuf> {
     Some(PathBuf::from(common.trim()).join("stapel/stops"))
 }
 
-fn key_order(key: &str) -> (u64, String) {
+pub(crate) fn key_order(key: &str) -> (u64, String) {
     let n = key
         .rsplit('-')
         .next()

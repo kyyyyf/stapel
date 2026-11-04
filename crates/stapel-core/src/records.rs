@@ -53,6 +53,44 @@ pub fn journal_ticket(root: &Path, key: Option<&str>) -> Result<Ticket, String> 
     }
 }
 
+/// The first 8 hex digits of the hash of the last confirmation of the section `spec`.
+fn spec_hash8(state: &crate::state::State) -> Option<String> {
+    let c = state.confirmations.iter().rfind(|c| c.section == "spec")?;
+    let hex = c.hash.strip_prefix("sha256:").unwrap_or(&c.hash);
+    Some(hex.chars().take(8).collect())
+}
+
+/// The current dependency rounds of `own` (STP-27 AC-21), one per earlier parallel ticket:
+/// `<EARLIER>:<8 hex of the earlier spec hash>:<8 hex of the own spec hash>`.
+pub fn dependency_rounds(root: &Path, own: &Ticket) -> Vec<String> {
+    use crate::parallel::{key_order, parallel_tickets, spec_time};
+    let state = |t: &Ticket| match &t.status {
+        Status::Open(s) | Status::Closed(s) => Some(s.clone()),
+        _ => None,
+    };
+    let Some(own_state) = state(own) else {
+        return Vec::new();
+    };
+    let (Some(own_at), Some(own_hash)) = (spec_time(&own_state), spec_hash8(&own_state)) else {
+        return Vec::new();
+    };
+    let rank = |at: &str, key: &str| (crate::time::parse_utc(at), key_order(key));
+    let mut rounds = Vec::new();
+    for (other, _) in parallel_tickets(root, own) {
+        let Some(other_state) = state(&other) else {
+            continue;
+        };
+        let (Some(other_at), Some(other_hash)) = (spec_time(&other_state), spec_hash8(&other_state))
+        else {
+            continue;
+        };
+        if rank(other_at, &other.key) < rank(own_at, &own.key) {
+            rounds.push(format!("{}:{other_hash}:{own_hash}", other.key));
+        }
+    }
+    rounds
+}
+
 /// A findings import that passed every check.
 #[derive(Debug)]
 pub struct FindingsPlan {
@@ -91,7 +129,10 @@ pub fn plan_findings(
     let text = read_input(root, base, file)?;
     let target = ticket.dir.join("findings.jsonl");
     let label = format!(".stapel/tickets/{}/findings.jsonl", ticket.key);
-    let findings = check_findings(file, &text, &ticket.key, &target, &label, importer)?;
+    let rounds = dependency_rounds(root, &ticket);
+    let findings = check_findings(
+        file, &text, &ticket.key, &target, &label, importer, &rounds,
+    )?;
     Ok(FindingsPlan {
         closed: matches!(ticket.status, Status::Closed(_)),
         key: ticket.key,
@@ -609,7 +650,7 @@ pub fn check_triage_fields(m: &Map<String, Value>) -> Result<(), String> {
 }
 
 /// The first rule a record breaks, as `<field>: <reason>`.
-fn check_record(m: &Map<String, Value>, key: &str) -> Result<(), String> {
+fn check_record(m: &Map<String, Value>, key: &str, rounds: &[String]) -> Result<(), String> {
     if m.contains_key("imported_by") {
         return Err("imported_by: written by stapel, not by the file".into());
     }
@@ -626,7 +667,10 @@ fn check_record(m: &Map<String, Value>, key: &str) -> Result<(), String> {
         Some(Value::String(s)) if s == key => {}
         Some(_) => return Err(format!("ticket: must be {key}")),
     }
-    listed(m, "stage", &STAGES)?;
+    let dependency = m.get("stage").and_then(Value::as_str) == Some("dependency");
+    if !dependency {
+        listed(m, "stage", &STAGES)?;
+    }
     match m.get("round") {
         None => return Err("round: missing".into()),
         Some(Value::String(s)) if !s.is_empty() => {
@@ -641,8 +685,32 @@ fn check_record(m: &Map<String, Value>, key: &str) -> Result<(), String> {
             return Err("round: must be a non-negative whole number or a non-empty string".into());
         }
     }
-    listed(m, "role", &ROLES)?;
+    if dependency {
+        if m.get("role").and_then(Value::as_str) != Some("depends") {
+            return Err("role: must be depends for the stage dependency".into());
+        }
+        match m.get("round") {
+            Some(Value::String(s)) if rounds.contains(s) => {}
+            _ => {
+                return Err(
+                    "round: must be the current dependency round of an earlier parallel ticket"
+                        .into(),
+                );
+            }
+        }
+    } else {
+        listed(m, "role", &ROLES)?;
+    }
     listed(m, "severity", &SEVERITIES)?;
+    match m.get("waits") {
+        None if dependency && m.get("severity").and_then(Value::as_str) != Some("LOW") => {
+            return Err("waits: missing; HIGH and MEDIUM need spec or merge".into());
+        }
+        None => {}
+        Some(Value::String(s)) if dependency && (s == "spec" || s == "merge") => {}
+        Some(_) if dependency => return Err("waits: must be spec or merge".into()),
+        Some(_) => return Err("waits: only the stage dependency has it".into()),
+    }
     listed(m, "promise", &PROMISES)?;
     text_field(m, "claim")?;
     listed(m, "catchable_at", &CATCHABLE)?;
@@ -673,6 +741,7 @@ pub fn check_findings(
     target: &Path,
     target_label: &str,
     importer: &str,
+    rounds: &[String],
 ) -> Result<Findings, String> {
     let mut lines: Vec<String> = Vec::new();
     let mut ids: Vec<String> = Vec::new();
@@ -708,7 +777,7 @@ pub fn check_findings(
                 "{file}:{n}: more than {MAX_RECORDS} records; split the file"
             ));
         }
-        check_record(&map, key).map_err(|reason| format!("{file}:{n}: {reason}"))?;
+        check_record(&map, key, rounds).map_err(|reason| format!("{file}:{n}: {reason}"))?;
         let line = with_importer(raw, importer)
             .ok_or_else(|| format!("{file}:{n}: not a JSON object"))?;
         if line.len() + 1 > MAX_LINE {
