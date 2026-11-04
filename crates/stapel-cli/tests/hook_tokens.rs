@@ -856,3 +856,31 @@ fn report_counts_hook_records() {
     assert_eq!(row[2], "10", "{out}");
     assert_eq!(row[3], "20", "{out}");
 }
+
+// STP-27 AC-8: the input's cwd names the root before CLAUDE_PROJECT_DIR.
+#[test]
+fn root_from_input_cwd() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = main_transcript(
+        elsewhere.path(),
+        "main.jsonl",
+        &[("m1", S, "2026-01-01T11:00:05.000Z", [1, 2, 3, 4], true)],
+    );
+    let launch = repo_with_ticket();
+    let worktree = repo_with_ticket();
+    let input = serde_json::json!({
+        "hook_event_name": "SessionEnd",
+        "session_id": "s-hook",
+        "cwd": worktree.path(),
+        "transcript_path": path,
+    });
+    stapel(elsewhere.path())
+        .env("CLAUDE_PROJECT_DIR", launch.path())
+        .args(["hook", "session-end"])
+        .write_stdin(input.to_string())
+        .assert()
+        .success()
+        .stdout("");
+    assert_eq!(records(worktree.path(), "ABC-1").len(), 1);
+    assert!(records(launch.path(), "ABC-1").is_empty());
+}

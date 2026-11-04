@@ -136,3 +136,42 @@ fn silent_outside_a_stapel_repository() {
         .clone();
     assert_eq!(String::from_utf8(out).unwrap(), "");
 }
+
+// AC-8: the input's cwd names the root before CLAUDE_PROJECT_DIR.
+#[test]
+fn root_from_input_cwd() {
+    let launch = repo_with_ticket();
+    let worktree = stapel_repo();
+    let expected = format!("{LINE}stapel next:\n{}", next_text(worktree.path()));
+    assert_ne!(next_text(launch.path()), next_text(worktree.path()));
+
+    let away = bare_dir();
+    let input = serde_json::json!({
+        "hook_event_name": "SessionStart",
+        "cwd": worktree.path(),
+    });
+    let out = stapel(away.path())
+        .env("CLAUDE_PROJECT_DIR", launch.path())
+        .args(["hook", "session-start"])
+        .write_stdin(input.to_string())
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(String::from_utf8(out).unwrap(), expected);
+
+    // A cwd outside a stapel repository: the next source.
+    let plain = git_repo();
+    let input = serde_json::json!({"cwd": plain.path()});
+    let out = stapel(away.path())
+        .env("CLAUDE_PROJECT_DIR", launch.path())
+        .args(["hook", "session-start"])
+        .write_stdin(input.to_string())
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    assert!(String::from_utf8(out).unwrap().contains("ABC-1"));
+}
