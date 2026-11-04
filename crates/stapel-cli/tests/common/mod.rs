@@ -185,6 +185,79 @@ pub fn token_of(command: &str) -> String {
         .to_string()
 }
 
+/// Runs git in `dir` without the global configuration and returns its stdout.
+pub fn git_in(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Writes `spec` confirmation time `at` into the `state.json` of `key` in `dir`; none removes every
+/// confirmation.
+pub fn set_spec_time(dir: &Path, key: &str, at: Option<&str>) {
+    let path = dir.join(format!(".stapel/tickets/{key}/state.json"));
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    state["confirmations"] = match at {
+        Some(at) => serde_json::json!([{
+            "section": "spec",
+            "by": "test-user",
+            "at": at,
+            "hash": "h",
+            "normal_form": 1,
+        }]),
+        None => serde_json::json!([]),
+    };
+    std::fs::write(&path, state.to_string()).unwrap();
+}
+
+/// Two ticket worktrees of one repository (STP-27): `a` is ABC-1, `b` is ABC-2.
+pub struct Pair {
+    pub repo: TempDir,
+    pub a: std::path::PathBuf,
+    pub b: std::path::PathBuf,
+}
+
+/// A repository with one commit (`src/shared.txt`, `src/main.rs`, `Cargo.lock`, a ledger with union
+/// merge), two ticket worktrees ABC-1 and ABC-2 made by `stapel new`, and spec confirmations at
+/// 10:00 and 11:00 on 2026-01-01.
+pub fn two_ticket_worktrees() -> Pair {
+    let repo = stapel_repo();
+    let dir = repo.path();
+    let put = |rel: &str, text: String| {
+        let path = dir.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let lines = |n: u32| (1..=n).map(|i| format!("line {i}\n")).collect::<String>();
+    put("src/shared.txt", lines(10));
+    put("src/main.rs", lines(20));
+    put(
+        "Cargo.lock",
+        "# lock\nname = \"x\"\nversion = \"1\"\nchecksum = \"c\"\n".to_string(),
+    );
+    put(".stapel/process-ledger.jsonl", "{\"n\":0}\n".to_string());
+    git_in(dir, &["config", "user.email", "test-user.invalid"]);
+    git_in(dir, &["add", "-A"]);
+    git_in(dir, &["commit", "-q", "-m", "base"]);
+    stapel(dir).args(["new", "First"]).assert().success();
+    stapel(dir).args(["new", "Second"]).assert().success();
+    let a = dir.join(".claude/worktrees/ABC-1");
+    let b = dir.join(".claude/worktrees/ABC-2");
+    set_spec_time(&a, "ABC-1", Some("2026-01-01T10:00:00Z"));
+    set_spec_time(&b, "ABC-2", Some("2026-01-01T11:00:00Z"));
+    Pair { repo, a, b }
+}
+
 /// The grants folder inside the git directory of `dir`.
 pub fn grants_dir(dir: &Path) -> std::path::PathBuf {
     dir.join(".git/stapel/grants")
