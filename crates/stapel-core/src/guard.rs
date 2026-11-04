@@ -18,6 +18,9 @@ pub struct HookInput {
     /// Claude Code's permission mode, e.g. `default`, `acceptEdits`, `auto`, `plan`.
     #[serde(default)]
     pub permission_mode: Option<String>,
+    /// Present only inside a subagent (Claude Code); absent in the main session.
+    #[serde(default)]
+    pub agent_id: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -100,6 +103,14 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
             }
             if let Some(reason) = check_command(command) {
                 return Decision::Deny(reason.into());
+            }
+            if input.agent_id.as_deref().is_some_and(|id| !id.is_empty())
+                && !subagent_git_ok(command, cwd)
+            {
+                return Decision::Deny(format!(
+                    "subagents run only these git commands in their own worktree: {}",
+                    SUBAGENT_GIT.join(", ")
+                ));
             }
             match plain_invocation(command) {
                 Some(invocation) => {
@@ -277,6 +288,171 @@ fn resolve_hops(path: &Path, hops: usize) -> PathBuf {
         }
     }
     out
+}
+
+/// The git subcommands a subagent may run (STP-27 AC-14).
+const SUBAGENT_GIT: [&str; 12] = [
+    "status",
+    "diff",
+    "log",
+    "show",
+    "add",
+    "commit",
+    "rev-parse",
+    "ls-files",
+    "grep",
+    "blame",
+    "merge-base",
+    "cat-file",
+];
+
+/// True when every `git`, `cd` and `GIT_*` word of a subagent's command stays within the
+/// rules: allowed subcommands, no config or location options, paths inside the worktree.
+/// Text the parser cannot read is refused.
+fn subagent_git_ok(command: &str, cwd: &Path) -> bool {
+    if command.len() > MAX_COMMAND_LEN {
+        return false;
+    }
+    let root = resolve(&stapel_root(cwd).unwrap_or_else(|| cwd.to_path_buf()));
+    let mut at = resolve(cwd);
+    let mut budget = WORK_BUDGET;
+    subagent_scan(command, &root, &mut at, 0, &mut budget)
+}
+
+/// True when `path` is in the worktree `root` and not in a worktree nested under it.
+fn in_own_worktree(path: &Path, root: &Path) -> bool {
+    let path = resolve(path);
+    path.starts_with(root) && !path.starts_with(root.join(".claude/worktrees"))
+}
+
+fn subagent_scan(
+    text: &str,
+    root: &Path,
+    at: &mut PathBuf,
+    depth: usize,
+    budget: &mut usize,
+) -> bool {
+    if depth > MAX_DEPTH || *budget < text.len() + 1 {
+        return false;
+    }
+    *budget -= text.len() + 1;
+    let lexed = lex(text);
+    for words in &lexed.commands {
+        if !subagent_simple(words, root, at, depth, budget) {
+            return false;
+        }
+    }
+    lexed
+        .nested
+        .iter()
+        .all(|script| subagent_scan(script, root, &mut at.clone(), depth + 1, budget))
+}
+
+fn subagent_simple(
+    words: &[String],
+    root: &Path,
+    at: &mut PathBuf,
+    depth: usize,
+    budget: &mut usize,
+) -> bool {
+    if words
+        .iter()
+        .any(|w| w.starts_with("GIT_") && w.contains('='))
+    {
+        return false;
+    }
+    let mut start = 0;
+    while let Some(w) = words.get(start) {
+        if RESERVED.contains(&w.as_str()) || is_assignment(w) {
+            start += 1;
+        } else {
+            break;
+        }
+    }
+    let Some((program, args)) = words[start.min(words.len())..].split_first() else {
+        return true;
+    };
+    let name = base_name(program);
+    if name == "cd" || name == "pushd" {
+        return match args.iter().find(|a| !a.starts_with('-')) {
+            Some(dir) if !dir.contains('$') && !dir.starts_with('~') && dir != "-" => {
+                let target = at.join(dir);
+                if !in_own_worktree(&target, root) {
+                    return false;
+                }
+                *at = resolve(&target);
+                true
+            }
+            _ => false,
+        };
+    }
+    if name == "git" {
+        return subagent_git_args(args, root, at);
+    }
+    if WRAPPERS.contains(&name) || name == "eval" {
+        // Any later word may start the wrapped program, and a word with a space may be a command line.
+        for (i, arg) in args.iter().enumerate() {
+            if arg.contains(char::is_whitespace)
+                && !subagent_scan(arg, root, &mut at.clone(), depth + 1, budget)
+            {
+                return false;
+            }
+            if base_name(arg) == "git" && !subagent_git_args(&args[i + 1..], root, at) {
+                return false;
+            }
+        }
+        if name == "eval" {
+            return subagent_scan(&args.join(" "), root, &mut at.clone(), depth + 1, budget);
+        }
+        return true;
+    }
+    if SHELLS.contains(&name) {
+        return match shell_script(args) {
+            Some(script) => subagent_scan(script, root, &mut at.clone(), depth + 1, budget),
+            None => true,
+        };
+    }
+    true
+}
+
+/// The arguments after `git`: global options, the subcommand, and its own options.
+fn subagent_git_args(args: &[String], root: &Path, at: &Path) -> bool {
+    let mut i = 0;
+    while let Some(arg) = args.get(i) {
+        if arg == "-C" {
+            let Some(path) = args.get(i + 1) else {
+                return false;
+            };
+            if path.contains('$') || !in_own_worktree(&at.join(path), root) {
+                return false;
+            }
+            // A later `-C` is relative to this one; keep it simple and refuse a chain.
+            return args[i + 2..].first().is_some_and(|a| !a.starts_with('-'))
+                && subagent_git_args(&args[i + 2..], root, &at.join(path));
+        } else if arg.starts_with("-C")
+            || arg.starts_with("-c")
+            || arg.starts_with("--git-dir")
+            || arg.starts_with("--work-tree")
+            || arg.starts_with("--output")
+            || arg.starts_with("--config-env")
+            || arg.starts_with("--namespace")
+            || arg.starts_with("--super-prefix")
+            || arg.starts_with("--exec-path")
+        {
+            return false;
+        } else if arg.starts_with('-') {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    let Some(sub) = args.get(i) else {
+        return true;
+    };
+    SUBAGENT_GIT.contains(&sub.as_str())
+        && !args[i + 1..].iter().any(|a| {
+            a.starts_with("--output") || a.starts_with("--git-dir") || a.starts_with("--work-tree")
+        })
 }
 
 /// The reason to deny a shell command, if any.
