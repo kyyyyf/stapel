@@ -234,7 +234,8 @@ fn kill_group(pid: u32) {
 fn kill_group(_pid: u32) {}
 
 /// Variables of the caller that reach a cargo run (STP-6 AC-8); the check adds its own.
-pub const ENV_ALLOW: [&str; 9] = [
+pub const ENV_ALLOW: [&str; 10] = [
+    "STAPEL_CARGO_LOCK_HELD",
     "HOME",
     "USER",
     "PATH",

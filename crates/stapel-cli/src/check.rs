@@ -233,6 +233,10 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         Ok(l) => l,
         Err(e) => return refuse(e),
     };
+    if _cargo_lock.is_some() {
+        // SAFETY: the check is still single-threaded here; no cargo run or reader thread has started.
+        unsafe { std::env::set_var(crate::cargo::HELD_MARK, std::process::id().to_string()) };
+    }
     let target = dir.join("check-target");
     let timeout = Duration::from_secs(check.timeout_secs);
     // A configuration above the worktree is found before any cargo run (AC-7).
