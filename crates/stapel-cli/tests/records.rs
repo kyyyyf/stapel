@@ -1788,3 +1788,84 @@ fn dialog_refuses_an_unreadable_config() {
         .stderr(expected);
     assert_eq!(grant_files(dir), 0);
 }
+
+// ---- STP-27 AC-21 ----
+
+#[test]
+fn dependency_stage() {
+    let pair = common::two_ticket_worktrees();
+    let b = pair.b.as_path();
+    // The spec hashes of both tickets make the current round of ABC-2.
+    let set_hash = |dir: &Path, key: &str, hash: &str| {
+        let path = dir.join(format!(".stapel/tickets/{key}/state.json"));
+        let mut state: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        state["confirmations"][0]["hash"] = json!(hash);
+        std::fs::write(&path, state.to_string()).unwrap();
+    };
+    set_hash(&pair.a, "ABC-1", "aaaaaaaa11112222");
+    set_hash(b, "ABC-2", "bbbbbbbb33334444");
+    let round = "ABC-1:aaaaaaaa:bbbbbbbb";
+    let target =
+        |dir: &Path| std::fs::read_to_string(dir.join(".stapel/tickets/ABC-2/findings.jsonl")).ok();
+    let dep = |id: &str| {
+        let mut v = base();
+        v["id"] = json!(id);
+        v["ticket"] = json!("ABC-2");
+        v["stage"] = json!("dependency");
+        v["round"] = json!(round);
+        v["role"] = json!("depends");
+        v["waits"] = json!("merge");
+        v
+    };
+    let import = |dir: &Path, v: &Value| {
+        put(dir, "in.jsonl", &line(v));
+        stapel(dir)
+            .args(["findings", "import", "in.jsonl"])
+            .assert()
+    };
+    let refuse = |dir: &Path, v: &Value| {
+        put(dir, "in.jsonl", &line(v));
+        let err = refused(dir, &["in.jsonl"]);
+        assert!(err.starts_with("stapel: in.jsonl:1: "), "{err}");
+        err
+    };
+
+    // Refusals first: nothing is written.
+    let mut no_waits = dep("D-1");
+    no_waits.as_object_mut().unwrap().remove("waits");
+    assert!(refuse(b, &no_waits).contains("waits"));
+    let mut medium = no_waits.clone();
+    medium["severity"] = json!("MEDIUM");
+    assert!(refuse(b, &medium).contains("waits"));
+    let mut later = dep("D-1");
+    later["waits"] = json!("later");
+    assert!(refuse(b, &later).contains("waits"));
+    let mut other_stage = base();
+    other_stage["ticket"] = json!("ABC-2");
+    other_stage["waits"] = json!("merge");
+    assert!(refuse(b, &other_stage).contains("waits"));
+    let mut role = dep("D-1");
+    role["role"] = json!("reviewer");
+    assert!(refuse(b, &role).contains("role"));
+    let mut other_round = dep("D-1");
+    other_round["round"] = json!("ABC-1:aaaaaaaa:cccccccc");
+    assert!(refuse(b, &other_round).contains("round"));
+    let mut number_round = dep("D-1");
+    number_round["round"] = json!(1);
+    assert!(refuse(b, &number_round).contains("round"));
+    assert!(target(b).is_none());
+
+    // HIGH with `waits: merge` and a LOW `no dependency found` without `waits` pass.
+    import(b, &dep("D-1"))
+        .success()
+        .stdout("imported: 1 findings into ABC-2\n");
+    let mut none = dep("D-2");
+    none["severity"] = json!("LOW");
+    none["claim"] = json!("no dependency found");
+    none.as_object_mut().unwrap().remove("waits");
+    import(b, &none)
+        .success()
+        .stdout("imported: 1 findings into ABC-2\n");
+    assert_eq!(target(b).unwrap().lines().count(), 2);
+}
