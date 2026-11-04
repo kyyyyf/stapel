@@ -33,7 +33,7 @@ fn commit_all(dir: &Path, message: &str) {
 
 /// A stand-in `cargo` in `<root>/bin`, with its control files in `<root>/ctl`:
 /// every run appends `run <args>` to `log`; while `hold` exists it writes `started` and waits for
-/// `release`; `--version` prints a version line; `print` prints its arguments and the held mark,
+/// `release`; every run appends the held mark (or `unset`) to `marks`; `--version` prints a version line; `print` prints its arguments and the held mark,
 /// copies the lock file to `holder` and exits 3; `term` kills itself with SIGTERM.
 struct Standin {
     bin: PathBuf,
@@ -50,6 +50,7 @@ impl Standin {
             "#!/bin/sh\n\
              D='{ctl}'\n\
              echo \"run $*\" >> \"$D/log\"\n\
+             echo \"${{STAPEL_CARGO_LOCK_HELD-unset}}\" >> \"$D/marks\"\n\
              if [ -e \"$D/hold\" ]; then\n\
              \x20 echo \"$*\" > \"$D/started\"\n\
              \x20 while [ ! -e \"$D/release\" ]; do sleep 0.05; done\n\
@@ -443,4 +444,83 @@ fn killed_holder_frees_the_lock() {
         assert!(status.success(), "{name}: {status:?}");
         assert_eq!(standin.runs(&tag), 1, "{name}: {}", standin.log());
     }
+}
+
+// STP-27 AC-12: `stapel check` takes the lock before its first cargo run, the holder line names the
+// ticket and `stapel check`, and every cargo run sees the held mark with the check's pid.
+#[test]
+fn check_takes_the_lock() {
+    let root = tempfile::tempdir().unwrap();
+    let standin = Standin::new(root.path());
+    let home = root.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let repo = check_repo();
+    let dir = repo.path();
+    git(dir, &["switch", "-q", "-c", "ABC-1"]);
+
+    standin.touch("hold");
+    let mut check = standin
+        .command(dir, &home, &["check", "ABC-1"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_until("the check's cargo", || standin.ctl.join("started").exists());
+    let holder = std::fs::read_to_string(home.join(".cache/stapel/cargo.lock")).unwrap();
+    assert!(
+        holder.starts_with(&format!("ABC-1, pid {}, since 20", check.id())),
+        "{holder}"
+    );
+    assert!(holder.trim_end().ends_with(", stapel check"), "{holder}");
+    standin.remove("hold");
+    standin.touch("release");
+    wait_exit(&mut check, "the check");
+
+    let marks = std::fs::read_to_string(standin.ctl.join("marks")).unwrap();
+    assert!(!marks.is_empty(), "no cargo run");
+    for mark in marks.lines() {
+        assert_eq!(mark, check.id().to_string(), "marks: {marks}");
+    }
+}
+
+// STP-27 AC-12: with the held mark set, `stapel cargo` and `stapel check` take no lock, and the mark
+// goes on to cargo.
+#[test]
+fn held_mark_takes_no_lock() {
+    let root = tempfile::tempdir().unwrap();
+    let standin = Standin::new(root.path());
+    let home = root.path().join("home");
+    let lock_dir = home.join(".cache/stapel");
+    std::fs::create_dir_all(&lock_dir).unwrap();
+    let repo = check_repo();
+    let dir = repo.path();
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(lock_dir.join("cargo.lock"))
+        .unwrap();
+    file.lock().unwrap();
+
+    for (name, args) in [
+        ("cargo", vec!["cargo", "marked"]),
+        ("check", vec!["check", "ABC-1"]),
+    ] {
+        let _ = std::fs::remove_file(standin.ctl.join("marks"));
+        let err = root.path().join(format!("{name}.err"));
+        let mut cmd = standin.command(dir, &home, &args);
+        cmd.env("STAPEL_CARGO_LOCK_HELD", "4242");
+        let mut child = spawn_to(cmd, &err);
+        wait_exit(&mut child, name);
+        let text = std::fs::read_to_string(&err).unwrap();
+        assert!(!text.contains(WAIT_LINE), "{name}: {text}");
+        let marks = std::fs::read_to_string(standin.ctl.join("marks")).unwrap();
+        assert!(!marks.is_empty(), "{name}: no cargo run");
+        for mark in marks.lines() {
+            assert_eq!(mark, "4242", "{name}: marks {marks}");
+        }
+    }
+    let line = std::fs::read_to_string(lock_dir.join("cargo.lock")).unwrap();
+    assert!(line.is_empty(), "a holder line was written: {line}");
 }

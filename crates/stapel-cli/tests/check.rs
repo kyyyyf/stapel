@@ -2166,6 +2166,7 @@ fn cargo_runs_with_the_allow_list_only() {
         "CARGO_BUILD_JOBS",
         "CARGO_TARGET_DIR",
         "CARGO_TERM_COLOR",
+        "STAPEL_CARGO_LOCK_HELD",
         // set by the shell itself
         "PWD",
         "OLDPWD",
@@ -2183,7 +2184,12 @@ fn cargo_runs_with_the_allow_list_only() {
         for n in &names {
             assert!(allowed.contains(n), "{n} reached cargo: {dump}");
         }
-        for must in ["PATH", "CARGO_TARGET_DIR", "CARGO_TERM_COLOR"] {
+        for must in [
+            "PATH",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "STAPEL_CARGO_LOCK_HELD",
+        ] {
             assert!(names.contains(&must), "{must} is missing: {dump}");
         }
         assert!(
@@ -2256,7 +2262,11 @@ fn cargo_runs_see_every_allowed_variable_and_one_cargo() {
     // set by the shell itself
     let shell = ["PWD", "OLDPWD", "SHLVL", "_"];
     let mut expected: Vec<&str> = sent.iter().map(|(n, _)| *n).collect();
-    expected.extend(["CARGO_TARGET_DIR", "CARGO_TERM_COLOR"]);
+    expected.extend([
+        "CARGO_TARGET_DIR",
+        "CARGO_TERM_COLOR",
+        "STAPEL_CARGO_LOCK_HELD",
+    ]);
     expected.sort_unstable();
     let mut seen = 0;
     let mut versions = 0;
