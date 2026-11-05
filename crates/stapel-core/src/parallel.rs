@@ -329,6 +329,95 @@ pub fn waits(root: &Path) -> Vec<Wait> {
     found
 }
 
+/// What a closed branch ticket still needs (STP-27 AC-23).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchClose {
+    /// The close is written and `HEAD` does not hold it.
+    Commit,
+    /// `HEAD` holds the close and the base branch does not: merge the branch in the main checkout.
+    Merge { main: PathBuf, not_ready: Option<String> },
+}
+
+/// The step of a closed branch ticket `own` at `root`; none when it has no base branch or the base
+/// branch holds the close.
+pub fn branch_close(root: &Path, own: &Ticket) -> Option<BranchClose> {
+    let base = state_of(own)?.base_branch.clone()?;
+    if !closed_at(root, "HEAD", &own.key) {
+        return Some(BranchClose::Commit);
+    }
+    if closed_on_base(root, &base, &own.key) {
+        return None;
+    }
+    let main = worktrees(root).into_iter().next()?.path;
+    let mut reasons = Vec::new();
+    match current_branch(&main) {
+        Some(b) if b == base => {}
+        Some(b) => reasons.push(format!("it is on {b}, not on {base}")),
+        None => reasons.push(format!("it is not on {base}")),
+    }
+    match crate::worktree::dirty_paths(&main) {
+        Ok(dirty) if dirty.is_empty() => {}
+        Ok(dirty) => reasons.push(format!("it has changes in {}", dirty.join(", "))),
+        Err(e) => reasons.push(format!("its state is unknown: {e}")),
+    }
+    let not_ready = (!reasons.is_empty()).then(|| reasons.join("; "));
+    Some(BranchClose::Merge { main, not_ready })
+}
+
+/// The notices `can go on: <LATER> (<EARLIER> is merged into <branch>)` for a checkout without a
+/// branch ticket: a listed worktree's ticket has a stop whose earlier ticket is closed in `HEAD`
+/// (STP-27 AC-24).
+pub fn go_on_notices(root: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    if branch_ticket(root).is_some() {
+        return out;
+    }
+    let (Some(branch), Some(stops)) = (current_branch(root), stops_dir(root)) else {
+        return out;
+    };
+    let here = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    for wt in worktrees(root) {
+        if wt.prunable || wt.path.canonicalize().unwrap_or_else(|_| wt.path.clone()) == here {
+            continue;
+        }
+        let Some(later) = branch_ticket(&wt.path) else {
+            continue;
+        };
+        let mut files: Vec<PathBuf> = std::fs::read_dir(stops.join(&later.key))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        files.sort();
+        let mut seen: Vec<String> = Vec::new();
+        for path in files {
+            let Some(name) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            let Some((earlier, _)) = name.rsplit_once('-') else {
+                continue;
+            };
+            if earlier.is_empty()
+                || seen.iter().any(|s| s == earlier)
+                || !closed_at(root, "HEAD", earlier)
+            {
+                continue;
+            }
+            seen.push(earlier.to_string());
+            out.push(format!(
+                "can go on: {} ({earlier} is merged into {branch})",
+                later.key
+            ));
+        }
+    }
+    out
+}
+
 /// The parallel tickets of `own`, each with the branch of its worktree: the branch tickets of the
 /// other listed worktrees that are not prunable and not closed on the base branch.
 pub fn parallel_tickets(root: &Path, own: &Ticket) -> Vec<(Ticket, String)> {

@@ -185,7 +185,19 @@ pub fn text_at(root: &Path) -> Result<Vec<String>, Fail> {
 fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<Vec<String>, Fail> {
     let (root, config) = (root.to_path_buf(), config.clone());
     let mut out = Vec::new();
-    if key.is_none()
+    // A checkout without a branch ticket names the tickets that can go on (STP-27 AC-24).
+    if key.is_none() && !json {
+        out.extend(stapel_core::parallel::go_on_notices(&root));
+    }
+    // A closed branch ticket still has its close to commit or its branch to merge (AC-23).
+    let closing = match (key, stapel_core::tickets::branch_ticket(&root)) {
+        (None, Some(t)) if matches!(t.status, Status::Closed(_)) => {
+            stapel_core::parallel::branch_close(&root, &t)
+        }
+        _ => None,
+    };
+    if closing.is_none()
+        && key.is_none()
         && !list(&root)
             .iter()
             .any(|t| matches!(t.status, Status::Open(_)))
@@ -281,6 +293,35 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
             facts.history = Some(&with_brief);
             decision = decide(&facts);
         }
+    }
+    match closing {
+        Some(stapel_core::parallel::BranchClose::Commit) => {
+            decision.action = Action {
+                name: "commit-close",
+                subject: None,
+                target: Some(Target::Command(format!(
+                    "git commit .stapel/tickets/{}",
+                    ticket.key
+                ))),
+            };
+        }
+        Some(stapel_core::parallel::BranchClose::Merge { main, not_ready }) => {
+            if let Some(reason) = not_ready {
+                decision
+                    .facts
+                    .insert(0, format!("main checkout not ready: {reason}"));
+            }
+            decision.action = Action {
+                name: "merge-branch",
+                subject: None,
+                target: Some(Target::Command(format!(
+                    "git merge --no-ff {} (in {})",
+                    ticket.key,
+                    main.display()
+                ))),
+            };
+        }
+        None => {}
     }
     // The trial merge with each parallel ticket writes or removes the stops (STP-27 AC-16).
     for trial in stapel_core::parallel::trial_merges(&root) {
