@@ -61,7 +61,10 @@ fn key_above_every_worktree_and_branch() {
     let wt6 = out.join("wt6");
     git(dir, &["worktree", "add", "-q", wt6.to_str().unwrap(), "-b", "side6"]);
     ticket_file(&wt6, "ABC-6");
-    git(&wt6, &["add", "-A"]);
+    // A file named like a key is no ticket folder and does not count.
+    std::fs::write(wt6.join(".stapel/tickets/ABC-30.md"), "note\n").unwrap();
+    std::fs::write(wt6.join(".stapel/tickets/ABC-30"), "note\n").unwrap();
+    git(&wt6,&["add", "-A"]);
     git(&wt6, &["commit", "-q", "-m", "six"]);
     git(dir, &["worktree", "remove", "--force", wt6.to_str().unwrap()]);
 
@@ -116,7 +119,30 @@ fn two_new_at_once() {
     let repo = stapel_repo();
     let dir = repo.path().to_path_buf();
     commit_all(&dir);
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+
+    // While another process holds new.lock, `new` waits and makes nothing.
+    let lock_dir = dir.join(".git/stapel");
+    std::fs::create_dir_all(&lock_dir).unwrap();
+    let held = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(lock_dir.join("new.lock"))
+        .unwrap();
+    held.lock().unwrap();
+    let waiter = {
+        let dir = dir.clone();
+        std::thread::spawn(move || stapel(&dir).args(["new", "Waiting"]).output().unwrap())
+    };
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(!waiter.is_finished(), "new ran while new.lock was held");
+    assert!(!dir.join(".claude/worktrees/ABC-1").exists());
+    drop(held);
+    let out = waiter.join().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    git(&dir, &["rev-parse", "--verify", "-q", "ABC-1"]);
+
+    let barrier =std::sync::Arc::new(std::sync::Barrier::new(2));
     let handles: Vec<_> = (0..2)
         .map(|i| {
             let dir = dir.clone();
@@ -282,6 +308,13 @@ fn key_must_match_the_branch() {
             .code(2)
             .stderr(contains(format!("stapel: {text}")));
     }
+
+    // A key typed in lower case: the refusal names the folder's key.
+    stapel(dir)
+        .args(["check", "abc-1"])
+        .assert()
+        .code(2)
+        .stderr(contains(format!("stapel: {text}")));
 
     // The branch ticket itself is not refused for that reason.
     let out = stapel(dir).args(["check", "ABC-2"]).output().unwrap();
