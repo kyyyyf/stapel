@@ -585,3 +585,103 @@ fn merge_main_before_close() {
     assert!(said.contains(RUN_CHECK_B), "{said}");
     assert!(!said.contains("merge-main"), "{said}");
 }
+
+// ---- STP-27 AC-23 and AC-24: merge the branch after close; the notice ----
+
+/// Writes `closed` into the `state.json` of `key` in `dir`, without a commit.
+fn close_uncommitted(dir: &Path, key: &str) {
+    let path = dir.join(format!(".stapel/tickets/{key}/state.json"));
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    state["closed"] = serde_json::json!({
+        "by": "test-user",
+        "at": "2026-01-02T10:00:00Z",
+        "reason": "done",
+    });
+    std::fs::write(&path, state.to_string()).unwrap();
+}
+
+/// Commits the ticket folder of `key` in `dir`.
+fn commit_ticket(dir: &Path, key: &str) {
+    git_in(dir, &["add", &format!(".stapel/tickets/{key}")]);
+    git_in(dir, &["commit", "-q", "-m", &format!("{key} close")]);
+}
+
+#[test]
+fn merge_branch_after_close() {
+    let pair = two_ticket_worktrees();
+    let main = pair.repo.path();
+    let main_path = git_in(main, &["rev-parse", "--show-toplevel"]).trim().to_string();
+    let base = base_name(&pair);
+    let merge_line = format!("next: merge-branch — git merge --no-ff ABC-1 (in {main_path})");
+
+    // The close is written and not committed: `commit-close`.
+    close_uncommitted(&pair.a, "ABC-1");
+    let said = next(&pair.a, None);
+    assert!(
+        said.lines().any(|l| l == "next: commit-close — git commit .stapel/tickets/ABC-1"),
+        "{said}"
+    );
+    assert!(!said.contains("merge-branch"), "{said}");
+
+    // The close is committed and the base branch lacks it: `merge-branch` with the main path.
+    commit_ticket(&pair.a, "ABC-1");
+    let said = next(&pair.a, None);
+    assert!(said.lines().any(|l| l == merge_line), "{said}");
+    assert!(!said.contains("main checkout not ready"), "{said}");
+
+    // A ticket that is open asks for no merge of its branch.
+    let said = next(&pair.b, None);
+    assert!(!said.contains("merge-branch"), "{said}");
+    assert!(!said.contains("commit-close"), "{said}");
+
+    // The main checkout on another branch: the fact comes first, the action stays.
+    git_in(main, &["checkout", "-q", "-b", "elsewhere"]);
+    let said = next(&pair.a, None);
+    let lines: Vec<&str> = said.lines().collect();
+    assert!(lines[1].starts_with("main checkout not ready: "), "{said}");
+    assert!(lines.contains(&merge_line.as_str()), "{said}");
+    git_in(main, &["checkout", "-q", &base]);
+
+    // The main checkout with a changed `src/a.rs`: the fact comes first, the action stays.
+    std::fs::write(main.join("src/a.rs"), "changed\n").unwrap();
+    let said = next(&pair.a, None);
+    let lines: Vec<&str> = said.lines().collect();
+    assert!(lines[1].starts_with("main checkout not ready: "), "{said}");
+    assert!(lines[1].contains("src/a.rs"), "{said}");
+    assert!(lines.contains(&merge_line.as_str()), "{said}");
+    std::fs::remove_file(main.join("src/a.rs")).unwrap();
+
+    // The base branch holds the close: no merge is asked for.
+    git_in(main, &["merge", "-q", "--no-ff", "--no-edit", "ABC-1"]);
+    let said = next(&pair.a, None);
+    assert!(!said.contains("merge-branch"), "{said}");
+    assert!(!said.contains("commit-close"), "{said}");
+    assert!(!said.contains("main checkout not ready"), "{said}");
+}
+
+#[test]
+fn can_go_on_notice() {
+    let pair = two_ticket_worktrees();
+    let main = pair.repo.path();
+    let base = base_name(&pair);
+    put_dependency_stop(&pair, &merge_stop_body());
+    let notice = format!("can go on: ABC-2 (ABC-1 is merged into {base})");
+
+    // The earlier ticket is not merged into the base branch: no notice.
+    let said = next(main, None);
+    assert!(!said.contains("can go on"), "{said}");
+
+    // After the merge of the earlier ticket's closed branch: the notice, then `new-ticket`.
+    close_uncommitted(&pair.a, "ABC-1");
+    commit_ticket(&pair.a, "ABC-1");
+    git_in(main, &["merge", "-q", "--no-ff", "--no-edit", "ABC-1"]);
+    let said = next(main, None);
+    let lines: Vec<&str> = said.lines().collect();
+    assert_eq!(lines[0], notice, "{said}");
+    assert!(lines[1].starts_with("next: new-ticket"), "{said}");
+
+    // Inside the worktree of the later ticket there is no notice.
+    let said = next(&pair.b, None);
+    assert!(!said.contains("can go on"), "{said}");
+}
