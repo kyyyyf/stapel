@@ -29,7 +29,10 @@ spec of the next item may be written in a second git worktree, with no cargo, no
 there until the current ticket closes (ledger 2026-10-22). An item is added, moved, split or widened only by a
 dated `decision` record in `.stapel/process-ledger.jsonl` that names the reason, made with the human in the
 chat; an agent never does it on its own. A ticket gets its `STP-<n>` key from `stapel new` when it is taken;
-the keys in the phase-0 list that have no folder are labels.
+the keys in the phase-0 list that have no folder are labels. Since plan item 1.13 tickets may build in
+parallel, each in its own branch and worktree made by `stapel new`; agents run cargo only through
+`stapel cargo`, which waits for the machine-wide lock; after a close the orchestrator merges the branch
+into main locally and removes the worktree.
 
 ## Language
 

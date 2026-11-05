@@ -59,6 +59,7 @@ translator   = { provider = "claude-code", model = "claude-sonnet-5-5" }
 # Agent type -> role of its token records (STP-26); a type without a row is recorded as `research`.
 [roles]
 stapel-builder = "builder"
+stapel-depends = "depends"
 stapel-drift = "drift"
 stapel-reviewer = "reviewer"
 stapel-spec-reviewer = "reviewer"

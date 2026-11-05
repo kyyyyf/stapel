@@ -1,0 +1,2 @@
+.stapel/process-ledger.jsonl merge=union
+.stapel/sessions.jsonl merge=union

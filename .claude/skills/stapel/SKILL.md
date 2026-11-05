@@ -1,7 +1,7 @@
 ---
 name: stapel
 description: "Carries a development ticket from description to merge with the stapel process."
-# stapel: 0.1.0 sha256:4775d12c642f782eaabc0ae122bf111f91ad4d1ae59e3e7952a5558c7de60b82
+# stapel: 0.1.0 sha256:30f3dfc2f7c3c0df5468012564d32d5af8d6185361856f90f9d3f2f6b90fc176
 ---
 # The stapel process
 
@@ -27,6 +27,17 @@ the file to use; the facts that block an action come first. Do not re-read the w
   beyond their findings.
 - While a ticket builds, the frame and spec of the next plan item may be written in a second git worktree;
   no cargo, no builder and no `stapel ok` there until the current ticket closes.
+- Parallel tickets: `stapel new` makes a branch and a worktree for each ticket. SessionStart does not
+  fire after `EnterWorktree`, so run `stapel next` after `EnterWorktree` before anything else. Commands without KEY take the ticket of the
+  current branch and refuse a foreign KEY. Agents run cargo only through `stapel cargo`; the cargo lock
+  waits with no limit, so a wait is not a failure. Subagents run only allowed git commands inside their
+  worktree.
+- For a ticket that has an earlier parallel ticket, run `stapel depends KEY`, then start the agent
+  `stapel-depends` with both ticket paths before the build, and give it the pack and the round that command
+  printed; import its findings and triage them. A confirmed dependency of kind `spec` or `merge` stops the later ticket, and a stopped ticket waits: do
+  not build it. When the base branch holds the close of the other ticket, merge the
+  base branch into the ticket branch, resolve the conflicts, run `stapel check` again and run the combined
+  review before the close. After the close, merge the branch into main locally and remove the worktree.
 - `triage`: an open HIGH or MEDIUM finding inside the promise has no fate yet. Write a triage file and run
   `stapel findings triage FILE KEY`; the fate is one of patch, bad_plan, intent_gap, defer or no-change.
 - `ask-human`: a finding waits for the person. First ask the person in the chat, then run

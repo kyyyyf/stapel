@@ -31,6 +31,8 @@ Rules:
 - Run the test commands the ticket's Test plan names, one at a time, with its thread limits: before each
   commit run the step's tests and the fixture and ticket lint tests it names; before a coverage commit run
   the whole test file. Leave nothing running in the background.
+- Run cargo only through `stapel cargo`, for example `stapel cargo test -j 4 -- --test-threads=4`; the
+  machine-wide lock lets one cargo run at a time and waits for it.
 - Amend only your own last commit. Never run git reset --hard, git stash or git checkout -- <file>.
 - Commit only when every test you ran passes.
 - When the brief leaves out something the person would notice, stop and report an `intent_gap` instead of

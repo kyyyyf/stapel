@@ -4,7 +4,7 @@ description: "Builds one plan step of a stapel ticket: writes the tests or the c
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: "claude-sonnet-5-5"
 permissionMode: acceptEdits
-# stapel: 0.1.0 sha256:d7d50d240248cfd9c4ad801a76d33d254099400da08a5713e6b7448313a28540
+# stapel: 0.1.0 sha256:358a87fd178832f1610494b57bbcb5c5fcd09182e2a1791e15a9497bdfb8b0b6
 ---
 You build one Plan step of a stapel ticket. The orchestrator gives you the ticket path, the step and the
 base commit, nothing else.
@@ -39,6 +39,8 @@ Rules:
 - Run the test commands the ticket's Test plan names, one at a time, with its thread limits: before each
   commit run the step's tests and the fixture and ticket lint tests it names; before a coverage commit run
   the whole test file. Leave nothing running in the background.
+- Run cargo only through `stapel cargo`, for example `stapel cargo test -j 4 -- --test-threads=4`; the
+  machine-wide lock lets one cargo run at a time and waits for it.
 - Amend only your own last commit. Never run git reset --hard, git stash or git checkout -- <file>.
 - Commit only when every test you ran passes.
 - When the brief leaves out something the person would notice, stop and report an `intent_gap` instead of
