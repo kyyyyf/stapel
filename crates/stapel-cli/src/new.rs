@@ -182,19 +182,25 @@ fn add_worktree(
         .next()
         .map(|w| w.path)
         .unwrap_or_else(|| root.to_path_buf());
-    let mut last = String::new();
-    for attempt in 0..30u64 {
-        let key = next_key(config, root);
-        let path = main.join(".claude/worktrees").join(&key);
-        let path_arg = path.to_string_lossy().into_owned();
-        match git(root, &["worktree", "add", "-q", "-b", &key, &path_arg, "HEAD"]) {
-            Ok(_) => return Ok((key, path)),
-            Err(e) => last = e,
-        }
-        let jitter = u64::from(std::process::id() % 7) * 10;
-        std::thread::sleep(std::time::Duration::from_millis(30 * (attempt + 1) + jitter));
-    }
-    Err(last)
+    // The lock holds from the key scan to `git worktree add -b`; it is freed when `_lock` drops.
+    let common = git(root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let lock_dir = PathBuf::from(common).join("stapel");
+    std::fs::create_dir_all(&lock_dir).map_err(|e| format!("{}: {e}", lock_dir.display()))?;
+    let lock_path = lock_dir.join("new.lock");
+    let _lock = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|e| format!("{}: {e}", lock_path.display()))?;
+    _lock
+        .lock()
+        .map_err(|e| format!("{}: {e}", lock_path.display()))?;
+    let key = next_key(config, root);
+    let path = main.join(".claude/worktrees").join(&key);
+    let path_arg = path.to_string_lossy().into_owned();
+    git(root, &["worktree", "add", "-q", "-b", &key, &path_arg, "HEAD"])?;
+    Ok((key, path))
 }
 
 /// The full id of HEAD. A repository without commits (an unborn HEAD) has no base; any other git

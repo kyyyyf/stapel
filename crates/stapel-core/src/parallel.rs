@@ -94,7 +94,7 @@ pub fn branches(root: &Path) -> Vec<Branch> {
 pub fn branch_ticket_names(root: &Path, full_ref: &str) -> Vec<String> {
     git(
         root,
-        &["ls-tree", "--name-only", &format!("{full_ref}:.stapel/tickets")],
+        &["ls-tree", "-d", "--name-only", &format!("{full_ref}:.stapel/tickets")],
     )
     .unwrap_or_default()
     .lines()

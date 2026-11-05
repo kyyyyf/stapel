@@ -119,6 +119,10 @@ pub fn match_branch(root: &Path, key: Option<&str>) -> Result<(), String> {
         return Ok(());
     }
     let branch = crate::parallel::current_branch(root).unwrap_or_default();
+    let key = list(root)
+        .into_iter()
+        .find(|t| t.key.eq_ignore_ascii_case(key))
+        .map_or_else(|| key.to_string(), |t| t.key);
     Err(format!(
         "{key} is not the ticket of branch {branch}; run it in .claude/worktrees/{key}"
     ))
