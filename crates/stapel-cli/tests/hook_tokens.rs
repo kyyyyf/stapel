@@ -145,7 +145,7 @@ fn partial_messages_as_import() {
     assert_eq!(r["cache_read"], 300, "{r}");
 }
 
-const DEFAULT_ROLES: &str = "[roles]\nstapel-builder = \"builder\"\nstapel-drift = \"drift\"\nstapel-reviewer = \"reviewer\"\nstapel-spec-reviewer = \"reviewer\"\n";
+const DEFAULT_ROLES: &str = "[roles]\nstapel-builder = \"builder\"\nstapel-depends = \"depends\"\nstapel-drift = \"drift\"\nstapel-reviewer = \"reviewer\"\nstapel-spec-reviewer = \"reviewer\"\n";
 
 /// The one record that `subagent-stop` writes for `agent_type` in a repository whose `[roles]`
 /// table is replaced by `roles` (an empty text removes the table).

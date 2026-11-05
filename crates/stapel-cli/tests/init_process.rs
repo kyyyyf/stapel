@@ -1817,3 +1817,56 @@ fn skill_text_names_the_token_hooks() {
     );
     assert!(!flat.contains("Import the measured tokens"));
 }
+
+// STP-27 AC-25: init writes the read-only agent stapel-depends and its [roles] row; this
+// repository's agent file and roles row are the same.
+#[test]
+fn depends_agent_installed() {
+    const DEPENDS: &str = ".claude/agents/stapel-depends.md";
+    let repo = git_repo();
+    let dir = repo.path();
+    let out = init_in(dir);
+    assert!(out.contains(&format!("created: {DEPENDS}")), "{out}");
+    check_marker(dir, DEPENDS);
+    let fm = frontmatter(&read(dir, DEPENDS));
+    assert!(fm.contains(&"name: stapel-depends".to_string()), "{fm:?}");
+    assert!(fm.contains(&"tools: Read, Grep, Glob".to_string()), "{fm:?}");
+    let flat = collapsed(&body_of(dir, DEPENDS));
+    for phrase in ["no write access", "run no builds"] {
+        assert!(flat.contains(phrase), "missing {phrase:?}");
+    }
+    let row = "stapel-depends = \"depends\"";
+    let lines: Vec<String> = read(dir, ".stapel/stapel.toml")
+        .lines()
+        .map(|l| l.trim().to_string())
+        .collect();
+    assert!(lines.contains(&row.to_string()), "no roles row in the starter file");
+    let ours = std::fs::read_to_string(repo_root().join(".stapel/stapel.toml")).unwrap();
+    assert!(ours.lines().any(|l| l.trim() == row), "no roles row here");
+    let theirs = std::fs::read(repo_root().join(DEPENDS))
+        .unwrap_or_else(|e| panic!("this repository has no {DEPENDS}: {e}"));
+    assert!(theirs == std::fs::read(dir.join(DEPENDS)).unwrap(), "{DEPENDS} differs");
+}
+
+// STP-27 AC-25: the skill names worktrees, `stapel cargo`, the waits and the merge into main; the
+// builder runs cargo through `stapel cargo`.
+#[test]
+fn skill_text_names_parallel_builds() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let flat = collapsed(&body_of(dir, SKILL));
+    for phrase in [
+        "`stapel new` makes a branch and a worktree for each ticket",
+        "run `stapel next` after `EnterWorktree`",
+        "run cargo only through `stapel cargo`",
+        "the cargo lock waits with no limit",
+        "start the agent `stapel-depends` with both ticket paths before the build",
+        "a stopped ticket waits",
+        "merge the branch into main locally and remove the worktree",
+    ] {
+        assert!(flat.contains(phrase), "missing {phrase:?}");
+    }
+    let builder = collapsed(&body_of(dir, AGENTS[0]));
+    assert!(builder.contains("Run cargo only through `stapel cargo`"), "{builder}");
+}
