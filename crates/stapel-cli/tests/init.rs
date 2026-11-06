@@ -475,3 +475,62 @@ fn template_has_the_roles_table() {
         assert!(lines[at..].contains(&row), "{row} missing: {text}");
     }
 }
+
+// STP-27 AC-25 (D17-7): an existing `stapel.toml` whose `[roles]` table lacks the row of an
+// installed agent gets the row; every other line stays; a second run changes nothing.
+#[test]
+fn roles_row_added() {
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let row = "stapel-depends = \"depends\"";
+    let starter = read(dir, ".stapel/stapel.toml");
+    assert!(starter.lines().any(|l| l.trim() == row), "{starter}");
+    let old: String = starter
+        .lines()
+        .filter(|l| l.trim() != row)
+        .map(|l| format!("{l}\n"))
+        .collect::<String>()
+        .replace(
+            "stapel-reviewer = \"reviewer\"\n",
+            "stapel-reviewer = \"reviewer\"\nmy-agent = \"research\" # hand edit\n",
+        )
+        + "\n# hand edit at the end\n";
+    std::fs::write(dir.join(".stapel/stapel.toml"), &old).unwrap();
+
+    stapel(dir).arg("init").assert().success();
+
+    let new = read(dir, ".stapel/stapel.toml");
+    Config::parse(&new).unwrap();
+    let lines: Vec<&str> = new.lines().collect();
+    assert_eq!(
+        lines.iter().filter(|l| l.trim() == row).count(),
+        1,
+        "{new}"
+    );
+    let at = lines.iter().position(|l| l.trim() == "[roles]").unwrap();
+    let next_table = lines[at + 1..]
+        .iter()
+        .position(|l| l.starts_with('['))
+        .map_or(lines.len(), |p| at + 1 + p);
+    let row_at = lines.iter().position(|l| l.trim() == row).unwrap();
+    assert!(at < row_at && row_at < next_table, "row outside [roles]: {new}");
+    let without: String = lines
+        .iter()
+        .filter(|l| l.trim() != row)
+        .map(|l| format!("{l}\n"))
+        .collect();
+    assert_eq!(without, old, "another line changed: {new}");
+
+    let before = common::snapshot(dir);
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    stapel(dir)
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(contains("already set up"));
+    assert_eq!(common::snapshot(dir), before);
+}
