@@ -884,3 +884,48 @@ fn root_from_input_cwd() {
     assert_eq!(records(worktree.path(), "ABC-1").len(), 1);
     assert!(records(launch.path(), "ABC-1").is_empty());
 }
+
+// STP-27 AC-6: on a ticket branch the token hooks write to the branch ticket, with two open tickets.
+#[test]
+fn token_hooks_on_a_branch() {
+    let pair = common::two_ticket_worktrees();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = transcript(
+        elsewhere.path(),
+        "sub.jsonl",
+        &[("m1", "claude-sonnet-5", "2026-01-01T11:00:05.000Z", [1, 2, 3, 4], true)],
+    );
+    // On the branch ABC-2 the ticket ABC-1 stays untouched.
+    subagent_stop(&pair.b, elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    let rs = records(&pair.b, "ABC-2");
+    assert_eq!(rs.len(), 1, "{rs:?}");
+    assert_eq!(rs[0]["ticket"], "ABC-2");
+    assert!(records(&pair.b, "ABC-1").is_empty());
+
+    // A gap record goes to the branch ticket too.
+    subagent_stop(&pair.b, elsewhere.path(), "stapel-builder", &elsewhere.path().join("gone.jsonl"))
+        .success()
+        .stdout("");
+    let rs = records(&pair.b, "ABC-2");
+    assert_eq!(rs.len(), 2, "{rs:?}");
+    assert_eq!(rs[1]["source"], "estimate", "{}", rs[1]);
+    assert_eq!(rs[1]["ticket"], "ABC-2");
+    assert!(records(&pair.b, "ABC-1").is_empty());
+
+    // On ABC-1's branch the other ticket stays untouched.
+    subagent_stop(&pair.a, elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    assert_eq!(records(&pair.a, "ABC-1").len(), 1);
+    assert!(records(&pair.a, "ABC-2").is_empty());
+    assert_eq!(records(&pair.b, "ABC-2").len(), 2);
+
+    // On the base branch the old rule holds: two open tickets, nothing is written.
+    subagent_stop(pair.repo.path(), elsewhere.path(), "stapel-builder", &path)
+        .success()
+        .stdout("");
+    assert!(records(pair.repo.path(), "ABC-1").is_empty());
+    assert!(records(pair.repo.path(), "ABC-2").is_empty());
+}

@@ -1512,3 +1512,48 @@ fn subagent_git_guard() {
         call(command, true).success();
     }
 }
+
+// STP-27 AC-8: the guard takes its root from the input's `cwd` first, then `CLAUDE_PROJECT_DIR`,
+// then the working directory; an empty or relative `cwd` follows the same order.
+#[test]
+fn hook_root_edges() {
+    let pair = common::two_ticket_worktrees();
+    // ABC-1 has the legacy permit; ABC-2 has none.
+    set_state(&pair.a, "ABC-1", r#"{"key":"ABC-1","build":{"allowed":true}}"#);
+    let (a, b) = (pair.a.as_path(), pair.b.as_path());
+    let write = |process_dir: &Path, cwd: Option<serde_json::Value>, env: Option<&Path>, target: &Path| {
+        let mut payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
+            "tool_input": { "file_path": target.join("src/x.rs"), "content": "x" },
+        });
+        if let Some(cwd) = cwd {
+            payload["cwd"] = cwd;
+        }
+        let mut cmd = stapel(process_dir);
+        if let Some(env) = env {
+            cmd.env("CLAUDE_PROJECT_DIR", env);
+        }
+        cmd.args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+    };
+    let elsewhere = bare_dir();
+    let out = elsewhere.path();
+
+    // `cwd` at a ticket worktree decides by that worktree's ticket, before the project dir.
+    write(out, Some(json!(b)), Some(a), b).code(DENY);
+    write(out, Some(json!(b)), Some(pair.repo.path()), b).code(DENY);
+    write(out, Some(json!(a)), Some(b), a).success();
+    // A relative `cwd` is taken from the working directory.
+    write(b, Some(json!(".")), Some(a), b).code(DENY);
+    // An empty `cwd` gives way to the next source.
+    write(a, Some(json!("")), Some(b), b).code(DENY);
+    write(b, Some(json!("")), Some(a), a).success();
+    // No `cwd` and no `CLAUDE_PROJECT_DIR`: the working directory.
+    write(b, None, None, b).code(DENY);
+    write(a, None, None, a).success();
+    // No `cwd`: the project dir comes before the working directory.
+    write(a, None, Some(b), b).code(DENY);
+}
