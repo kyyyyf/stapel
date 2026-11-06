@@ -333,6 +333,27 @@ fn next_runs_the_trial_merge() {
         std::fs::read(stop_path(&pair, "ABC-2", "ABC-1")).unwrap(),
         before
     );
+
+    // `next` with a foreign KEY runs no trial merge (D11-2).
+    let pair = two_ticket_worktrees();
+    conflicting_commits(&pair);
+    let _ = stapel(&pair.b).args(["next", "ABC-1"]).output().unwrap();
+    assert!(!stop_path(&pair, "ABC-2", "ABC-1").exists());
+    assert!(!stop_path(&pair, "ABC-1", "ABC-2").exists());
+
+    // A stops folder that cannot be written: `next` says so (D11-3).
+    let pair = two_ticket_worktrees();
+    conflicting_commits(&pair);
+    let folder = pair.repo.path().join(".git/stapel");
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::write(&folder, "not a folder").unwrap();
+    let said = next(&pair.b, None);
+    let want = format!(
+        "stop not written: {}",
+        stop_path(&pair, "ABC-2", "ABC-1").display()
+    );
+    assert!(said.contains(&want), "{said}");
+    assert!(!said.contains("trial merge not run"), "{said}");
 }
 
 // ---- STP-27 AC-17 and AC-18: a stopped ticket waits; the base branch is merged before close ----
