@@ -461,6 +461,18 @@ pub enum Trial {
     Clean,
     /// Git did not answer with 0 or 1; no stop changed.
     NotRun(String),
+    /// A conflict whose stop file could not be written: `<path>: <error>`.
+    StopNotWritten(String),
+}
+
+/// Whether a rebase, a merge or a cherry-pick is in progress in the checkout at `root`.
+pub fn operation_in_progress(root: &Path) -> bool {
+    ["rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD"]
+        .iter()
+        .any(|name| {
+            git(root, &["rev-parse", "--path-format=absolute", "--git-path", name])
+                .is_some_and(|p| Path::new(p.trim()).exists())
+        })
 }
 
 /// The `.../stapel/stops` folder of the repository at `root`.
@@ -562,7 +574,9 @@ pub fn trial_merges(root: &Path) -> Vec<Trial> {
                         earlier,
                         files,
                     }),
-                    Err(e) => results.push(Trial::NotRun(format!("{}: {e}", stop.display()))),
+                    Err(e) => {
+                        results.push(Trial::StopNotWritten(format!("{}: {e}", stop.display())))
+                    }
                 }
             }
             code => {

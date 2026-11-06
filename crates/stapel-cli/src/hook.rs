@@ -84,17 +84,25 @@ pub fn post_tool_use() -> ExitCode {
         std::io::stdin().read_to_string(&mut text).ok()?;
         let (event, root) = hook_repository(&text)?;
         let mut lines = crate::check::hook_faults(&root).unwrap_or_default();
-        for trial in stapel_core::parallel::trial_merges(&root) {
-            if let stapel_core::parallel::Trial::Conflict {
-                later,
-                earlier,
-                files,
-            } = trial
-            {
-                lines.push(format!(
+        let trials = if stapel_core::parallel::operation_in_progress(&root) {
+            Vec::new()
+        } else {
+            stapel_core::parallel::trial_merges(&root)
+        };
+        for trial in trials {
+            match trial {
+                stapel_core::parallel::Trial::Conflict {
+                    later,
+                    earlier,
+                    files,
+                } => lines.push(format!(
                     "stapel: {later} conflicts with {earlier} in {}; {later} waits for {earlier}",
                     files.join(", ")
-                ));
+                )),
+                stapel_core::parallel::Trial::StopNotWritten(why) => {
+                    lines.push(format!("stop not written: {why}"));
+                }
+                _ => {}
             }
         }
         if lines.is_empty() {
