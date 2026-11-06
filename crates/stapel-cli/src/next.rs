@@ -324,9 +324,26 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
         None => {}
     }
     // The trial merge with each parallel ticket writes or removes the stops (STP-27 AC-16).
-    for trial in stapel_core::parallel::trial_merges(&root) {
-        if let stapel_core::parallel::Trial::NotRun(reason) = trial {
-            decision.facts.push(format!("trial merge not run: {reason}"));
+    // A foreign KEY runs none (D11-2).
+    let own_key = stapel_core::tickets::branch_ticket(&root).map(|t| t.key);
+    let foreign = key.is_some()
+        && own_key
+            .as_deref()
+            .is_none_or(|own| !own.eq_ignore_ascii_case(&ticket.key));
+    let trials = if foreign {
+        Vec::new()
+    } else {
+        stapel_core::parallel::trial_merges(&root)
+    };
+    for trial in trials {
+        match trial {
+            stapel_core::parallel::Trial::NotRun(reason) => {
+                decision.facts.push(format!("trial merge not run: {reason}"));
+            }
+            stapel_core::parallel::Trial::StopNotWritten(why) => {
+                decision.facts.push(format!("stop not written: {why}"));
+            }
+            _ => {}
         }
     }
     // A stopped ticket waits for the earlier one from the build on (STP-27 AC-17).
