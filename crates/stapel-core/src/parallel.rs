@@ -382,13 +382,14 @@ pub enum BranchClose {
     Merge { main: PathBuf, not_ready: Option<String> },
 }
 
-/// The step of a closed branch ticket `own` at `root`; none when it has no base branch or the base
-/// branch holds the close.
+/// The step of a closed branch ticket `own` at `root`; none when the close is committed and the
+/// ticket has no base branch, or the base branch holds the close.
 pub fn branch_close(root: &Path, own: &Ticket) -> Option<BranchClose> {
-    let base = state_of(own)?.base_branch.clone()?;
+    let base = state_of(own)?.base_branch.clone();
     if !closed_at(root, "HEAD", &own.key) {
         return Some(BranchClose::Commit);
     }
+    let base = base?;
     if closed_on_base(root, &base, &own.key) {
         return None;
     }
@@ -427,6 +428,9 @@ pub fn go_on_notices(root: &Path) -> Vec<String> {
         let Some(later) = branch_ticket(&wt.path) else {
             continue;
         };
+        if matches!(later.status, Status::Closed(_)) {
+            continue;
+        }
         let mut files: Vec<PathBuf> = std::fs::read_dir(stops.join(&later.key))
             .into_iter()
             .flatten()
