@@ -139,7 +139,7 @@ Terms:
 | № | Criterion | Test |
 |---|---|---|
 | AC-1 | WHEN `stapel init` runs THE `.gitignore` holds `/.claude/worktrees/` and `.gitattributes` holds `.stapel/process-ledger.jsonl merge=union` and `.stapel/sessions.jsonl merge=union`; a second run adds none. | `init::worktrees_ignored_and_journals_union`, `init::union_lines_edges` |
-| AC-2 | WHEN `stapel new` takes a key THE number is one above the largest key number in the local tickets folder, in the tickets folder of each listed worktree that is not prunable, in `.stapel/tickets/` of each local and remote-tracking branch, and in each local or remote-tracking ticket branch name. | `new_branch::key_above_every_worktree_and_branch` |
+| AC-2 | WHEN `stapel new` takes a key THE number is one above the largest key number in the local tickets folder, in the tickets folder of each listed worktree that is not prunable, in `.stapel/tickets/` of each local and remote-tracking branch, and in each local or remote-tracking ticket branch name; only folders count. | `new_branch::key_above_every_worktree_and_branch`, `new_branch::non_folder_keys` |
 | AC-3 | WHEN `stapel new` runs on a base branch with a commit and a clean tree THE command creates the branch `<KEY>` at HEAD and the worktree `.claude/worktrees/<KEY>` under the main checkout, writes the ticket there with `base` set to HEAD and `base_branch` to the current branch, and prints `created: <KEY>`, `branch: <KEY> from <base branch> at <short hash>` and `worktree: .claude/worktrees/<KEY>`. | `new_branch::new_creates_branch_and_worktree` |
 | AC-4 | WHEN two `stapel new` start at once in the main checkout THE keys differ and both branches and worktrees exist. | `new_branch::two_new_at_once` |
 | AC-5 | IF HEAD has no commit THEN `stapel new` writes the ticket in the current checkout as before and prints `note: no commit yet; the ticket stays in this checkout`; IF the current branch is a ticket branch THEN it refuses with `stapel new runs on the base branch, not on the ticket branch <branch>` and exit 2; IF the tree has changes outside machine files THEN it refuses with `commit the changes of <paths> first; the new worktree starts at HEAD` and exit 2. | `new_branch::unborn_head_and_ticket_branch`, `new_branch::new_edges` |
@@ -150,23 +150,24 @@ Terms:
 | AC-10 | WHEN `stapel cargo <args>` runs without the held mark THE command takes the cargo lock, waiting with no time limit, writes its holder line, runs `cargo <args>` with the same stdio and the held mark, and exits with cargo's code, or 128 plus the signal number when cargo dies by a signal; IF `HOME` is empty or unset THEN it refuses with `no folder for the cargo lock: HOME is not set` and exit 1. | `cargo_lock::wrapper_runs_cargo` |
 | AC-11 | WHILE another process holds the cargo lock THE waiting `stapel cargo` or `stapel check` prints once on stderr `waiting for the cargo lock: held by <holder line or an unknown holder>` and goes on when the lock is free; IF the holder is killed THEN the lock is free once its cargo child ends, for `stapel cargo` and for `stapel check`. | `cargo_lock::second_waits_and_names_the_holder`, `cargo_lock::killed_holder_frees_the_lock`, `cargo_lock::lock_edges` |
 | AC-12 | WHEN `stapel check` runs without the held mark THE check takes the cargo lock before its first cargo run and passes the held mark to cargo; with the held mark, `stapel check` and `stapel cargo` take no lock. | `cargo_lock::check_takes_the_lock`, `cargo_lock::held_mark_takes_no_lock` |
-| AC-13 | IF an agent's Bash command runs `cargo` as a program, also behind a wrapper, `sh -c` or `eval`, or sets `STAPEL_CARGO_LOCK_HELD` THEN the guard denies it with ``cargo runs only through `stapel cargo`, which waits for the machine-wide cargo lock``; `stapel cargo …` passes. | `hook::bare_cargo_denied` |
-| AC-14 | IF a subagent's Bash command (input with `agent_id`) runs `git` with a word outside `status`, `diff`, `log`, `show`, `add`, `commit`, `rev-parse`, `ls-files`, `grep`, `blame`, `merge-base`, `cat-file`, or with `-c`, `--git-dir`, `--work-tree`, `--output`, or `-C` to a path not inside its worktree, or sets a `GIT_*` variable, or runs `cd` to a path not inside its worktree THEN the guard denies it with `subagents run only these git commands in their own worktree: <list>`; the main session is not denied. | `hook::subagent_git_guard` |
-| AC-15 | WHEN a commit command runs on a ticket branch whose ticket and a parallel ticket both have a spec time THE post-tool-use hook runs `git merge-tree --write-tree` of both branches; IF it reports a conflict THEN it writes the stop of the later ticket and prints `stapel: <LATER> conflicts with <EARLIER> in <files>; <LATER> waits for <EARLIER>`. | `parallel::conflict_stops_the_later` |
-| AC-16 | WHEN `stapel next` runs for a ticket with a parallel ticket THE same trial merge runs, so a commit made outside the hook also gives the stop; a clean trial merge writes no stop and removes the pair's conflict stop; IF git exits other than 0 or 1 THEN `next` prints the fact `trial merge not run: <git's first stderr line>` and changes no stop. | `parallel::next_runs_the_trial_merge` |
-| AC-17 | WHEN a ticket has a stop of kind `merge` and its earlier ticket is not closed on the base branch, or a stop of kind `spec` and the earlier ticket's spec confirmation is stale THE `stapel next` prints `blocked: <KEY> waits for <EARLIER> (<reason>)` and `next: wait — <EARLIER>`, and the guard denies its code writes; `always_writable` paths stay open; a `spec` stop with a fresh earlier confirmation does not block. | `parallel::stopped_ticket_waits`, `parallel::spec_kind_waits_for_the_spec` |
+| AC-13 | IF an agent's Bash command runs `cargo` as a program, also behind a wrapper, `sh -c` or `eval`, or sets `STAPEL_CARGO_LOCK_HELD` (an assignment, `export`, `env`, also in `sh -c`) THEN the guard denies it with ``cargo runs only through `stapel cargo`, which waits for the machine-wide cargo lock``; `stapel cargo …` and a command that only names the held mark (`grep`, `echo`) pass. | `hook::bare_cargo_denied`, `hook::bare_cargo_edges` |
+| AC-14 | IF a subagent's Bash command (input with `agent_id`) runs `git` with a word outside `status`, `diff`, `log`, `show`, `add`, `commit`, `rev-parse`, `ls-files`, `grep`, `blame`, `merge-base`, `cat-file`, or with `-c`, `--git-dir`, `--work-tree`, `--output`, `-O`, `--open-files-in-pager`, `--ext-diff`, `--textconv`, or `-C` (also `env -C` or `env --chdir`) to a path not inside its worktree or starting with `~`, or sets a `GIT_*` variable, or runs `cd` to a path not inside its worktree THEN the guard denies it with `subagents run only these git commands in their own worktree: <list>`; the worktree is the one of the Hook root; the main session is not denied. | `hook::subagent_git_guard`, `hook::subagent_git_edges` |
+| AC-15 | WHEN a commit command runs on a ticket branch whose ticket and a parallel ticket both have a spec time, and no rebase, merge or cherry-pick is in progress, THE post-tool-use hook runs `git merge-tree --write-tree` of both branches; IF it reports a conflict THEN it writes the stop of the later ticket and prints `stapel: <LATER> conflicts with <EARLIER> in <files>; <LATER> waits for <EARLIER>`. | `parallel::conflict_stops_the_later`, `parallel::trial_merge_edges` |
+| AC-16 | WHEN `stapel next` runs for the branch ticket with a parallel ticket THE same trial merge runs, so a commit made outside the hook also gives the stop; a clean trial merge writes no stop and removes the pair's conflict stop; `next` with a foreign KEY runs none; IF git exits other than 0 or 1 THEN `next` prints the fact `trial merge not run: <git's first stderr line>` and changes no stop; IF a stop cannot be written THEN `next` and the hook print `stop not written: <path>: <error>`. | `parallel::next_runs_the_trial_merge`, `parallel::trial_merge_edges` |
+| AC-17 | WHEN a ticket has a stop of kind `merge` and its earlier ticket is not closed on the base branch, or a stop of kind `spec` and the earlier ticket's spec confirmation is stale THE `stapel next` prints `blocked: <KEY> waits for <EARLIER> (<reason>)` in every stage and, in place of a build action (build-step, green-step, run-check, code-review, close), `next: wait — <EARLIER>`, and the guard denies its code writes through the write tools; `always_writable` paths stay open; a `spec` stop with a fresh earlier confirmation does not block; IF the stops folder or the ticket's own `state.json` cannot be read THEN the guard denies code writes; the guard only reads stops, `next` and the post-tool-use hook remove them. | `parallel::stopped_ticket_waits`, `parallel::spec_kind_waits_for_the_spec`, `parallel::wait_edges` |
 | AC-18 | WHEN the base branch holds a close the ticket lacks THE `stapel next` prints `next: merge-main — git merge <base branch>` before code review and close; IF so THEN `close` refuses with `close needs <base branch> merged: run git merge <base branch> and stapel check <KEY> first`; other base-branch commits ask for nothing. A stop whose earlier ticket's close HEAD holds is removed. | `parallel::merge_main_before_close` |
-| AC-19 | WHEN HEAD has a merge round, the check passes and code review rounds are done as before THE `stapel next` names `code-review — stapel review start <KEY> --round merge` until a finding import of that merge round exists; a code review done before the merge stays valid; its pack holds the ticket's diff against the base branch and the merge diff; `close` refuses until then; a later merge round asks again. The order is merge-main, run-check, code review, merge review, close. | `depends::merge_review_after_merge_main` |
-| AC-20 | WHILE the later ticket's current dependency round is not done THE `stapel next` names `dependency-review — stapel depends <KEY>` and the guard denies its code writes; `stapel depends <KEY>` writes a pack with the Frame, criteria, Plan and named files of both tickets and the earlier ticket's diff against the base branch, and prints its path and the round; IF no earlier parallel ticket exists THEN it refuses with `<KEY> has no earlier parallel ticket` and exit 2. | `depends::dependency_review_named`, `depends::pack_holds_both_tickets` |
-| AC-21 | WHEN `findings import` gets the stage `dependency` THE record needs the role `depends`, the round of the current dependency round and, for HIGH or MEDIUM, `waits` of `spec` or `merge`; a review that finds no dependency returns one LOW record with the claim `no dependency found`; IF `waits` is on another stage or has another value THEN the import refuses with exit 2. | `records::dependency_stage` |
-| AC-22 | WHEN a dependency round is done THE later ticket's dependency stop of that pair holds the HIGH or MEDIUM records of the round whose verdict is not `false`, with the kind of their `waits` (`merge` when both kinds are present); with none, the dependency stop is removed; a new spec confirmation of either ticket makes a new round. | `depends::confirmed_dependency_stops`, `depends::false_verdict_lifts_the_stop` |
-| AC-23 | WHEN the branch ticket is closed and HEAD holds the close THE `stapel next` prints `next: merge-branch — git merge --no-ff <KEY> (in <main checkout path>)` until the base branch holds it; while the close is not committed it prints `next: commit-close — git commit .stapel/tickets/<KEY>`; IF the main checkout is not on the base branch or has changes outside machine files THEN the fact `main checkout not ready: <reason>` comes first. | `parallel::merge_branch_after_close` |
-| AC-24 | WHEN `stapel next` runs in a checkout without a branch ticket and a listed worktree's ticket has a stop whose earlier ticket is closed on this branch THE first lines are `can go on: <LATER> (<EARLIER> is merged into <branch>)`. | `parallel::can_go_on_notice` |
-| AC-25 | WHEN `stapel init` installs the process THE agent `.claude/agents/stapel-depends.md` (read-only tools) and the `[roles]` row `stapel-depends = "depends"` are written, and the skill names worktrees, `stapel cargo`, the waits and the merge into main. | `init_process::depends_agent_installed`, `init_process::skill_text_names_parallel_builds` |
+| AC-19 | WHEN HEAD has a merge round, the check passes and code review rounds are done as before THE `stapel next` names `code-review — stapel review start <KEY> --round merge` until a finding import of that merge round exists; a code review done before the merge stays valid; its pack holds the ticket's diff against the base branch and the merge diff; `close` refuses until then; a later merge round asks again. The order is merge-main, run-check, code review, merge review, summary, close. | `depends::merge_review_after_merge_main`, `depends::merge_review_edges` |
+| AC-20 | WHILE the later ticket's current dependency round is not done THE `stapel next` names `dependency-review — stapel depends <KEY>` and the guard denies its code writes; `stapel depends <KEY>` writes a pack with the Frame, criteria, Plan and named files of both tickets and the earlier ticket's diff against the base branch, and prints its path and the round; IF no earlier parallel ticket exists THEN it refuses with `<KEY> has no earlier parallel ticket` and exit 2. | `depends::dependency_review_named`, `depends::pack_holds_both_tickets`, `depends::pack_cut` |
+| AC-21 | WHEN `findings import` gets the stage `dependency` THE record needs the role `depends`, the round of the current dependency round and, for HIGH or MEDIUM, `waits` of `spec` or `merge`; a review that finds no dependency returns one LOW record with the claim `no dependency found`; IF `waits` is on another stage or has another value, or a LOW record has another claim or a `waits` THEN the import refuses with exit 2. | `records::dependency_stage`, `records::dependency_round_edges` |
+| AC-22 | WHEN a dependency round is done THE later ticket's dependency stop of that pair holds the HIGH or MEDIUM records of the round whose verdict is not `false`, with the kind of their `waits` (`merge` when both kinds are present, and for a record without a valid `waits`); with none, the dependency stop is removed; a new spec confirmation of either ticket makes a new round. | `depends::confirmed_dependency_stops`, `depends::false_verdict_lifts_the_stop`, `depends::stop_edges` |
+| AC-23 | WHEN the branch ticket is closed and HEAD holds the close THE `stapel next` prints `next: merge-branch — git merge --no-ff <KEY> (in <main checkout path>)` until the base branch holds it; while the close is not committed it prints `next: commit-close — git commit .stapel/tickets/<KEY>`, also for a ticket without `base_branch`; IF the main checkout is not on the base branch or has changes outside machine files THEN the fact `main checkout not ready: <reason>` comes first. | `parallel::merge_branch_after_close`, `parallel::merge_branch_edges` |
+| AC-24 | WHEN `stapel next` runs in a checkout without a branch ticket and a listed worktree's open ticket has a stop whose earlier ticket is closed on this branch THE first lines are `can go on: <LATER> (<EARLIER> is merged into <branch>)`. | `parallel::can_go_on_notice`, `parallel::notice_edges` |
+| AC-25 | WHEN `stapel init` installs the process THE agent `.claude/agents/stapel-depends.md` (read-only tools) and the `[roles]` row `stapel-depends = "depends"` are written, also into an existing `stapel.toml` that lacks the row, and the skill names worktrees, `stapel cargo`, the waits and the merge into main. | `init_process::depends_agent_installed`, `init_process::skill_text_names_parallel_builds`, `init::roles_row_added`, `init_process::depends_agent_fields` |
+| AC-26 | IF the Hook root of a guard input is a ticket worktree THEN the guard denies a code write into the main checkout or into another listed worktree with `<path> is outside the worktree of <KEY>`. | `hook::writes_stay_in_the_worktree` |
 
 ### Guarantees
 
-- **Promised:** the Frame's promise, by AC-1 to AC-25; outside ticket branches, commands without KEY
+- **Promised:** the Frame's promise, by AC-1 to AC-26; outside ticket branches, commands without KEY
   behave as before; `stapel new` on a base branch with a commit makes a branch and a worktree (AC-3);
   agents run cargo through `stapel cargo`; a ticket branch whose ticket folder is missing has no branch
   ticket and keeps the old rules.
@@ -175,7 +176,9 @@ Terms:
   read; a worktree folder deleted by hand (git lists it as prunable and stapel skips it); a base branch
   rewritten after a ticket branched from it; three or more parallel tickets (pairs are checked and the
   order holds, but it is not tested); a trial merge before the later ticket's spec is confirmed (SR1-20);
-  a fair order among waiters for the cargo lock (any waiter may take it next).
+  a fair order among waiters for the cargo lock (any waiter may take it next); code written by a stopped
+  ticket through Bash (`sed -i`, redirection, `git apply`), which is plan item 1.9 (D12-1); git run through
+  a path the guard does not read (a script the subagent wrote, a git program by path, `CDPATH`) (D10-6).
 
 ## Test plan
 
@@ -192,7 +195,7 @@ build runs; the holder is a child process the test starts and kills. Light tests
 | Keys | local `STP-1`; a worktree with `STP-4` on disk only; a branch whose tree has `STP-6`; a branch `STP-9` with no folder; a remote-tracking branch `origin/STP-11`; a prunable worktree whose folder held `STP-14` and whose branch `STP-12` still exists: next key `STP-13` | `new_branch::key_above_every_worktree_and_branch` |
 | New | on `main` with a commit: branch, worktree, files only in the worktree, `base` and `base_branch` in `state.json`, the three lines; on a base branch named `master`: the same with `master` | `new_branch::new_creates_branch_and_worktree` |
 | Race | two `stapel new` started together in the main checkout: two keys, two branches, two worktrees | `new_branch::two_new_at_once` |
-| Unborn, ticket branch | no commit: old behaviour and the note; run inside a ticket worktree: the refusal, exit 2, no branch made; an uncommitted change of `docs/a.md`: the dirty refusal, exit 2; an uncommitted `state.json` only: allowed | `new_branch::unborn_head_and_ticket_branch` |
+| Unborn, ticket branch | no commit: old behaviour and the note; run inside a ticket worktree: the refusal, exit 2, no branch made; an uncommitted change of a file in `docs/`: the dirty refusal, exit 2; an uncommitted `state.json` only: allowed | `new_branch::unborn_head_and_ticket_branch` |
 | Branch ticket | two open tickets in one checkout, branch `STP-2`: `status`, `next`, `ok` and `review start` without KEY take `STP-2`; branch `stp-2`: the same; `STP-2` closed: `next` still takes it; branch `STP-7` with no folder: the old rule; on `main`: refused as before | `new_branch::branch_names_the_ticket` |
 | Wrong KEY | in the `STP-2` worktree, `check STP-1`, `ok STP-1`, `close STP-1`: the refusal, exit 2; on `main`: no refusal | `new_branch::key_must_match_the_branch` |
 | Hook root | `CLAUDE_PROJECT_DIR` at main and input `cwd` at a ticket worktree: the session-start lines and the token records are the worktree's | `hook_session::root_from_input_cwd`, `hook_tokens::root_from_input_cwd` |
@@ -217,13 +220,36 @@ build runs; the holder is a child process the test starts and kills. Light tests
 | Notice | on `main` after the earlier ticket's branch merged, a worktree ticket with a stop: the notice line first, then `new-ticket` | `parallel::can_go_on_notice` |
 | Install | `stapel init`: the agent file with read-only tools, the `[roles]` row, the skill sentences; this repository's files the same | `init_process::depends_agent_installed`, `init_process::skill_text_names_parallel_builds` |
 | Union edges | a `.gitattributes` with one of the two lines: only the other appended; a file without a final newline: a newline, then the lines; a second run after a first run created both files: no change (D1-3) | `init::union_lines_edges` |
-| New edges | the main checkout has no folder of the new key; `new` from a second base worktree puts the worktree under the main checkout; the dirty refusal leaves no branch or worktree; an untracked `docs/b.md` and a renamed file count as changes (D3-4) | `new_branch::new_edges` |
+| New edges | the main checkout has no folder of the new key; `new` from a second base worktree puts the worktree under the main checkout; the dirty refusal leaves no branch or worktree; an untracked file in `docs/` and a renamed file count as changes (D3-4) | `new_branch::new_edges` |
 | Hooks on a branch | two open tickets, branch `ABC-2`: a `subagent-stop` record and a gap record go to `ABC-2` (D4-1) | `hook_tokens::token_hooks_on_a_branch` |
 | Commands on a branch | two open tickets, branch `ABC-2`: `check`, `close`, `findings import`, `ledger add --kind finding` and `tokens import-records` without KEY take `ABC-2`; `ok ABC-1` without a section and the close dialog for `ABC-1` are refused (D4-3, D4-4) | `new_branch::commands_on_a_branch` |
 | Post root | post-tool-use with `cwd` at a ticket worktree and `CLAUDE_PROJECT_DIR` at main: the worktree's facts; `cwd` outside any stapel repository: `CLAUDE_PROJECT_DIR`'s (D5-1) | `hook_post::root_from_input_cwd` |
 | Root edges | the guard with `cwd` at a ticket worktree decides by the worktree's ticket; a relative `cwd`; an empty `cwd`: the next source; no `cwd` and no `CLAUDE_PROJECT_DIR`: the working directory (D5-2, D5-4) | `hook::hook_root_edges` |
 | Permit edges | `ABC-2` confirmed on branch `ABC-2` while `ABC-1` is not: the write allowed; `ABC-1` with `build.allowed` on branch `ABC-2`: denied; branch `ABC-7` without a folder: the old rule; the denial names only the branch ticket (D6-1 to D6-3) | `hook::permit_edges` |
 | Lock edges | an empty held mark: the lock taken; a killed `stapel cargo` holder with a `stapel check` waiter: the waiter goes on after the child ends and its wait line names the holder (D7-4) | `cargo_lock::lock_edges` |
+| Held mark forms | `export STAPEL_CARGO_LOCK_HELD=1`, `env STAPEL_CARGO_LOCK_HELD=1 stapel cargo test`, `sh -c "STAPEL_CARGO_LOCK_HELD=1 stapel cargo test"`: denied; `grep STAPEL_CARGO_LOCK_HELD src/x.rs`, `echo $STAPEL_CARGO_LOCK_HELD`: allowed (D9-1, D9-2) | `hook::bare_cargo_denied` |
+| Cargo edges | `/usr/bin/cargo test`, `xargs cargo test`, `echo x \| cargo test`, `$(cargo metadata)`, `command cargo test`: denied (D9-3) | `hook::bare_cargo_edges` |
+| Git guard fixes | input with `agent_id`: `git -C ~ status`, `git -C ~/x status`, `env -C /tmp git commit`, `env --chdir=/tmp git status`, `git grep -O x`, `git grep --open-files-in-pager=vi x`, `git diff --ext-diff`, `git log --textconv`: denied; `echo GIT_A=1`: allowed, `GIT_DIR=/x git status`: denied; `cwd` at the worktree and `CLAUDE_PROJECT_DIR` at main: `git -C crates status` allowed, `git -C <main root> status` denied (D10-1 to D10-5) | `hook::subagent_git_guard` |
+| Git edges | git behind `env`, `sh -c`, `$(…)`, `eval`, `xargs`; `pushd ..`; two `-C`; `--work-tree` or `--git-dir` after the subcommand; an absolute `-C` inside and outside the worktree; a symlink in the worktree that points out; an empty `agent_id`: each decision and the full deny text (D10-7) | `hook::subagent_git_edges` |
+| Hook merge fixes | a commit during a rebase, a merge and a cherry-pick: no trial merge, no stop; a stops folder that cannot be written: the hook prints `stop not written: <path>: <error>` (D11-1, D11-3) | `parallel::conflict_stops_the_later` |
+| Next merge fixes | `stapel next STP-1` in the `STP-2` worktree: no trial merge; a stops folder that cannot be written: `next` prints `stop not written: <path>: <error>` (D11-2, D11-3) | `parallel::next_runs_the_trial_merge` |
+| Trial merge edges | a conflict in two files: both named; a clean merge and a git failure leave other pairs' stops; three tickets: each pair; the tie-break of equal spec times through `next`; the hook on a git failure; the first of several stderr lines (D11-4) | `parallel::trial_merge_edges` |
+| Worktree writes | the Hook root at the `STP-2` worktree: an `Edit` of `crates/x.rs` in the main checkout and in the `STP-1` worktree by absolute path: denied with the AC-26 text; in its own worktree: decided as before; a path outside every checkout: decided as before (D12-2) | `hook::writes_stay_in_the_worktree` |
+| Wait fixes | the stops folder unreadable and the own `state.json` not JSON: code writes denied; a guard decision leaves an obsolete stop file on disk, `next` removes it; a stopped ticket with a dirty tree: the commit action stays, the blocked line shows; a stopped ticket in the spec stage: the blocked line (D12-3, D12-5, D12-6) | `parallel::stopped_ticket_waits` |
+| Wait edges | `merge-main` without a stop; the own key's close on the base branch; `merge-main` before code review and close; a `spec` stop whose earlier ticket is closed on the base branch or in no worktree; the guard text for an unreadable stop (D12-7, D12-8) | `parallel::wait_edges` |
+| Dependency record fixes | a LOW record with another claim: refused; a LOW `no dependency found` with `waits`: refused (D13-1) | `records::dependency_stage` |
+| Dependency round edges | an import into the earlier ticket: refused; equal spec times: the round by key order; two spec confirmations: the last counts; a hash with the `sha256:` prefix; `waits: spec`; a MEDIUM record with `waits` (D13-2, D13-3) | `records::dependency_round_edges` |
+| Dependency stop fixes | a HIGH record whose `waits` was lost by a triage edit: the stop of kind `merge` (D14-4) | `depends::confirmed_dependency_stops` |
+| Dependency stop edges | a pending round and a stop at once: `dependency-review` before `wait` in `next` and in the guard; an older round's stop stays until the new round has a record; a triage that grades a record down to LOW lifts the stop; records in an old and a new round (D14-1, D14-2, D14-6) | `depends::stop_edges` |
+| Pack cut | a named file of 70 KiB: cut at 64 KiB with a note; a missing file and a non-UTF-8 file: a note each (D14-5) | `depends::pack_cut` |
+| Merge review edges | the merge ask comes before `write-summary`; round-1 findings imported before the merge stay valid; `close` with a grant still refuses; an import of the first merge round does not satisfy a later merge round (D15-1, D15-3) | `depends::merge_review_edges` |
+| Merge branch fixes | a closed, uncommitted ticket without `base_branch`: `commit-close` (D16-1) | `parallel::merge_branch_after_close` |
+| Merge branch edges | a change of a machine file in the main checkout: still ready; the wrong branch and a changed file at once: both reasons joined by `; `; a detached main checkout; an unknown state; the fact line found by its text before the `merge-branch` line; `--json` without notices (D16-2, D16-4) | `parallel::merge_branch_edges` |
+| Notice fixes | the later ticket closed: no notice (D16-3) | `parallel::can_go_on_notice` |
+| Notice edges | a detached HEAD: no notice; a prunable worktree: skipped; two stops on one earlier ticket: one notice; `--json`: no notice (D16-3) | `parallel::notice_edges` |
+| Roles row | an existing `stapel.toml` with a `[roles]` table without the `stapel-depends` row: `init` adds the row and keeps every other line; a second run: no change (D17-7) | `init::roles_row_added` |
+| Depends agent fields | the agent file holds `permissionMode: default` and the output fields `stage` `dependency`, `role` `depends`, `waits`; the skill names `stapel depends KEY`, the merge of the base branch into the ticket branch and the combined review; a `depends` role binding in `[roles]` is accepted (D17-2 to D17-5) | `init_process::depends_agent_fields` |
+| Non-folder keys | a file named `ABC-30` in the local tickets folder and in a listed worktree's tickets folder: not counted (D18-3) | `new_branch::non_folder_keys` |
 
 ### Inputs
 
@@ -279,6 +305,8 @@ build runs; the holder is a child process the test starts and kills. Light tests
 | a builder runs `git -C ../.. status` or `git -c core.worktree=…` | denied (AC-14) | `hook::subagent_git_guard` |
 | builds before the dependency review | code writes denied (AC-20) | `depends::dependency_review_named` |
 | writes code in a stopped ticket | denied by the guard (AC-17) | `parallel::stopped_ticket_waits` |
+| writes code by absolute path into the main checkout or the earlier ticket's worktree | denied (AC-26) | `hook::writes_stay_in_the_worktree` |
+| runs `git -C ~/other commit` or `env -C /x git commit` as a subagent | denied (AC-14) | `hook::subagent_git_guard` |
 | runs `stapel check STP-1` from the `STP-2` worktree | refused (AC-7) | `new_branch::key_must_match_the_branch` |
 | closes a ticket without merging main | refused (AC-18) | `parallel::merge_main_before_close` |
 | skips the merge review | `close` refuses (AC-19) | `depends::merge_review_after_merge_main` |
@@ -290,8 +318,9 @@ deadlock if the mark is lost through `env_clear`); `stapel new` fixtures that co
 get a worktree; a merge of main that brings `Cargo.lock` and how `stapel check` treats it as a build input;
 a stop written by the earlier ticket's hook into the shared git folder while the later session reads it.
 
-**Author self-check:** 2026-11-03, before spec review, again after rounds 1 and 2: promise items 1 to 10
-map to AC-2 to AC-5 (1), AC-6 to AC-8 (2), AC-9 (3), AC-10 to AC-13 (4), AC-14 (5), AC-1 (6), AC-15 and
+**Author self-check:** 2026-11-03, before spec review, again after rounds 1 and 2, and 2026-11-06 after
+the drift reviews of the build: promise items 1 to 10 map to AC-2 to AC-5 (1), AC-6 to AC-8 (2), AC-9 and
+AC-26 (3), AC-10 to AC-13 (4), AC-14 (5), AC-1 (6), AC-15 and
 AC-16 (7), AC-20 to AC-22 and AC-17 (8), AC-17 to AC-19 (9), AC-23 to AC-25 (10); each Inputs and External
 states row has a test or "not promised"; readers of the changed configuration (`[roles]` with
 `stapel-depends`, the finding stage `dependency`) are `config.rs`, `records.rs`, `triage.rs`, `next.rs`, the
@@ -301,18 +330,19 @@ token hooks and `init`.
 
 ### Facts
 
-- F-1: `tickets::next_key` (`crates/stapel-core/src/tickets.rs:24`) takes the largest local folder number
-  plus one; `new::run` (`crates/stapel-cli/src/new.rs:7`) writes in the current checkout; no lock.
+- F-1: `tickets::next_key` (`crates/stapel-core/src/tickets.rs`, line 24) takes the largest local folder
+  number plus one; `new::run` (`crates/stapel-cli/src/new.rs`, line 7) writes in the current checkout; no
+  lock.
 - F-2: `tickets::resolve` (`tickets.rs:86`) takes the one open ticket without KEY; its callers are
   `status`, `check`, `close`, `next`, `confirm`, `dialog` and `records`; the token hooks keep their own
   rule (`crates/stapel-cli/src/tokens.rs` `hook_records`, `gap_record`).
 - F-3: each worktree checks out its own `.stapel/tickets/`; machine files (`state.json`, findings) may be
   uncommitted (`worktree.rs` `is_machine_file`), so a parallel ticket is read from its folder on disk.
-- F-4: `stage::build_permit` (`crates/stapel-core/src/stage.rs:170`) returns the first open ticket with
+- F-4: `stage::build_permit` (`crates/stapel-core/src/stage.rs`, line 170) returns the first open ticket with
   fresh `build.requires`; the guard calls it with the root of the written path (`guard.rs:186`), which is
   the worktree's root.
 - F-5: `check.lock` and `check-target` live in `<git common dir>/stapel/` and are shared by worktrees;
-  `run_cargo` (`crates/stapel-core/src/runner.rs:308`) clears the environment and passes `ENV_ALLOW`.
+  `run_cargo` (`crates/stapel-core/src/runner.rs`, line 308) clears the environment and passes `ENV_ALLOW`.
 - F-6: the guard reads Bash programs behind `WRAPPERS`, `sh -c` and `eval` (`guard.rs:571`
   `check_program`).
 - F-7: the post-tool-use hook runs for a commit command (`hook.rs` `post_tool_use`) and returns
@@ -352,8 +382,34 @@ token hooks and `init`.
   a hook record also to a closed one (D4-2, STP-26 AC-8 and AC-9); the cargo lock file is emptied when the
   lock is dropped, and a killed holder's line is never shown because the lock is free (D7-3); the lock fd
   is inherited by every child (close-on-exec cleared through `libc`).
-- STP-27 is built on main by the old rules with the installed binary; builders run bare cargo through
-  the whole build; `stapel init` with the new skill and builder text runs in step 17; the binary is
+- As built (drift reviews of steps 8 to 18, the fates in `findings.jsonl`):
+  - The held mark is in the shared `ENV_ALLOW` of the core runner, so every runner caller passes an
+    inherited mark (D8-1, kept by the human).
+  - For subagents the guard also denies rare global git options (`--config-env`, `--namespace`,
+    `--super-prefix`, `--exec-path`), `cd` or `pushd` with no argument, `$`, `~` or `-`, and every long
+    command (D10-5 a, b, d, kept by the human).
+  - Every git call of `parallel.rs` runs without `GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` (D11-3).
+  - Dependency stops are synced at findings import and triage only: a deleted stop comes back at the next
+    import or triage, each import rewrites `at`, and a dependency stop has empty `files` (D14-3, the human).
+  - `stapel depends` ignores files in its folder, cuts a named file at 64 KiB with a note, notes a missing
+    or non-UTF-8 file, puts the agent's prompt text into the pack and writes one pack per earlier pair
+    (D14-5, the human).
+  - A merge round counts as reviewed when a finding of stage `code-review` has its round text (D15-4); the
+    merge pack also holds Checks (merge, claims), Stat and Spec (D15-2, the human); the merge round does not
+    remove old review folders, the next numbered `review start` does (D15-5, the human).
+  - The reasons of `main checkout not ready` are `it is on <X>, not on <BASE>`, `it is not on <BASE>`
+    (detached), `it has changes in <a>, <b>` and `its state is unknown`, joined by `; `; once the base branch
+    holds the close, `next` in the worktree gives `new-ticket`; `merge-branch`, `commit-close` and the
+    notices apply to `next` without KEY; the notices print first in text mode and not in `--json`; no
+    notice on a detached HEAD, prunable worktrees are skipped, one notice per earlier ticket (D16-3, the
+    human).
+  - `DEFAULT_ROLES` of the token hooks keeps four rows; without a `[roles]` table `stapel-depends` is
+    journaled as `research`.
+  - `stapel new` holds `new.lock` from the key scan through `git worktree add -b` and does not retry a failed
+    `git worktree add`; a concurrent `git worktree add` of another tool gives the git error (D18-2, the
+    human); the AC-7 refusal names the folder's key.
+- STP-27 is built on main by the old rules with the installed binary; from step 9 on, builders run cargo
+  through `target/debug/stapel cargo`, because the installed binary has no `cargo` command; `stapel init` with the new skill and builder text runs in step 17; the binary is
   reinstalled after the close (SR1-9).
 
 ## Proof
@@ -361,7 +417,7 @@ token hooks and `init`.
 | Criterion | Test |
 |---|---|
 | AC-1 | `init::worktrees_ignored_and_journals_union`, `init::union_lines_edges` |
-| AC-2 | `new_branch::key_above_every_worktree_and_branch` |
+| AC-2 | `new_branch::key_above_every_worktree_and_branch`, `new_branch::non_folder_keys` |
 | AC-3 | `new_branch::new_creates_branch_and_worktree` |
 | AC-4 | `new_branch::two_new_at_once` |
 | AC-5 | `new_branch::unborn_head_and_ticket_branch`, `new_branch::new_edges` |
@@ -372,19 +428,20 @@ token hooks and `init`.
 | AC-10 | `cargo_lock::wrapper_runs_cargo` |
 | AC-11 | `cargo_lock::second_waits_and_names_the_holder`, `cargo_lock::killed_holder_frees_the_lock`, `cargo_lock::lock_edges` |
 | AC-12 | `cargo_lock::check_takes_the_lock`, `cargo_lock::held_mark_takes_no_lock` |
-| AC-13 | `hook::bare_cargo_denied` |
-| AC-14 | `hook::subagent_git_guard` |
-| AC-15 | `parallel::conflict_stops_the_later` |
-| AC-16 | `parallel::next_runs_the_trial_merge` |
-| AC-17 | `parallel::stopped_ticket_waits`, `parallel::spec_kind_waits_for_the_spec` |
+| AC-13 | `hook::bare_cargo_denied`, `hook::bare_cargo_edges` |
+| AC-14 | `hook::subagent_git_guard`, `hook::subagent_git_edges` |
+| AC-15 | `parallel::conflict_stops_the_later`, `parallel::trial_merge_edges` |
+| AC-16 | `parallel::next_runs_the_trial_merge`, `parallel::trial_merge_edges` |
+| AC-17 | `parallel::stopped_ticket_waits`, `parallel::spec_kind_waits_for_the_spec`, `parallel::wait_edges` |
 | AC-18 | `parallel::merge_main_before_close` |
-| AC-19 | `depends::merge_review_after_merge_main` |
-| AC-20 | `depends::dependency_review_named`, `depends::pack_holds_both_tickets` |
-| AC-21 | `records::dependency_stage` |
-| AC-22 | `depends::confirmed_dependency_stops`, `depends::false_verdict_lifts_the_stop` |
-| AC-23 | `parallel::merge_branch_after_close` |
-| AC-24 | `parallel::can_go_on_notice` |
-| AC-25 | `init_process::depends_agent_installed`, `init_process::skill_text_names_parallel_builds` |
+| AC-19 | `depends::merge_review_after_merge_main`, `depends::merge_review_edges` |
+| AC-20 | `depends::dependency_review_named`, `depends::pack_holds_both_tickets`, `depends::pack_cut` |
+| AC-21 | `records::dependency_stage`, `records::dependency_round_edges` |
+| AC-22 | `depends::confirmed_dependency_stops`, `depends::false_verdict_lifts_the_stop`, `depends::stop_edges` |
+| AC-23 | `parallel::merge_branch_after_close`, `parallel::merge_branch_edges` |
+| AC-24 | `parallel::can_go_on_notice`, `parallel::notice_edges` |
+| AC-25 | `init_process::depends_agent_installed`, `init_process::skill_text_names_parallel_builds`, `init::roles_row_added`, `init_process::depends_agent_fields` |
+| AC-26 | `hook::writes_stay_in_the_worktree` |
 
 ## Plan
 
@@ -415,7 +472,8 @@ Route: full (tags `guard`, `data`, `interface`), auto.
    `check::cargo_runs_see_every_allowed_variable_and_one_cargo` to expect the held mark. Must not change:
    check outcomes, step 7.
 9. The guard denies bare cargo (AC-13; test `hook::bare_cargo_denied`). Must not change: other Bash
-   decisions.
+   decisions. As built: the RED also changes seven hook tests and the `cargo run -- <stapel action>` dialog
+   cases of four record and dialog tests to expect the cargo denial; that dialog form is gone (B9-1).
 10. The git guard for subagents (AC-14; test `hook::subagent_git_guard`). Must not change: the main
     session's git commands.
 11. Order, trial merge and stops (AC-15, AC-16; tests `parallel::conflict_stops_the_later`,
@@ -430,13 +488,15 @@ Route: full (tags `guard`, `data`, `interface`), auto.
     `depends::pack_holds_both_tickets`, `depends::confirmed_dependency_stops`,
     `depends::false_verdict_lifts_the_stop`): `depends.rs`, `next`. Must not change: step 12.
 15. The merge review (AC-19; test `depends::merge_review_after_merge_main`): `review.rs`, `next`, `close`.
-    Must not change: review rounds 1 and 2.
+    Must not change: review rounds 1 and 2. As built: the RED gives the `depends.rs` helper `build_ready` a
+    one-row criteria table, because `review start` refuses a Spec without criteria.
 16. Merge branch and the notice (AC-23, AC-24; tests `parallel::merge_branch_after_close`,
     `parallel::can_go_on_notice`). Must not change: `next` on a ticket that is open.
 17. Install and skill text (AC-25; tests `init_process::depends_agent_installed`,
     `init_process::skill_text_names_parallel_builds`): `assets/agents/depends.md`, `assets/skill.md`,
     `init.rs`, this repository's `stapel init`, `CLAUDE.md` "The plan" and the builder text on `stapel cargo`.
-    Must not change: the four agent files except the builder's cargo line.
+    Must not change: the four agent files except the builder's cargo line. As built: the RED also changes
+    `DEFAULT_ROLES` of `hook_tokens.rs`; the human added the row to this repository's `.stapel/stapel.toml`.
 18. Fixes of `stapel new` after the drift reviews (AC-2, AC-4, AC-7; tests
     `new_branch::two_new_at_once`, `new_branch::key_above_every_worktree_and_branch`,
     `new_branch::key_must_match_the_branch`): the RED makes the race test hold `new.lock` and expect the
@@ -453,6 +513,50 @@ Route: full (tags `guard`, `data`, `interface`), auto.
     `hook::hook_root_edges`): the gaps of D4-1 and D5-2. Must not change: any code.
 22. Coverage of the permit and the lock, no GREEN (AC-9, AC-11; tests `hook::permit_edges`,
     `cargo_lock::lock_edges`): the gaps of D6-1 and D7-4. Must not change: any code.
+23. The held mark only when set (AC-13; test `hook::bare_cargo_denied`): the RED adds the rows "Held mark
+    forms"; `grep` and `echo` of the name fail at RED (D9-1, D9-2). Must not change: the cargo denial.
+24. Git guard fixes (AC-14; test `hook::subagent_git_guard`): the RED adds the rows "Git guard fixes"
+    (D10-1 to D10-5); the guard takes the worktree from the Hook root and denies only a setting of `GIT_*`.
+    Must not change: the main session's git commands.
+25. Hook trial merge fixes (AC-15; test `parallel::conflict_stops_the_later`): the RED adds the row "Hook
+    merge fixes" (D11-1, D11-3). Must not change: the stop of a real conflict.
+26. Next trial merge fixes (AC-16; test `parallel::next_runs_the_trial_merge`): the RED adds the row "Next
+    merge fixes" (D11-2, D11-3). Must not change: step 25.
+27. Writes stay in the worktree (AC-26; test `hook::writes_stay_in_the_worktree`): the guard compares the
+    written path with the Hook root (D12-2). Must not change: writes outside every checkout.
+28. Wait fixes (AC-17; test `parallel::stopped_ticket_waits`): the RED adds the rows "Wait fixes" (D12-3,
+    D12-5, D12-6); the guard reads stops only; the wait takes the place of build actions only. Must not
+    change: the `spec` stop rules.
+29. Dependency record and stop fixes (AC-21, AC-22; tests `records::dependency_stage`,
+    `depends::confirmed_dependency_stops`): the RED adds the rows "Dependency record fixes" and "Dependency
+    stop fixes" (D13-1, D14-4). Must not change: other stages.
+30. Close and notice fixes (AC-23, AC-24; tests `parallel::merge_branch_after_close`,
+    `parallel::can_go_on_notice`): the RED adds the rows "Merge branch fixes" and "Notice fixes" (D16-1,
+    D16-3). Must not change: `next` on an open ticket.
+31. The roles row in an existing `stapel.toml` (AC-25; test `init::roles_row_added`): `init.rs` adds a
+    missing `[roles]` row of an installed agent and keeps every other line (D17-7). Must not change: a
+    `stapel.toml` that has the row.
+32. Coverage of the guard, no GREEN (AC-13, AC-14; tests `hook::bare_cargo_edges`,
+    `hook::subagent_git_edges`): the gaps of D9-3 and D10-7. Must not change: any code.
+33. Coverage of the trial merge, no GREEN (AC-15, AC-16; test `parallel::trial_merge_edges`): the gaps of
+    D11-4. Must not change: any code.
+34. Coverage of the wait, no GREEN (AC-17; test `parallel::wait_edges`): the gaps of D12-7 and D12-8. Must
+    not change: any code.
+35. Coverage of the dependency round, no GREEN (AC-21; test `records::dependency_round_edges`): the gaps of
+    D13-2 and D13-3. Must not change: any code.
+36. Coverage of the dependency stop, no GREEN (AC-22; test `depends::stop_edges`): the gaps of D14-1, D14-2
+    and D14-6. Must not change: any code.
+37. Coverage of the pack, no GREEN (AC-20; test `depends::pack_cut`): the gap of D14-5. Must not change:
+    any code.
+38. Coverage of the merge review, no GREEN (AC-19; test `depends::merge_review_edges`): the gaps of D15-1
+    and D15-3. Must not change: any code.
+39. Coverage of the merge branch and the notice, no GREEN (AC-23, AC-24; tests
+    `parallel::merge_branch_edges`, `parallel::notice_edges`): the gaps of D16-2 to D16-4. Must not change:
+    any code.
+40. Coverage of the install, no GREEN (AC-25; test `init_process::depends_agent_fields`): the gaps of D17-2
+    to D17-5. Must not change: any code.
+41. Coverage of the keys, no GREEN (AC-2; test `new_branch::non_folder_keys`): the gap of D18-3. Must not
+    change: any code.
 
 ## Review
 

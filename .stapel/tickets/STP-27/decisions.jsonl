@@ -8,3 +8,11 @@
 {"v":1,"id":"d-ed97328e39be","at":"2026-11-03T12:21:07Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:7bfde75af3427b07e5c3cb1b9ae203c6d561141dd4ecf7d96c4197c572a733ae","via":"grant"}
 {"v":1,"id":"d-5eee796b5989","at":"2026-11-03T12:21:07Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:44c9aa8b93e8c21f08a87b34234c7601f2b6727435a3d100e370bf7d9f7792c6","via":"grant"}
 {"v":1,"id":"d-9ff00c7e8f44","at":"2026-11-03T12:21:07Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:5d07646c89d19320e55683210d2d1660f0453fa3ce0fa8309ae34a03a08b1843","via":"grant"}
+{"v":1,"id":"d-966c3138ac69","at":"2026-11-04T09:25:09Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:43ae99b0e68abeae054267e70df08f7e8482114a6184823829942740e702c141","via":"grant"}
+{"v":1,"id":"d-49c49779c990","at":"2026-11-04T09:25:09Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:3ef53f1f8999a6bc65b7c09760d1ec4161489ff152b7fe615acfc2e860f5a17e","via":"grant"}
+{"v":1,"id":"d-c0100568b453","at":"2026-11-04T09:25:09Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:b953448e273f8f65ef793c0764666ec0744279efb151cfba7e8daea26d19e264","via":"grant"}
+{"v":1,"id":"d-09aaef82ea00","at":"2026-11-04T09:25:09Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:6399c45e5093c98d43d280c64358c646eedccd98cc595b1794142dc5432bd361","via":"grant"}
+{"v":1,"id":"d-e8a3de1a6874","at":"2026-11-06T11:01:58Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:4de21a7bf0813ff6463dd59168217fdaeb9a1dd1226a8d76aba64c51d18ff005","via":"grant"}
+{"v":1,"id":"d-5b37b4604f64","at":"2026-11-06T11:01:58Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:133753c6d91726a282bb6eff4c160e466ee881c8a3b435721f984512860bc073","via":"grant"}
+{"v":1,"id":"d-223eda6c51d2","at":"2026-11-06T11:01:58Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:64437036a46f1e7c90f81c6853a7bf48934aa890820d0588d8410e8bebf6f52a","via":"grant"}
+{"v":1,"id":"d-09a9dfc0073c","at":"2026-11-06T11:01:58Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:2620d4c188751d86d3cbaf7d9e1d24f3a08549e48a3cc21bd83d99bc1989ff18","via":"grant"}
