@@ -163,7 +163,7 @@ Terms:
 | AC-23 | WHEN the branch ticket is closed and HEAD holds the close THE `stapel next` prints `next: merge-branch — git merge --no-ff <KEY> (in <main checkout path>)` until the base branch holds it; while the close is not committed it prints `next: commit-close — git commit .stapel/tickets/<KEY>`, also for a ticket without `base_branch`; IF the main checkout is not on the base branch or has changes outside machine files THEN the fact `main checkout not ready: <reason>` comes first. | `parallel::merge_branch_after_close`, `parallel::merge_branch_edges` |
 | AC-24 | WHEN `stapel next` runs in a checkout without a branch ticket and a listed worktree's open ticket has a stop whose earlier ticket is closed on this branch THE first lines are `can go on: <LATER> (<EARLIER> is merged into <branch>)`. | `parallel::can_go_on_notice`, `parallel::notice_edges` |
 | AC-25 | WHEN `stapel init` installs the process THE agent `.claude/agents/stapel-depends.md` (read-only tools) and the `[roles]` row `stapel-depends = "depends"` are written, also into an existing `stapel.toml` that lacks the row, and the skill names worktrees, `stapel cargo`, the waits and the merge into main. | `init_process::depends_agent_installed`, `init_process::skill_text_names_parallel_builds`, `init::roles_row_added`, `init_process::depends_agent_fields` |
-| AC-26 | IF the Hook root of a guard input is a ticket worktree THEN the guard denies a code write into the main checkout or into another listed worktree with `<path> is outside the worktree of <KEY>`. | `hook::writes_stay_in_the_worktree` |
+| AC-26 | IF the Hook root of a guard input is a ticket worktree THEN the guard denies a write of a write tool into the main checkout or into another listed worktree, `always_writable` paths such as `.stapel/` included, with `<path> is outside the worktree of <KEY>`. | `hook::writes_stay_in_the_worktree`, `hook::worktree_write_edges` |
 
 ### Guarantees
 
@@ -230,11 +230,12 @@ build runs; the holder is a child process the test starts and kills. Light tests
 | Held mark forms | `export STAPEL_CARGO_LOCK_HELD=1`, `env STAPEL_CARGO_LOCK_HELD=1 stapel cargo test`, `sh -c "STAPEL_CARGO_LOCK_HELD=1 stapel cargo test"`: denied; `grep STAPEL_CARGO_LOCK_HELD src/x.rs`, `echo $STAPEL_CARGO_LOCK_HELD`: allowed (D9-1, D9-2) | `hook::bare_cargo_denied` |
 | Cargo edges | `/usr/bin/cargo test`, `xargs cargo test`, `echo x \| cargo test`, `$(cargo metadata)`, `command cargo test`: denied (D9-3) | `hook::bare_cargo_edges` |
 | Git guard fixes | input with `agent_id`: `git -C ~ status`, `git -C ~/x status`, `env -C /tmp git commit`, `env --chdir=/tmp git status`, `git grep -O x`, `git grep --open-files-in-pager=vi x`, `git diff --ext-diff`, `git log --textconv`: denied; `echo GIT_A=1`: allowed, `GIT_DIR=/x git status`: denied; `cwd` at the worktree and `CLAUDE_PROJECT_DIR` at main: `git -C crates status` allowed, `git -C <main root> status` denied (D10-1 to D10-5) | `hook::subagent_git_guard` |
-| Git edges | git behind `env`, `sh -c`, `$(…)`, `eval`, `xargs`; `pushd ..`; two `-C`; `--work-tree` or `--git-dir` after the subcommand; an absolute `-C` inside and outside the worktree; a symlink in the worktree that points out; an empty `agent_id`: each decision and the full deny text (D10-7) | `hook::subagent_git_edges` |
+| Git edges | git behind `env`, `sh -c`, `$(…)`, `eval`, `xargs`; `pushd ..`; two `-C`; `--work-tree` or `--git-dir` after the subcommand; an absolute `-C` inside and outside the worktree; a symlink in the worktree that points out; an empty `agent_id`: each decision and the full deny text (D10-7); `GIT_X=` through `export`, `declare`, `typeset`, `local`, `readonly` and `env`: denied, `GIT_DIR=/x git status` also for the main session; `env --chdir /tmp`, `env -C/tmp`, `env -C ~`: denied (D24-2, D24-3) | `hook::subagent_git_edges` |
 | Hook merge fixes | a commit during a rebase, a merge and a cherry-pick: no trial merge, no stop; a stops folder that cannot be written: the hook prints `stop not written: <path>: <error>` (D11-1, D11-3) | `parallel::conflict_stops_the_later` |
 | Next merge fixes | `stapel next STP-1` in the `STP-2` worktree: no trial merge; a stops folder that cannot be written: `next` prints `stop not written: <path>: <error>` (D11-2, D11-3) | `parallel::next_runs_the_trial_merge` |
-| Trial merge edges | a conflict in two files: both named; a clean merge and a git failure leave other pairs' stops; three tickets: each pair; the tie-break of equal spec times through `next`; the hook on a git failure; the first of several stderr lines (D11-4) | `parallel::trial_merge_edges` |
+| Trial merge edges | a conflict in two files: both named; a clean merge and a git failure leave other pairs' stops; three tickets: each pair; the tie-break of equal spec times through `next`; the hook on a git failure; the first of several stderr lines (D11-4); `next` with the own KEY writes the stop, and after its removal `next` with a foreign KEY succeeds and writes none; the `stop not written` line holds the path, a colon and an error text (D26-1, D26-2) | `parallel::trial_merge_edges` |
 | Worktree writes | the Hook root at the `STP-2` worktree: an `Edit` of `crates/x.rs` in the main checkout and in the `STP-1` worktree by absolute path: denied with the AC-26 text; in its own worktree: decided as before; a path outside every checkout: decided as before (D12-2) | `hook::writes_stay_in_the_worktree` |
+| Worktree write edges | from the `STP-2` worktree: a `.stapel/` file in the main checkout and in the `STP-1` worktree: denied with the AC-26 text; a `.stapel/` file in its own worktree: allowed; the rule with no `cwd` and `CLAUDE_PROJECT_DIR` at the worktree, and with the working directory only; a Hook root in the main checkout writing into a worktree: decided as before; a folder under `.claude/worktrees/` that is no ticket worktree (D27-1 to D27-4) | `hook::worktree_write_edges` |
 | Wait fixes | the stops folder unreadable and the own `state.json` not JSON: code writes denied; a guard decision leaves an obsolete stop file on disk, `next` removes it; a stopped ticket with a dirty tree: the commit action stays, the blocked line shows; a stopped ticket in the spec stage: the blocked line (D12-3, D12-5, D12-6) | `parallel::stopped_ticket_waits` |
 | Wait edges | `merge-main` without a stop; the own key's close on the base branch; `merge-main` before code review and close; a `spec` stop whose earlier ticket is closed on the base branch or in no worktree; the guard text for an unreadable stop (D12-7, D12-8) | `parallel::wait_edges` |
 | Dependency record fixes | a LOW record with another claim: refused; a LOW `no dependency found` with `waits`: refused (D13-1) | `records::dependency_stage` |
@@ -441,7 +442,7 @@ token hooks and `init`.
 | AC-23 | `parallel::merge_branch_after_close`, `parallel::merge_branch_edges` |
 | AC-24 | `parallel::can_go_on_notice`, `parallel::notice_edges` |
 | AC-25 | `init_process::depends_agent_installed`, `init_process::skill_text_names_parallel_builds`, `init::roles_row_added`, `init_process::depends_agent_fields` |
-| AC-26 | `hook::writes_stay_in_the_worktree` |
+| AC-26 | `hook::writes_stay_in_the_worktree`, `hook::worktree_write_edges` |
 
 ## Plan
 
@@ -557,6 +558,8 @@ Route: full (tags `guard`, `data`, `interface`), auto.
     to D17-5. Must not change: any code.
 41. Coverage of the keys, no GREEN (AC-2; test `new_branch::non_folder_keys`): the gap of D18-3. Must not
     change: any code.
+42. Coverage of the worktree writes, no GREEN (AC-26; test `hook::worktree_write_edges`): the gaps of D27-1
+    to D27-4. Must not change: any code.
 
 ## Review
 
