@@ -782,6 +782,20 @@ fn merge_branch_after_close() {
     assert!(!said.contains("merge-branch"), "{said}");
     assert!(!said.contains("commit-close"), "{said}");
     assert!(!said.contains("main checkout not ready"), "{said}");
+
+    // A closed, uncommitted ticket without `base_branch` still asks for `commit-close`.
+    let pair = two_ticket_worktrees();
+    let path = pair.a.join(".stapel/tickets/ABC-1/state.json");
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    state.as_object_mut().unwrap().remove("base_branch");
+    std::fs::write(&path, state.to_string()).unwrap();
+    close_uncommitted(&pair.a, "ABC-1");
+    let said = next(&pair.a, None);
+    assert!(
+        said.lines().any(|l| l == "next: commit-close — git commit .stapel/tickets/ABC-1"),
+        "{said}"
+    );
 }
 
 #[test]
@@ -807,5 +821,10 @@ fn can_go_on_notice() {
 
     // Inside the worktree of the later ticket there is no notice.
     let said = next(&pair.b, None);
+    assert!(!said.contains("can go on"), "{said}");
+
+    // The later ticket is closed itself: no notice.
+    close_uncommitted(&pair.b, "ABC-2");
+    let said = next(main, None);
     assert!(!said.contains("can go on"), "{said}");
 }

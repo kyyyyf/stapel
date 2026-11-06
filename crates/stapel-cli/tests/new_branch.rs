@@ -284,7 +284,7 @@ fn branch_names_the_ticket() {
         .assert()
         .success()
         .stdout(contains("ABC-2"))
-        .stdout(contains("next: closed"));
+        .stdout(contains("next: commit-close"));
 }
 
 #[test]
