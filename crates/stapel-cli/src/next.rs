@@ -346,12 +346,12 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
             _ => {}
         }
     }
-    // A stopped ticket waits for the earlier one from the build on (STP-27 AC-17).
     // The dependency review of each earlier parallel ticket comes first (STP-27 AC-20).
+    let mut reviewing = false;
     if at_build {
         let pending = stapel_core::depends::pending_for(&root, &ticket);
-        let waits = stapel_core::parallel::waits(&root);
         if !pending.is_empty() {
+            reviewing = true;
             decision
                 .facts
                 .extend(pending.iter().map(|p| format!("blocked: {}", p.line())));
@@ -360,15 +360,28 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
                 subject: None,
                 target: Some(Target::Command(format!("stapel depends {}", ticket.key))),
             };
-        } else if let Some(first) = waits.first() {
+        }
+    }
+    // A stopped ticket shows the wait in every stage; it takes the place of a build action only
+    // (STP-27 AC-17). `next` removes the stops that are obsolete.
+    if !foreign {
+        stapel_core::parallel::prune_stops(&root);
+        let waits = stapel_core::parallel::waits(&root);
+        if let Some(first) = waits.first() {
             decision
                 .facts
                 .extend(waits.iter().map(|w| format!("blocked: {}", w.line())));
-            decision.action = Action {
-                name: "wait",
-                subject: None,
-                target: Some(Target::Command(first.earlier.clone())),
-            };
+            let build = matches!(
+                decision.action.name,
+                "build-step" | "green-step" | "run-check" | "code-review" | "close"
+            );
+            if build && !reviewing {
+                decision.action = Action {
+                    name: "wait",
+                    subject: None,
+                    target: Some(Target::Command(first.earlier.clone())),
+                };
+            }
         }
     }
     if json {

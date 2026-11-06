@@ -271,25 +271,70 @@ fn earlier_spec_fresh(root: &Path, own: &Ticket, earlier: &str) -> bool {
     crate::stage::is_fresh(&config, &crate::ticket::parse(&text), state, "spec")
 }
 
-/// The stops that block the branch ticket at `root` (STP-27 AC-17). A stop whose earlier ticket is
-/// closed in `HEAD` is removed (AC-18); one whose earlier ticket is closed on the base branch does
-/// not block. A `merge` stop blocks otherwise; a `spec` stop blocks while the earlier spec is stale.
+/// The stop files of `key` in `stops`, sorted; a missing folder holds none, an unreadable one is an
+/// error.
+fn stop_files(stops: &Path, key: &str) -> std::io::Result<Vec<PathBuf>> {
+    let mut files: Vec<PathBuf> = match std::fs::read_dir(stops.join(key)) {
+        Ok(entries) => entries
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|e| e.path())
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e),
+    };
+    files.sort();
+    Ok(files)
+}
+
+/// Removes the stops of the branch ticket at `root` whose earlier ticket is closed in `HEAD`
+/// (STP-27 AC-18). Only `next` and the post-tool-use hook call it; the guard only reads.
+pub fn prune_stops(root: &Path) {
+    let (Some(own), Some(stops)) = (branch_ticket(root), stops_dir(root)) else {
+        return;
+    };
+    for path in stop_files(&stops, &own.key).unwrap_or_default() {
+        let earlier = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_suffix(".json"))
+            .and_then(|n| n.rsplit_once('-'))
+            .map(|(e, _)| e);
+        if let Some(earlier) = earlier
+            && !earlier.is_empty()
+            && closed_at(root, "HEAD", earlier)
+        {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
+/// The stops that block the branch ticket at `root` (STP-27 AC-17); it only reads. A stop whose
+/// earlier ticket is closed in `HEAD` or on the base branch does not block. A `merge` stop blocks
+/// otherwise; a `spec` stop blocks while the earlier spec is stale. A ticket whose `state.json` or
+/// stops folder cannot be read waits, so the guard denies code.
 pub fn waits(root: &Path) -> Vec<Wait> {
     let mut found = Vec::new();
     let Some(own) = branch_ticket(root) else {
         return found;
     };
+    let unreadable = |why: &str| {
+        vec![Wait {
+            later: own.key.clone(),
+            earlier: "unknown".to_string(),
+            reason: why.to_string(),
+        }]
+    };
+    if matches!(own.status, Status::Unreadable(_)) {
+        return unreadable("its state.json cannot be read");
+    }
     let Some(stops) = stops_dir(root) else {
-        return found;
+        return unreadable("the stops folder is not known");
     };
     let base = state_of(&own).and_then(|s| s.base_branch.clone());
-    let mut files: Vec<PathBuf> = std::fs::read_dir(stops.join(&own.key))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .collect();
-    files.sort();
+    let Ok(files) = stop_files(&stops, &own.key) else {
+        return unreadable("the stops folder cannot be read");
+    };
     for path in files {
         let Some(name) = path
             .file_name()
@@ -305,7 +350,6 @@ pub fn waits(root: &Path) -> Vec<Wait> {
             continue;
         }
         if closed_at(root, "HEAD", earlier) {
-            let _ = std::fs::remove_file(&path);
             continue;
         }
         if base

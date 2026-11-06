@@ -84,6 +84,7 @@ pub fn post_tool_use() -> ExitCode {
         std::io::stdin().read_to_string(&mut text).ok()?;
         let (event, root) = hook_repository(&text)?;
         let mut lines = crate::check::hook_faults(&root).unwrap_or_default();
+        stapel_core::parallel::prune_stops(&root);
         let trials = if stapel_core::parallel::operation_in_progress(&root) {
             Vec::new()
         } else {
