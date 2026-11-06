@@ -105,7 +105,7 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
                 return Decision::Deny(reason.into());
             }
             if input.agent_id.as_deref().is_some_and(|id| !id.is_empty())
-                && !subagent_git_ok(command, cwd)
+                && !subagent_git_ok(command, cwd, project_dir)
             {
                 return Decision::Deny(format!(
                     "subagents run only these git commands in their own worktree: {}",
@@ -324,11 +324,16 @@ const SUBAGENT_GIT: [&str; 12] = [
 /// True when every `git`, `cd` and `GIT_*` word of a subagent's command stays within the
 /// rules: allowed subcommands, no config or location options, paths inside the worktree.
 /// Text the parser cannot read is refused.
-fn subagent_git_ok(command: &str, cwd: &Path) -> bool {
+fn subagent_git_ok(command: &str, cwd: &Path, project_dir: Option<&Path>) -> bool {
     if command.len() > MAX_COMMAND_LEN {
         return false;
     }
-    let root = resolve(&stapel_root(cwd).unwrap_or_else(|| cwd.to_path_buf()));
+    // The Hook root: the stapel root of `cwd`, else of the project dir, else `cwd`.
+    let root = resolve(
+        &stapel_root(cwd)
+            .or_else(|| project_dir.and_then(stapel_root))
+            .unwrap_or_else(|| cwd.to_path_buf()),
+    );
     let mut at = resolve(cwd);
     let mut budget = WORK_BUDGET;
     subagent_scan(command, &root, &mut at, 0, &mut budget)
@@ -370,15 +375,12 @@ fn subagent_simple(
     depth: usize,
     budget: &mut usize,
 ) -> bool {
-    if words
-        .iter()
-        .any(|w| w.starts_with("GIT_") && w.contains('='))
-    {
-        return false;
-    }
     let mut start = 0;
     while let Some(w) = words.get(start) {
         if RESERVED.contains(&w.as_str()) || is_assignment(w) {
+            if w.starts_with("GIT_") && is_assignment(w) {
+                return false;
+            }
             start += 1;
         } else {
             break;
@@ -404,15 +406,50 @@ fn subagent_simple(
     if name == "git" {
         return subagent_git_args(args, root, at);
     }
+    if matches!(
+        name,
+        "export" | "declare" | "typeset" | "local" | "readonly"
+    ) && args
+        .iter()
+        .any(|a| a.starts_with("GIT_") && is_assignment(a))
+    {
+        return false;
+    }
     if WRAPPERS.contains(&name) || name == "eval" {
         // Any later word may start the wrapped program, and a word with a space may be a command line.
+        let mut here = at.clone();
         for (i, arg) in args.iter().enumerate() {
             if arg.contains(char::is_whitespace)
                 && !subagent_scan(arg, root, &mut at.clone(), depth + 1, budget)
             {
                 return false;
             }
-            if base_name(arg) == "git" && !subagent_git_args(&args[i + 1..], root, at) {
+            if name == "env" {
+                let dir = match arg.as_str() {
+                    "-C" | "--chdir" => Some(args.get(i + 1).map(String::as_str)),
+                    _ => arg
+                        .strip_prefix("--chdir=")
+                        .or_else(|| arg.strip_prefix("-C").filter(|d| !d.is_empty()))
+                        .map(Some),
+                };
+                if let Some(dir) = dir {
+                    let Some(dir) = dir else {
+                        return false;
+                    };
+                    if dir.contains('$') || dir.starts_with('~') {
+                        return false;
+                    }
+                    let target = here.join(dir);
+                    if !in_own_worktree(&target, root) {
+                        return false;
+                    }
+                    here = resolve(&target);
+                }
+            }
+            if is_assignment(arg) && arg.starts_with("GIT_") {
+                return false;
+            }
+            if base_name(arg) == "git" && !subagent_git_args(&args[i + 1..], root, &here) {
                 return false;
             }
         }
@@ -438,7 +475,7 @@ fn subagent_git_args(args: &[String], root: &Path, at: &Path) -> bool {
             let Some(path) = args.get(i + 1) else {
                 return false;
             };
-            if path.contains('$') || !in_own_worktree(&at.join(path), root) {
+            if path.contains('$') || path.starts_with('~') || !in_own_worktree(&at.join(path), root) {
                 return false;
             }
             // A later `-C` is relative to this one; keep it simple and refuse a chain.
@@ -466,7 +503,13 @@ fn subagent_git_args(args: &[String], root: &Path, at: &Path) -> bool {
     };
     SUBAGENT_GIT.contains(&sub.as_str())
         && !args[i + 1..].iter().any(|a| {
-            a.starts_with("--output") || a.starts_with("--git-dir") || a.starts_with("--work-tree")
+            a.starts_with("--output")
+                || a.starts_with("--git-dir")
+                || a.starts_with("--work-tree")
+                || a.starts_with("-O")
+                || a.starts_with("--open-files-in-pager")
+                || a.starts_with("--ext-diff")
+                || a.starts_with("--textconv")
         })
 }
 
