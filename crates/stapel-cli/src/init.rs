@@ -87,6 +87,14 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
                 config.tickets.key
             );
         }
+        if let Some(new_text) = add_roles_rows(&text, &config) {
+            plan.push(Step {
+                label: format!("updated: {CONFIG}"),
+                rel: CONFIG.into(),
+                content: new_text,
+                executable: false,
+            });
+        }
         config
     } else {
         let prefix = match prefix {
@@ -148,6 +156,46 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
         say!("note: restart Claude Code so that it loads the new agents and skill");
     }
     Ok(())
+}
+
+/// The text of an existing `stapel.toml` with the `[roles]` row of each installed agent that the
+/// table lacks, every other line kept; `None` when there is no `[roles]` table or no row is missing.
+fn add_roles_rows(text: &str, config: &Config) -> Option<String> {
+    let roles = config.roles.as_ref()?;
+    let missing: Vec<String> = AGENT_FILES
+        .iter()
+        .filter(|a| !roles.contains_key(&format!("stapel-{}", a.name)))
+        .map(|a| format!("stapel-{} = \"{}\"", a.name, a.role))
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let at = lines.iter().position(|l| l.trim() == "[roles]")?;
+    let mut last = at;
+    for (i, l) in lines.iter().enumerate().skip(at + 1) {
+        let t = l.trim();
+        if t.starts_with('[') {
+            break;
+        }
+        if !t.is_empty() && !t.starts_with('#') {
+            last = i;
+        }
+    }
+    let mut out = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        out.push_str(l);
+        if i == last {
+            if !l.ends_with('\n') {
+                out.push('\n');
+            }
+            for row in &missing {
+                out.push_str(row);
+                out.push('\n');
+            }
+        }
+    }
+    Some(out)
 }
 
 const SKILL_PATH: &str = ".claude/skills/stapel/SKILL.md";
