@@ -524,3 +524,63 @@ fn held_mark_takes_no_lock() {
     let line = std::fs::read_to_string(lock_dir.join("cargo.lock")).unwrap();
     assert!(line.is_empty(), "a holder line was written: {line}");
 }
+
+// STP-27 AC-11 (D7-4): an empty held mark takes the lock; a killed `stapel cargo` holder with a
+// `stapel check` waiter: the waiter names the holder and goes on after the cargo child ends.
+#[test]
+fn lock_edges() {
+    let root = tempfile::tempdir().unwrap();
+    let standin = Standin::new(root.path());
+    let home = root.path().join("home");
+    let lock_dir = home.join(".cache/stapel");
+    std::fs::create_dir_all(&lock_dir).unwrap();
+    let repo = check_repo();
+    let dir = repo.path();
+
+    // An empty held mark is no mark: the lock is taken and the holder line written.
+    let mut cmd = standin.command(dir, &home, &["cargo", "print"]);
+    cmd.env("STAPEL_CARGO_LOCK_HELD", "");
+    let out = cmd.output().unwrap();
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+    let holder = std::fs::read_to_string(standin.ctl.join("holder")).unwrap();
+    assert!(holder.contains(", pid "), "no holder line: {holder:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("mark=\n"), "empty mark passed on: {stdout}");
+    std::fs::remove_file(standin.ctl.join("log")).unwrap();
+
+    // A killed `stapel cargo` holder, a `stapel check` waiter.
+    standin.touch("hold");
+    let mut holder = standin
+        .command(dir, &home, &["cargo", "hold"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_until("the holder's cargo", || standin.ctl.join("started").exists());
+    standin.remove("hold");
+    let err = root.path().join("check.err");
+    let mut waiter = spawn_to(standin.command(dir, &home, &["check", "ABC-1"]), &err);
+    wait_until("the wait line", || {
+        std::fs::read_to_string(&err)
+            .unwrap_or_default()
+            .contains(WAIT_LINE)
+    });
+    let holder_pid = holder.id();
+    kill9(&mut holder);
+    std::thread::sleep(Duration::from_millis(700));
+    assert!(
+        waiter.try_wait().unwrap().is_none(),
+        "the check went on while the holder's cargo child still ran"
+    );
+    assert_eq!(standin.runs("--version"), 0, "{}", standin.log());
+    standin.touch("release");
+    wait_exit(&mut waiter, "the check waiter");
+    assert!(standin.runs("--version") > 0, "{}", standin.log());
+    let text = std::fs::read_to_string(&err).unwrap();
+    assert_eq!(text.matches(WAIT_LINE).count(), 1, "{text}");
+    let line = text.lines().find(|l| l.contains(WAIT_LINE)).unwrap();
+    assert!(
+        line.contains(&format!("pid {holder_pid}")) && line.contains("stapel cargo hold"),
+        "{line}"
+    );
+}

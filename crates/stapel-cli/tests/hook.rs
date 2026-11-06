@@ -1437,6 +1437,49 @@ fn permit_only_for_the_branch_ticket() {
     code_write(dir).success();
 }
 
+// STP-27 AC-9 (D6-1 to D6-3): the permit comes from the branch ticket alone, in both directions.
+#[test]
+fn permit_edges() {
+    // ABC-2 has the permit on branch ABC-2 while ABC-1 has none: the write is allowed; and the
+    // reverse: ABC-1 has the permit, branch ABC-2 has none: denied, naming only ABC-2.
+    let pair = common::two_ticket_worktrees();
+    let (a, b) = (pair.a.as_path(), pair.b.as_path());
+    set_state(b, "ABC-2", r#"{"key":"ABC-2","build":{"allowed":true}}"#);
+    code_write(b).success();
+    code_write(a).code(DENY).stderr(contains("ABC-1"));
+    let pair = common::two_ticket_worktrees();
+    let (a, b) = (pair.a.as_path(), pair.b.as_path());
+    set_state(a, "ABC-1", r#"{"key":"ABC-1","build":{"allowed":true}}"#);
+    code_write(b)
+        .code(DENY)
+        .stderr(contains("ABC-2"))
+        .stderr(predicates::str::contains("ABC-1").not());
+    code_write(a).success();
+
+    // A branch ABC-7 without a ticket folder: the rule of STP-18 stays (the permit of ABC-1 opens it).
+    let repo = confirmed_repo();
+    let dir = repo.path();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&["config", "user.email", "test-user"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "base"]);
+    let outside = tempfile::tempdir().unwrap();
+    let wt = outside.path().join("wt");
+    git(&["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "ABC-7"]);
+    code_write(&wt).success();
+}
+
 // STP-27 AC-13: cargo runs only through `stapel cargo`.
 #[test]
 fn bare_cargo_denied() {
