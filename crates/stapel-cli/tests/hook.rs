@@ -1659,3 +1659,29 @@ fn hook_root_edges() {
     // No `cwd`: the project dir comes before the working directory.
     write(a, None, Some(b), b).code(DENY);
 }
+
+// STP-27 AC-26 (D12-2): the guard compares the written path with the Hook root.
+#[test]
+fn writes_stay_in_the_worktree() {
+    let pair = common::two_ticket_worktrees();
+    let (a, b, main) = (pair.a.as_path(), pair.b.as_path(), pair.repo.path());
+    // Both tickets have the permit, so only the worktree rule can deny.
+    set_state(a, "ABC-1", r#"{"key":"ABC-1","build":{"allowed":true}}"#);
+    set_state(b, "ABC-2", r#"{"key":"ABC-2","build":{"allowed":true}}"#);
+    let outside_text = |path: &Path| format!("{} is outside the worktree of ABC-2", path.display());
+
+    // The Hook root is the ABC-2 worktree: the main checkout and the ABC-1 worktree are refused.
+    for tool in ["Edit", "Write"] {
+        for base in [main, a] {
+            let path = base.join("crates/x.rs");
+            write_call(b, tool, &path.display().to_string())
+                .code(DENY)
+                .stderr(contains(outside_text(&path)));
+        }
+    }
+    // Its own worktree is decided as before.
+    code_write(b).success();
+    // A path outside every checkout is decided as before.
+    let elsewhere = bare_dir();
+    write_call(b, "Edit", &elsewhere.path().join("x.rs").display().to_string()).success();
+}
