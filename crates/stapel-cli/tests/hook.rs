@@ -1568,6 +1568,51 @@ fn subagent_git_guard() {
     ] {
         call(command, true).success();
     }
+
+    // Git guard fixes (D10-1 to D10-3, D10-5).
+    for command in [
+        "git -C ~ status",
+        "git -C ~/x status",
+        "env -C /tmp git commit -m x",
+        "env --chdir=/tmp git status",
+        "git grep -O x",
+        "git grep --open-files-in-pager=vi x",
+        "git diff --ext-diff",
+        "git log --textconv",
+    ] {
+        call(command, true).code(DENY);
+        call(command, false).success();
+    }
+    // GIT_DIR is denied for the main session too (the bypass rule).
+    call("GIT_DIR=/x git status", true).code(DENY);
+    call("echo GIT_A=1", true).success();
+
+    // D10-4: the worktree is the one of the Hook root, `CLAUDE_PROJECT_DIR` included.
+    let pair = common::two_ticket_worktrees();
+    let main = pair.repo.path();
+    let from = |cwd: &Path, command: &str| {
+        let payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "cwd": cwd,
+            "agent_id": "agent-1",
+            "tool_name": "Bash",
+            "tool_input": { "command": command },
+        });
+        stapel(cwd)
+            .env("CLAUDE_PROJECT_DIR", main)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+    };
+    from(&pair.b, "git -C crates status").success();
+    from(&pair.b, &format!("git -C {} status", main.display())).code(DENY);
+    let outside = bare_dir();
+    from(
+        outside.path(),
+        &format!("git -C {} status", main.join("crates").display()),
+    )
+    .success();
 }
 
 // STP-27 AC-8: the guard takes its root from the input's `cwd` first, then `CLAUDE_PROJECT_DIR`,
