@@ -47,8 +47,9 @@ pub fn pre_tool_use() -> ExitCode {
 }
 
 /// `stapel hook session-start` (STP-22): in a stapel repository, the skill line and, when
-/// `stapel next` succeeds there, `stapel next:` and its text. Stdin is not read. Everything
-/// else, a panic included, prints nothing more and exits 0.
+/// `stapel next` succeeds there, `stapel next:` and its text. Stdin is read for the payload's
+/// `cwd` (the hook root); a run from a terminal waits for input. Everything else, a panic
+/// included, prints nothing more and exits 0.
 pub fn session_start() -> ExitCode {
     std::panic::set_hook(Box::new(|_| {}));
     let root = std::panic::catch_unwind(|| {
@@ -113,9 +114,8 @@ pub fn post_tool_use() -> ExitCode {
 }
 
 /// The payload's hook event and the stapel root of the hook repository when the payload is a
-/// PostToolUse or PostToolUseFailure payload of a Bash call with a commit command: the root of the
-/// first present source among the payload's `cwd`, `CLAUDE_PROJECT_DIR` and the working
-/// directory, with no fallback to the next. An empty `cwd` or `CLAUDE_PROJECT_DIR` is absent.
+/// PostToolUse or PostToolUseFailure payload of a Bash call with a commit command: the hook root
+/// of the payload (`token_root`).
 fn hook_repository(text: &str) -> Option<(String, PathBuf)> {
     let payload: serde_json::Value = serde_json::from_str(text).ok()?;
     let event = payload.get("hook_event_name")?.as_str()?;
@@ -129,19 +129,7 @@ fn hook_repository(text: &str) -> Option<(String, PathBuf)> {
     if !holds_git_commit(command) {
         return None;
     }
-    let here = std::env::current_dir().ok()?;
-    let source = match payload
-        .get("cwd")
-        .and_then(|c| c.as_str())
-        .filter(|c| !c.is_empty())
-    {
-        Some(cwd) => here.join(cwd),
-        None => match std::env::var_os("CLAUDE_PROJECT_DIR").filter(|d| !d.is_empty()) {
-            Some(dir) => here.join(dir),
-            None => here,
-        },
-    };
-    Some((event.to_string(), stapel_root(&source)?))
+    Some((event.to_string(), token_root(&payload)?))
 }
 
 fn deny(reason: &str) -> ExitCode {

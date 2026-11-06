@@ -508,10 +508,14 @@ fn plan_append_lines(
     lines: &[&str],
     plan: &mut Vec<Step>,
 ) -> Result<(), String> {
+    let mut existed = true;
     let mut text = match std::fs::read(root.join(rel)) {
         Ok(bytes) => String::from_utf8(bytes)
             .map_err(|_| format!("{rel} is not UTF-8; the file was not touched"))?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            existed = false;
+            String::new()
+        }
         Err(e) => return Err(format!("{rel}: {e}")),
     };
     let mut changed = false;
@@ -530,7 +534,7 @@ fn plan_append_lines(
         plan.push(Step {
             rel: rel.into(),
             content: text,
-            label: format!("appended: {rel}"),
+            label: format!("{}: {rel}", if existed { "appended" } else { "created" }),
             executable: false,
         });
     }
