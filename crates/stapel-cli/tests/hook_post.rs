@@ -1198,11 +1198,49 @@ fn reads_the_hook_repository() {
         "cwd in a failing worktree",
     );
 
-    // `cwd` outside any stapel repository: no fallback.
+    // `cwd` outside any stapel repository: the next source (D5-1).
     let outside = common::bare_dir();
-    assert_silent(
+    assert_fault(
         run_hook(bad, Some(bad), &payload(Some(outside.path()), commit_cmd)),
         "cwd outside",
+    );
+}
+
+// STP-27 AC-8, D5-1: the hook root is the `cwd`'s root, before `CLAUDE_PROJECT_DIR`; a `cwd`
+// outside any stapel repository gives way to `CLAUDE_PROJECT_DIR`.
+#[test]
+fn root_from_input_cwd() {
+    let bad = failing();
+    let good = clean();
+    let (bad, good) = (bad.path(), good.path());
+    let commit_cmd = "git commit -m x";
+    let away = common::bare_dir();
+
+    assert_fault(
+        run_hook(away.path(), Some(good), &payload(Some(bad), commit_cmd)),
+        "cwd failing, CLAUDE_PROJECT_DIR clean",
+    );
+    assert_silent(
+        run_hook(away.path(), Some(bad), &payload(Some(good), commit_cmd)),
+        "cwd clean, CLAUDE_PROJECT_DIR failing",
+    );
+
+    let outside = common::bare_dir();
+    assert_fault(
+        run_hook(
+            away.path(),
+            Some(bad),
+            &payload(Some(outside.path()), commit_cmd),
+        ),
+        "cwd outside, CLAUDE_PROJECT_DIR failing",
+    );
+    assert_silent(
+        run_hook(
+            away.path(),
+            Some(good),
+            &payload(Some(outside.path()), commit_cmd),
+        ),
+        "cwd outside, CLAUDE_PROJECT_DIR clean",
     );
 }
 

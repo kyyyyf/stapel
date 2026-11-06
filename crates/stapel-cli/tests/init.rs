@@ -3,6 +3,7 @@
 mod common;
 
 use common::{bare_dir, git_repo, read, stapel};
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use stapel_core::config::Config;
 
@@ -74,7 +75,7 @@ fn creates_layout_in_empty_repo() {
         .stdout(contains("created: .stapel/stapel.toml"))
         .stdout(contains("created: .stapel/allowlist.toml"))
         .stdout(contains("created: .stapel/tickets/.gitkeep"))
-        .stdout(contains("appended: .gitignore"))
+        .stdout(contains("created: .gitignore"))
         .stdout(contains("created: .claude/settings.json"));
 
     assert!(dir.join(".stapel/stapel.toml").is_file());
@@ -152,7 +153,10 @@ fn worktrees_ignored_and_journals_union() {
     stapel(empty.path())
         .args(["init", "--prefix", "ABC"])
         .assert()
-        .success();
+        .success()
+        .stdout(contains("created: .gitignore\n"))
+        .stdout(contains("created: .gitattributes\n"))
+        .stdout(contains("appended: .gitattributes").not());
     let attrs = read(empty.path(), ".gitattributes");
     assert_eq!(
         attrs,
