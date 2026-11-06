@@ -1497,6 +1497,20 @@ fn bare_cargo_denied() {
     for command in ["stapel cargo test -p x", "echo cargo"] {
         bash(repo.path(), command).success();
     }
+    // Held mark forms (D9-1, D9-2): setting the mark is denied, naming it is not.
+    for command in [
+        "export STAPEL_CARGO_LOCK_HELD=1",
+        "env STAPEL_CARGO_LOCK_HELD=1 stapel cargo test",
+        "sh -c \"STAPEL_CARGO_LOCK_HELD=1 stapel cargo test\"",
+    ] {
+        bash(repo.path(), command).code(DENY).stderr(contains(text));
+    }
+    for command in [
+        "grep STAPEL_CARGO_LOCK_HELD src/x.rs",
+        "echo $STAPEL_CARGO_LOCK_HELD",
+    ] {
+        bash(repo.path(), command).success();
+    }
 }
 
 // STP-27 AC-14: a subagent runs only allowed git commands inside its own worktree.
