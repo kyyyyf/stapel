@@ -164,6 +164,71 @@ fn worktrees_ignored_and_journals_union() {
     );
 }
 
+// STP-27 AC-1, D1-3: edges of the union lines.
+#[test]
+fn union_lines_edges() {
+    let ledger = ".stapel/process-ledger.jsonl merge=union";
+    let sessions = ".stapel/sessions.jsonl merge=union";
+
+    // One of the two lines present: only the other is appended.
+    for (have, want) in [(ledger, sessions), (sessions, ledger)] {
+        let repo = git_repo();
+        let dir = repo.path();
+        std::fs::write(dir.join(".gitattributes"), format!("{have}\n")).unwrap();
+        stapel(dir)
+            .args(["init", "--prefix", "ABC"])
+            .assert()
+            .success();
+        assert_eq!(read(dir, ".gitattributes"), format!("{have}\n{want}\n"));
+    }
+
+    // A file without a final newline gets a newline, then the lines.
+    let repo = git_repo();
+    let dir = repo.path();
+    std::fs::write(dir.join(".gitattributes"), "*.png binary").unwrap();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    assert_eq!(
+        read(dir, ".gitattributes"),
+        format!("*.png binary\n{ledger}\n{sessions}\n")
+    );
+
+    // A second run after a first run created both files changes nothing.
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success()
+        .stdout(contains("created: .gitattributes\n"));
+    let ignore = read(dir, ".gitignore");
+    let attrs = read(dir, ".gitattributes");
+    stapel(dir)
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(contains("created: .gitattributes").not())
+        .stdout(contains("appended: .gitattributes").not());
+    assert_eq!(read(dir, ".gitignore"), ignore);
+    assert_eq!(read(dir, ".gitattributes"), attrs);
+
+    // A non-UTF-8 .gitattributes is refused and kept.
+    let repo = git_repo();
+    let dir = repo.path();
+    std::fs::write(dir.join(".gitattributes"), b"\xff\xfe\n").unwrap();
+    let out = stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert_eq!(
+        std::fs::read(dir.join(".gitattributes")).unwrap(),
+        b"\xff\xfe\n"
+    );
+}
+
 // AC-11
 #[test]
 fn refuses_outside_git() {

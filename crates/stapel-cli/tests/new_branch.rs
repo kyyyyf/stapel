@@ -330,3 +330,132 @@ fn key_must_match_the_branch() {
         .assert()
         .success();
 }
+
+// STP-27 AC-5, D3-4: edges of `new`.
+#[test]
+fn new_edges() {
+    let repo = stapel_repo();
+    let dir = repo.path();
+    std::fs::create_dir_all(dir.join("docs")).unwrap();
+    std::fs::write(dir.join("docs/a.md"), "a\n").unwrap();
+    commit_all(dir);
+
+    // The main checkout holds no folder of the new key.
+    stapel(dir).args(["new", "First"]).assert().success();
+    assert!(!dir.join(".stapel/tickets/ABC-1").exists());
+    assert!(dir.join(".claude/worktrees/ABC-1/.stapel/tickets/ABC-1/ticket.md").is_file());
+
+    // `new` from a second base worktree puts the worktree under the main checkout.
+    let outside = tempfile::tempdir().unwrap();
+    let second = outside.path().join("second");
+    git(dir, &["worktree", "add", "-q", second.to_str().unwrap(), "-b", "other-base"]);
+    stapel(&second).args(["new", "Second"]).assert().success();
+    assert!(dir.join(".claude/worktrees/ABC-2/.stapel/tickets/ABC-2/ticket.md").is_file());
+    assert!(!second.join(".claude/worktrees").exists());
+    assert!(!second.join(".stapel/tickets/ABC-2").exists());
+
+    // A dirty refusal leaves no branch and no worktree: untracked file, then a rename.
+    let branches = git_out(dir, &["branch", "--list"]);
+    let worktrees = git_out(dir, &["worktree", "list"]);
+    std::fs::write(dir.join("docs/b.md"), "b\n").unwrap();
+    stapel(dir)
+        .args(["new", "Third"])
+        .assert()
+        .code(2)
+        .stderr(contains("commit the changes of docs/b.md first; the new worktree starts at HEAD"));
+    std::fs::remove_file(dir.join("docs/b.md")).unwrap();
+    git(dir, &["mv", "docs/a.md", "docs/c.md"]);
+    stapel(dir)
+        .args(["new", "Third"])
+        .assert()
+        .code(2)
+        .stderr(contains("docs/c.md"))
+        .stderr(contains("commit the changes of"));
+    assert_eq!(git_out(dir, &["branch", "--list"]), branches);
+    assert_eq!(git_out(dir, &["worktree", "list"]), worktrees);
+    assert!(!dir.join(".claude/worktrees/ABC-3").exists());
+    assert!(!branches.contains("ABC-3"));
+}
+
+// STP-27 AC-6, D4-3: more commands without KEY on a ticket branch.
+#[test]
+fn commands_on_a_branch() {
+    let repo = two_tickets_in_one_checkout();
+    let dir = repo.path();
+    git(dir, &["checkout", "-q", "-b", "ABC-2"]);
+    let none_of_abc1 = |what: &str| {
+        let folder = dir.join(".stapel/tickets/ABC-1");
+        for f in ["findings.jsonl", "decisions.jsonl", "tokens.jsonl"] {
+            assert!(!folder.join(f).exists(), "{what} wrote ABC-1/{f}");
+        }
+    };
+
+    let out = stapel(dir).arg("check").output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("several open tickets"), "{err}");
+
+    let finding = serde_json::json!({
+        "id": "F-1", "ticket": "ABC-2", "stage": "code-review", "round": 1,
+        "role": "reviewer", "severity": "HIGH", "promise": "inside", "claim": "a claim",
+        "catchable_at": "code", "fate": "patch",
+    });
+    std::fs::write(dir.join("in.jsonl"), format!("{finding}\n")).unwrap();
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success()
+        .stdout("imported: 1 findings into ABC-2\n");
+    stapel(dir)
+        .args(["ledger", "add", "--kind", "finding", "--note", "n"])
+        .assert()
+        .success()
+        .stdout("recorded: finding for ABC-2\n");
+    let record = serde_json::json!({
+        "id": "T-1", "role": "builder", "model": "m-1", "source": "measured",
+        "input": 10, "output": 5,
+    });
+    std::fs::write(dir.join("tok.jsonl"), format!("{record}\n")).unwrap();
+    stapel(dir)
+        .args(["tokens", "import-records", "tok.jsonl"])
+        .assert()
+        .success()
+        .stdout(contains("ABC-2"));
+    assert!(dir.join(".stapel/tickets/ABC-2/findings.jsonl").is_file());
+    assert!(dir.join(".stapel/tickets/ABC-2/tokens.jsonl").is_file());
+    none_of_abc1("import");
+
+    // A foreign key is refused: `ok ABC-1` and the close dialog for ABC-1.
+    let text = "ABC-1 is not the ticket of branch ABC-2; run it in .claude/worktrees/ABC-1";
+    stapel(dir)
+        .args(["ok", "ABC-1"])
+        .assert()
+        .code(2)
+        .stderr(contains(text));
+    let payload = serde_json::json!({
+        "tool_name": "Bash",
+        "cwd": dir,
+        "permission_mode": "auto",
+        "tool_input": { "command": "stapel close ABC-1 --reason done", "description": "t" },
+    });
+    let out = stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(payload.to_string())
+        .output()
+        .unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(all.contains(text), "{all}");
+    assert!(!all.contains("--grant"), "{all}");
+
+    // `close` without KEY closes the branch ticket only.
+    stapel(dir)
+        .args(["close", "--reason", "done"])
+        .assert()
+        .success()
+        .stdout(contains("closed: ABC-2"));
+    assert!(state_json(dir, "ABC-2").get("closed").is_some());
+    assert!(state_json(dir, "ABC-1").get("closed").is_none());
+}
