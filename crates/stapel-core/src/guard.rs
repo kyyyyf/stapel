@@ -649,7 +649,10 @@ fn check_words(words: &[String], found: &mut Found) {
         if HOOK_WORDS.iter().any(|w| lower.contains(w)) {
             found.bypass = true;
         }
-        if word.contains(CARGO_LOCK_HELD_WORD) {
+        if word
+            .strip_prefix(CARGO_LOCK_HELD_WORD)
+            .is_some_and(|rest| rest.starts_with('='))
+        {
             found.cargo = true;
         }
         if HOOKLESS_PUSH_WORDS.iter().any(|w| lower.contains(w)) {
