@@ -318,6 +318,30 @@ fn confirmed_dependency_stops() {
     );
     assert_eq!(stop_kind(&pair), "spec");
 
+    // A HIGH record whose `waits` a triage edit lost: the stop has the kind `merge` (D14-4).
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let round = round_of(&pair.b);
+    review_returns(&pair, &[record("D-1", &round, "HIGH", Some("spec"), "a dependency")]);
+    assert_eq!(stop_kind(&pair), "spec");
+    let findings = pair.b.join(".stapel/tickets/ABC-2/findings.jsonl");
+    let lost: String = std::fs::read_to_string(&findings)
+        .unwrap()
+        .lines()
+        .map(|l| {
+            let mut v: Value = serde_json::from_str(l).unwrap();
+            v.as_object_mut().unwrap().remove("waits");
+            format!("{v}\n")
+        })
+        .collect();
+    std::fs::write(&findings, lost).unwrap();
+    put_records(
+        &pair.b,
+        "triage",
+        &[json!({"id": "D-1", "ticket": "ABC-2", "fate": "defer", "verdict": "high"})],
+    );
+    assert_eq!(stop_kind(&pair), "merge");
+
     // Only LOW records: no stop.
     let pair = two_ticket_worktrees();
     build_ready(&pair.b, "ABC-2");

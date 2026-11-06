@@ -1854,6 +1854,16 @@ fn dependency_stage() {
     let mut number_round = dep("D-1");
     number_round["round"] = json!(1);
     assert!(refuse(b, &number_round).contains("round"));
+    // A LOW record with another claim, or with `waits`, is refused (D13-1).
+    let mut low_claim = dep("D-1");
+    low_claim["severity"] = json!("LOW");
+    low_claim["claim"] = json!("a small thing");
+    low_claim.as_object_mut().unwrap().remove("waits");
+    assert!(refuse(b, &low_claim).contains("claim"));
+    let mut low_waits = dep("D-1");
+    low_waits["severity"] = json!("LOW");
+    low_waits["claim"] = json!("no dependency found");
+    assert!(refuse(b, &low_waits).contains("waits"));
     assert!(target(b).is_none());
 
     // HIGH with `waits: merge` and a LOW `no dependency found` without `waits` pass.
