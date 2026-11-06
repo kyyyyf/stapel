@@ -189,6 +189,49 @@ fn conflict_stops_the_later() {
     );
     assert!(said.contains(conflict_line()), "{said}");
     assert!(stop_path(&pair, "ABC-2", "ABC-1").is_file());
+
+    // A commit during a rebase, a merge and a cherry-pick: no trial merge, no stop (D11-1).
+    for (marker, is_dir) in [
+        ("rebase-merge", true),
+        ("rebase-apply", true),
+        ("MERGE_HEAD", false),
+        ("CHERRY_PICK_HEAD", false),
+    ] {
+        let pair = two_ticket_worktrees();
+        write_commit(&pair.a, "src/shared.txt", &lines_with(10, 2, "from a"));
+        write_commit(&pair.b, "src/shared.txt", &lines_with(10, 2, "from b"));
+        let git_dir = git_in(&pair.b, &["rev-parse", "--absolute-git-dir"])
+            .trim()
+            .to_string();
+        let path = format!("{git_dir}/{marker}");
+        if is_dir {
+            std::fs::create_dir_all(&path).unwrap();
+        } else {
+            std::fs::write(&path, "0000000000000000000000000000000000000000\n").unwrap();
+        }
+        let said = hook(&pair.b, &[]);
+        assert!(!said.contains("conflicts"), "{marker}: {said}");
+        assert!(!stop_path(&pair, "ABC-2", "ABC-1").exists(), "{marker}");
+    }
+
+    // A stops folder that cannot be written: the hook says so (D11-3).
+    let pair = two_ticket_worktrees();
+    let folder = pair.repo.path().join(".git/stapel");
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::write(&folder, "not a folder").unwrap();
+    let said = both_change(
+        &pair,
+        "src/shared.txt",
+        &lines_with(10, 2, "from a"),
+        &lines_with(10, 2, "from b"),
+        &[],
+    );
+    let want = format!(
+        "stop not written: {}",
+        stop_path(&pair, "ABC-2", "ABC-1").display()
+    );
+    assert!(said.contains(&want), "{said}");
+    assert!(!said.contains("trial merge not run"), "{said}");
 }
 
 /// `stapel next` in `dir`: its stdout.
