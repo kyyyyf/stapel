@@ -138,6 +138,24 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
                     target.display()
                 ));
             }
+            // D12-2: a hook rooted in a ticket worktree writes only inside that worktree.
+            if let Some(hook_root) = stapel_root(cwd).or_else(|| project_dir.and_then(stapel_root))
+            {
+                let hook_root = resolve(&hook_root);
+                let key = hook_root.file_name().and_then(|n| n.to_str());
+                let in_worktrees = hook_root
+                    .parent()
+                    .is_some_and(|p| p.ends_with(".claude/worktrees"));
+                if let (true, Some(key)) = (in_worktrees, key)
+                    && stapel_root(&target).is_some()
+                    && !in_own_worktree(&target, &hook_root)
+                {
+                    return Decision::Deny(format!(
+                        "{} is outside the worktree of {key}",
+                        target.display()
+                    ));
+                }
+            }
             decide_write(&target)
         }
         _ => Decision::Allow,
