@@ -170,7 +170,7 @@ pub fn sync_stops(root: &Path, own: &Ticket) -> Result<(), String> {
             match text(finding, "waits") {
                 Some("spec") => spec = true,
                 Some("merge") => merge = true,
-                _ => {}
+                _ => merge = true,
             }
         }
         let kind = if merge {

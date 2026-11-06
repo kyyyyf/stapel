@@ -680,8 +680,17 @@ fn check_record(m: &Map<String, Value>, key: &str, rounds: &[String]) -> Result<
         listed(m, "role", &ROLES)?;
     }
     listed(m, "severity", &SEVERITIES)?;
+    let low = m.get("severity").and_then(Value::as_str) == Some("LOW");
+    if dependency && low {
+        if m.get("claim").and_then(Value::as_str) != Some("no dependency found") {
+            return Err("claim: a LOW dependency record must say `no dependency found`".into());
+        }
+        if m.contains_key("waits") {
+            return Err("waits: a LOW dependency record has none".into());
+        }
+    }
     match m.get("waits") {
-        None if dependency && m.get("severity").and_then(Value::as_str) != Some("LOW") => {
+        None if dependency && !low => {
             return Err("waits: missing; HIGH and MEDIUM need spec or merge".into());
         }
         None => {}
