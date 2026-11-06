@@ -544,6 +544,66 @@ fn stopped_ticket_waits() {
     assert_eq!(said.matches(WAIT_LINE).count(), 1, "{said}");
     assert!(said.lines().any(|l| l == "next: wait — ABC-1"), "{said}");
     write_hook(b, "crates/x.rs").code(2);
+
+    // Wait fixes (D12-3): the stops folder of the ticket cannot be read: code writes are denied.
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
+    let folder = pair.repo.path().join(".git/stapel/stops/ABC-2");
+    std::fs::create_dir_all(folder.parent().unwrap()).unwrap();
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::write(&folder, "not a folder").unwrap();
+    write_hook(&pair.b, "crates/x.rs")
+        .code(2)
+        .stderr(predicates::str::contains("ABC-2 waits for"));
+    write_hook(&pair.b, ".stapel/note.md").success();
+
+    // Wait fixes (D12-3): the own state.json is not JSON: code writes are denied as a wait.
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
+    let state = pair.b.join(".stapel/tickets/ABC-2/state.json");
+    let saved = std::fs::read_to_string(&state).unwrap();
+    std::fs::write(&state, "{").unwrap();
+    write_hook(&pair.b, "crates/x.rs")
+        .code(2)
+        .stderr(predicates::str::contains("ABC-2 waits for"));
+    std::fs::write(&state, saved).unwrap();
+
+    // Wait fixes (D12-5): a guard decision keeps an obsolete stop file, `next` removes it. The
+    // stop is not JSON, and its earlier ticket is closed in HEAD.
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
+    let closed = serde_json::json!({
+        "key": "ABC-1",
+        "closed": {"by": "test-user", "at": "2026-01-02T10:00:00Z", "reason": "done"},
+    })
+    .to_string();
+    write_commit(&pair.b, ".stapel/tickets/ABC-1/state.json", &closed);
+    let stop = put_dependency_stop(&pair, "{");
+    let _ = write_hook(&pair.b, "crates/x.rs").try_success();
+    assert!(stop.is_file(), "a guard decision removed the stop");
+    next(&pair.b, None);
+    assert!(!stop.exists(), "next left the obsolete stop");
+
+    // Wait fixes (D12-6): a stopped ticket with a dirty tree keeps the commit action.
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
+    std::fs::write(pair.b.join("src/dirty.txt"), "dirty\n").unwrap();
+    put_dependency_stop(&pair, &merge_stop_body());
+    let said = next(&pair.b, None);
+    assert!(said.contains("blocked: ABC-2 waits for ABC-1 (dependency)"), "{said}");
+    assert!(said.lines().any(|l| l.starts_with("next: commit")), "{said}");
+    assert!(!said.contains("next: wait"), "{said}");
+
+    // Wait fixes (D12-6): a stopped ticket in the spec stage shows the blocked line.
+    let pair = two_ticket_worktrees();
+    put_dependency_stop(&pair, &merge_stop_body());
+    let said = next(&pair.b, None);
+    assert!(said.contains("blocked: ABC-2 waits for ABC-1 (dependency)"), "{said}");
+    assert!(!said.contains("next: wait"), "{said}");
 }
 
 #[test]
