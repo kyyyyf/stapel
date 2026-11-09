@@ -237,7 +237,7 @@ build runs; the holder is a child process the test starts and kills. Light tests
 | Worktree writes | the Hook root at the `STP-2` worktree: an `Edit` of `crates/x.rs` in the main checkout and in the `STP-1` worktree by absolute path: denied with the AC-26 text; in its own worktree: decided as before; a path outside every checkout: decided as before (D12-2) | `hook::writes_stay_in_the_worktree` |
 | Worktree write edges | from the `STP-2` worktree: a `.stapel/` file in the main checkout and in the `STP-1` worktree: denied with the AC-26 text; a `.stapel/` file in its own worktree: allowed; the rule with no `cwd` and `CLAUDE_PROJECT_DIR` at the worktree, and with the working directory only; a Hook root in the main checkout writing into a worktree: decided as before; a folder under `.claude/worktrees/` that is no ticket worktree (D27-1 to D27-4) | `hook::worktree_write_edges` |
 | Wait fixes | the stops folder unreadable and the own `state.json` not JSON: code writes denied; a guard decision leaves an obsolete stop file on disk, `next` removes it; a stopped ticket with a dirty tree: the commit action stays, the blocked line shows; a stopped ticket in the spec stage: the blocked line (D12-3, D12-5, D12-6) | `parallel::stopped_ticket_waits` |
-| Wait edges | `merge-main` without a stop; the own key's close on the base branch; `merge-main` before code review and close; a `spec` stop whose earlier ticket is closed on the base branch or in no worktree; the guard text for an unreadable stop (D12-7, D12-8) | `parallel::wait_edges` |
+| Wait edges | `merge-main` without a stop; the own key's close on the base branch; `merge-main` before code review and close; a `spec` stop whose earlier ticket is closed on the base branch or in no worktree; the guard text for an unreadable stop (D12-7, D12-8); a commit through the post-tool-use hook removes a stop whose earlier ticket is closed in HEAD; `next` at the build stage with an unreadable stops folder or own `state.json`: the blocked line and `next: wait — unknown` (D28-1, D28-3) | `parallel::wait_edges` |
 | Dependency record fixes | a LOW record with another claim: refused; a LOW `no dependency found` with `waits`: refused (D13-1) | `records::dependency_stage` |
 | Dependency round edges | an import into the earlier ticket: refused; equal spec times: the round by key order; two spec confirmations: the last counts; a hash with the `sha256:` prefix; `waits: spec`; a MEDIUM record with `waits` (D13-2, D13-3) | `records::dependency_round_edges` |
 | Dependency stop fixes | a HIGH record whose `waits` was lost by a triage edit: the stop of kind `merge` (D14-4) | `depends::confirmed_dependency_stops` |
@@ -245,11 +245,11 @@ build runs; the holder is a child process the test starts and kills. Light tests
 | Pack cut | a named file of 70 KiB: cut at 64 KiB with a note; a missing file and a non-UTF-8 file: a note each (D14-5) | `depends::pack_cut` |
 | Merge review edges | the merge ask comes before `write-summary`; round-1 findings imported before the merge stay valid; `close` with a grant still refuses; an import of the first merge round does not satisfy a later merge round (D15-1, D15-3) | `depends::merge_review_edges` |
 | Merge branch fixes | a closed, uncommitted ticket without `base_branch`: `commit-close` (D16-1) | `parallel::merge_branch_after_close` |
-| Merge branch edges | a change of a machine file in the main checkout: still ready; the wrong branch and a changed file at once: both reasons joined by `; `; a detached main checkout; an unknown state; the fact line found by its text before the `merge-branch` line; `--json` without notices (D16-2, D16-4) | `parallel::merge_branch_edges` |
+| Merge branch edges | a change of a machine file in the main checkout: still ready; the wrong branch and a changed file at once: both reasons joined by `; `; a detached main checkout; an unknown state; the fact line found by its text before the `merge-branch` line; `--json` without notices (D16-2, D16-4); a closed ticket without `base_branch` whose close is committed: no `merge-branch` and no `commit-close` (D30-1) | `parallel::merge_branch_edges` |
 | Notice fixes | the later ticket closed: no notice (D16-3) | `parallel::can_go_on_notice` |
 | Notice edges | a detached HEAD: no notice; a prunable worktree: skipped; two stops on one earlier ticket: one notice; `--json`: no notice (D16-3) | `parallel::notice_edges` |
 | Roles row | an existing `stapel.toml` with a `[roles]` table without the `stapel-depends` row: `init` adds the row and keeps every other line; a second run: no change (D17-7) | `init::roles_row_added` |
-| Depends agent fields | the agent file holds `permissionMode: default` and the output fields `stage` `dependency`, `role` `depends`, `waits`; the skill names `stapel depends KEY`, the merge of the base branch into the ticket branch and the combined review; a `depends` role binding in `[roles]` is accepted (D17-2 to D17-5) | `init_process::depends_agent_fields` |
+| Depends agent fields | the agent file holds `permissionMode: default` and the output fields `stage` `dependency`, `role` `depends`, `waits`; the skill names `stapel depends KEY`, the merge of the base branch into the ticket branch and the combined review; a `depends` role binding in `[roles]` is accepted (D17-2 to D17-5); `init` that adds a missing row prints `updated: .stapel/stapel.toml` (D31-2) | `init_process::depends_agent_fields` |
 | Non-folder keys | a file named `ABC-30` in the local tickets folder and in a listed worktree's tickets folder: not counted (D18-3) | `new_branch::non_folder_keys` |
 
 ### Inputs
@@ -541,7 +541,7 @@ Route: full (tags `guard`, `data`, `interface`), auto.
     `hook::subagent_git_edges`): the gaps of D9-3 and D10-7. Must not change: any code.
 33. Coverage of the trial merge, no GREEN (AC-15, AC-16; test `parallel::trial_merge_edges`): the gaps of
     D11-4. Must not change: any code.
-34. Coverage of the wait, no GREEN (AC-17; test `parallel::wait_edges`): the gaps of D12-7 and D12-8. Must
+34. Coverage of the wait, no GREEN (AC-17; test `parallel::wait_edges`): the gaps of D12-7, D12-8, D28-1 and D28-3. Must
     not change: any code.
 35. Coverage of the dependency round, no GREEN (AC-21; test `records::dependency_round_edges`): the gaps of
     D13-2 and D13-3. Must not change: any code.
@@ -552,10 +552,10 @@ Route: full (tags `guard`, `data`, `interface`), auto.
 38. Coverage of the merge review, no GREEN (AC-19; test `depends::merge_review_edges`): the gaps of D15-1
     and D15-3. Must not change: any code.
 39. Coverage of the merge branch and the notice, no GREEN (AC-23, AC-24; tests
-    `parallel::merge_branch_edges`, `parallel::notice_edges`): the gaps of D16-2 to D16-4. Must not change:
+    `parallel::merge_branch_edges`, `parallel::notice_edges`): the gaps of D16-2 to D16-4 and D30-1. Must not change:
     any code.
 40. Coverage of the install, no GREEN (AC-25; test `init_process::depends_agent_fields`): the gaps of D17-2
-    to D17-5. Must not change: any code.
+    to D17-5 and D31-2. Must not change: any code.
 41. Coverage of the keys, no GREEN (AC-2; test `new_branch::non_folder_keys`): the gap of D18-3. Must not
     change: any code.
 42. Coverage of the worktree writes, no GREEN (AC-26; test `hook::worktree_write_edges`): the gaps of D27-1
