@@ -1685,3 +1685,85 @@ fn writes_stay_in_the_worktree() {
     let elsewhere = bare_dir();
     write_call(b, "Edit", &elsewhere.path().join("x.rs").display().to_string()).success();
 }
+
+// STP-27 AC-13 (D9-3): cargo by path, under xargs, in a pipe, in a substitution, behind `command`.
+#[test]
+fn bare_cargo_edges() {
+    let repo = initialized_repo();
+    for command in [
+        "/usr/bin/cargo test",
+        "xargs cargo test",
+        "echo x | cargo test",
+        "echo $(cargo metadata)",
+        "command cargo test",
+    ] {
+        bash(repo.path(), command)
+            .code(DENY)
+            .stderr(contains(CARGO_TEXT));
+    }
+}
+
+// STP-27 AC-14 (D10-7, D24-2, D24-3): the edges of the subagent git guard, with the full text.
+#[test]
+fn subagent_git_edges() {
+    let repo = initialized_repo();
+    let dir = repo.path();
+    let text = "subagents run only these git commands in their own worktree: \
+                status, diff, log, show, add, commit, rev-parse, ls-files, grep, blame, \
+                merge-base, cat-file";
+    let call = |command: &str, agent: Option<&str>| {
+        let mut payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "cwd": dir,
+            "tool_name": "Bash",
+            "tool_input": { "command": command },
+        });
+        if let Some(agent) = agent {
+            payload["agent_id"] = json!(agent);
+        }
+        stapel(dir)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+    };
+    let inside = dir.join("crates").display().to_string();
+    let outside = bare_dir();
+    let out = outside.path().display().to_string();
+    std::os::unix::fs::symlink(outside.path(), dir.join("link")).unwrap();
+
+    let denied_for_agent = [
+        "env git checkout main".to_string(),
+        "sh -c \"git checkout main\"".to_string(),
+        "echo $(git checkout main)".to_string(),
+        "eval git checkout main".to_string(),
+        "echo x | xargs git checkout".to_string(),
+        "pushd .. && git status".to_string(),
+        "git -C crates -C .. status".to_string(),
+        "git status --work-tree=/x".to_string(),
+        "git log --git-dir=/x".to_string(),
+        format!("git -C {out} status"),
+        "git -C link status".to_string(),
+        "env --chdir /tmp git status".to_string(),
+        "env -C/tmp git status".to_string(),
+        "env -C ~ git status".to_string(),
+        "export GIT_X=1".to_string(),
+        "declare GIT_X=1".to_string(),
+        "typeset GIT_X=1".to_string(),
+        "local GIT_X=1".to_string(),
+        "readonly GIT_X=1".to_string(),
+        "env GIT_X=1 git status".to_string(),
+    ];
+    for command in &denied_for_agent {
+        call(command, Some("agent-1"))
+            .code(DENY)
+            .stderr(contains(text));
+        call(command, None).success();
+    }
+    // An absolute `-C` inside the worktree passes.
+    call(&format!("git -C {inside} status"), Some("agent-1")).success();
+    // An empty `agent_id` is the main session.
+    call("git checkout main", Some("")).success();
+    // GIT_DIR is denied for the main session too.
+    call("GIT_DIR=/x git status", None).code(DENY);
+}
