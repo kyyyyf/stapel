@@ -568,6 +568,11 @@ fn stopped_ticket_waits() {
     write_hook(&pair.b, "crates/x.rs")
         .code(2)
         .stderr(predicates::str::contains("ABC-2 waits for"));
+    // Unreadable own state (C34-1): `next` takes the wait, not `new-ticket`.
+    let said = next(&pair.b, None);
+    assert!(said.contains("blocked: ABC-2 waits for unknown ("), "{said}");
+    assert!(said.lines().any(|l| l == "next: wait — unknown"), "{said}");
+    assert!(!said.contains("new-ticket"), "{said}");
     std::fs::write(&state, saved).unwrap();
 
     // Wait fixes (D12-5): a guard decision keeps an obsolete stop file, `next` removes it. The
