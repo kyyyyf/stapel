@@ -86,6 +86,7 @@ const MAX_DEPTH: usize = 16;
 /// Decides on a tool call. `cwd` is where the agent runs; `project_dir` is the Claude Code
 /// project (`CLAUDE_PROJECT_DIR`), which still counts when the agent has `cd`-ed elsewhere.
 pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Decision {
+    let working_dir = cwd;
     let cwd = input.cwd.as_deref().unwrap_or(cwd);
     match input.tool_name.as_str() {
         "Bash" => {
@@ -139,8 +140,14 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
                 ));
             }
             // D12-2: a hook rooted in a ticket worktree writes only inside that worktree.
-            if let Some(hook_root) = stapel_root(cwd).or_else(|| project_dir.and_then(stapel_root))
-            {
+            // Hook root order: the input `cwd`, then the project dir, then the working directory.
+            let hook_root = input
+                .cwd
+                .as_deref()
+                .and_then(stapel_root)
+                .or_else(|| project_dir.and_then(stapel_root))
+                .or_else(|| stapel_root(working_dir));
+            if let Some(hook_root) = hook_root {
                 let hook_root = resolve(&hook_root);
                 let key = hook_root.file_name().and_then(|n| n.to_str());
                 let in_worktrees = hook_root
