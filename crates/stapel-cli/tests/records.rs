@@ -1879,3 +1879,98 @@ fn dependency_stage() {
         .stdout("imported: 1 findings into ABC-2\n");
     assert_eq!(target(b).unwrap().lines().count(), 2);
 }
+
+#[test]
+fn dependency_round_edges() {
+    let pair = common::two_ticket_worktrees();
+    let (a, b) = (pair.a.as_path(), pair.b.as_path());
+    let confirm = |dir: &Path, key: &str, list: Value| {
+        let path = dir.join(format!(".stapel/tickets/{key}/state.json"));
+        let mut state: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        state["confirmations"] = list;
+        std::fs::write(&path, state.to_string()).unwrap();
+    };
+    let spec = |at: &str, hash: &str| {
+        json!({"section": "spec", "by": "test-user", "at": at, "hash": hash, "normal_form": 1})
+    };
+    let dep = |ticket: &str, round: &str| {
+        let mut v = base();
+        v["id"] = json!("D-1");
+        v["ticket"] = json!(ticket);
+        v["stage"] = json!("dependency");
+        v["round"] = json!(round);
+        v["role"] = json!("depends");
+        v["waits"] = json!("merge");
+        v
+    };
+    let try_import = |dir: &Path, v: &Value| {
+        put(dir, "in.jsonl", &line(v));
+        stapel(dir)
+            .args(["findings", "import", "in.jsonl"])
+            .assert()
+    };
+    let findings = |dir: &Path, key: &str| {
+        std::fs::read_to_string(dir.join(format!(".stapel/tickets/{key}/findings.jsonl"))).ok()
+    };
+
+    // Two confirmations of ABC-1: the last one counts; a `sha256:` prefix is cut before 8 digits.
+    confirm(
+        a,
+        "ABC-1",
+        json!([
+            spec("2026-01-01T09:00:00Z", "sha256:11111111aaaa"),
+            spec("2026-01-01T10:00:00Z", "sha256:aaaaaaaa11112222"),
+        ]),
+    );
+    confirm(
+        b,
+        "ABC-2",
+        json!([spec("2026-01-01T11:00:00Z", "sha256:bbbbbbbb33334444")]),
+    );
+    let round = "ABC-1:aaaaaaaa:bbbbbbbb";
+    let old = "ABC-1:11111111:bbbbbbbb";
+    let prefixed = "ABC-1:sha256:a:bbbbbbbb";
+    for wrong in [old, prefixed] {
+        put(b, "in.jsonl", &line(&dep("ABC-2", wrong)));
+        let err = refused(b, &["in.jsonl"]);
+        assert!(err.contains("round"), "{err}");
+    }
+    assert!(findings(b, "ABC-2").is_none());
+
+    // An import into the earlier ticket: refused, it has no earlier ticket.
+    put(a, "in.jsonl", &line(&dep("ABC-1", round)));
+    let err = refused(a, &["in.jsonl"]);
+    assert!(err.contains("round"), "{err}");
+    assert!(findings(a, "ABC-1").is_none());
+
+    // `waits: spec` passes.
+    let mut waits_spec = dep("ABC-2", round);
+    waits_spec["waits"] = json!("spec");
+    try_import(b, &waits_spec)
+        .success()
+        .stdout("imported: 1 findings into ABC-2\n");
+
+    // A MEDIUM record with `waits` passes.
+    let mut medium = dep("ABC-2", round);
+    medium["id"] = json!("D-2");
+    medium["severity"] = json!("MEDIUM");
+    try_import(b, &medium)
+        .success()
+        .stdout("imported: 1 findings into ABC-2\n");
+    assert_eq!(findings(b, "ABC-2").unwrap().lines().count(), 2);
+
+    // Equal spec times: the key order decides, ABC-1 is earlier and ABC-2 is later.
+    let same = "2026-01-01T12:00:00Z";
+    confirm(a, "ABC-1", json!([spec(same, "aaaaaaaa11112222")]));
+    confirm(b, "ABC-2", json!([spec(same, "bbbbbbbb33334444")]));
+    let mut again = dep("ABC-2", round);
+    again["id"] = json!("D-3");
+    try_import(b, &again)
+        .success()
+        .stdout("imported: 1 findings into ABC-2\n");
+    put(a, "in.jsonl", &line(&dep("ABC-1", round)));
+    let err = refused(a, &["in.jsonl"]);
+    assert!(err.contains("round"), "{err}");
+    assert!(findings(a, "ABC-1").is_none());
+}
