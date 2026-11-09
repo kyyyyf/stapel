@@ -1684,6 +1684,23 @@ fn writes_stay_in_the_worktree() {
     // A path outside every checkout is decided as before.
     let elsewhere = bare_dir();
     write_call(b, "Edit", &elsewhere.path().join("x.rs").display().to_string()).success();
+
+    // Worktree root fix (C42-1): no input `cwd`, the working directory at the main checkout and
+    // `CLAUDE_PROJECT_DIR` at the worktree: the project dir comes before the working directory.
+    let notes = main.join(".stapel/notes.md");
+    let payload = json!({
+        "session_id": "test",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Write",
+        "tool_input": { "file_path": notes, "content": "x" },
+    });
+    stapel(main)
+        .env("CLAUDE_PROJECT_DIR", b)
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(payload.to_string())
+        .assert()
+        .code(DENY)
+        .stderr(contains(outside_text(&notes)));
 }
 
 // STP-27 AC-26 (D27-1 to D27-4): `.stapel/` writes, the root fallbacks, a main-checkout root and a
