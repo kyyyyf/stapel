@@ -1140,3 +1140,127 @@ fn wait_edges() {
     assert!(said.contains("blocked: ABC-2 waits for unknown ("), "{said}");
     assert!(said.lines().any(|l| l == "next: wait — unknown"), "{said}");
 }
+
+#[test]
+fn merge_branch_edges() {
+    let pair = two_ticket_worktrees();
+    let main = pair.repo.path();
+    let main_path = git_in(main, &["rev-parse", "--show-toplevel"]).trim().to_string();
+    let base = base_name(&pair);
+    let merge_line = format!("next: merge-branch — git merge --no-ff ABC-1 (in {main_path})");
+    close_uncommitted(&pair.a, "ABC-1");
+    commit_ticket(&pair.a, "ABC-1");
+
+    // A changed machine file in the main checkout: still ready (D16-2).
+    std::fs::write(main.join(".stapel/process-ledger.jsonl"), "{\"n\":1}\n").unwrap();
+    std::fs::create_dir_all(main.join(".stapel/tickets/ABC-1")).unwrap();
+    std::fs::write(main.join(".stapel/tickets/ABC-1/findings.jsonl"), "{}\n").unwrap();
+    let said = next(&pair.a, None);
+    assert!(said.lines().any(|l| l == merge_line), "{said}");
+    assert!(!said.contains("main checkout not ready"), "{said}");
+
+    // The wrong branch and a changed file at once: both reasons joined by `; ` (D16-4).
+    git_in(main, &["checkout", "-q", "-b", "elsewhere"]);
+    std::fs::write(main.join("src/a.rs"), "changed\n").unwrap();
+    let said = next(&pair.a, None);
+    let fact = said
+        .lines()
+        .position(|l| l.starts_with("main checkout not ready: "))
+        .unwrap_or_else(|| panic!("{said}"));
+    let merge = said
+        .lines()
+        .position(|l| l == merge_line)
+        .unwrap_or_else(|| panic!("{said}"));
+    assert!(fact < merge, "{said}");
+    let line = said.lines().nth(fact).unwrap();
+    assert_eq!(
+        line,
+        format!(
+            "main checkout not ready: it is on elsewhere, not on {base}; \
+             it has changes in src/a.rs"
+        ),
+        "{said}"
+    );
+    std::fs::remove_file(main.join("src/a.rs")).unwrap();
+
+    // A detached main checkout.
+    git_in(main, &["checkout", "-q", "--detach"]);
+    let said = next(&pair.a, None);
+    assert!(
+        said.lines().any(|l| l == format!("main checkout not ready: it is not on {base}")),
+        "{said}"
+    );
+    assert!(said.lines().any(|l| l == merge_line), "{said}");
+    git_in(main, &["checkout", "-q", &base]);
+
+    // An unknown state: the status of the main checkout fails.
+    std::fs::write(main.join(".git/index"), "garbage").unwrap();
+    let said = next(&pair.a, None);
+    assert!(
+        said.lines().any(|l| l.starts_with("main checkout not ready: its state is unknown: ")),
+        "{said}"
+    );
+    assert!(said.lines().any(|l| l == merge_line), "{said}");
+
+    // `--json`: the merge step stays and there is no notice.
+    let out = stapel(&pair.a).args(["next", "--json"]).assert().success().get_output().stdout.clone();
+    let said = String::from_utf8_lossy(&out).into_owned();
+    assert!(said.contains("merge-branch"), "{said}");
+    assert!(!said.contains("can go on"), "{said}");
+
+    // A closed ticket without `base_branch` whose close is committed: no merge, no commit-close
+    // (D30-1).
+    let pair = two_ticket_worktrees();
+    let path = pair.a.join(".stapel/tickets/ABC-1/state.json");
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    state.as_object_mut().unwrap().remove("base_branch");
+    std::fs::write(&path, state.to_string()).unwrap();
+    close_uncommitted(&pair.a, "ABC-1");
+    commit_ticket(&pair.a, "ABC-1");
+    let said = next(&pair.a, None);
+    assert!(!said.contains("merge-branch"), "{said}");
+    assert!(!said.contains("commit-close"), "{said}");
+}
+
+#[test]
+fn notice_edges() {
+    let pair = two_ticket_worktrees();
+    let main = pair.repo.path();
+    let base = base_name(&pair);
+    let notice = format!("can go on: ABC-2 (ABC-1 is merged into {base})");
+    put_dependency_stop(&pair, &merge_stop_body());
+    let conflict = pair.repo.path().join(".git/stapel/stops/ABC-2/ABC-1-conflict.json");
+    std::fs::write(&conflict, merge_stop_body()).unwrap();
+    close_uncommitted(&pair.a, "ABC-1");
+    commit_ticket(&pair.a, "ABC-1");
+    git_in(main, &["merge", "-q", "--no-ff", "--no-edit", "ABC-1"]);
+
+    // Two stops on one earlier ticket: one notice.
+    let said = next(main, None);
+    assert_eq!(said.lines().filter(|l| *l == notice).count(), 1, "{said}");
+    assert_eq!(said.matches("can go on").count(), 1, "{said}");
+
+    // `--json`: no notice.
+    let out = stapel(main).args(["next", "--json"]).assert().success().get_output().stdout.clone();
+    let said = String::from_utf8_lossy(&out).into_owned();
+    assert!(!said.contains("can go on"), "{said}");
+
+    // A prunable worktree of the later ticket: skipped.
+    std::fs::remove_dir_all(&pair.b).unwrap();
+    let said = next(main, None);
+    assert!(!said.contains("can go on"), "{said}");
+
+    // A detached HEAD: no notice.
+    let pair = two_ticket_worktrees();
+    let main = pair.repo.path();
+    put_dependency_stop(&pair, &merge_stop_body());
+    close_uncommitted(&pair.a, "ABC-1");
+    commit_ticket(&pair.a, "ABC-1");
+    git_in(main, &["merge", "-q", "--no-ff", "--no-edit", "ABC-1"]);
+    let said = next(main, None);
+    assert!(said.contains("can go on: ABC-2"), "{said}");
+    git_in(main, &["checkout", "-q", "--detach"]);
+    let said = next(main, None);
+    assert!(!said.contains("can go on"), "{said}");
+}
