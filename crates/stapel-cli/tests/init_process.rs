@@ -1870,3 +1870,52 @@ fn skill_text_names_parallel_builds() {
     let builder = collapsed(&body_of(dir, AGENTS[0]));
     assert!(builder.contains("Run cargo only through `stapel cargo`"), "{builder}");
 }
+
+// STP-27 AC-25 (D17-2 to D17-5, D31-2): the depends agent fields, the skill's wait and merge
+// phrases, a `depends` model binding, and the label printed when init adds the missing row.
+#[test]
+fn depends_agent_fields() {
+    const DEPENDS: &str = ".claude/agents/stapel-depends.md";
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let fm = frontmatter(&read(dir, DEPENDS));
+    assert!(fm.contains(&"permissionMode: default".to_string()), "{fm:?}");
+    let flat = collapsed(&body_of(dir, DEPENDS));
+    for phrase in ["\"stage\":\"dependency\"", "\"role\":\"depends\"", "\"waits\":\"spec|merge\""] {
+        assert!(flat.contains(phrase), "missing {phrase:?}");
+    }
+    let skill = collapsed(&body_of(dir, SKILL));
+    for phrase in [
+        "`stapel depends KEY`",
+        "merge the base branch into the ticket branch",
+        "combined review",
+    ] {
+        assert!(skill.contains(phrase), "missing {phrase:?}");
+    }
+
+    let bound = repo_with_config(|t| {
+        t.replace(
+            "drift    = {",
+            "depends = { provider = \"claude-code\", model = \"claude-sonnet-5-5\" }\ndrift    = {",
+        )
+    });
+    let bdir = bound.path();
+    assert!(read(bdir, ".stapel/stapel.toml").contains("depends = {"));
+    stapel(bdir).arg("init").assert().success();
+    assert!(bdir.join(DEPENDS).exists());
+
+    let old = repo_with_config(|t| {
+        t.lines()
+            .filter(|l| l.trim() != "stapel-depends = \"depends\"")
+            .map(|l| format!("{l}\n"))
+            .collect()
+    });
+    let odir = old.path();
+    stapel(odir)
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(contains("updated: .stapel/stapel.toml"));
+    assert!(read(odir, ".stapel/stapel.toml").contains("stapel-depends = \"depends\""));
+}
