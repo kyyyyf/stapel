@@ -1686,6 +1686,69 @@ fn writes_stay_in_the_worktree() {
     write_call(b, "Edit", &elsewhere.path().join("x.rs").display().to_string()).success();
 }
 
+// STP-27 AC-26 (D27-1 to D27-4): `.stapel/` writes, the root fallbacks, a main-checkout root and a
+// folder under `.claude/worktrees/` that is no ticket worktree.
+#[test]
+fn worktree_write_edges() {
+    let pair = common::two_ticket_worktrees();
+    let (a, b, main) = (pair.a.as_path(), pair.b.as_path(), pair.repo.path());
+    set_state(a, "ABC-1", r#"{"key":"ABC-1","build":{"allowed":true}}"#);
+    set_state(b, "ABC-2", r#"{"key":"ABC-2","build":{"allowed":true}}"#);
+    let outside_text = |path: &Path| format!("{} is outside the worktree of ABC-2", path.display());
+    let write = |process_dir: &Path, cwd: Option<&Path>, env: Option<&Path>, target: &Path| {
+        let mut payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
+            "tool_input": { "file_path": target, "content": "x" },
+        });
+        if let Some(cwd) = cwd {
+            payload["cwd"] = json!(cwd);
+        }
+        let mut cmd = stapel(process_dir);
+        if let Some(env) = env {
+            cmd.env("CLAUDE_PROJECT_DIR", env);
+        }
+        cmd.args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+    };
+
+    // A `.stapel/` file outside the worktree is denied; in its own worktree it is allowed.
+    for base in [main, a] {
+        let path = base.join(".stapel/notes.md");
+        write(b, Some(b), None, &path)
+            .code(DENY)
+            .stderr(contains(outside_text(&path)));
+    }
+    write(b, Some(b), None, &b.join(".stapel/notes.md")).success();
+
+    // No `cwd`: `CLAUDE_PROJECT_DIR` at the worktree, then the working directory only.
+    let path = main.join(".stapel/notes.md");
+    write(b, None, None, &path)
+        .code(DENY)
+        .stderr(contains(outside_text(&path)));
+    let elsewhere = bare_dir();
+    write(elsewhere.path(), None, Some(b), &path)
+        .code(DENY)
+        .stderr(contains(outside_text(&path)));
+    write(elsewhere.path(), None, Some(b), &b.join(".stapel/notes.md")).success();
+    write(b, None, Some(b), &b.join(".stapel/notes.md")).success();
+    write(b, None, None, &b.join(".stapel/notes.md")).success();
+
+    // A Hook root in the main checkout writing into a worktree: decided as before.
+    write(main, Some(main), None, &a.join(".stapel/notes.md")).success();
+    write(main, Some(main), None, &a.join("src/x.rs")).success();
+    write(main, Some(main), None, &main.join(".stapel/notes.md")).success();
+
+    // A folder under `.claude/worktrees/` that is no ticket worktree has no stapel root of its
+    // own, so the Hook root is the main checkout and the writes are decided as before.
+    let junk = main.join(".claude/worktrees/junk");
+    std::fs::create_dir_all(&junk).unwrap();
+    write(main, Some(&junk), None, &main.join(".stapel/notes.md")).success();
+    write(main, Some(&junk), None, &a.join(".stapel/notes.md")).success();
+}
+
 // STP-27 AC-13 (D9-3): cargo by path, under xargs, in a pipe, in a substitution, behind `command`.
 #[test]
 fn bare_cargo_edges() {
