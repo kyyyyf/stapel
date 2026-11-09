@@ -636,3 +636,92 @@ fn pack_cut() {
     let blob_part = blob_part.split("\n#### ").next().unwrap();
     assert!(blob_part.contains("(not UTF-8 text)"), "{blob_part}");
 }
+
+#[test]
+fn merge_review_edges() {
+    // The merge ask comes before the summary; round-1 findings imported before the merge stay
+    // valid; `close` with a grant still refuses; a stale first-round import does not satisfy a
+    // later merge round (D15-1, D15-3).
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let b = pair.b.as_path();
+    let main = pair.repo.path();
+    let round = round_of(b);
+    review_returns(&pair, &[nothing_found("D-1", &round)]);
+
+    // A numeric code review round is imported before the merge.
+    let mut r1 = nothing_found("R-1", "1");
+    r1["stage"] = json!("code-review");
+    r1["role"] = json!("reviewer");
+    put_records(b, "import", &[r1]);
+
+    let base = git_in(main, &["symbolic-ref", "--short", "HEAD"]).trim().to_string();
+    let close_on_base = |key: &str| {
+        let rel = format!(".stapel/tickets/{key}/state.json");
+        let path = main.join(&rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let closed = json!({
+            "key": key,
+            "closed": {"by": "test-user", "at": "2026-01-02T10:00:00Z", "reason": "done"},
+        });
+        std::fs::write(&path, closed.to_string()).unwrap();
+        git_in(main, &["add", &rel]);
+        git_in(main, &["commit", "-q", "-m", "close"]);
+    };
+    let pass_at_head = || {
+        let head = git_in(b, &["rev-parse", "HEAD"]).trim().to_string();
+        let rec = json!({
+            "v": 1, "kind": "check", "id": "c1", "at": "2026-10-19T10:00:00Z",
+            "ticket": "ABC-2", "head": head, "result": "pass", "steps": [],
+        });
+        std::fs::write(b.join(".stapel/tickets/ABC-2/runs.jsonl"), format!("{rec}\n")).unwrap();
+    };
+    let merge_round = || {
+        let merge = git_in(b, &["rev-list", "--merges", "-n", "1", "HEAD"]);
+        format!("merge:{}", &merge.trim()[..8])
+    };
+    let ask = "next: code-review — stapel review start ABC-2 --round merge";
+    close_on_base("ABC-1");
+    git_in(b, &["merge", "-q", "--no-edit", &base]);
+    let first = merge_round();
+    set_section(b, "ABC-2", "Review", "Reviewed: no findings.");
+    git_in(b, &["add", "-A"]);
+    git_in(b, &["commit", "-q", "-m", "ABC-2: review"]);
+    pass_at_head();
+
+    // No summary yet: the merge ask comes first, and the round-1 import is not asked again.
+    let said = next(b);
+    assert!(said.lines().any(|l| l == ask), "{said}");
+    assert!(!said.contains("write-summary"), "{said}");
+    assert!(!said.contains("--round 1"), "{said}");
+
+    // `close` with a grant refuses on the merge review before it looks at the grant.
+    stapel(b)
+        .args(["close", "ABC-2", "--reason", "done", "--grant", "bogus"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("merge review"));
+
+    // The import of the first merge round satisfies it; the summary is asked next.
+    let mut m1 = nothing_found("M-1", &first);
+    m1["stage"] = json!("code-review");
+    m1["role"] = json!("reviewer");
+    put_records(b, "import", &[m1]);
+    let said = next(b);
+    assert!(!said.contains("--round merge"), "{said}");
+    assert!(said.contains("write-summary"), "{said}");
+
+    // A second merge round: the import of the first one does not satisfy it.
+    close_on_base("ABC-3");
+    git_in(b, &["merge", "-q", "--no-edit", &base]);
+    let second = merge_round();
+    assert_ne!(first, second);
+    pass_at_head();
+    let said = next(b);
+    assert!(said.lines().any(|l| l == ask), "{said}");
+    stapel(b)
+        .args(["close", "ABC-2", "--reason", "done", "--grant", "bogus"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("merge review"));
+}
