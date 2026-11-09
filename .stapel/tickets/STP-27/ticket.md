@@ -234,8 +234,10 @@ build runs; the holder is a child process the test starts and kills. Light tests
 | Hook merge fixes | a commit during a rebase, a merge and a cherry-pick: no trial merge, no stop; a stops folder that cannot be written: the hook prints `stop not written: <path>: <error>` (D11-1, D11-3) | `parallel::conflict_stops_the_later` |
 | Next merge fixes | `stapel next STP-1` in the `STP-2` worktree: no trial merge; a stops folder that cannot be written: `next` prints `stop not written: <path>: <error>` (D11-2, D11-3) | `parallel::next_runs_the_trial_merge` |
 | Trial merge edges | a conflict in two files: both named; a clean merge and a git failure leave other pairs' stops; three tickets: each pair; the tie-break of equal spec times through `next`; the hook on a git failure; the first of several stderr lines (D11-4); `next` with the own KEY writes the stop, and after its removal `next` with a foreign KEY succeeds and writes none; the `stop not written` line holds the path, a colon and an error text (D26-1, D26-2) | `parallel::trial_merge_edges` |
-| Worktree writes | the Hook root at the `STP-2` worktree: an `Edit` of `crates/x.rs` in the main checkout and in the `STP-1` worktree by absolute path: denied with the AC-26 text; in its own worktree: decided as before; a path outside every checkout: decided as before (D12-2) | `hook::writes_stay_in_the_worktree` |
+| Worktree writes | the Hook root at the `STP-2` worktree: an `Edit` of a file in `crates/` in the main checkout and in the `STP-1` worktree by absolute path: denied with the AC-26 text; in its own worktree: decided as before; a path outside every checkout: decided as before (D12-2) | `hook::writes_stay_in_the_worktree` |
 | Worktree write edges | from the `STP-2` worktree: a `.stapel/` file in the main checkout and in the `STP-1` worktree: denied with the AC-26 text; a `.stapel/` file in its own worktree: allowed; the rule with no `cwd` and `CLAUDE_PROJECT_DIR` at the worktree, and with the working directory only; a Hook root in the main checkout writing into a worktree: decided as before; a folder under `.claude/worktrees/` that is no ticket worktree (D27-1 to D27-4) | `hook::worktree_write_edges` |
+| Worktree root fix | no input `cwd`, the working directory at the main checkout and `CLAUDE_PROJECT_DIR` at the `STP-2` worktree: a write of a `.stapel/` file in the main checkout is denied with the AC-26 text (C42-1) | `hook::writes_stay_in_the_worktree` |
+| Unreadable own state | on branch `STP-2` with its own `state.json` not JSON: `next` prints the blocked line `STP-2 waits for unknown (…)` and `next: wait — unknown`, not `new-ticket` (C34-1) | `parallel::stopped_ticket_waits` |
 | Wait fixes | the stops folder unreadable and the own `state.json` not JSON: code writes denied; a guard decision leaves an obsolete stop file on disk, `next` removes it; a stopped ticket with a dirty tree: the commit action stays, the blocked line shows; a stopped ticket in the spec stage: the blocked line (D12-3, D12-5, D12-6) | `parallel::stopped_ticket_waits` |
 | Wait edges | `merge-main` without a stop; the own key's close on the base branch; `merge-main` before code review and close; a `spec` stop whose earlier ticket is closed on the base branch or in no worktree; the guard text for an unreadable stop (D12-7, D12-8); a commit through the post-tool-use hook removes a stop whose earlier ticket is closed in HEAD; `next` at the build stage with an unreadable stops folder or own `state.json`: the blocked line and `next: wait — unknown` (D28-1, D28-3) | `parallel::wait_edges` |
 | Dependency record fixes | a LOW record with another claim: refused; a LOW `no dependency found` with `waits`: refused (D13-1) | `records::dependency_stage` |
@@ -409,6 +411,20 @@ token hooks and `init`.
   - `stapel new` holds `new.lock` from the key scan through `git worktree add -b` and does not retry a failed
     `git worktree add`; a concurrent `git worktree add` of another tool gives the git error (D18-2, the
     human); the AC-7 refusal names the folder's key.
+- As built (drift reviews of steps 23 to 42):
+  - A word `STAPEL_CARGO_LOCK_HELD=<value>` sets the held mark wherever it stands, so `echo
+    STAPEL_CARGO_LOCK_HELD=1` is denied; `export` of the bare name and `STAPEL_CARGO_LOCK_HELD+=1` are not
+    caught (D23-1).
+  - After `env` every `-C` is read as a folder, so `env git commit -C HEAD` is denied for subagents (D24-1, the
+    human).
+  - When the stops folder, the git common dir or the own `state.json` cannot be read, the wait names the
+    earlier ticket `unknown` (D28-2, the human); a `Legacy` state is read as before; a pending dependency
+    review comes before the wait (D28-4, the human).
+  - `init` adds a missing `stapel-<agent>` row after the last row of `[roles]` and prints `updated:
+    .stapel/stapel.toml`; a `stapel.toml` without `[roles]`, or whose header carries a comment, gets no row,
+    and a row with another value is kept (D31-1, D31-2).
+  - `next` with a foreign KEY needs that ticket's folder in the current checkout; without it `next` refuses as
+    for any missing ticket.
 - STP-27 is built on main by the old rules with the installed binary; from step 9 on, builders run cargo
   through `target/debug/stapel cargo`, because the installed binary has no `cargo` command; `stapel init` with the new skill and builder text runs in step 17; the binary is
   reinstalled after the close (SR1-9).
@@ -533,7 +549,8 @@ Route: full (tags `guard`, `data`, `interface`), auto.
     stop fixes" (D13-1, D14-4). Must not change: other stages.
 30. Close and notice fixes (AC-23, AC-24; tests `parallel::merge_branch_after_close`,
     `parallel::can_go_on_notice`): the RED adds the rows "Merge branch fixes" and "Notice fixes" (D16-1,
-    D16-3). Must not change: `next` on an open ticket.
+    D16-3). Must not change: `next` on an open ticket. As built: the RED also changes
+    `new_branch::branch_names_the_ticket`, whose closed ticket without `base_branch` now gets `commit-close`.
 31. The roles row in an existing `stapel.toml` (AC-25; test `init::roles_row_added`): `init.rs` adds a
     missing `[roles]` row of an installed agent and keeps every other line (D17-7). Must not change: a
     `stapel.toml` that has the row.
@@ -559,7 +576,14 @@ Route: full (tags `guard`, `data`, `interface`), auto.
 41. Coverage of the keys, no GREEN (AC-2; test `new_branch::non_folder_keys`): the gap of D18-3. Must not
     change: any code.
 42. Coverage of the worktree writes, no GREEN (AC-26; test `hook::worktree_write_edges`): the gaps of D27-1
-    to D27-4. Must not change: any code.
+    to D27-4. Must not change: any code. As built: the case of `CLAUDE_PROJECT_DIR` against the working
+    directory failed and went to step 44 (C42-1).
+43. `next` with an unreadable own `state.json` (AC-17; test `parallel::stopped_ticket_waits`): the RED adds the
+    row "Unreadable own state"; on a ticket branch `next` reads the ticket's folder even when its state is
+    unreadable and takes the wait (C34-1). Must not change: the guard decision of that case.
+44. The Hook root order of the AC-26 rule (AC-26; test `hook::writes_stay_in_the_worktree`): the RED adds the
+    row "Worktree root fix"; the rule takes the root of the input `cwd`, then of `CLAUDE_PROJECT_DIR`, then of
+    the working directory (C42-1). Must not change: the decisions of `hook::worktree_write_edges`.
 
 ## Review
 
