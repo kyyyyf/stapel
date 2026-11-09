@@ -196,6 +196,31 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
         }
         _ => None,
     };
+    // A branch ticket whose own state cannot be read waits; it is not a checkout without a ticket
+    // (STP-27 AC-17).
+    if key.is_none()
+        && let Some(own) = stapel_core::tickets::branch_ticket(&root)
+        && matches!(own.status, Status::Unreadable(_))
+    {
+        let waits = stapel_core::parallel::waits(&root);
+        let facts: Vec<String> = waits.iter().map(|w| format!("blocked: {}", w.line())).collect();
+        let action = Action {
+            name: "wait",
+            subject: None,
+            target: Some(Target::Command(
+                waits
+                    .first()
+                    .map_or_else(|| "unknown".to_string(), |w| w.earlier.clone()),
+            )),
+        };
+        if json {
+            out.push(json_line(Some(&own.key), &action, &facts));
+        } else {
+            out.extend(facts);
+            out.push(action.line());
+        }
+        return Ok(out);
+    }
     if closing.is_none()
         && key.is_none()
         && !list(&root)
