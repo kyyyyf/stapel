@@ -534,3 +534,47 @@ fn merge_review_after_merge_main() {
         .assert()
         .success();
 }
+
+#[test]
+fn stop_edges() {
+    // A pending round and a stop at once: `dependency-review` comes before `wait`, in next and in
+    // the guard; the older round's stop stays until the new round has a record (D14-1, D14-2).
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let round = round_of(&pair.b);
+    review_returns(&pair, &[record("D-1", &round, "MEDIUM", Some("spec"), "a dependency")]);
+    assert_eq!(stop_kind(&pair), "spec");
+    set_hash(&pair.a, "ABC-1", "feedfacefeedface");
+    let new_round = round_of(&pair.b);
+    assert_ne!(new_round, round);
+    assert!(stop_file(&pair).exists());
+    let said = next(&pair.b);
+    assert!(said.lines().any(|l| l == DEPEND_B), "{said}");
+    assert!(!said.lines().any(|l| l.starts_with("next: wait")), "{said}");
+    write_hook(&pair.b, "crates/x.rs")
+        .code(2)
+        .stderr(predicates::str::contains("stapel depends"));
+    // The stop of the older round stays while the new round has no record.
+    assert_eq!(stop_kind(&pair), "spec");
+
+    // Records in the old and in the new round: only the new round counts.
+    review_returns(&pair, &[record("D-2", &new_round, "MEDIUM", Some("merge"), "again")]);
+    assert_eq!(stop_kind(&pair), "merge");
+    let said = next(&pair.b);
+    assert!(!said.lines().any(|l| l == DEPEND_B), "{said}");
+
+    // A triage that grades the only record down to LOW lifts the stop (D14-6).
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let round = round_of(&pair.b);
+    review_returns(&pair, &[record("D-1", &round, "HIGH", Some("merge"), "a dependency")]);
+    assert_eq!(stop_kind(&pair), "merge");
+    put_records(
+        &pair.b,
+        "triage",
+        &[json!({"id": "D-1", "ticket": "ABC-2", "fate": "defer", "verdict": "low"})],
+    );
+    assert!(!stop_file(&pair).exists());
+    let said = next(&pair.b);
+    assert!(said.lines().any(|l| l == RUN_CHECK_B), "{said}");
+}
