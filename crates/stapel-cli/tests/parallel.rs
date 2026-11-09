@@ -1024,3 +1024,119 @@ fn trial_merge_edges() {
         assert!(!line[prefix.len()..].trim().is_empty(), "{line}");
     }
 }
+
+#[test]
+fn wait_edges() {
+    fn closed_state(key: &str) -> String {
+        serde_json::json!({
+            "key": key,
+            "closed": {"by": "test-user", "at": "2026-01-02T10:00:00Z", "reason": "done"},
+        })
+        .to_string()
+    }
+
+    // `merge-main` needs no stop: the base branch holds the earlier ticket's close (D12-7).
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let base = base_name(&pair);
+    commit_on_base(&pair, ".stapel/tickets/ABC-1/state.json", &closed_state("ABC-1"));
+    let said = next(&pair.b, None);
+    assert!(
+        said.lines().any(|l| l == format!("next: merge-main — git merge {base}")),
+        "{said}"
+    );
+    assert!(!said.contains("waits for"), "{said}");
+
+    // The own key's close on the base branch asks for no merge (D12-7).
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
+    commit_on_base(&pair, ".stapel/tickets/ABC-2/state.json", &closed_state("ABC-2"));
+    let said = next(&pair.b, None);
+    assert!(!said.contains("merge-main"), "{said}");
+    assert!(said.contains(RUN_CHECK_B), "{said}");
+
+    // `merge-main` comes before the code review (D12-7): no `[check]`, so the review is next.
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let toml = pair.b.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    let cut = text.find("\n[check]").unwrap();
+    std::fs::write(&toml, &text[..cut]).unwrap();
+    git_in(&pair.b, &["add", "-A"]);
+    git_in(&pair.b, &["commit", "-q", "-m", "ABC-2 step 1 skip: no check"]);
+    dependency_asked_and_done(&pair);
+    let said = next(&pair.b, None);
+    assert!(
+        said.lines().any(|l| l.starts_with("next: code-review")),
+        "{said}"
+    );
+    let base = base_name(&pair);
+    commit_on_base(&pair, ".stapel/tickets/ABC-1/state.json", &closed_state("ABC-1"));
+    let said = next(&pair.b, None);
+    assert!(
+        said.lines().any(|l| l == format!("next: merge-main — git merge {base}")),
+        "{said}"
+    );
+    assert!(!said.contains("code-review"), "{said}");
+
+    // A `spec` stop whose earlier ticket is closed on the base branch: no wait (D12-8).
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
+    spec_confirmation(&pair.a, "ABC-1", false);
+    dependency_done(&pair);
+    put_dependency_stop(&pair, &spec_stop_body());
+    let said = next(&pair.b, None);
+    assert!(said.contains(WAIT_LINE), "{said}");
+    commit_on_base(&pair, ".stapel/tickets/ABC-1/state.json", &closed_state("ABC-1"));
+    put_dependency_stop(&pair, &spec_stop_body());
+    let said = next(&pair.b, None);
+    assert!(!said.contains("waits for"), "{said}");
+    write_hook(&pair.b, "crates/x.rs").success();
+
+    // A `spec` stop whose earlier ticket is in no worktree: the wait (D12-8).
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
+    let path = pair.repo.path().join(".git/stapel/stops/ABC-2/ABC-9-dependency.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, spec_stop_body()).unwrap();
+    let said = next(&pair.b, None);
+    assert!(said.contains("blocked: ABC-2 waits for ABC-9 ("), "{said}");
+    assert!(said.lines().any(|l| l == "next: wait — ABC-9"), "{said}");
+    write_hook(&pair.b, "crates/x.rs").code(2);
+
+    // The guard text for an unreadable stop (D12-8).
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
+    put_dependency_stop(&pair, "{");
+    write_hook(&pair.b, "crates/x.rs").code(2).stderr(predicates::str::contains(
+        "writing crates/x.rs is denied: ABC-2 waits for ABC-1 (unreadable stop file); \
+         code waits until the earlier ticket is merged",
+    ));
+
+    // A commit through the post-tool-use hook removes a stop whose earlier ticket is closed in
+    // HEAD (D28-1).
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
+    write_commit(&pair.b, ".stapel/tickets/ABC-1/state.json", &closed_state("ABC-1"));
+    let stop = put_dependency_stop(&pair, &merge_stop_body());
+    hook(&pair.b, &[]);
+    assert!(!stop.exists(), "the hook left the obsolete stop");
+
+    // `next` at the build stage with an unreadable stops folder: the blocked line and the wait on
+    // `unknown` (D28-3).
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
+    let folder = pair.repo.path().join(".git/stapel/stops/ABC-2");
+    std::fs::create_dir_all(folder.parent().unwrap()).unwrap();
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::write(&folder, "not a folder").unwrap();
+    let said = next(&pair.b, None);
+    assert!(said.contains("blocked: ABC-2 waits for unknown ("), "{said}");
+    assert!(said.lines().any(|l| l == "next: wait — unknown"), "{said}");
+}
