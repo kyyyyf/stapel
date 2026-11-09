@@ -459,3 +459,30 @@ fn commands_on_a_branch() {
     assert!(state_json(dir, "ABC-2").get("closed").is_some());
     assert!(state_json(dir, "ABC-1").get("closed").is_none());
 }
+
+#[test]
+fn non_folder_keys() {
+    let repo = stapel_repo();
+    let dir = repo.path();
+    let outside = tempfile::tempdir().unwrap();
+    git(dir, &["config", "user.email", "test-user"]);
+    ticket_file(dir, "ABC-2");
+    // A file named like a key in the local tickets folder does not count.
+    std::fs::write(dir.join(".stapel/tickets/ABC-30"), "note\n").unwrap();
+    std::fs::write(dir.join(".stapel/tickets/ABC-31.md"), "note\n").unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "base"]);
+
+    // A listed worktree with a folder ABC-4 and files named like keys.
+    let wt = outside.path().join("wt");
+    git(dir, &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "side"]);
+    ticket_file(&wt, "ABC-4");
+    std::fs::write(wt.join(".stapel/tickets/ABC-40"), "note\n").unwrap();
+    std::fs::write(wt.join(".stapel/tickets/ABC-41.md"), "note\n").unwrap();
+
+    stapel(dir)
+        .args(["new", "Next ticket"])
+        .assert()
+        .success()
+        .stdout(contains("created: ABC-5"));
+}
