@@ -828,3 +828,199 @@ fn can_go_on_notice() {
     let said = next(main, None);
     assert!(!said.contains("can go on"), "{said}");
 }
+
+#[test]
+fn trial_merge_edges() {
+    // A stand-in git that fails on merge-tree with the given stderr lines and exit 128.
+    fn stand_in(stderr_lines: &[&str]) -> (tempfile::TempDir, String) {
+        let real = String::from_utf8(
+            std::process::Command::new("sh")
+                .args(["-c", "command -v git"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        let bin = tempfile::tempdir().unwrap();
+        let echoes: String = stderr_lines
+            .iter()
+            .map(|l| format!("    echo '{l}' >&2\n"))
+            .collect();
+        let script = bin.path().join("git");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = merge-tree ]; then\n{echoes}    \
+                 exit 128\n  fi\ndone\nexec {} \"$@\"\n",
+                real.trim()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = format!(
+            "{}:{}",
+            bin.path().display(),
+            std::env::var("PATH").unwrap()
+        );
+        (bin, path)
+    }
+    // Every stop file of the repository as (relative name, bytes), sorted.
+    fn snapshot(pair: &Pair) -> Vec<(String, Vec<u8>)> {
+        let root = pair.repo.path().join(".git/stapel/stops");
+        let mut out = Vec::new();
+        if let Ok(tickets) = std::fs::read_dir(&root) {
+            for t in tickets.flatten() {
+                for f in std::fs::read_dir(t.path()).unwrap().flatten() {
+                    out.push((
+                        format!(
+                            "{}/{}",
+                            t.file_name().to_string_lossy(),
+                            f.file_name().to_string_lossy()
+                        ),
+                        std::fs::read(f.path()).unwrap(),
+                    ));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+    fn stop_files(pair: &Pair, later: &str, earlier: &str) -> serde_json::Value {
+        let v: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(stop_path(pair, later, earlier)).unwrap(),
+        )
+        .unwrap();
+        v["files"].clone()
+    }
+
+    // A conflict in two files: both are named, in the line and in the stop.
+    let pair = two_ticket_worktrees();
+    write_commit(&pair.a, "src/shared.txt", &lines_with(10, 2, "from a"));
+    write_commit(&pair.a, "src/main.rs", &lines_with(20, 2, "from a"));
+    write_commit(&pair.b, "src/shared.txt", &lines_with(10, 2, "from b"));
+    write_commit(&pair.b, "src/main.rs", &lines_with(20, 2, "from b"));
+    let said = hook(&pair.b, &[]);
+    assert!(
+        said.contains(
+            "stapel: ABC-2 conflicts with ABC-1 in src/main.rs, src/shared.txt; \
+             ABC-2 waits for ABC-1"
+        ),
+        "{said}"
+    );
+    assert_eq!(
+        stop_files(&pair, "ABC-2", "ABC-1"),
+        serde_json::json!(["src/main.rs", "src/shared.txt"])
+    );
+
+    // Three tickets: each pair gets its own stop.
+    let pair = two_ticket_worktrees();
+    stapel(pair.repo.path())
+        .args(["new", "Third"])
+        .assert()
+        .success();
+    let c = pair.repo.path().join(".claude/worktrees/ABC-3");
+    set_spec_time(&c, "ABC-3", Some("2026-01-01T12:00:00Z"));
+    write_commit(&pair.a, "src/shared.txt", &lines_with(10, 2, "from a"));
+    write_commit(&pair.b, "src/shared.txt", &lines_with(10, 2, "from b"));
+    write_commit(&c, "src/shared.txt", &lines_with(10, 2, "from c"));
+    let said = hook(&c, &[]);
+    assert!(
+        said.contains("stapel: ABC-3 conflicts with ABC-1 in src/shared.txt; ABC-3 waits for ABC-1"),
+        "{said}"
+    );
+    assert!(
+        said.contains("stapel: ABC-3 conflicts with ABC-2 in src/shared.txt; ABC-3 waits for ABC-2"),
+        "{said}"
+    );
+    next(&pair.b, None);
+    assert!(stop_path(&pair, "ABC-3", "ABC-1").is_file());
+    assert!(stop_path(&pair, "ABC-3", "ABC-2").is_file());
+    assert!(stop_path(&pair, "ABC-2", "ABC-1").is_file());
+    assert!(!stop_path(&pair, "ABC-1", "ABC-2").exists());
+    assert!(!stop_path(&pair, "ABC-1", "ABC-3").exists());
+    assert!(!stop_path(&pair, "ABC-2", "ABC-3").exists());
+
+    // A clean merge of one pair removes only that pair's stop.
+    write_commit(&pair.b, "src/shared.txt", &lines_with(10, 2, "from a"));
+    next(&pair.b, None);
+    assert!(!stop_path(&pair, "ABC-2", "ABC-1").exists());
+    assert!(stop_path(&pair, "ABC-3", "ABC-1").is_file());
+    assert!(stop_path(&pair, "ABC-3", "ABC-2").is_file());
+
+    // A git failure leaves every stop as it is: `next` and the hook (D11-4).
+    let before = snapshot(&pair);
+    assert_eq!(before.len(), 2);
+    write_commit(&pair.b, "src/main.rs", &lines_with(20, 3, "from b"));
+    let (_bin, path) = stand_in(&["fatal: stand-in refuses merge-tree"]);
+    let said = next(&pair.b, Some(&path));
+    assert!(
+        said.contains("trial merge not run: fatal: stand-in refuses merge-tree"),
+        "{said}"
+    );
+    assert_eq!(snapshot(&pair), before);
+    let said = hook(&pair.b, &[("PATH", path.clone())]);
+    assert!(!said.contains("conflicts"), "{said}");
+    assert_eq!(snapshot(&pair), before);
+
+    // Only the first of several stderr lines is in the fact.
+    let (_bin2, path2) = stand_in(&["fatal: first line", "hint: second line"]);
+    let said = next(&pair.b, Some(&path2));
+    assert!(said.contains("trial merge not run: fatal: first line"), "{said}");
+    assert!(!said.contains("second line"), "{said}");
+
+    // The same second: `next` makes the higher key the later ticket.
+    let pair = two_ticket_worktrees();
+    set_spec_time(&pair.a, "ABC-1", Some("2026-01-01T10:00:00Z"));
+    set_spec_time(&pair.b, "ABC-2", Some("2026-01-01T10:00:00Z"));
+    conflicting_commits(&pair);
+    next(&pair.a, None);
+    assert!(stop_path(&pair, "ABC-2", "ABC-1").is_file());
+    assert!(!stop_path(&pair, "ABC-1", "ABC-2").exists());
+
+    // `next` with the own KEY writes the stop; after its removal a foreign KEY writes none.
+    let pair = two_ticket_worktrees();
+    conflicting_commits(&pair);
+    let out = stapel(&pair.b).args(["next", "ABC-2"]).output().unwrap();
+    assert!(out.status.success());
+    assert!(stop_path(&pair, "ABC-2", "ABC-1").is_file());
+    std::fs::remove_file(stop_path(&pair, "ABC-2", "ABC-1")).unwrap();
+    // The folder of ABC-1 exists in this worktree, so the foreign KEY names a known ticket.
+    let foreign = pair.b.join(".stapel/tickets/ABC-1");
+    std::fs::create_dir_all(&foreign).unwrap();
+    for f in std::fs::read_dir(pair.a.join(".stapel/tickets/ABC-1"))
+        .unwrap()
+        .flatten()
+    {
+        if f.path().is_file() {
+            std::fs::copy(f.path(), foreign.join(f.file_name())).unwrap();
+        }
+    }
+    let out = stapel(&pair.b).args(["next", "ABC-1"]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!stop_path(&pair, "ABC-2", "ABC-1").exists());
+    assert!(!stop_path(&pair, "ABC-1", "ABC-2").exists());
+
+    // The `stop not written` line holds the path, a colon and an error text (D26-1, D26-2).
+    for via_hook in [false, true] {
+        let pair = two_ticket_worktrees();
+        conflicting_commits(&pair);
+        let folder = pair.repo.path().join(".git/stapel");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::write(&folder, "not a folder").unwrap();
+        let said = if via_hook {
+            hook(&pair.b, &[])
+        } else {
+            next(&pair.b, None)
+        };
+        let prefix = format!(
+            "stop not written: {}: ",
+            stop_path(&pair, "ABC-2", "ABC-1").display()
+        );
+        let line = said
+            .lines()
+            .find(|l| l.starts_with(&prefix))
+            .unwrap_or_else(|| panic!("no line {prefix:?} in {said}"));
+        assert!(!line[prefix.len()..].trim().is_empty(), "{line}");
+    }
+}
