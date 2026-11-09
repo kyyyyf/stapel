@@ -578,3 +578,61 @@ fn stop_edges() {
     let said = next(&pair.b);
     assert!(said.lines().any(|l| l == RUN_CHECK_B), "{said}");
 }
+
+#[test]
+fn pack_cut() {
+    let pair = two_ticket_worktrees();
+    let (a, b) = (pair.a.as_path(), pair.b.as_path());
+    set_section(
+        a,
+        "ABC-1",
+        "Plan",
+        "Route: light, auto.\n\n1. Change `src/big.txt`, `src/gone.txt` and `src/blob.bin` (AC-1).",
+    );
+    set_section(b, "ABC-2", "Description", "### Frame\n\nProblem of the second.");
+    set_section(b, "ABC-2", "Plan", "Route: light, auto.\n\n1. Change `src/main.rs` (AC-1).");
+    // 70 KiB: the head is kept, the tail after 64 KiB is not.
+    let mut big = String::from("HEADMARK\n");
+    while big.len() < 70 * 1024 - 9 {
+        big.push_str("0123456789012345678901234567890123456789012345678901234567890123\n");
+    }
+    big.push_str("TAILMARK\n");
+    assert!(big.len() > 70 * 1024 - 100);
+    write_commit(a, "src/big.txt", &big);
+    // Not UTF-8.
+    /// A small file that is not UTF-8.
+    fn dir_blob() -> Vec<u8> {
+        vec![0xff, 0xfe, 0x00, 0xc3, 0x28, 0x41]
+    }
+    let blob = dir_blob();
+    std::fs::write(a.join("src/blob.bin"), &blob).unwrap();
+    git_in(a, &["add", "-A"]);
+    git_in(a, &["commit", "-q", "-m", "blob"]);
+    write_commit(b, "src/main.rs", "fn main() {}\n");
+
+    let out = stapel(b).arg("depends").assert().success().get_output().stdout.clone();
+    let text = String::from_utf8(out).unwrap();
+    let path = text
+        .lines()
+        .find_map(|l| l.strip_prefix("pack: "))
+        .unwrap_or_else(|| panic!("no pack line: {text}"));
+    let pack = std::fs::read_to_string(b.join(path)).unwrap();
+
+    let big_part = pack
+        .split("#### src/big.txt")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no big.txt part: {pack}"));
+    let big_part = big_part.split("\n#### ").next().unwrap();
+    assert!(big_part.contains("HEADMARK"), "{big_part}");
+    assert!(!big_part.contains("TAILMARK"), "{big_part}");
+    assert!(big_part.contains("(cut after 65536 bytes)"), "{big_part}");
+    assert!(big_part.len() < 66 * 1024 + 200, "{}", big_part.len());
+
+    let gone = pack.split("#### src/gone.txt").nth(1).unwrap_or_else(|| panic!("{pack}"));
+    let gone = gone.split("\n#### ").next().unwrap();
+    assert!(gone.contains("(no such file in this checkout)"), "{gone}");
+
+    let blob_part = pack.split("#### src/blob.bin").nth(1).unwrap_or_else(|| panic!("{pack}"));
+    let blob_part = blob_part.split("\n#### ").next().unwrap();
+    assert!(blob_part.contains("(not UTF-8 text)"), "{blob_part}");
+}
