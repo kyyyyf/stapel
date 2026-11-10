@@ -533,6 +533,47 @@ fn merge_review_after_merge_main() {
         .args(["close", "ABC-2", "--reason", "done"])
         .assert()
         .success();
+
+    // Merge round bound (E-1): main holds a `--no-ff` merge of a closed ticket before `stapel new`;
+    // the new ticket never merges main, so it has no merge round.
+    let side = tempfile::tempdir().unwrap();
+    let side_dir = side.path().join("side");
+    git_in(
+        main,
+        &["worktree", "add", "-q", "-b", "side", side_dir.to_str().unwrap()],
+    );
+    let rel = ".stapel/tickets/ABC-9/state.json";
+    let path = side_dir.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let closed = json!({
+        "key": "ABC-9",
+        "closed": {"by": "test-user", "at": "2026-01-02T10:00:00Z", "reason": "done"},
+    });
+    std::fs::write(&path, closed.to_string()).unwrap();
+    git_in(&side_dir, &["add", rel]);
+    git_in(&side_dir, &["commit", "-q", "-m", "close ABC-9"]);
+    git_in(main, &["merge", "-q", "--no-ff", "-m", "merge ABC-9", "side"]);
+    stapel(main).args(["new", "Third"]).assert().success();
+    let c = main.join(".claude/worktrees/ABC-10");
+    assert!(c.is_dir(), "no worktree {}", c.display());
+    set_section(&c, "ABC-10", "Spec", "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | The spec. | t |");
+    git_in(&c, &["add", "-A"]);
+    git_in(&c, &["commit", "-q", "-m", "ABC-10: ticket"]);
+    stapel(&c)
+        .args(["review", "start", "ABC-10", "--round", "merge"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("no merge of"));
+    let said = next(&c);
+    assert!(!said.contains("--round merge"), "{said}");
+    let out = stapel(&c)
+        .args(["close", "ABC-10", "--reason", "done"])
+        .assert()
+        .get_output()
+        .stderr
+        .clone();
+    let err = String::from_utf8_lossy(&out);
+    assert!(!err.contains("merge review"), "{err}");
 }
 
 #[test]
