@@ -1524,6 +1524,14 @@ fn bare_cargo_denied() {
     bash(repo.path(), "timeout 1800 cargo test")
         .code(DENY)
         .stderr(contains(text));
+    // Precise stapel cargo (D46-1): `stapel` is an option's value there, not the program.
+    for command in [
+        "env -u stapel cargo test",
+        "xargs -I stapel cargo test",
+        "env -C stapel cargo test",
+    ] {
+        bash(repo.path(), command).code(DENY).stderr(contains(text));
+    }
     for command in [
         "cargo test",
         "env FOO=1 cargo test",
