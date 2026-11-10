@@ -907,8 +907,13 @@ fn check_program(words: &[String], full: &str, depth: usize, under_xargs: bool, 
         }
         let under_xargs = name == "xargs";
         for i in 0..args.len() {
-            // The word after `stapel` is its subcommand, not a program.
-            if i > 0 && base_name(&args[i - 1]) == "stapel" && base_name(&args[i]) == "cargo" {
+            // The word after `stapel` is its subcommand, not a program; but only when `stapel`
+            // is the program the wrapper runs, not the value of a wrapper option.
+            if i > 0
+                && base_name(&args[i - 1]) == "stapel"
+                && base_name(&args[i]) == "cargo"
+                && !(i > 1 && takes_value(&args[i - 2]))
+            {
                 continue;
             }
             // Later wrappers are covered by this loop, so they are not expanded again.
@@ -947,6 +952,38 @@ fn check_program(words: &[String], full: &str, depth: usize, under_xargs: bool, 
     } else if name == "git" {
         check_git(args, full, depth, under_xargs, found);
     }
+}
+
+/// Wrapper options that take the next word as their value (`env -u NAME`, `xargs -I STR`,
+/// `env -C DIR`): the word after one is not the wrapper's program.
+fn takes_value(option: &str) -> bool {
+    matches!(
+        option,
+        "-u" | "-C"
+            | "-I"
+            | "-n"
+            | "-L"
+            | "-P"
+            | "-s"
+            | "-d"
+            | "-E"
+            | "-a"
+            | "-S"
+            | "-U"
+            | "-g"
+            | "--unset"
+            | "--chdir"
+            | "--split-string"
+            | "--max-args"
+            | "--max-procs"
+            | "--max-lines"
+            | "--max-chars"
+            | "--delimiter"
+            | "--arg-file"
+            | "--eof"
+            | "--user"
+            | "--group"
+    )
 }
 
 /// Commands that remove CLAUDECODE from what child processes see.
