@@ -90,8 +90,9 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
     let cwd = input.cwd.as_deref().unwrap_or(cwd);
     match input.tool_name.as_str() {
         "Bash" => {
-            let in_stapel_repo =
-                stapel_root(cwd).is_some() || project_dir.and_then(stapel_root).is_some();
+            let in_stapel_repo = stapel_root(cwd).is_some()
+                || project_dir.and_then(stapel_root).is_some()
+                || stapel_root(working_dir).is_some();
             let command = match &input.tool_input["command"] {
                 serde_json::Value::String(command) => command.as_str(),
                 serde_json::Value::Null => "",
@@ -106,7 +107,7 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
                 return Decision::Deny(reason.into());
             }
             if input.agent_id.as_deref().is_some_and(|id| !id.is_empty())
-                && !subagent_git_ok(command, cwd, project_dir)
+                && !subagent_git_ok(command, cwd, project_dir, working_dir)
             {
                 return Decision::Deny(format!(
                     "subagents run only these git commands in their own worktree: {}",
@@ -372,7 +373,12 @@ const SUBAGENT_GIT: [&str; 12] = [
 /// True when every `git`, `cd` and `GIT_*` word of a subagent's command stays within the
 /// rules: allowed subcommands, no config or location options, paths inside the worktree.
 /// Text the parser cannot read is refused.
-fn subagent_git_ok(command: &str, cwd: &Path, project_dir: Option<&Path>) -> bool {
+fn subagent_git_ok(
+    command: &str,
+    cwd: &Path,
+    project_dir: Option<&Path>,
+    working_dir: &Path,
+) -> bool {
     if command.len() > MAX_COMMAND_LEN {
         return false;
     }
@@ -380,6 +386,7 @@ fn subagent_git_ok(command: &str, cwd: &Path, project_dir: Option<&Path>) -> boo
     let root = resolve(
         &stapel_root(cwd)
             .or_else(|| project_dir.and_then(stapel_root))
+            .or_else(|| stapel_root(working_dir))
             .unwrap_or_else(|| cwd.to_path_buf()),
     );
     let mut at = resolve(cwd);
