@@ -24,9 +24,7 @@ fails until the installed files match.
 ## The plan
 
 The plan is `docs/PHASES.md` (`docs/decisions/0004`). Tickets are taken in the order of its items; a ticket's
-Frame names its plan item (`1.3`) and its promise stays inside that item. While a ticket builds, the frame and
-spec of the next item may be written in a second git worktree, with no cargo, no builder and no `stapel ok`
-there until the current ticket closes (ledger 2026-10-22). An item is added, moved, split or widened only by a
+Frame names its plan item (`1.3`) and its promise stays inside that item. An item is added, moved, split or widened only by a
 dated `decision` record in `.stapel/process-ledger.jsonl` that names the reason, made with the human in the
 chat; an agent never does it on its own. A ticket gets its `STP-<n>` key from `stapel new` when it is taken;
 the keys in the phase-0 list that have no folder are labels. Since plan item 1.13 tickets may build in

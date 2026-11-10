@@ -20,16 +20,15 @@ the file to use; the facts that block an action come first. Do not re-read the w
 - `run-check`: `stapel check KEY`; no other cargo or test run while it runs.
 - Start a new session for each ticket; during the build do not read briefs or reviewer reports yourself
   beyond their findings.
-- While a ticket builds, the frame and spec of the next plan item may be written in a second git worktree;
-  no cargo, no builder and no `stapel ok` there until the current ticket closes.
 - Parallel tickets: `stapel new` makes a branch and a worktree for each ticket. SessionStart does not
   fire after `EnterWorktree`, so run `stapel next` after `EnterWorktree` before anything else. Commands without KEY take the ticket of the
   current branch and refuse a foreign KEY. Agents run cargo only through `stapel cargo`; the cargo lock
   waits with no limit, so a wait is not a failure. Subagents run only allowed git commands inside their
   worktree.
 - For a ticket that has an earlier parallel ticket, run `stapel depends KEY`, then start the agent
-  `stapel-depends` with both ticket paths before the build, and give it the pack and the round that command
-  printed; import its findings and triage them. A confirmed dependency of kind `spec` or `merge` stops the later ticket, and a stopped ticket waits: do
+  `stapel-depends` and give it the pack and the round that command printed, before the build; the agent reads the pack
+  and returns, when it finds no dependency, one LOW record with the claim `no dependency found` and no `waits`,
+  and it gives `waits` only to HIGH and MEDIUM records; import its findings and triage them. A confirmed dependency of kind `spec` or `merge` stops the later ticket, and a stopped ticket waits: do
   not build it. When the base branch holds the close of the other ticket, merge the
   base branch into the ticket branch, resolve the conflicts, run `stapel check` again and run the combined
   review before the close. After the close, merge the branch into main locally and remove the worktree.
