@@ -171,8 +171,7 @@ fn dirty_paths(root: &Path) -> Result<Vec<String>, String> {
     Ok(paths)
 }
 
-/// Takes the next free key and makes its branch and worktree; a parallel `new` that took the same
-/// key makes git refuse, and the next key is tried.
+/// Takes the next free key and makes its branch and worktree.
 fn add_worktree(
     config: &stapel_core::config::Config,
     root: &Path,

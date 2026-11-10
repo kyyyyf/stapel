@@ -210,11 +210,11 @@ enum FindingsAction {
 enum ReviewAction {
     /// Prepare one code review round of a ticket.
     Start {
-        /// The ticket key.
-        key: String,
         /// The round: 1, 2 or `merge`.
         #[arg(long)]
         round: review::Round,
+        /// The ticket key; without it the ticket of the current branch.
+        key: Option<String>,
     },
 }
 
@@ -333,7 +333,7 @@ fn main() -> ExitCode {
             return fail::finish(findings::triage(&file, key.as_deref()));
         }
         Command::Review(ReviewAction::Start { key, round }) => {
-            return fail::finish(review::start(&key, round));
+            return fail::finish(review::start(key.as_deref(), round));
         }
         Command::Ledger(LedgerAction::Add {
             kind,

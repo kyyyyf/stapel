@@ -36,13 +36,13 @@ impl std::str::FromStr for Round {
     }
 }
 
-pub fn start(key: &str, round: Round) -> Result<(), Fail> {
+pub fn start(key: Option<&str>, round: Round) -> Result<(), Fail> {
     let number = match round {
         Round::Number(n) => Some(n),
         Round::Merge => None,
     };
     let (root, config) = repo::open().map_err(Fail::failed)?;
-    let ticket = resolve(&root, Some(key)).map_err(Fail::refused)?;
+    let ticket = resolve(&root, key).map_err(Fail::refused)?;
     let state = match &ticket.status {
         Status::Open(state) => state,
         Status::Closed(_) => {
