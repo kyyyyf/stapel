@@ -240,6 +240,8 @@ that the items that cut the person's approval dialogs come first; the numbers st
 2026-10-22 (ledger): 1.9 and 1.10 are one ticket; 1.11 takes the light route or joins 1.12; the frame and
 spec of the next item may be written in a second worktree while the current ticket builds. Changed on
 2026-11-02 (ledger): the new item 1.13 is taken before 1.6, and it replaces the second-worktree rule.
+Changed on 2026-11-10 (ledger): after 1.13 only 1.11 with 1.12 (one ticket) and the new item 1.14 are taken;
+1.6, 1.7, 1.9 and 1.10 leave the plan and become candidates ("The plan after STP-27" below).
 
 - 1.1 (STP-20) `stapel next [KEY]`: the next action computed from `state.json`, the Plan steps, `check --history`,
   `runs.jsonl` and `findings.jsonl`; one line of action plus the command or the path (`--json` for the
@@ -312,144 +314,69 @@ stops `next`, and the person confirms in one dialog); one dialog per section (ST
 
 ---
 
-## Phase 2 — pilot on a foreign repository (two to three weeks)
+## The plan after STP-27 (ledger 2026-11-10)
 
-Moved forward from phase 4 (`docs/decisions/0004`): the product claim is tested on a repository that is not
-stapel's own before the guards and the index are built, and its measurements decide what phases 3 and 4
-contain.
+Cut on 2026-11-10 after a review of the code and the business model. Every ticket so far ran on this
+repository, tickets grew (STP-27: 50 steps in 8 days), and the product claim, "the tenth change costs what
+the first did", is untested. The pilot needs only the junit runner, so everything else waits for the pilot's
+numbers. The earlier phases 2 to 5 are replaced by the stages below; their text is in the git history.
 
-**How the pilot is run (decided by the orchestrator on the human's request, 2026-10-19).**
+Two process rules from the same decision:
 
-- The repository: the TypeScript project next to this one that klc already runs (jest with `jest-junit`);
-  never named in tracked files. The human is the one technical person and the only reviewer in the forge.
-- Preconditions, checked on the day before: phase 1 closed; `stapel init` there with the human's explicit
-  consent at that moment; the binary on PATH, `gh` or `glab` logged in, Claude Code on the subscription.
-- Three tickets, one after another, each the next real ticket of that project, each about 300 changed
-  lines or fewer; the first one is the comparison with klc: the same ticket from the same base commit in two
-  branches, stapel first, klc second, by the same person; the human chooses which branch merges and records
-  why. Tickets two and three go through stapel only.
-- The person's part per ticket: the request in the chat, the frame and coverage questions, one confirmation
-  dialog, one push dialog, the merge in the forge. The author of stapel is not in the chat; what the person
-  had to ask the author is a finding against the skill text.
-- Measures per ticket, written into the ticket's summary and into `docs/`: the metrics of `docs/PLAN.md` §8;
-  questions asked and dialogs shown; wall time from the request to the MR; escaped defects counted four
-  weeks after the merge. The comparison table and the decision on klc (freeze, carry over the remainder,
-  or bring the lessons back) close the phase.
-- Ticket state lives on the ticket's branch next to the code (one ticket, one branch, one MR); a separate
-  state branch stays an option in `stapel.toml` for a later team.
+- A ticket over 12 Plan steps or two code review rounds stops and is split by a ledger decision.
+- The guard is frozen: new guard work starts only after a real bypass seen in the pilot.
 
-**Goal.** The three pilot tickets merged with the person answering questions and two dialogs per ticket;
-the comparison with klc recorded.
+### Stage A — the road to the pilot (about a week)
 
-**Acceptance criteria (abridged).**
+Items, in order. A1 and A2 each run in their own session with an Opus orchestrator.
 
-1. The person types no stapel command during the three tickets; the decisions log shows every answer.
-2. The MRs carry the review map, and the human reviewer's comments on them are recorded as findings.
-3. Escaped defects per ticket are counted four weeks after each merge and written into the summary.
-4. The comparison table is published in `docs/` of both repositories without the project's name.
+- A1 (items 1.11 and 1.12 as one ticket): the `junit` runner and the `base..HEAD` walk, with the text of
+  those items above.
+- A2 (item 2.1, widened; depends on A1): `stapel init` on a foreign repository: no `[check] cargo`, the
+  skill and the agents, a smoke ticket that proves the hooks and the junit runner, the person's checklist
+  printed at the end. Widened: the files `init` installs stay out of the shared git history of that
+  repository (for example through `.git/info/exclude`), also when its git hooks live in a tracked folder.
+- A3 (new item 1.14): attention numbers per ticket in the token report: dialogs shown, questions asked, the
+  human's minutes, Plan steps, wall time from the request to the merge request. Also: a `SubagentStop`
+  whose transcript file does not exist writes no `estimate` record (312 of 545 records of STP-27).
 
-**Exit criterion.** Three tickets merged on the pilot repository; the comparison table published; the
-decision on klc recorded; the list of what phases 3 and 4 must contain updated from the pilot's findings.
+### Stage B — the pilot (two to three weeks)
 
-**Items.**
+- The repository: the TypeScript project next to this one (jest with `jest-junit`, git hooks in a tracked
+  folder); never named in tracked files. Two local clones of its branch are made after A1 and A2 close and
+  the human confirms the base commit: one for stapel, one for a plain agent. Their `origin` is the local
+  repository, so nothing leaves the machine by accident.
+- 2.2 pilot ticket one, two ways from the same base commit: through stapel, and through a plain Claude Code
+  agent without the process. The ticket: stream highlighting driven by data, with a hover cost that does not
+  depend on the row count. The comparison with a plain agent replaces the comparison with klc.
+- 2.3 pilot tickets two and three, through stapel only: collapsed columns with windowing (a UI ticket that
+  is hard to test in jsdom), then the verification ticket of that group (e2e, performance baseline,
+  documents; almost no RED→GREEN).
+- The person's part per ticket: the request in the chat, the questions, one confirmation dialog, the push
+  and the merge request by hand. The author of stapel is not in the chat; what the person had to ask the
+  author is a finding against the skill text.
+- Measures per ticket: the attention numbers of A3, tokens by role, review rounds and findings, escaped
+  defects counted four weeks after the merge.
 
-- 2.1 `stapel init` on a foreign repository: no `[check] cargo`, the skill and the agents, `context.md` with
-  the sections of phase 3 empty, a smoke ticket that proves the hooks and the junit runner; the person's
-  checklist printed at the end.
-- 2.2 pilot ticket one and the comparison record with klc (both branches, the metrics, the merge decision).
-- 2.3 pilot tickets two and three; the comparison table; the decision on klc; the findings against the
-  skill text and the plan of phases 3 and 4 updated.
+### Stage C — the gate (item 2.4)
 
----
+stapel continues as planned only if all three hold on the pilot's numbers:
 
-## Phase 3 — project context, guards and autonomy levels (three to four weeks)
+1. The human's minutes per ticket are not above a plain agent plus the review of its code.
+2. Escaped defects are fewer than the plain agent's.
+3. The third ticket costs no more than the first.
 
-**Why this phase comes before the index.** The goals name one pain that stapel is for: software written by
-chatting with an agent is an MVP, because the agent knows nothing of what the organisation keeps in people's
-heads, and because each change looks right alone while their sum erodes the system. Phase 1 makes the
-process repeatable; phase 2 shows it on a real repository; neither gives the agent the organisation's
-knowledge or stops the erosion. Phase 3 does both: a project context the agent reads at every frame, and
-checks the program runs that the agent cannot weaken (`docs/20260107_arc_integrity.md`, untracked note:
-"the earlier and harder the check, the more reliable it is"; a reviewer model is the weakest layer). The
-index (phase 4) saves tokens and sharpens the review map; it does not change what is true about the result.
-The goals rank quality and determinism before token efficiency, and the measurements of phase 0 say the
-orchestrator's context, not file reading, is the main cost, which `stapel next` already attacks. So phase 3
-is the second half of the product claim and phase 4 is an optimisation measured against the pilot's numbers.
+Otherwise stapel narrows to `check` and the token journal for CI. The decision is a ledger record.
 
-**Goal.** A ticket that breaks a project rule is stopped by a check the agent cannot weaken, not by a
-reviewer; the person's involvement is a configured level, from "every question and both dialogs" down to
-"one page, one dialog".
+### Stage D — candidates, decided at the gate from the pilot's findings
 
-**What is included.**
+Not a plan; nothing here is taken before the gate. `stapel check` in CI; the guards folder with the ratchet;
+`stapel lint` (item 1.6); `stapel ship` with the review map (item 1.7); guard items 1.9 and 1.10; the input
+from BMAD (both items of ledger 2026-11-04); the index; autonomy levels and the human page; Zed and more
+languages; removal of the five empty crates; one short plan document in place of `docs/PLAN.md` and this
+file.
 
-- `.stapel/context.md`: domain terms, conventions, non-functional budgets, a "never" list, architecture
-  rules; read by the orchestrator at the frame and by the builder brief; an answer that holds for the whole
-  repository goes there instead of the ticket's Decisions log, through a question with that option.
-- Machine guards out of the agent's reach under `.stapel/guards/`: dependency rules as tests, ratchet
-  baselines ("no worse than now": existing violations recorded, new ones fail, a fixed one leaves the
-  baseline for good), coverage of the diff, a public API snapshot, a new dependency only through a dialog;
-  `stapel check` runs them at every step; the guard denies agent writes under `.stapel/guards/`; CI runs
-  the same set and decides.
-- Autonomy levels in `stapel.toml` (the founder parameter of decision 0004, second segment): which of the
-  moments of `docs/decisions/0004` §4 ask the person. Level 1: every frame and coverage question, the
-  confirmation dialog, the push dialog (phase 1 default). Level 2: only questions the orchestrator cannot
-  answer from `context.md` and the code, one dialog. Level 3: the human page in the person's language,
-  generated from the Frame and the criteria and confirmed instead of them; the criteria stay in English
-  for the agents; a change in either makes the other stale.
-- Ticket types `bug` (reproduction, cause hypothesis, no fix) and `spike` (a question with a time box), with
-  templates; ticket status outside the confirmed text (label STP-11).
+## What stays out of scope
 
-**Acceptance criteria (abridged).**
-
-1. A builder that adds a forbidden import or a new dependency is stopped before the GREEN commit, with a
-   message that names the rule and the fix.
-2. A ratchet baseline shrinks when a violation is fixed and never grows without a dialog.
-3. At level 3 the human page and the criteria are confirmed by one dialog; a change in either makes the
-   other stale.
-4. A pilot ticket at level 2 asks the person fewer questions than the same kind of ticket at level 1, and
-   the answers it takes from `context.md` are listed in the ticket.
-
-**Exit criterion.** One pilot ticket stopped by a guard; one ticket shipped at level 2 on the pilot
-repository; the level-3 page produced for one ticket and read by a person who reads no tests.
-
-**Items.** 3.1 `context.md` and the question option "holds for the repository"; 3.2 the guards folder, the
-ratchet and `check` running them; 3.3 the dependency dialog and the API snapshot; 3.4 autonomy levels 1 and
-2; 3.5 level 3, the human page; 3.6 `bug` and `spike`. Details are fixed at the end of phase 2 from the
-pilot's findings. Changed on 2026-10-22 (ledger): phase 3 starts when the third pilot ticket merges, while
-the four-week count of escaped defects runs; the items are taken as three tickets: 3.1 with 3.6, 3.2 with
-3.3, 3.4 with 3.5.
-
----
-
-## Phase 4 — index and selective tests (two to three weeks)
-
-Unchanged in content from the earlier phase 2, moved after the pilot: the pilot's token measurements say
-where the index pays. Included: `stapel-index` with adapters for TypeScript and Rust; `stapel q` (`symbol`,
-`refs`, `callers`, `tests`, `impact`); blast radius, which also feeds the review map of `ship`; selective
-test runs per step with a full run before `ship`; the MCP server with the same queries; context packs
-assembled within a budget. Taken as three tickets (ledger 2026-10-22): the index with `stapel q` first,
-then `impact` with selective runs, then MCP with context packs. The `impact` ticket also feeds the dependency check of
-item 1.13 (ledger 2026-11-02). The selective-runs ticket also decides the
-frequency of the full `stapel check` (ledger 2026-10-22: the builder runs the whole suite before GREEN; a
-full check after a step only when it changes existing tests or shared test helpers; otherwise before code
-review and before the close). Acceptance criteria as before: `impact` matches a manual sample, imprecise
-answers marked, incremental re-indexing, selective and full runs in `runs.jsonl`, savings measured on three
-tickets.
-
-**Exit criterion.** The builder agent on a pilot ticket uses MCP queries instead of reading whole files,
-and this is visible in `tokens.jsonl`.
-
----
-
-## Phase 5 — Zed and more languages (after phase 4; not sized)
-
-Decided by the human on 2026-10-19: Zed and a couple of other languages are the stage after these. Zed:
-`stapel-lsp` for `ticket.md` and code, where each button calls one existing command, and the inbox in the
-status bar. Languages: Python and Go adapters for the index and their test runners for `check` (pytest and
-`go test` with JUnit output); C++ later. Nothing in phases 1 to 4 depends on this phase.
-
-## What stays out of scope until phase 5 has run
-
-Jira (the adapter exists, the connection comes later), semantic search on embeddings, multi-user locks more
-complex than "the section is held by whoever confirms", a hosted service, a web UI, agents other than Claude
-Code, deploy and operations after the merge, a separate observation stage.
+Jira, semantic search on embeddings, multi-user locks, a hosted service, a web UI, agents other than Claude
+Code, deploy and operations after the merge.
