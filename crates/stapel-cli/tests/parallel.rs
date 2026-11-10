@@ -743,8 +743,45 @@ fn merge_branch_after_close() {
     let main_path = git_in(main, &["rev-parse", "--show-toplevel"]).trim().to_string();
     let base = base_name(&pair);
     let merge_line = format!("next: merge-branch — git merge --no-ff ABC-1 (in {main_path})");
+    // `stapel next KEY` in `dir`: its stdout.
+    let next_key = |dir: &Path, key: &str| -> String {
+        let out = stapel(dir).args(["next", key]).assert().success().get_output().stdout.clone();
+        String::from_utf8_lossy(&out).into_owned()
+    };
 
-    // The close is written and not committed: `commit-close`.
+    // A foreign KEY shows no `merge-main` of the checkout's own ticket (W-7).
+    {
+        let other = two_ticket_worktrees();
+        build_ready(&other.b, "ABC-2");
+        put_dependency_stop(&other, &merge_stop_body());
+        // ABC-1 is built in its own worktree and its folder is copied into the ABC-2 worktree with
+        // its steps done, so `next ABC-1` can be asked there and would show `merge-main`.
+        build_ready(&other.a, "ABC-1");
+        let from = other.a.join(".stapel/tickets/ABC-1");
+        let to = other.b.join(".stapel/tickets/ABC-1");
+        std::fs::create_dir_all(&to).unwrap();
+        for name in ["ticket.md", "state.json"] {
+            std::fs::copy(from.join(name), to.join(name)).unwrap();
+        }
+        commit_ticket(&other.b, "ABC-1");
+        git_in(
+            &other.b,
+            &["commit", "-q", "--allow-empty", "-m", "ABC-1 step 1 skip: nothing"],
+        );
+        let closed = serde_json::json!({
+            "key": "ABC-1",
+            "closed": {"by": "test-user", "at": "2026-01-02T10:00:00Z", "reason": "done"},
+        })
+        .to_string();
+        commit_on_base(&other, ".stapel/tickets/ABC-1/state.json", &closed);
+        let said = next(&other.b, None);
+        assert!(said.lines().any(|l| l.starts_with("next: merge-main")), "{said}");
+        let said = next_key(&other.b, "ABC-1");
+        assert!(!said.contains("merge-main"), "{said}");
+        assert!(!said.contains("merge-review"), "{said}");
+    }
+
+    // The close is written and not committed: `commit-close`, also with the own KEY (R-10).
     close_uncommitted(&pair.a, "ABC-1");
     let said = next(&pair.a, None);
     assert!(
@@ -752,12 +789,19 @@ fn merge_branch_after_close() {
         "{said}"
     );
     assert!(!said.contains("merge-branch"), "{said}");
+    let said = next_key(&pair.a, "ABC-1");
+    assert!(
+        said.lines().any(|l| l == "next: commit-close — git commit .stapel/tickets/ABC-1"),
+        "{said}"
+    );
 
     // The close is committed and the base branch lacks it: `merge-branch` with the main path.
     commit_ticket(&pair.a, "ABC-1");
     let said = next(&pair.a, None);
     assert!(said.lines().any(|l| l == merge_line), "{said}");
     assert!(!said.contains("main checkout not ready"), "{said}");
+    let said = next_key(&pair.a, "ABC-1");
+    assert!(said.lines().any(|l| l == merge_line), "{said}");
 
     // A ticket that is open asks for no merge of its branch.
     let said = next(&pair.b, None);
