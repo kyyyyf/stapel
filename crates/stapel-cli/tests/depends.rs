@@ -782,3 +782,60 @@ fn merge_review_edges() {
         .failure()
         .stderr(predicates::str::contains("merge review"));
 }
+
+// STP-27 AC-18, D53-2: with the merge round due, `next ABC-1` names no merge review.
+#[test]
+fn foreign_key_no_merge_review() {
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    let b = pair.b.as_path();
+    let main = pair.repo.path();
+    let round = round_of(b);
+    review_returns(&pair, &[nothing_found("D-1", &round)]);
+
+    // The ABC-1 folder is present in the ABC-2 worktree.
+    let folder = b.join(".stapel/tickets/ABC-1");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::copy(
+        pair.a.join(".stapel/tickets/ABC-1/ticket.md"),
+        folder.join("ticket.md"),
+    )
+    .unwrap();
+    git_in(b, &["add", "-A"]);
+    git_in(b, &["commit", "-q", "-m", "ABC-1 folder"]);
+
+    // The base branch gains a close of ABC-1; ABC-2 merges it.
+    let base = git_in(main, &["symbolic-ref", "--short", "HEAD"]).trim().to_string();
+    let rel = ".stapel/tickets/ABC-1/state.json";
+    let mut closed: Value =
+        serde_json::from_str(&std::fs::read_to_string(pair.a.join(rel)).unwrap()).unwrap();
+    closed["closed"] =
+        json!({"by": "test-user", "at": "2026-01-02T10:00:00Z", "reason": "done"});
+    std::fs::create_dir_all(main.join(".stapel/tickets/ABC-1")).unwrap();
+    std::fs::write(main.join(rel), closed.to_string()).unwrap();
+    git_in(main, &["add", rel]);
+    git_in(main, &["commit", "-q", "-m", "close"]);
+    git_in(b, &["merge", "-q", "--no-edit", &base]);
+
+    // The code review was done and the check passes at HEAD: the merge round is due.
+    set_section(b, "ABC-2", "Review", "Reviewed: no findings.");
+    set_section(b, "ABC-2", "Summary", "Done.");
+    git_in(b, &["add", "-A"]);
+    git_in(b, &["commit", "-q", "-m", "ABC-2: review and summary"]);
+    let head = git_in(b, &["rev-parse", "HEAD"]).trim().to_string();
+    let rec = json!({
+        "v": 1, "kind": "check", "id": "c1", "at": "2026-10-19T10:00:00Z",
+        "ticket": "ABC-2", "head": head, "result": "pass", "steps": [],
+    });
+    std::fs::write(b.join(".stapel/tickets/ABC-2/runs.jsonl"), format!("{rec}\n")).unwrap();
+
+    let said = next(b);
+    assert!(said.contains("--round merge"), "the merge round is due: {said}");
+
+    let out = stapel(b).args(["next", "ABC-1"]).assert().success().get_output().stdout.clone();
+    let said = String::from_utf8_lossy(&out).into_owned();
+    assert!(!said.contains("--round merge"), "{said}");
+    assert!(!said.contains("merge-review"), "{said}");
+    assert!(!said.contains("merge-main"), "{said}");
+    assert!(!said.contains("ABC-2"), "{said}");
+}

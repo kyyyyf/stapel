@@ -498,3 +498,32 @@ fn non_folder_keys() {
         .success()
         .stdout(contains("created: ABC-5"));
 }
+
+// STP-27 AC-6, D50-1: `review start` without KEY on a clean ticket branch writes the pack of ABC-2.
+#[test]
+fn review_start_on_a_branch() {
+    let pair = common::two_ticket_worktrees();
+    let b = pair.b.as_path();
+    common::set_section(
+        b,
+        "ABC-2",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | The spec. | t |",
+    );
+    std::fs::create_dir_all(b.join("src")).unwrap();
+    std::fs::write(b.join("src/note.txt"), "note\n").unwrap();
+    git(b, &["add", "-A"]);
+    git(b, &["commit", "-q", "-m", "ABC-2 work"]);
+
+    let out = stapel(b)
+        .args(["review", "start", "--round", "1"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{err}");
+    assert!(said.contains("pack: .stapel/scratch/review/ABC-2-r1/pack.md"), "{said}");
+    assert!(b.join(".stapel/scratch/review/ABC-2-r1/pack.md").is_file());
+    assert!(!pair.a.join(".stapel/scratch/review").exists());
+    assert!(!b.join(".stapel/scratch/review/ABC-1-r1").exists());
+}
