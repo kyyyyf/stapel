@@ -153,7 +153,8 @@ pub fn merge_commit(root: &Path) -> Option<String> {
     let own = branch_ticket(root)?;
     let base = state_of(&own)?.base_branch.clone()?;
     let base_ref = format!("refs/heads/{base}");
-    let merges = git(root, &["rev-list", "--merges", "HEAD"])?;
+    // Only merges the ticket made: a merge already on the base branch is none (E-1).
+    let merges = git(root, &["rev-list", "--merges", &format!("{base_ref}..HEAD")])?;
     for sha in merges.lines() {
         let line = git(root, &["rev-list", "--parents", "-n", "1", sha])?;
         let parents: Vec<&str> = line.split_whitespace().skip(1).collect();
