@@ -1483,6 +1483,32 @@ fn permit_edges() {
 // STP-27 AC-13: cargo runs only through `stapel cargo`.
 #[test]
 fn bare_cargo_denied() {
+    // Wrapped stapel actions (R-4): `stapel cargo run -- <action>` gets the decision of the
+    // `stapel` form of that action.
+    let ticket_repo = repo_with_ticket();
+    hook_bash(
+        ticket_repo.path(),
+        "stapel cargo run -p stapel-cli -- ok ABC-1 spec --grant X",
+        "auto",
+    )
+    .code(DENY)
+    .stderr(contains("grant"));
+    hook_bash(
+        ticket_repo.path(),
+        "stapel cargo run -- hook pre-tool-use",
+        "auto",
+    )
+    .code(DENY)
+    .stderr(contains("hook"));
+    let (reason, replaced) = ask(ticket_repo.path(), "stapel cargo run -- ok spec");
+    assert!(
+        reason.contains("ABC-1") && reason.contains("sha256:"),
+        "{reason}"
+    );
+    assert!(
+        replaced.contains("ok ABC-1 spec --grant "),
+        "{replaced}"
+    );
     let repo = initialized_repo();
     let text = CARGO_TEXT;
     // Wrapped stapel cargo (E-2): the program is `stapel`, so it passes; wrapped bare cargo does not.
