@@ -1663,6 +1663,25 @@ fn subagent_git_guard() {
         &format!("git -C {} status", main.join("crates").display()),
     )
     .success();
+
+    // Git guard root (W-8, E-4): `cwd` outside any stapel repository and no project dir: the
+    // Hook root is the stapel root of the working directory, here the STP-2 worktree.
+    let by_working_dir = |command: &str| {
+        let payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "cwd": outside.path(),
+            "agent_id": "agent-1",
+            "tool_name": "Bash",
+            "tool_input": { "command": command },
+        });
+        stapel(&pair.b)
+            .env_remove("CLAUDE_PROJECT_DIR")
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+    };
+    by_working_dir(&format!("git -C {} status", main.display())).code(DENY);
 }
 
 // STP-27 AC-8: the guard takes its root from the input's `cwd` first, then `CLAUDE_PROJECT_DIR`,
