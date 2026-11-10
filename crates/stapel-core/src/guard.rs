@@ -742,15 +742,24 @@ fn check_words(words: &[String], found: &mut Found) {
 /// `stapel` or `cargo run ... --`.
 /// The action and the sub-action are compared in any case.
 fn check_stapel(name: &str, args: &[String], found: &mut Found) {
-    let rest = match name {
-        "stapel" => args,
-        "cargo" if args.first().is_some_and(|a| a == "run") => {
-            match args.iter().position(|a| a == "--") {
-                Some(sep) => &args[sep + 1..],
-                None => return,
-            }
+    // `stapel cargo run [options] -- <action>` runs that action (STP-27 R-4); a bare
+    // `cargo run ... -- <action>` is denied as cargo, but its hook or grant reason comes first.
+    let wrapped = match name {
+        "stapel" => {
+            args.first().is_some_and(|a| a == "cargo") && args.get(1).is_some_and(|a| a == "run")
         }
+        "cargo" => args.first().is_some_and(|a| a == "run"),
         _ => return,
+    };
+    let rest = if wrapped {
+        match args.iter().position(|a| a == "--") {
+            Some(sep) => &args[sep + 1..],
+            None => return,
+        }
+    } else if name == "stapel" {
+        args
+    } else {
+        return;
     };
     let Some(at) = rest.iter().position(|w| !w.starts_with('-')) else {
         return;
@@ -1308,11 +1317,14 @@ pub fn plain_invocation(command: &str) -> Option<Invocation> {
         .cloned()
         .collect();
     let (program, rest) = match words.first().map(|w| base_name(w)) {
-        Some("stapel") => (words[..1].to_vec(), &words[1..]),
-        Some("cargo") if words.get(1).is_some_and(|w| w == "run") => {
+        Some("stapel")
+            if words.get(1).is_some_and(|w| w == "cargo")
+                && words.get(2).is_some_and(|w| w == "run") =>
+        {
             let sep = words.iter().position(|w| w == "--")?;
             (words[..=sep].to_vec(), &words[sep + 1..])
         }
+        Some("stapel") => (words[..1].to_vec(), &words[1..]),
         _ => return None,
     };
     let at = rest.iter().position(|w| !w.starts_with('-'))?;
