@@ -1485,6 +1485,19 @@ fn permit_edges() {
 fn bare_cargo_denied() {
     let repo = initialized_repo();
     let text = CARGO_TEXT;
+    // Wrapped stapel cargo (E-2): the program is `stapel`, so it passes; wrapped bare cargo does not.
+    for command in [
+        "timeout 1800 stapel cargo test",
+        "nice stapel cargo test",
+        "nohup stapel cargo check",
+        "xargs stapel cargo test",
+        "env A=1 stapel cargo test",
+    ] {
+        bash(repo.path(), command).success();
+    }
+    bash(repo.path(), "timeout 1800 cargo test")
+        .code(DENY)
+        .stderr(contains(text));
     for command in [
         "cargo test",
         "env FOO=1 cargo test",
