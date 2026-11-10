@@ -331,7 +331,6 @@ fn resolve_hops(path: &Path, hops: usize) -> PathBuf {
     out
 }
 
-/// The git subcommands a subagent may run (STP-27 AC-14).
 /// Long git options a subagent may not use, also as an abbreviation git accepts (R-5).
 const GIT_BANNED_LONG: [&str; 10] = [
     "--output",
@@ -346,15 +345,22 @@ const GIT_BANNED_LONG: [&str; 10] = [
     "--exec-path",
 ];
 
-/// True when `arg` is a long option (or `--name=value`) whose name is a prefix of one of `names`.
+/// Real git options that are also a prefix of a banned name; git takes the exact match first (D48-1).
+const GIT_EXACT_LONG: [&str; 1] = ["text"];
+
+/// True when `arg` is a long option (or `--name=value`) whose name is a prefix of one of `names`
+/// and is not the exact name of a real git option.
 fn abbreviates_any(arg: &str, names: &[&str]) -> bool {
     let Some(name) = arg.strip_prefix("--") else {
         return false;
     };
     let name = name.split('=').next().unwrap_or("");
-    !name.is_empty() && names.iter().any(|full| full[2..].starts_with(name))
+    !name.is_empty()
+        && !GIT_EXACT_LONG.contains(&name)
+        && names.iter().any(|full| full[2..].starts_with(name))
 }
 
+/// The git subcommands a subagent may run (STP-27 AC-14).
 const SUBAGENT_GIT: [&str; 12] = [
     "status",
     "diff",
