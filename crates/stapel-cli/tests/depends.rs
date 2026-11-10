@@ -743,6 +743,22 @@ fn merge_review_edges() {
         .failure()
         .stderr(predicates::str::contains("merge review"));
 
+    // The base branch gains a commit after the merge: the merge pack does not show it (W-6).
+    std::fs::write(main.join("later.txt"), "LATERMARK\n").unwrap();
+    git_in(main, &["add", "later.txt"]);
+    git_in(main, &["commit", "-q", "-m", "later"]);
+    stapel(b)
+        .args(["review", "start", "ABC-2", "--round", "merge"])
+        .assert()
+        .success();
+    let folder = b.join(".stapel/scratch/review/ABC-2-rmerge");
+    let ticket_diff = std::fs::read_to_string(folder.join("diff.patch")).unwrap();
+    assert!(ticket_diff.contains("src/note.txt"), "{ticket_diff}");
+    assert!(!ticket_diff.contains("later.txt"), "{ticket_diff}");
+    let merge_diff = std::fs::read_to_string(folder.join("merge.patch")).unwrap();
+    assert!(merge_diff.contains("tickets/ABC-1/state.json"), "{merge_diff}");
+    assert!(!merge_diff.contains("later.txt"), "{merge_diff}");
+
     // The import of the first merge round satisfies it; the summary is asked next.
     let mut m1 = nothing_found("M-1", &first);
     m1["stage"] = json!("code-review");
