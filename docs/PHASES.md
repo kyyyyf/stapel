@@ -371,6 +371,11 @@ stapel continues as planned only if all three hold on the pilot's numbers:
 Otherwise stapel narrows to `check` and the token journal for CI. The decision is a ledger record. If it
 narrows, phases 3 to 5 below are not taken.
 
+Also decided at the gate (ledger 2026-11-10, third decision): the kind `bug`. Until then a bug goes through
+the current process unchanged; the RED test is the reproduction. Every escaped defect of a pilot ticket
+becomes a bug ticket, and its attention numbers (item 1.14) show what a bug costs. If that cost is too high
+for a two-step fix, the kind `bug` enters phase 4 by a ledger decision.
+
 ### After the gate — phases 3 to 5 (ledger 2026-11-10, second decision)
 
 Taken only if the gate (2.4) passes, in this order, chosen by the human. The pilot's findings may reorder
@@ -405,6 +410,12 @@ feature and ticket.
   "no change needed, because".
 - 4.4 computed readiness. A feature is done when its tickets are closed and each requirement is proved by a
   named test; `stapel next` on a feature names the next ticket and what blocks it.
+
+- Candidate for this phase, decided at the gate: the kind `bug`, on the ticket-kind mechanism of 4.2. A
+  short form of three lines (the reproduction, the cause hypothesis found by an investigation before the
+  Frame, the source ticket), one RED, one GREEN, one dialog. The link to the source ticket counts escaped
+  defects per ticket without a hand-written note. A bug has no level above it; when its fix changes a
+  requirement, the staleness of 4.3 applies.
 
 The quality of a feature spec is measured, per ticket, by three numbers: `intent_gap` findings and
 questions (enough information), brief size and builder tokens (not too much), dialogs and the human's
