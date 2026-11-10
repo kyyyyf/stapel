@@ -1151,10 +1151,26 @@ fn wait_edges() {
     let path = pair.repo.path().join(".git/stapel/stops/ABC-2/ABC-9-dependency.json");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, spec_stop_body()).unwrap();
+    git_in(&pair.b, &["branch", "ABC-9"]);
     let said = next(&pair.b, None);
     assert!(said.contains("blocked: ABC-2 waits for ABC-9 ("), "{said}");
     assert!(said.lines().any(|l| l == "next: wait — ABC-9"), "{said}");
     write_hook(&pair.b, "crates/x.rs").code(2);
+
+    // An abandoned earlier ticket (no worktree, no branch): `next` removes its stops and gives no
+    // wait (R-6).
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
+    let spec = put_dependency_stop(&pair, &spec_stop_body());
+    let conflict = stop_path(&pair, "ABC-2", "ABC-1");
+    std::fs::write(&conflict, merge_stop_body()).unwrap();
+    git_in(pair.repo.path(), &["worktree", "remove", "--force", pair.a.to_str().unwrap()]);
+    git_in(pair.repo.path(), &["branch", "-D", "ABC-1"]);
+    let said = next(&pair.b, None);
+    assert!(!said.contains("waits for"), "{said}");
+    assert!(!spec.exists() && !conflict.exists(), "the abandoned stops stayed");
+    write_hook(&pair.b, "crates/x.rs").success();
 
     // The guard text for an unreadable stop (D12-8).
     let pair = two_ticket_worktrees();
