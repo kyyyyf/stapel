@@ -72,7 +72,7 @@ pub fn take(command: &str) -> Result<Option<CargoLock>, String> {
             warn!(
                 "waiting for the cargo lock: held by {}",
                 if holder.is_empty() {
-                    "an unknown holder"
+                    "an unknown holder (a process started by an earlier cargo run may hold it)"
                 } else {
                     holder
                 }
