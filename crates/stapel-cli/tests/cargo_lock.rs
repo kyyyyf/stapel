@@ -390,6 +390,12 @@ fn second_waits_and_names_the_holder() {
         text.contains("waiting for the cargo lock: held by an unknown holder"),
         "{text}"
     );
+    assert!(
+        text.contains(
+            "held by an unknown holder (a process started by an earlier cargo run may hold it)"
+        ),
+        "{text}"
+    );
     assert_eq!(standin.runs("third"), 0);
     drop(file);
     wait_exit(&mut waiter, "the waiter");
