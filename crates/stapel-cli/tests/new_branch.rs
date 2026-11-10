@@ -394,6 +394,18 @@ fn commands_on_a_branch() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!err.contains("several open tickets"), "{err}");
 
+    // `review start` without KEY takes the branch ticket (W-3).
+    let out = stapel(dir)
+        .args(["review", "start", "--round", "1"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("Usage"), "{err}");
+    assert!(!err.contains("required"), "{err}");
+    assert!(!err.contains("several open tickets"), "{err}");
+    assert!(out.status.code() != Some(2) || err.contains("ABC-2"), "{err}");
+    none_of_abc1("review start");
+
     let finding = serde_json::json!({
         "id": "F-1", "ticket": "ABC-2", "stage": "code-review", "round": 1,
         "role": "reviewer", "severity": "HIGH", "promise": "inside", "claim": "a claim",
