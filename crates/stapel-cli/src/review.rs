@@ -255,7 +255,20 @@ fn write_merge_pack(
         let path = folder.join(name);
         std::fs::write(&path, bytes).map_err(|e| Fail::failed(format!("{}: {e}", path.display())))
     };
+    // The ticket's diff from its merge base with the base branch, so a later base commit stays out.
     let base_ref = format!("refs/heads/{base_branch}");
+    let found = Command::new("git")
+        .args(["merge-base", &base_ref, head])
+        .current_dir(root)
+        .output()
+        .map_err(|e| Fail::failed(format!("git merge-base: {e}")))?;
+    if !found.status.success() {
+        return Err(Fail::failed(format!(
+            "git merge-base failed: {}",
+            String::from_utf8_lossy(&found.stderr).trim()
+        )));
+    }
+    let base_ref = String::from_utf8_lossy(&found.stdout).trim().to_string();
     write("diff.patch", &diff(root, &[], &base_ref, head)?)?;
     let stat = diff(root, &["--stat=120", "--stat-graph-width=20"], &base_ref, head)?;
     write("merge.patch", &diff(root, &[], &format!("{merge}^1"), merge)?)?;
