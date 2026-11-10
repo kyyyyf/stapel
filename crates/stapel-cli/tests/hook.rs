@@ -1692,6 +1692,16 @@ fn subagent_git_guard() {
         call(command, true).code(DENY);
         call(command, false).success();
     }
+    // Exact git options (D48-1): the exact name of a real option is no abbreviation.
+    // Only `--text` fails on the old code; the others guard existing behaviour.
+    for command in [
+        "git grep --text x",
+        "git log --oneline --name-only --stat",
+        "git diff --no-ext-diff",
+    ] {
+        call(command, true).success();
+    }
+    call("git diff --textc", true).code(DENY);
     // GIT_DIR is denied for the main session too (the bypass rule).
     call("GIT_DIR=/x git status", true).code(DENY);
     call("echo GIT_A=1", true).success();
