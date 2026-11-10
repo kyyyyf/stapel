@@ -1622,6 +1622,17 @@ fn subagent_git_guard() {
         call(command, true).code(DENY);
         call(command, false).success();
     }
+    // Git abbreviations (R-5): git accepts unambiguous abbreviations of long options.
+    for command in [
+        "git log --out=/tmp/x",
+        "git diff --ext-d",
+        "git log --textc",
+        "git status --git-d=/x",
+        "git grep --open-f=vi x",
+    ] {
+        call(command, true).code(DENY);
+        call(command, false).success();
+    }
     // GIT_DIR is denied for the main session too (the bypass rule).
     call("GIT_DIR=/x git status", true).code(DENY);
     call("echo GIT_A=1", true).success();
