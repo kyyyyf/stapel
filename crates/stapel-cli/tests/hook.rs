@@ -1558,6 +1558,57 @@ fn bare_cargo_denied() {
     ] {
         bash(repo.path(), command).success();
     }
+    // Cargo run after options (D47-1, D49-2): `run` follows cargo's global options and a
+    // `+toolchain` word.
+    hook_bash(
+        ticket_repo.path(),
+        "stapel cargo -q run -- ok ABC-1 --grant X",
+        "auto",
+    )
+    .code(DENY)
+    .stderr(contains("grant"));
+    hook_bash(
+        ticket_repo.path(),
+        "stapel cargo +nightly run -- hook pre-tool-use",
+        "auto",
+    )
+    .code(DENY)
+    .stderr(contains("hook"));
+    hook_bash(
+        ticket_repo.path(),
+        "stapel cargo --offline -v run -- ok ABC-1 --grant X",
+        "auto",
+    )
+    .code(DENY)
+    .stderr(contains("grant"));
+    hook_bash(
+        ticket_repo.path(),
+        "stapel cargo run -- -- ok ABC-1 --grant X",
+        "auto",
+    )
+    .code(DENY)
+    .stderr(contains("grant"));
+    let (reason, _) = ask(ticket_repo.path(), "stapel cargo -q run -- ok spec");
+    assert!(reason.contains("ABC-1"), "{reason}");
+    bash(repo.path(), "cargo run -- ok spec")
+        .code(DENY)
+        .stderr(contains(text));
+    // Only the working directory is a stapel repository: a main-session `cargo test` is denied.
+    let outside = bare_dir();
+    let payload = json!({
+        "session_id": "test",
+        "hook_event_name": "PreToolUse",
+        "cwd": outside.path(),
+        "tool_name": "Bash",
+        "tool_input": { "command": "cargo test" },
+    });
+    stapel(repo.path())
+        .env_remove("CLAUDE_PROJECT_DIR")
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(payload.to_string())
+        .assert()
+        .code(DENY)
+        .stderr(contains(text));
 }
 
 // STP-27 AC-14: a subagent runs only allowed git commands inside its own worktree.
