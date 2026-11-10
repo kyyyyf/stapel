@@ -769,6 +769,26 @@ fn check_words(words: &[String], found: &mut Found) {
     }
 }
 
+/// True when the words after `cargo` name the `run` subcommand, after cargo's global options
+/// (`-q`, `--offline`, `--color auto`, `-Z flag`, ...) and a `+toolchain` word.
+fn cargo_runs(words: &[String]) -> bool {
+    let mut i = 0;
+    while let Some(w) = words.get(i) {
+        if w == "run" {
+            return true;
+        }
+        if w.starts_with('+') {
+            i += 1;
+        } else if w.starts_with('-') && w != "--" {
+            let takes_value = matches!(w.as_str(), "--color" | "--config" | "-C" | "-Z");
+            i += if takes_value { 2 } else { 1 };
+        } else {
+            return false;
+        }
+    }
+    false
+}
+
 /// `stapel hook ...` run by an agent, and `stapel ok|close|findings import|ledger add|tokens
 /// import-records` with a `--grant` or a run-time word (`$`) after the action, whether as
 /// `stapel` or `cargo run ... --`.
@@ -777,10 +797,8 @@ fn check_stapel(name: &str, args: &[String], found: &mut Found) {
     // `stapel cargo run [options] -- <action>` runs that action (STP-27 R-4); a bare
     // `cargo run ... -- <action>` is denied as cargo, but its hook or grant reason comes first.
     let wrapped = match name {
-        "stapel" => {
-            args.first().is_some_and(|a| a == "cargo") && args.get(1).is_some_and(|a| a == "run")
-        }
-        "cargo" => args.first().is_some_and(|a| a == "run"),
+        "stapel" => args.first().is_some_and(|a| a == "cargo") && cargo_runs(&args[1..]),
+        "cargo" => cargo_runs(args),
         _ => return,
     };
     let rest = if wrapped {
@@ -1387,8 +1405,7 @@ pub fn plain_invocation(command: &str) -> Option<Invocation> {
         .collect();
     let (program, rest) = match words.first().map(|w| base_name(w)) {
         Some("stapel")
-            if words.get(1).is_some_and(|w| w == "cargo")
-                && words.get(2).is_some_and(|w| w == "run") =>
+            if words.get(1).is_some_and(|w| w == "cargo") && cargo_runs(&words[2..]) =>
         {
             let sep = words.iter().position(|w| w == "--")?;
             (words[..=sep].to_vec(), &words[sep + 1..])
