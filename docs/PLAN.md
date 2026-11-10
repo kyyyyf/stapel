@@ -4,6 +4,8 @@ Status: plan at the start of the project, 2026-10-02. Changed by decisions recor
 `docs/decisions/`; the product direction and the interface changed on 2026-10-19 (`docs/decisions/0004`).
 The plan was cut to the pilot on 2026-11-10 (ledger): phases 2 to 5 below are replaced by the stages in
 `docs/PHASES.md`, "The plan after STP-27"; §8 compares with a plain agent, not with klc.
+The feature level is stapel's own (ledger 2026-11-10, second decision): the method studied in decisions
+0001 to 0003 is a source of ideas and a possible input, not the upper layer of stapel.
 
 ## 1. What it is
 

@@ -339,6 +339,8 @@ Items, in order. A1 and A2 each run in their own session with an Opus orchestrat
 - A3 (new item 1.14): attention numbers per ticket in the token report: dialogs shown, questions asked, the
   human's minutes, Plan steps, wall time from the request to the merge request. Also: a `SubagentStop`
   whose transcript file does not exist writes no `estimate` record (312 of 545 records of STP-27).
+  Widened on 2026-11-10 (ledger, second decision) by two pilot measures: the time from a confirmation
+  request to its answer, and the count of questions that concern the feature, not the ticket.
 
 ### Stage B — the pilot (two to three weeks)
 
@@ -366,17 +368,64 @@ stapel continues as planned only if all three hold on the pilot's numbers:
 2. Escaped defects are fewer than the plain agent's.
 3. The third ticket costs no more than the first.
 
-Otherwise stapel narrows to `check` and the token journal for CI. The decision is a ledger record.
+Otherwise stapel narrows to `check` and the token journal for CI. The decision is a ledger record. If it
+narrows, phases 3 to 5 below are not taken.
 
-### Stage D — candidates, decided at the gate from the pilot's findings
+### After the gate — phases 3 to 5 (ledger 2026-11-10, second decision)
 
-Not a plan; nothing here is taken before the gate. `stapel check` in CI; the guards folder with the ratchet;
-`stapel lint` (item 1.6); `stapel ship` with the review map (item 1.7); guard items 1.9 and 1.10; the input
-from BMAD (both items of ledger 2026-11-04); the index; autonomy levels and the human page; Zed and more
-languages; removal of the five empty crates; one short plan document in place of `docs/PLAN.md` and this
-file.
+Taken only if the gate (2.4) passes, in this order, chosen by the human. The pilot's findings may reorder
+them only by a ledger decision. The numbers 3 to 5 are new; they do not mean the earlier phases 3 to 5.
+Each item is one ticket under the rule of 12 Plan steps.
+
+**Phase 3 — one ticket made lighter.**
+
+- 3.1 the human page as a file. `stapel` writes the page (the Frame, the criteria, the Decisions lines, one
+  line each for Design, Proof and Plan) to `.stapel/tickets/KEY/page.md`; the orchestrator names the path in
+  the chat and the person reads it in the editor; changed lines are marked after an edit. The dialog of
+  `stapel ok KEY` shows a short summary (title, criteria count, changes, the page's hash) and refuses when
+  the page changed after it was written. No editor extension and no LSP.
+- 3.2 `stapel check` in the CI of the repository: the same check on the merge request, so the boundary
+  decides, not the agent's shell. This is what lets the guard stay frozen.
+
+**Phase 4 — the feature level.** Optional: a ticket without a feature works as before. Two levels only,
+feature and ticket.
+
+- 4.1 the elaboration skill. The questions, the template and the checklists for elaborating a feature are
+  ported from the method studied in decisions 0001 to 0003 into the skill `stapel init` installs. Its
+  licence is MIT (checked 2026-11-10): the copyright and permission notice is kept; the method's name is a
+  trademark and appears only in a truthful compatibility statement. Not taken: tracker stores, personas,
+  Python tooling. The ticket's investigation chooses the snapshot. A report per release of the method lists
+  ideas worth taking.
+- 4.2 the kind `feature`: a ticket with a description, requirements with ids, a Decisions log and a
+  breakdown into tickets with dependencies; confirmed by the same dialog and page as a ticket; no build and
+  no status of its own. Child tickets are created from the breakdown and name the requirements they cover.
+- 4.3 staleness from requirements to tickets. A ticket records the hash of each requirement it covers. A
+  changed requirement makes an unbuilt ticket wait for a new confirmation with the diff, stops a ticket in
+  build, and marks a closed ticket "built against the old text" until the human decides: a new ticket, or
+  "no change needed, because".
+- 4.4 computed readiness. A feature is done when its tickets are closed and each requirement is proved by a
+  named test; `stapel next` on a feature names the next ticket and what blocks it.
+
+The quality of a feature spec is measured, per ticket, by three numbers: `intent_gap` findings and
+questions (enough information), brief size and builder tokens (not too much), dialogs and the human's
+minutes (attention). A rule of the elaboration skill that catches nothing is removed as in the spec process.
+
+**Phase 5 — the sum of changes.**
+
+- 5.1 the guards folder: machine checks out of the agent's reach with ratchet baselines ("no worse than
+  now": existing violations recorded, new ones fail, a fixed one leaves the baseline for good); `stapel
+  check` and the CI run them.
+- 5.2 a new dependency only through a dialog, and a public API snapshot.
+
+### Candidates without a place in the order
+
+Not a plan; each needs a ledger decision to enter it. `stapel lint` (item 1.6); `stapel ship` with the
+review map (item 1.7); guard items 1.9 and 1.10; an import from the method or from a tracker when a real
+user asks; the index; autonomy levels; an editor extension; more languages; removal of the five empty
+crates; one short plan document in place of `docs/PLAN.md` and this file.
 
 ## What stays out of scope
 
-Jira, semantic search on embeddings, multi-user locks, a hosted service, a web UI, agents other than Claude
-Code, deploy and operations after the merge.
+Jira sync, semantic search on embeddings, multi-user locks, a hosted service, a web UI, agents other than
+Claude Code, deploy and operations after the merge, a planning method of stapel's own beyond the feature
+level above, more than two levels of work items.
