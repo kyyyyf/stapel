@@ -1916,3 +1916,18 @@ fn subagent_git_edges() {
     // GIT_DIR is denied for the main session too.
     call("GIT_DIR=/x git status", None).code(DENY);
 }
+
+// STP-27 AC-13 (R-2): the held mark in the forms of declare, typeset and a quoted name.
+#[test]
+fn held_mark_forms() {
+    let repo = initialized_repo();
+    for command in [
+        "declare -x STAPEL_CARGO_LOCK_HELD=1",
+        "typeset -x STAPEL_CARGO_LOCK_HELD=1",
+        "\"STAPEL_CARGO_LOCK_HELD\"=1 stapel cargo test",
+    ] {
+        bash(repo.path(), command)
+            .code(DENY)
+            .stderr(contains(CARGO_TEXT));
+    }
+}
