@@ -289,11 +289,17 @@ fn stop_files(stops: &Path, key: &str) -> std::io::Result<Vec<PathBuf>> {
 }
 
 /// Removes the stops of the branch ticket at `root` whose earlier ticket is closed in `HEAD`
-/// (STP-27 AC-18). Only `next` and the post-tool-use hook call it; the guard only reads.
+/// (STP-27 AC-18) or has neither a listed worktree nor a local branch (AC-17). Only `next` and the post-tool-use hook call it; the guard only reads.
 pub fn prune_stops(root: &Path) {
     let (Some(own), Some(stops)) = (branch_ticket(root), stops_dir(root)) else {
         return;
     };
+    let mut held: Vec<String> = branches(root)
+        .into_iter()
+        .filter(|b| b.full_ref.starts_with("refs/heads/"))
+        .map(|b| b.name)
+        .collect();
+    held.extend(worktrees(root).iter().filter_map(|w| current_branch(&w.path)));
     for path in stop_files(&stops, &own.key).unwrap_or_default() {
         let earlier = path
             .file_name()
@@ -303,7 +309,8 @@ pub fn prune_stops(root: &Path) {
             .map(|(e, _)| e);
         if let Some(earlier) = earlier
             && !earlier.is_empty()
-            && closed_at(root, "HEAD", earlier)
+            && (closed_at(root, "HEAD", earlier)
+                || !held.iter().any(|h| h.eq_ignore_ascii_case(earlier)))
         {
             let _ = std::fs::remove_file(&path);
         }
