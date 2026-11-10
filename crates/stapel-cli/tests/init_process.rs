@@ -1861,7 +1861,7 @@ fn skill_text_names_parallel_builds() {
         "run `stapel next` after `EnterWorktree`",
         "run cargo only through `stapel cargo`",
         "the cargo lock waits with no limit",
-        "start the agent `stapel-depends` with both ticket paths before the build",
+        "start the agent `stapel-depends` and give it the pack and the round that command printed",
         "a stopped ticket waits",
         "merge the branch into main locally and remove the worktree",
     ] {
@@ -1893,6 +1893,29 @@ fn depends_agent_fields() {
     ] {
         assert!(skill.contains(phrase), "missing {phrase:?}");
     }
+
+    // W-4, E-5: the agent reads the pack; no dependency is one LOW record without `waits`.
+    let agent_text = flat.clone();
+    assert!(!agent_text.contains("No dependency is a valid answer"), "{agent_text}");
+    for phrase in [
+        "Read the pack of `stapel depends KEY`",
+        "one LOW record with the claim `no dependency found` and no `waits`",
+        "`waits` only to HIGH and MEDIUM",
+    ] {
+        assert!(agent_text.contains(phrase), "agent text misses {phrase:?}");
+    }
+    assert!(!agent_text.contains("\"severity\":\"HIGH|MEDIUM|LOW\",\"waits\""), "{agent_text}");
+    for phrase in [
+        "the agent reads the pack",
+        "one LOW record with the claim `no dependency found` and no `waits`",
+        "`waits` only to HIGH and MEDIUM",
+    ] {
+        assert!(skill.contains(phrase), "skill misses {phrase:?}");
+    }
+    // E-8: neither the skill nor CLAUDE.md keeps the second-worktree rule.
+    assert!(!skill.contains("second git worktree"), "{skill}");
+    let claude = collapsed(&std::fs::read_to_string(repo_root().join("CLAUDE.md")).unwrap());
+    assert!(!claude.contains("second git worktree"), "CLAUDE.md keeps the old rule");
 
     let bound = repo_with_config(|t| {
         t.replace(
