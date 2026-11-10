@@ -866,6 +866,10 @@ fn check_program(words: &[String], full: &str, depth: usize, under_xargs: bool, 
         }
         let under_xargs = name == "xargs";
         for i in 0..args.len() {
+            // The word after `stapel` is its subcommand, not a program.
+            if i > 0 && base_name(&args[i - 1]) == "stapel" && base_name(&args[i]) == "cargo" {
+                continue;
+            }
             // Later wrappers are covered by this loop, so they are not expanded again.
             if !WRAPPERS.contains(&base_name(&args[i])) {
                 check_program(&args[i..], full, depth, under_xargs, found);
