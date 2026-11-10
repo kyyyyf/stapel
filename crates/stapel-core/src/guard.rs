@@ -331,6 +331,29 @@ fn resolve_hops(path: &Path, hops: usize) -> PathBuf {
 }
 
 /// The git subcommands a subagent may run (STP-27 AC-14).
+/// Long git options a subagent may not use, also as an abbreviation git accepts (R-5).
+const GIT_BANNED_LONG: [&str; 10] = [
+    "--output",
+    "--git-dir",
+    "--work-tree",
+    "--open-files-in-pager",
+    "--ext-diff",
+    "--textconv",
+    "--config-env",
+    "--namespace",
+    "--super-prefix",
+    "--exec-path",
+];
+
+/// True when `arg` is a long option (or `--name=value`) whose name is a prefix of one of `names`.
+fn abbreviates_any(arg: &str, names: &[&str]) -> bool {
+    let Some(name) = arg.strip_prefix("--") else {
+        return false;
+    };
+    let name = name.split('=').next().unwrap_or("");
+    !name.is_empty() && names.iter().any(|full| full[2..].starts_with(name))
+}
+
 const SUBAGENT_GIT: [&str; 12] = [
     "status",
     "diff",
@@ -515,6 +538,7 @@ fn subagent_git_args(args: &[String], root: &Path, at: &Path) -> bool {
             || arg.starts_with("--namespace")
             || arg.starts_with("--super-prefix")
             || arg.starts_with("--exec-path")
+            || abbreviates_any(arg, &GIT_BANNED_LONG)
         {
             return false;
         } else if arg.starts_with('-') {
@@ -535,6 +559,7 @@ fn subagent_git_args(args: &[String], root: &Path, at: &Path) -> bool {
                 || a.starts_with("--open-files-in-pager")
                 || a.starts_with("--ext-diff")
                 || a.starts_with("--textconv")
+                || abbreviates_any(a, &GIT_BANNED_LONG)
         })
 }
 
