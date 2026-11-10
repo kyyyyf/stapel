@@ -148,6 +148,8 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         _ => None,
     };
     let dirty = dirty_paths(root).map_err(Fail::failed)?;
+    let own = stapel_core::tickets::branch_ticket(root)
+        .is_some_and(|t| t.key.eq_ignore_ascii_case(&ticket.key));
     Ok(History {
         labels: steps.iter().map(|s| s.label.clone()).collect(),
         greens: steps
@@ -163,8 +165,11 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         open_red: open_red_label,
         dirty,
         brief: None,
-        merge_main: stapel_core::parallel::merge_main_needed(root),
-        merge_review: stapel_core::parallel::merge_review_due(root, &ticket.dir),
+        // Both read the branch ticket of the checkout: only its own ticket shows them (W-7).
+        merge_main: own.then(|| stapel_core::parallel::merge_main_needed(root)).flatten(),
+        merge_review: own
+            .then(|| stapel_core::parallel::merge_review_due(root, &ticket.dir))
+            .flatten(),
     })
 }
 
@@ -191,7 +196,10 @@ fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<
     }
     // A closed branch ticket still has its close to commit or its branch to merge (AC-23).
     let closing = match (key, stapel_core::tickets::branch_ticket(&root)) {
-        (None, Some(t)) if matches!(t.status, Status::Closed(_)) => {
+        (own, Some(t))
+            if matches!(t.status, Status::Closed(_))
+                && own.is_none_or(|k| k.eq_ignore_ascii_case(&t.key)) =>
+        {
             stapel_core::parallel::branch_close(&root, &t)
         }
         _ => None,
