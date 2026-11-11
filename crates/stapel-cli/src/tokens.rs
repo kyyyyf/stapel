@@ -867,6 +867,30 @@ fn cursors(
     (cursors, newest)
 }
 
+/// The attention cursor: the latest `to` of the attention records of `identity` in every ticket's
+/// `tokens.jsonl`. Other lines are skipped (STP-29).
+fn attention_cursor(root: &Path, identity: &str) -> Option<u64> {
+    let mut cursor: Option<u64> = None;
+    for ticket in stapel_core::tickets::list(root) {
+        let Ok(entries) = read(&ticket.dir.join("tokens.jsonl")) else {
+            continue;
+        };
+        for (_, entry) in entries {
+            let (Entry::V1(map) | Entry::Legacy(map)) = entry else {
+                continue;
+            };
+            let text = |key: &str| map.get(key).and_then(Value::as_str);
+            if text("kind") != Some("attention") || text("transcript") != Some(identity) {
+                continue;
+            }
+            if let Some(ms) = text("to").and_then(parse_cli_time) {
+                cursor = Some(cursor.map_or(ms, |c| c.max(ms)));
+            }
+        }
+    }
+    cursor
+}
+
 /// How far a hook call reads a transcript (STP-26).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Reach {
@@ -1039,7 +1063,10 @@ pub fn hook_records(
         .collect();
     // Attention events of a main transcript, from `stop` and `session-end` only (STP-29).
     let events = if (hook == "stop" || hook == "session-end") && !identity.contains('/') {
-        stapel_core::attention::read_events(transcript).unwrap_or_default()
+        let after = attention_cursor(root, &identity);
+        let mut events = stapel_core::attention::read_events(transcript).unwrap_or_default();
+        events.retain(|e| after.is_none_or(|c| e.time_ms > c));
+        events
     } else {
         Vec::new()
     };
