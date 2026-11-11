@@ -18,7 +18,7 @@ existed. The measurements are in Design, F-1.
 
 **Non-goals.** The count of questions that concern the feature, not the ticket (counted by hand in the
 pilot's summary; the human, 2026-11-11); a merge request time (`ship` is not in the plan: wall time ends at
-the close); dialogs and questions of subagents; a display in the editor.
+the person's last event); dialogs and questions of subagents; a display in the editor.
 
 **Promise (closed list).**
 
@@ -114,7 +114,7 @@ Terms:
 | AC-10 | WHEN `stapel tokens measure FILE` gets a main transcript THE command prints `transcript: <identity>`, a table with the columns source, model, input, output, cache read and cache write (one `main` row per model of the file, one `subagents` row per model of the `*.jsonl` files of the same session in `<sessionId>/subagents` beside it), the attention line of AC-9 and `wall time: <duration>` from the first to the last timed line. | `attention::measure_prints_tokens_and_attention` |
 | AC-14 | WHEN `stapel tokens measure` runs THE command writes no file and exits 0, also in a folder that is no stapel repository and no git repository. | `attention::measure_outside_a_repository` |
 | AC-11 | IF `FILE` does not exist, is no regular file, cannot be read, has no `sessionId` or is a subagent transcript THEN `stapel tokens measure` prints one line on standard error that names the path and the reason, prints nothing on standard output and exits 2; without `FILE` it exits 2 with the usage text. | `attention::measure_refuses_bad_files` |
-| AC-12 | WHEN the `subagent-stop` hook gets a transcript path that does not exist THE hook writes nothing; the gap records of the other reasons, and of `stop` and `session-end`, are unchanged. | `attention::missing_subagent_transcript_writes_nothing`, `hook_tokens::unreadable_transcript_gives_a_gap_record` |
+| AC-12 | WHEN the `subagent-stop` hook gets a transcript path that does not exist THE hook writes nothing; the gap records of the other reasons, and of `stop` and `session-end`, are unchanged. | `attention::missing_subagent_transcript_writes_nothing`, `hook_tokens::unreadable_transcript_gives_a_gap_record`, `hook_tokens::bad_input_writes_nothing`, `hook_tokens::token_hooks_on_a_branch` |
 
 ### Guarantees
 
@@ -130,7 +130,12 @@ Terms:
   later (lost); a `stop` call whose token records come up to 10 minutes later because an attention record
   alone is the newest record of the transcript (SR1-13); `import-records` of an attention record (refused as
   any record without a `source`); the gap records already in a journal; steps of a ticket whose commits are
-  not reachable from `HEAD` (the count is then lower); a clock that runs back (waits of 0).
+  not reachable from `HEAD` (the count is then lower); a clock that runs back (waits of 0); a hook call
+  that has no target ticket (several open tickets and no branch ticket, or none open and none closed in the
+  window): it writes no attention record, also for events that have a worktree ticket, and the cursor does
+  not move (D3d-1); a call that fails between the writes into two tickets' journals (the events of the
+  second ticket before the first record's `to` are lost; D3d-3); a `sessionId` that holds a path separator
+  (`measure` then looks for subagent files in the folder that path names; D5-1).
 
 ## Test plan
 
@@ -165,6 +170,7 @@ case first shows that the same setup with a good input writes. Light tests run t
 | Bad files | a missing path, a folder, a FIFO, a file without read permission (as `hook_tokens` tests it), a file without `sessionId`, a subagent transcript: exit 2, standard output empty, the path and the reason on standard error; no argument: exit 2 and the usage text | `attention::measure_refuses_bad_files` |
 | Missing subagent file | `subagent-stop` with a missing path: no file changed, exit 0; the same input with a file writes | `attention::missing_subagent_transcript_writes_nothing` |
 | Gap records | the STP-26 test without its missing-path case for `subagent-stop`: a folder, a file without `sessionId`, a file without read permission still give gap records; `stop` with a missing path still gives one | `hook_tokens::unreadable_transcript_gives_a_gap_record` |
+| Old examples | two STP-26 tests used a missing subagent transcript as their example of a gap record: the control of the bad-input test and the gap record on a branch ticket now use a folder path, and each asserts that a missing path writes nothing | `hook_tokens::bad_input_writes_nothing`, `hook_tokens::token_hooks_on_a_branch` |
 
 ### Inputs
 
@@ -263,6 +269,29 @@ of `tokens.jsonl` that see the new record are the report, the token cursor of th
 - The skill text is not changed: rule 8 already sends the orchestrator to `stapel tokens KEY`, which now
   prints the attention lines.
 
+### As built
+
+- The reader has two entries: `read_events` gives the events, `read_events_with_cwd` gives each event with
+  the `cwd` of its line. `Event` has no `cwd` field, because the step tests build it with struct literals
+  and a GREEN commit may not change tests (step 3d).
+- `hook_records` keeps the 10-minute rule of `stop` for the whole call. A `stop` with no complete message
+  no longer returns early: its token window is empty and an attention record alone may be written (step 3).
+- The attention cursor is the function `attention_cursor`; the worktree key comes from `worktree_key`,
+  which takes the first pair of the components `.claude` and `worktrees` of a path (D3d-5).
+- The records of worktree tickets are appended first, one journal at a time, then the target ticket's
+  lines (D3d-3).
+- The report sums the records in `AttentionSum`; `step_count` reads the subjects of `git log HEAD`; the
+  helper `duration` prints the Duration text, `2 h 0 min` for a whole number of hours (D4-1, fixed in step
+  4c).
+- `measure` checks the file type before it opens the file, then reads it three times (tokens, events,
+  first and last time); the row of a model whose last message has no final line shows `≥` and counts that
+  message's streamed output; a refusal is the line `stapel: <path>: <reason>` with the reasons `missing`,
+  `not a file`, `not readable`, `no sessionId` and `subagent transcript`. `render` became generic over the
+  number of columns; the report's table is byte for byte as before (D5-4).
+- The attention line is formatted in two places, the report and `measure`, with the same text (D5-3).
+- Step 6 changed three old tests of `hook_tokens`, not one: the plan had missed two that used a missing
+  subagent transcript as their example of a gap record; the GREEN builder stopped and the RED was amended.
+
 ## Proof
 
 | Criterion | Test |
@@ -281,7 +310,7 @@ of `tokens.jsonl` that see the new record are the report, the token cursor of th
 | AC-10 | `attention::measure_prints_tokens_and_attention` |
 | AC-14 | `attention::measure_outside_a_repository` |
 | AC-11 | `attention::measure_refuses_bad_files` |
-| AC-12 | `attention::missing_subagent_transcript_writes_nothing`, `hook_tokens::unreadable_transcript_gives_a_gap_record` |
+| AC-12 | `attention::missing_subagent_transcript_writes_nothing`, `hook_tokens::unreadable_transcript_gives_a_gap_record`, `hook_tokens::bad_input_writes_nothing`, `hook_tokens::token_hooks_on_a_branch` |
 
 ## Plan
 
@@ -316,9 +345,10 @@ commit of a test that passes at once (SR1-9).
    the other `tokens` actions.
 6. No record for a missing subagent transcript (AC-12; tests
    `attention::missing_subagent_transcript_writes_nothing`,
-   `hook_tokens::unreadable_transcript_gives_a_gap_record`): the RED changes the missing-path case of
-   `subagent-stop` in the old test to expect no record, so both tests fail there. Must not change: the gap
-   records of the other reasons and of `stop` and `session-end`.
+   `hook_tokens::unreadable_transcript_gives_a_gap_record`, `hook_tokens::bad_input_writes_nothing`,
+   `hook_tokens::token_hooks_on_a_branch`): the RED changes the missing-path case of `subagent-stop` in the
+   three old tests to expect no record, so all four tests fail there. Must not change: the gap records of
+   the other reasons and of `stop` and `session-end`.
 
 ## Review
 
