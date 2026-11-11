@@ -1,4 +1,5 @@
 //! Tickets, state facts, section hashes, checks, decision log, process definitions from TOML.
+pub mod attention;
 pub mod brief;
 pub mod build_inputs;
 pub mod checkstate;
