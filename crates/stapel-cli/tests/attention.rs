@@ -468,3 +468,67 @@ fn report_shows_the_attention_lines() {
         assert_eq!(String::from_utf8(out).unwrap(), golden, "{args:?}");
     }
 }
+
+#[test]
+fn report_without_attention_is_unchanged() {
+    let golden = |name: &str| {
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden").join(name))
+            .unwrap()
+    };
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for args in [
+        vec!["--role", "builder", "--input", "10", "--output", "20", "--cache-read", "0"],
+        vec!["--role", "author", "--estimate", "5000"],
+        vec!["--role", "builder", "--estimate", "70"],
+    ] {
+        let mut a = vec!["tokens", "add", "ABC-1"];
+        a.extend(args);
+        stapel(dir).args(&a).assert().success();
+    }
+    let main = dir.join("main.jsonl");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/main.jsonl"),
+        &main,
+    )
+    .unwrap();
+    stapel(dir)
+        .args(["tokens", "import"])
+        .arg(&main)
+        .args(["--role", "orchestrator", "--until", "2026-01-02T00:00:00Z"])
+        .assert()
+        .success();
+
+    // One ticket, no attention record: the report is the old golden, with neither new line.
+    let out = stapel(dir).args(["tokens", "ABC-1"]).assert().success().get_output().stdout.clone();
+    let text = String::from_utf8(out).unwrap();
+    assert_eq!(text, golden("tokens_report.txt"));
+    assert!(!text.contains("attention:") && !text.contains("steps:"), "{text}");
+
+    // The same journal among other tickets: the all-tickets golden, with neither new line.
+    for title in ["Second", "Third", "Fourth"] {
+        stapel(dir).args(["new", title]).assert().success();
+    }
+    std::fs::write(
+        dir.join(".stapel/tickets/ABC-2/tokens.jsonl"),
+        concat!(
+            r#"{"ts":"2026-10-02T18:00:00Z","ticket":"ABC-2","role":"reviewer","model":"claude-sonnet-5-5","total_tokens":50786,"kind":"measured"}"#, "\n",
+            r#"{"ts":"2026-10-02T19:00:00Z","ticket":"ABC-2","role":"builder","model":"claude-opus-5-5","input_tokens":900000,"output_tokens":90000,"kind":"estimate"}"#, "\n",
+            r#"{"ts":"2026-10-05T07:00:00Z","ticket":"ABC-2","role":"author","model":"claude-opus-5-5","input_tokens":null,"output_tokens":null,"kind":"estimate"}"#, "\n",
+        ),
+    )
+    .unwrap();
+    stapel(dir)
+        .args(["tokens", "add", "ABC-3", "--role", "builder", "--estimate", "1"])
+        .assert()
+        .success();
+    let mut journal = std::fs::OpenOptions::new()
+        .append(true)
+        .open(dir.join(".stapel/tickets/ABC-3/tokens.jsonl"))
+        .unwrap();
+    std::io::Write::write_all(&mut journal, b"{broken\n").unwrap();
+    let out = stapel(dir).arg("tokens").assert().code(1).get_output().stdout.clone();
+    let text = String::from_utf8(out).unwrap();
+    assert_eq!(text, golden("tokens_report_all.txt"));
+    assert!(!text.contains("attention:") && !text.contains("steps:"), "{text}");
+}
