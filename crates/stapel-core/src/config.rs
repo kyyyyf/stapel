@@ -54,6 +54,135 @@ pub struct Check {
     /// first `cargo` in an absolute `PATH` entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cargo: Option<String>,
+    /// The junit runner (STP-28 AC-4): the command template with one word `{file}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// The junit runner: the XML report path, relative to the check copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<String>,
+    /// The junit runner: test file globs; the default is filled in at load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tests: Option<Vec<String>>,
+    /// The junit runner: build input globs; the default is filled in at load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<Vec<String>>,
+}
+
+pub const DEFAULT_TEST_GLOBS: [&str; 3] = ["**/*.test.*", "**/*.spec.*", "**/__tests__/**"];
+pub const DEFAULT_INPUT_GLOBS: [&str; 10] = [
+    "**/package.json",
+    "**/package-lock.json",
+    "**/yarn.lock",
+    "**/pnpm-lock.yaml",
+    "**/jest.config.*",
+    "**/tsconfig*.json",
+    "**/babel.config.*",
+    "**/.babelrc",
+    "**/.swcrc",
+    "**/jest.setup.*",
+];
+
+/// Whether the glob matches the repository path (STP-28 AC-6): `*` and `?` stay inside one part;
+/// `**` as a part matches any parts, none included, but a trailing `/**` needs at least one.
+pub fn glob_matches(glob: &str, path: &str) -> bool {
+    let g: Vec<&str> = glob.split('/').collect();
+    let p: Vec<&str> = path.split('/').collect();
+    parts_match(&g, &p)
+}
+
+fn parts_match(g: &[&str], p: &[&str]) -> bool {
+    match g.split_first() {
+        None => p.is_empty(),
+        Some((&"**", rest)) => {
+            if rest.is_empty() {
+                return !p.is_empty();
+            }
+            (0..=p.len()).any(|n| parts_match(rest, &p[n..]))
+        }
+        Some((head, rest)) => match p.split_first() {
+            Some((part, tail)) => part_matches(head, part) && parts_match(rest, tail),
+            None => false,
+        },
+    }
+}
+
+fn part_matches(glob: &str, part: &str) -> bool {
+    let g: Vec<char> = glob.chars().collect();
+    let s: Vec<char> = part.chars().collect();
+    // reach[j]: the first i glob chars match the first j part chars.
+    let mut reach = vec![false; s.len() + 1];
+    reach[0] = true;
+    for c in &g {
+        let mut next = vec![false; s.len() + 1];
+        if *c == '*' {
+            let mut any = false;
+            for j in 0..=s.len() {
+                any |= reach[j];
+                next[j] = any;
+            }
+        } else {
+            for j in 1..=s.len() {
+                next[j] = reach[j - 1] && (*c == '?' || *c == s[j - 1]);
+            }
+        }
+        reach = next;
+    }
+    reach[s.len()]
+}
+
+fn validate_glob(key: &str, glob: &str) -> Result<(), String> {
+    let bad = |why: &str| Err(format!("check.{key} \"{glob}\" {why}"));
+    if glob.is_empty() {
+        return bad("is empty");
+    }
+    if glob.starts_with('/') {
+        return bad("is absolute: use a path relative to the repository");
+    }
+    if glob.split('/').any(|part| part == "..") {
+        return bad("holds ..");
+    }
+    if glob.contains(['{', '}', '[', ']', '!', '\\']) {
+        return bad("holds one of { } [ ] ! \\, which are not supported: use * ? **");
+    }
+    Ok(())
+}
+
+fn validate_report(report: &str) -> Result<(), String> {
+    let bad = |why: &str| Err(format!("check.report \"{report}\" {why}"));
+    if report.is_empty() {
+        return bad("is empty");
+    }
+    if report.starts_with('/') {
+        return bad("is absolute: use a path relative to the check copy");
+    }
+    if report.split('/').any(|part| part == "..") {
+        return bad("holds ..");
+    }
+    Ok(())
+}
+
+fn validate_command(command: &str) -> Result<(), String> {
+    let bad = |why: &str| Err(format!("check.command \"{command}\" {why}"));
+    let words: Vec<&str> = command.split(' ').filter(|w| !w.is_empty()).collect();
+    let marks = command.matches("{file}").count();
+    if marks == 0 {
+        return bad("has no word {file}");
+    }
+    if marks > 1 {
+        return bad("holds {file} twice");
+    }
+    let Some(at) = words.iter().position(|w| *w == "{file}") else {
+        return bad("holds {file} inside a longer word: make it a word of its own");
+    };
+    if at == 0 {
+        return bad("has no program before {file}");
+    }
+    if at > 1 && words[at - 1].starts_with('-') {
+        return bad(
+            "puts {file} after a word that starts with -: put {file} right after the program",
+        );
+    }
+    Ok(())
 }
 
 fn default_runner() -> String {
@@ -136,11 +265,18 @@ impl Config {
     }
 
     pub fn parse(text: &str) -> Result<Config, String> {
-        let config: Config = toml::from_str(text).map_err(|e| e.to_string())?;
+        let mut config: Config = toml::from_str(text).map_err(|e| e.to_string())?;
         for entry in &config.guard.always_writable {
             validate_writable(entry)?;
         }
         config.validate()?;
+        if let Some(check) = config.check.as_mut().filter(|c| c.runner == "junit") {
+            let own = |globs: &[&str]| globs.iter().map(|g| g.to_string()).collect();
+            check.tests.get_or_insert_with(|| own(&DEFAULT_TEST_GLOBS));
+            check
+                .inputs
+                .get_or_insert_with(|| own(&DEFAULT_INPUT_GLOBS));
+        }
         Ok(config)
     }
 
@@ -208,11 +344,49 @@ impl Config {
             }
         }
         if let Some(check) = &self.check {
-            if check.runner != "cargo" {
-                return Err(format!(
-                    "check.runner \"{}\" is not supported: the only runner is cargo",
-                    check.runner
-                ));
+            match check.runner.as_str() {
+                "cargo" => {
+                    for (key, set) in [
+                        ("command", check.command.is_some()),
+                        ("report", check.report.is_some()),
+                        ("tests", check.tests.is_some()),
+                        ("inputs", check.inputs.is_some()),
+                    ] {
+                        if set {
+                            return Err(format!(
+                                "check.{key} is a junit key: set runner = \"junit\" or remove it"
+                            ));
+                        }
+                    }
+                }
+                "junit" => {
+                    if check.cargo.is_some() {
+                        return Err(
+                            "check.cargo belongs to the cargo runner: remove it for junit".into(),
+                        );
+                    }
+                    let Some(command) = &check.command else {
+                        return Err("check.command is needed for the junit runner".into());
+                    };
+                    validate_command(command)?;
+                    let Some(report) = &check.report else {
+                        return Err("check.report is needed for the junit runner".into());
+                    };
+                    validate_report(report)?;
+                    if check.tests.as_ref().is_some_and(|t| t.is_empty()) {
+                        return Err("check.tests is empty: name at least one glob".into());
+                    }
+                    for (key, globs) in [("tests", &check.tests), ("inputs", &check.inputs)] {
+                        for glob in globs.iter().flatten() {
+                            validate_glob(key, glob)?;
+                        }
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "check.runner \"{other}\" is not supported: use cargo or junit"
+                    ));
+                }
             }
             if !TIMEOUT_RANGE.contains(&check.timeout_secs) {
                 return Err(format!(
