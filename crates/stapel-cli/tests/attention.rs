@@ -271,3 +271,73 @@ fn subagent_stop_has_no_attention() {
     assert!(!rs.is_empty(), "{rs:?}");
     assert!(attention_records(&rs).is_empty(), "{rs:?}");
 }
+
+#[test]
+fn repeated_call_adds_nothing() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let dir = elsewhere.path();
+    let path = events_transcript(dir, true);
+    let repo = repo_with_ticket();
+    let file = tokens_path(repo.path(), "ABC-1");
+
+    // The first call writes the token record and the attention record.
+    hook(repo.path(), dir, "session-end", &path);
+    let first = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(records(repo.path(), "ABC-1").len(), 2);
+
+    // The same input again: no new event, so the file stays byte for byte.
+    hook(repo.path(), dir, "session-end", &path);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), first);
+}
+
+/// A planted attention record of the transcript `transcript` with `to` at `to`.
+fn planted_attention(transcript: &str, to: &str) -> String {
+    json!({
+        "v": 1, "id": "a-planted", "at": "2026-01-01T11:30:00.000Z", "ticket": "ABC-1",
+        "kind": "attention", "hook": "session-end", "transcript": transcript,
+        "from": "2026-01-01T11:00:01.000Z", "to": to,
+        "questions": 0, "dialogs": 1, "typed": 1, "waited_ms": 15_000, "attention_ms": 15_000, "long_waits": 0,
+    })
+    .to_string()
+        + "\n"
+}
+
+#[test]
+fn cursor_across_tickets() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let dir = elsewhere.path();
+    // Events at 11:00:01 (typed), 11:00:20 (dialog), 11:01:25 (2 questions), 11:01:40 (dialog).
+    let path = events_transcript(dir, false);
+
+    // The cursor is in the closed ticket ABC-1: at event 2, then between the call and the result of event 3.
+    for cursor in ["2026-01-01T11:00:20.000Z", "2026-01-01T11:00:50.000Z"] {
+        let repo = repo_with_ticket();
+        stapel(repo.path()).args(["new", "Second"]).assert().success();
+        let closed = tokens_path(repo.path(), "ABC-1");
+        let noise = [
+            // Not an attention cursor: a token record of the transcript, later than every event.
+            planted_token("2026-01-01T11:01:40.000Z", 60).trim_end().to_string(),
+            "not json".to_string(),
+            // Another transcript's attention record, later than every event.
+            planted_attention("s-other", "2026-01-01T11:05:00.000Z").trim_end().to_string(),
+            // A record of this transcript whose `to` is no time: no cursor.
+            planted_attention("s-hook", "yesterday").trim_end().to_string(),
+        ];
+        let text = planted_attention("s-hook", cursor) + &noise.join("\n") + "\n";
+        std::fs::write(&closed, text).unwrap();
+        stapel(repo.path()).args(["close", "ABC-1", "--reason", "merged"]).assert().success();
+
+        hook(repo.path(), dir, "session-end", &path);
+        let rs = records(repo.path(), "ABC-2");
+        assert_eq!(rs.len(), 1, "{cursor}: {rs:?}");
+        let r = &rs[0];
+        assert_eq!(r["kind"], "attention", "{cursor}: {r}");
+        assert_eq!(r["ticket"], "ABC-2", "{cursor}: {r}");
+        assert_eq!(r["typed"], 0, "{cursor}: {r}");
+        assert_eq!(r["questions"], 2, "{cursor}: {r}");
+        assert_eq!(r["dialogs"], 1, "{cursor}: {r}");
+        assert_eq!(r["waited_ms"], 70_000, "{cursor}: {r}");
+        assert_eq!(r["from"], "2026-01-01T11:01:25.000Z", "{cursor}: {r}");
+        assert_eq!(r["to"], "2026-01-01T11:01:40.000Z", "{cursor}: {r}");
+    }
+}
