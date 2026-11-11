@@ -11,7 +11,7 @@ use stapel_core::journal::{self, Entry};
 use stapel_core::next::{Action, Facts, Fault, History, Target, decide};
 use stapel_core::outcomes::{open_red, passing};
 use stapel_core::review::{finding_round, patch_findings};
-use stapel_core::steps::{Marker, git_text, step_commits, steps};
+use stapel_core::steps::{Marker, git_text, step_commits, steps, walk_range};
 use stapel_core::ticket::{parse, read};
 use stapel_core::tickets::{Status, Ticket, list, resolve};
 use stapel_core::triage::blocking_findings;
@@ -77,7 +77,7 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
     };
     shallow_refusal(root).map_err(Fail::failed)?;
     let base = base_of(root, ticket, &head).map_err(Fail::failed)?;
-    let commits = step_commits(root, key, &head).map_err(Fail::failed)?;
+    let commits = step_commits(root, key, &head, base.as_deref()).map_err(Fail::failed)?;
     let last = commits.last().map(|c| c.sha.clone());
     let steps = steps(commits);
     let bounds = Bounds {
@@ -135,7 +135,8 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         }
     }
 
-    let subjects = git_text(root, &["log", "--first-parent", "--format=%s", &head])
+    let walk = walk_range(base.as_deref(), &head);
+    let subjects = git_text(root, &["log", "--first-parent", "--format=%s", &walk])
         .map_err(Fail::failed)?
         .lines()
         .map(String::from)

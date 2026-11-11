@@ -103,8 +103,21 @@ pub fn parse_subject(key: &str, subject: &str) -> Option<(String, Marker)> {
     (!label.is_empty()).then(|| (label.to_string(), marker))
 }
 
-/// The ticket's step commits on the first-parent history of `head`, oldest first.
-pub fn step_commits(root: &Path, key: &str, head: &str) -> Result<Vec<StepCommit>, String> {
+/// The Walk: `base..head` with a `base`, else `head` (the history from the root).
+pub fn walk_range(base: Option<&str>, head: &str) -> String {
+    match base {
+        Some(base) => format!("{base}..{head}"),
+        None => head.to_string(),
+    }
+}
+
+/// The ticket's step commits on the Walk (first-parent, after `base` when given), oldest first.
+pub fn step_commits(
+    root: &Path,
+    key: &str,
+    head: &str,
+    base: Option<&str>,
+) -> Result<Vec<StepCommit>, String> {
     // Fields are split on NUL, which a commit message cannot hold.
     let raw = git(
         root,
@@ -114,7 +127,7 @@ pub fn step_commits(root: &Path, key: &str, head: &str) -> Result<Vec<StepCommit
             "--first-parent",
             "--reverse",
             "--format=%H%x00%s%x00%B",
-            head,
+            &walk_range(base, head),
         ],
     )?;
     let fields: Vec<String> = raw

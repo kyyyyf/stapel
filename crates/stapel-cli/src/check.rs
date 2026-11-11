@@ -78,8 +78,13 @@ pub(crate) fn base_of(root: &Path, ticket: &Ticket, head: &str) -> Result<Option
 }
 
 /// The steps of the ticket on the first-parent history of `head`.
-fn read_steps(root: &Path, key: &str, head: &str) -> Result<Vec<Step>, String> {
-    step_commits(root, key, head).map(steps)
+fn read_steps(
+    root: &Path,
+    key: &str,
+    head: &str,
+    base: Option<&str>,
+) -> Result<Vec<Step>, String> {
+    step_commits(root, key, head, base).map(steps)
 }
 
 fn no_steps(key: &str) -> String {
@@ -129,7 +134,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         Ok(b) => b,
         Err(e) => return refuse(e),
     };
-    let steps = match read_steps(&root, &ticket.key, &head) {
+    let steps = match read_steps(&root, &ticket.key, &head, base.as_deref()) {
         Ok(s) => s,
         Err(e) => return refuse(e),
     };
@@ -770,7 +775,7 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
     let key = ticket.key.clone();
     shallow_refusal(root).ok()?;
     let base = base_of(root, &ticket, &head).ok()?;
-    let commits = step_commits(root, &key, &head).ok()?;
+    let commits = step_commits(root, &key, &head, base.as_deref()).ok()?;
     let last = commits.last().map(|c| c.sha.clone())?;
     let steps = steps(commits);
     let bounds = Bounds {
