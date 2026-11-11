@@ -655,8 +655,9 @@ const RESERVED: [&str; 13] = [
 /// (a container, a remote host, a terminal multiplexer). Any later word may start that
 /// program, and any argument with a space may be a whole command line, so wrapper options and
 /// their values need no special knowledge.
-const WRAPPERS: [&str; 34] = [
+const WRAPPERS: [&str; 35] = [
     "env",
+    "rustup",
     "command",
     "builtin",
     "exec",
