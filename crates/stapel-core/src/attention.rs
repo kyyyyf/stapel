@@ -1,12 +1,14 @@
-//! The events reader of a main transcript (STP-29): questions and dialogs the person answered.
+//! The events reader of a main transcript (STP-29): questions, dialogs and typed messages.
 //!
 //! A call is a `tool_use` item of an `assistant` line, timed by the first line that holds its id.
 //! A result is a `tool_result` item of a `user` line; its source is `permissionDecision.source` of
 //! that line. Lines that do not parse, and other shapes, are skipped.
 
 use crate::time::parse_transcript_time;
+use crate::tokens::{read_bounded_line, MAX_TRANSCRIPT_LINE};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::io::BufReader;
 use std::path::Path;
 
 /// What the person did.
@@ -16,6 +18,8 @@ pub enum EventKind {
     Question(u32),
     /// A permission dialog the person answered.
     Dialog,
+    /// A message the person typed.
+    Typed,
 }
 
 /// One attention event.
@@ -43,18 +47,26 @@ struct Call {
 
 /// Read the events of a main transcript file.
 pub fn read_events(path: &Path) -> std::io::Result<Vec<Event>> {
-    let text = std::fs::read_to_string(path)?;
-    Ok(events_of(&text))
+    let file = std::fs::File::open(path)?;
+    events_of(BufReader::new(file))
 }
 
-/// The events of transcript text.
-pub fn events_of(text: &str) -> Vec<Event> {
+/// The events of a transcript reader. A line over 16 MiB is skipped.
+pub fn events_of(mut reader: impl std::io::BufRead) -> std::io::Result<Vec<Event>> {
     let mut calls: HashMap<String, Call> = HashMap::new();
     let mut events = Vec::new();
-    for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
+    let mut last_assistant: Option<u64> = None;
+    let mut buf = Vec::new();
+    while read_bounded_line(&mut reader, &mut buf, MAX_TRANSCRIPT_LINE)? {
+        if buf.len() > MAX_TRANSCRIPT_LINE {
+            continue;
+        }
+        let Ok(v) = serde_json::from_slice::<Value>(&buf) else {
             continue;
         };
+        if !v.is_object() {
+            continue;
+        }
         let Some(time_ms) = v
             .get("timestamp")
             .and_then(Value::as_str)
@@ -62,11 +74,13 @@ pub fn events_of(text: &str) -> Vec<Event> {
         else {
             continue;
         };
-        let Some(items) = v.pointer("/message/content").and_then(Value::as_array) else {
-            continue;
-        };
+        let content = v.pointer("/message/content");
         match v.get("type").and_then(Value::as_str) {
             Some("assistant") => {
+                last_assistant = Some(time_ms);
+                let Some(items) = content.and_then(Value::as_array) else {
+                    continue;
+                };
                 for item in items {
                     if item.get("type").and_then(Value::as_str) != Some("tool_use") {
                         continue;
@@ -88,36 +102,64 @@ pub fn events_of(text: &str) -> Vec<Event> {
                 }
             }
             Some("user") => {
-                let source = v
-                    .pointer("/permissionDecision/source")
-                    .and_then(Value::as_str);
-                for item in items {
-                    if item.get("type").and_then(Value::as_str) != Some("tool_result") {
+                let is_result = |item: &Value| {
+                    item.get("type").and_then(Value::as_str) == Some("tool_result")
+                };
+                if let Some(items) = content.and_then(Value::as_array) {
+                    if items.iter().any(is_result) {
+                        let source = v
+                            .pointer("/permissionDecision/source")
+                            .and_then(Value::as_str);
+                        for item in items.iter().filter(|i| is_result(i)) {
+                            let Some(call) = item
+                                .get("tool_use_id")
+                                .and_then(Value::as_str)
+                                .and_then(|id| calls.get(id))
+                            else {
+                                continue;
+                            };
+                            let kind = if call.name == "AskUserQuestion" {
+                                EventKind::Question(call.questions)
+                            } else if source.is_some_and(|s| s.starts_with("user")) {
+                                EventKind::Dialog
+                            } else {
+                                continue;
+                            };
+                            events.push(Event {
+                                kind,
+                                time_ms,
+                                wait_ms: time_ms.saturating_sub(call.time_ms),
+                            });
+                        }
                         continue;
                     }
-                    let Some(call) = item
-                        .get("tool_use_id")
-                        .and_then(Value::as_str)
-                        .and_then(|id| calls.get(id))
-                    else {
-                        continue;
-                    };
-                    let kind = if call.name == "AskUserQuestion" {
-                        EventKind::Question(call.questions)
-                    } else if source.is_some_and(|s| s.starts_with("user")) {
-                        EventKind::Dialog
-                    } else {
-                        continue;
-                    };
-                    events.push(Event {
-                        kind,
-                        time_ms,
-                        wait_ms: time_ms.saturating_sub(call.time_ms),
-                    });
                 }
+                let flag = |k: &str| v.get(k).and_then(Value::as_bool) == Some(true);
+                if flag("isMeta") || flag("isSidechain") || flag("isCompactSummary") {
+                    continue;
+                }
+                let text = match content {
+                    Some(Value::String(s)) => Some(s.as_str()),
+                    Some(Value::Array(items)) => items
+                        .iter()
+                        .find(|i| i.get("type").and_then(Value::as_str) == Some("text"))
+                        .and_then(|i| i.get("text").and_then(Value::as_str)),
+                    _ => None,
+                };
+                let Some(text) = text else {
+                    continue;
+                };
+                if text.starts_with('<') || text.starts_with("[Request interrupted") {
+                    continue;
+                }
+                events.push(Event {
+                    kind: EventKind::Typed,
+                    time_ms,
+                    wait_ms: last_assistant.map_or(0, |t| time_ms.saturating_sub(t)),
+                });
             }
             _ => {}
         }
     }
-    events
+    Ok(events)
 }
