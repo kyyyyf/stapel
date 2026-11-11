@@ -875,3 +875,189 @@ fn junit_record_is_current() {
     assert!(!next.contains("check: stale"), "{next}");
     assert!(!next.contains("stapel check"), "{next}");
 }
+
+/// Commits one test file with one call and a source file that is a GREEN of the same step.
+fn pair(dir: &Path, step: u32, file: &str, call: &str) {
+    write(dir, &format!("__tests__/{file}.test.ts"), call);
+    commit(dir, &format!("ABC-1 step {step} RED: {file}"));
+    write(dir, &format!("src/{file}.ts"), "export const x = 1;\n");
+    commit(dir, &format!("ABC-1 step {step} GREEN: {file}"));
+}
+
+// AC-13, AC-14: the history outcomes of STP-4 and STP-14 under junit; `tests-changed` protects the
+// text of a step test call, so a later RED supersedes it and a `spec change:` retires it.
+#[test]
+fn history_outcomes_under_junit() {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    // Step 1: a GREEN with no RED.
+    commit(dir, "ABC-1 step 1 GREEN: nothing before it");
+    // Step 2: two REDs.
+    write(dir, "__tests__/two.test.ts", "it(\"two\", () => {});\n");
+    commit(dir, "ABC-1 step 2 RED: two");
+    write(dir, "__tests__/two.test.ts", "it(\"two\", () => { /* again */ });\n");
+    commit(dir, "ABC-1 step 2 RED: two again");
+    commit(dir, "ABC-1 step 2 GREEN: two");
+    // Step 3: the RED changes code.
+    write(dir, "src/lib.ts", "export const lib = 1;\n");
+    write(dir, "__tests__/code.test.ts", "it(\"code\", () => {});\n");
+    commit(dir, "ABC-1 step 3 RED: test and code");
+    commit(dir, "ABC-1 step 3 GREEN: green");
+    // Step 4: a README next to the test is no code.
+    write(dir, "README.md", "notes\n");
+    write(dir, "__tests__/doc.test.ts", "it(\"doc\", () => {});\n");
+    commit(dir, "ABC-1 step 4 RED: test and a README");
+    write(dir, "src/doc.ts", "export const doc = 1;\n");
+    commit(dir, "ABC-1 step 4 GREEN: doc");
+    // Step 5: the GREEN edits the step test call.
+    pair(dir, 5, "five", "it(\"five\", () => { /* needs src/five.ts */ });\n");
+    write(
+        dir,
+        "__tests__/five.test.ts",
+        "it(\"five\", () => { /* needs src/five.ts, nothing */ });\n",
+    );
+    commit(dir, "ABC-1: edits the test of step 5");
+    // Steps 6 and 7: the RED of step 7 edits the test of step 6.
+    pair(dir, 6, "six", "it(\"six\", () => {});\n");
+    write(dir, "__tests__/six.test.ts", "it(\"six\", () => { /* more */ });\n");
+    commit(dir, "ABC-1 step 7 RED: six, changed");
+    commit(dir, "ABC-1 step 7 GREEN: six");
+    // Step 8: a spec change deletes the test.
+    pair(dir, 8, "eight", "it(\"eight\", () => {});\n");
+    write(dir, "__tests__/eight.test.ts", "// gone\n");
+    commit(dir, "ABC-1: spec change: drop eight");
+    // Steps 9 and 10: the RED of step 10 lies between the RED and the GREEN of step 9.
+    write(dir, "__tests__/nine.test.ts", "it(\"nine\", () => {});\n");
+    commit(dir, "ABC-1 step 9 RED: nine");
+    write(dir, "__tests__/ten.test.ts", "it(\"ten\", () => {});\n");
+    commit(dir, "ABC-1 step 10 RED: ten");
+    write(dir, "src/nine.ts", "export const nine = 1;\n");
+    commit(dir, "ABC-1 step 9 GREEN: nine");
+    write(dir, "src/ten.ts", "export const ten = 1;\n");
+    commit(dir, "ABC-1 step 10 GREEN: ten");
+
+    let (code, text) = stdout(dir, &["check", "ABC-1", "--history"]);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "unpaired", "{text}");
+    assert_eq!(outcome(&text, "step 2"), "duplicate", "{text}");
+    assert_eq!(outcome(&text, "step 3"), "red-changes-code", "{text}");
+    assert!(text.contains("step 3: red-changes-code: src/lib.ts"), "{text}");
+    assert_eq!(outcome(&text, "step 4"), "needs-run", "{text}");
+    assert_eq!(outcome(&text, "step 5"), "tests-changed", "{text}");
+    assert!(
+        text.contains("step 5: tests-changed: __tests__/five.test.ts::five"),
+        "{text}"
+    );
+    assert_eq!(outcome(&text, "step 6"), "needs-run", "{text}");
+    assert!(
+        text.contains("  superseded by step 7: __tests__/six.test.ts::six"),
+        "{text}"
+    );
+    assert_eq!(outcome(&text, "step 7"), "needs-run", "{text}");
+    assert_eq!(outcome(&text, "step 8"), "retired", "{text}");
+    assert!(
+        text.contains("  retired by "),
+        "the spec change retires the test: {text}"
+    );
+    assert_eq!(outcome(&text, "step 9"), "unverified", "{text}");
+    assert!(text.contains("interleaved: step 10"), "{text}");
+    assert_eq!(outcome(&text, "step 10"), "needs-run", "{text}");
+}
+
+/// A junit ticket whose step 1 RED adds `__tests__/h.test.ts` (a helper line and one test call) and
+/// the fixture `__tests__/data.json`; `green` is the GREEN commit's change.
+fn protected_repo(green: impl Fn(&Path)) -> JunitRepo {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    write(
+        dir,
+        "__tests__/h.test.ts",
+        "const helper = 1;\nit(\"holds\", () => { /* needs src/h.ts */ });\n",
+    );
+    write(dir, "__tests__/data.json", "{\"a\": 1}\n");
+    commit(dir, "ABC-1 step 1 RED: holds");
+    write(dir, "src/h.ts", "export const h = 1;\n");
+    green(dir);
+    commit(dir, "ABC-1 step 1 GREEN: holds");
+    repo
+}
+
+// AC-27: `tests-changed` protects the rest of a test file the RED changed and its other files that
+// match a test glob; a file the RED left alone stays free.
+#[test]
+fn tests_changed_under_junit() {
+    let case = |name: &str, green: &dyn Fn(&Path)| {
+        let repo = protected_repo(green);
+        let (_, text) = stdout(repo.dir(), &["check", "ABC-1", "--history"]);
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("{name}: no step 1:\n{text}"))
+            .to_string();
+        line
+    };
+    let line = case("a helper line", &|dir| {
+        write(
+            dir,
+            "__tests__/h.test.ts",
+            "const helper = 2;\nit(\"holds\", () => { /* needs src/h.ts */ });\n",
+        );
+    });
+    assert_eq!(
+        line, "step 1: tests-changed: __tests__/h.test.ts",
+        "a helper line"
+    );
+    let line = case("the fixture", &|dir| {
+        write(dir, "__tests__/data.json", "{\"a\": 2}\n");
+    });
+    assert_eq!(
+        line, "step 1: tests-changed: __tests__/data.json",
+        "the fixture"
+    );
+    let line = case("a file the RED left alone", &|dir| {
+        write(
+            dir,
+            "__tests__/base.test.ts",
+            "const helper = 5;\nit(\"base\", () => {});\nit(\"keeps\", () => { /* needs src/index.ts */ });\n",
+        );
+    });
+    assert_eq!(line, "step 1: needs-run", "a file the RED left alone");
+}
+
+// AC-27: the commit hook prints the `tests-changed` fault of a GREEN that edits a helper line.
+#[test]
+fn hook_faults_under_junit() {
+    let repo = protected_repo(|dir| {
+        write(
+            dir,
+            "__tests__/h.test.ts",
+            "const helper = 2;\nit(\"holds\", () => { /* needs src/h.ts */ });\n",
+        );
+    });
+    let dir = repo.dir();
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "git commit -m x", "description": "test" },
+        "tool_response": { "stdout": "", "stderr": "" },
+        "cwd": dir,
+    });
+    let out = stapel(dir)
+        .args(["hook", "post-tool-use"])
+        .write_stdin(payload.to_string())
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let answer: serde_json::Value = serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("stdout is not one JSON object ({e}):\n{text}"));
+    let context = answer["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no additionalContext:\n{text}"));
+    assert!(
+        context
+            .lines()
+            .any(|l| l == "step 1: tests-changed: __tests__/h.test.ts"),
+        "{context}"
+    );
+}
