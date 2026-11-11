@@ -702,7 +702,7 @@ fn cell(v: Option<u64>) -> String {
 /// The smallest width of each column; columns grow with their longest cell, two spaces apart.
 const MIN_WIDTHS: [usize; 8] = [14, 28, 9, 9, 12, 13, 10, 17];
 
-fn render(rows: &[[String; 8]]) -> Vec<String> {
+fn render<const N: usize>(rows: &[[String; N]]) -> Vec<String> {
     let mut widths = MIN_WIDTHS;
     for row in rows {
         for (i, c) in row.iter().enumerate() {
@@ -719,6 +719,139 @@ fn render(rows: &[[String; 8]]) -> Vec<String> {
             out
         })
         .collect()
+}
+
+/// The first and last timed line of a transcript file, in milliseconds.
+fn timed_span(path: &Path) -> Option<(u64, u64)> {
+    use stapel_core::tokens::{MAX_TRANSCRIPT_LINE, read_bounded_line};
+    let mut reader = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+    let mut buf = Vec::new();
+    let mut span: Option<(u64, u64)> = None;
+    while read_bounded_line(&mut reader, &mut buf, MAX_TRANSCRIPT_LINE).ok()? {
+        if buf.len() > MAX_TRANSCRIPT_LINE {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(&buf) else {
+            continue;
+        };
+        let Ok(Value::Object(v)) = serde_json::from_str::<Value>(text.trim_end()) else {
+            continue;
+        };
+        let Some(t) = v
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_transcript_time)
+        else {
+            continue;
+        };
+        span = Some(span.map_or((t, t), |(a, b)| (a.min(t), b.max(t))));
+    }
+    span
+}
+
+/// The rows of one source of the measure table: a row per model.
+fn measure_rows<'a>(
+    source: &str,
+    messages: impl Iterator<Item = &'a stapel_core::tokens::Message> + Clone,
+) -> Vec<[String; 6]> {
+    sum_window(messages.clone())
+        .into_iter()
+        .map(|s| {
+            let of_model = |m: &&stapel_core::tokens::Message| m.model == s.model;
+            let partial = messages.clone().filter(of_model).any(|m| !m.complete);
+            let mut cells = s.fields.map(|(_, v)| cell(v));
+            if partial {
+                // The streamed output of a message without a final line is a lower bound.
+                let total = messages
+                    .clone()
+                    .filter(of_model)
+                    .filter_map(|m| m.usage.output)
+                    .fold(0u64, u64::saturating_add);
+                cells[1] = format!("≥{total}");
+            }
+            [
+                source.to_string(),
+                s.model.clone(),
+                cells[0].clone(),
+                cells[1].clone(),
+                cells[2].clone(),
+                cells[3].clone(),
+            ]
+        })
+        .collect()
+}
+
+/// `stapel tokens measure FILE` (STP-29 AC-10, AC-11, AC-14): tokens and attention numbers of a main
+/// transcript and its subagent files; no repository is opened and nothing is written.
+pub fn measure(file: &Path) -> Result<(), crate::fail::Fail> {
+    use crate::fail::Fail;
+    let refuse = |reason: &str| Fail::refused(format!("{}: {reason}", file.display()));
+    let meta = std::fs::metadata(file).map_err(|e| {
+        refuse(if e.kind() == std::io::ErrorKind::NotFound {
+            "missing"
+        } else {
+            "not readable"
+        })
+    })?;
+    // The file type is checked before the file is opened: opening a FIFO would wait.
+    if !meta.is_file() {
+        return Err(refuse("not a file"));
+    }
+    if std::fs::File::open(file).is_err() {
+        return Err(refuse("not readable"));
+    }
+    let main = stapel_core::tokens::read_transcript(file).map_err(|_| refuse("not readable"))?;
+    let Some(session) = main.session.clone() else {
+        return Err(refuse("no sessionId"));
+    };
+    if main.agent.is_some() {
+        return Err(refuse("subagent transcript"));
+    }
+    let events = stapel_core::attention::read_events(file).map_err(|_| refuse("not readable"))?;
+    let sums = stapel_core::attention::sum_events(&events);
+
+    let mut subagent_messages = Vec::new();
+    let folder = match file.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
+    };
+    let mut names: Vec<_> = std::fs::read_dir(folder.join(&session).join("subagents"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+        .collect();
+    names.sort();
+    for path in names {
+        if let Ok(t) = stapel_core::tokens::read_transcript(&path)
+            && t.session.as_deref() == Some(session.as_str())
+        {
+            subagent_messages.extend(t.messages);
+        }
+    }
+
+    let mut table: Vec<[String; 6]> = vec![
+        ["source", "model", "input", "output", "cache read", "cache write"].map(String::from),
+    ];
+    table.extend(measure_rows("main", main.messages.iter()));
+    table.extend(measure_rows("subagents", subagent_messages.iter()));
+    let mut out = vec![format!("transcript: {session}")];
+    out.extend(render(&table));
+    out.push(format!(
+        "attention: {} dialogs, {} questions, {} messages; {} attention, {} waited ({} over 10 min)",
+        sums.dialogs,
+        sums.questions,
+        sums.typed,
+        duration(sums.attention_ms),
+        duration(sums.waited_ms),
+        sums.long_waits
+    ));
+    let wall = timed_span(file).map_or(0, |(a, b)| b.saturating_sub(a));
+    out.push(format!("wall time: {}", duration(wall)));
+    say!("{}", out.join("\n"));
+    Ok(())
 }
 
 /// Ticket folders in key order, read without their `state.json`.
