@@ -52,9 +52,25 @@ pub fn read_events(path: &Path) -> std::io::Result<Vec<Event>> {
 }
 
 /// The events of a transcript reader. A line over 16 MiB is skipped.
-pub fn events_of(mut reader: impl std::io::BufRead) -> std::io::Result<Vec<Event>> {
+pub fn events_of(reader: impl std::io::BufRead) -> std::io::Result<Vec<Event>> {
+    Ok(events_with_cwd_of(reader)?
+        .into_iter()
+        .map(|(e, _)| e)
+        .collect())
+}
+
+/// Read the events of a main transcript file, each with the `cwd` of its line (a string, else none).
+pub fn read_events_with_cwd(path: &Path) -> std::io::Result<Vec<(Event, Option<String>)>> {
+    let file = std::fs::File::open(path)?;
+    events_with_cwd_of(BufReader::new(file))
+}
+
+/// The events of a transcript reader, each with the `cwd` of its line.
+pub fn events_with_cwd_of(
+    mut reader: impl std::io::BufRead,
+) -> std::io::Result<Vec<(Event, Option<String>)>> {
     let mut calls: HashMap<String, Call> = HashMap::new();
-    let mut events = Vec::new();
+    let mut events: Vec<(Event, Option<String>)> = Vec::new();
     let mut last_assistant: Option<u64> = None;
     let mut buf = Vec::new();
     while read_bounded_line(&mut reader, &mut buf, MAX_TRANSCRIPT_LINE)? {
@@ -74,6 +90,7 @@ pub fn events_of(mut reader: impl std::io::BufRead) -> std::io::Result<Vec<Event
         else {
             continue;
         };
+        let cwd = v.get("cwd").and_then(Value::as_str).map(str::to_string);
         let content = v.pointer("/message/content");
         match v.get("type").and_then(Value::as_str) {
             Some("assistant") => {
@@ -125,11 +142,14 @@ pub fn events_of(mut reader: impl std::io::BufRead) -> std::io::Result<Vec<Event
                             } else {
                                 continue;
                             };
-                            events.push(Event {
-                                kind,
-                                time_ms,
-                                wait_ms: time_ms.saturating_sub(call.time_ms),
-                            });
+                            events.push((
+                                Event {
+                                    kind,
+                                    time_ms,
+                                    wait_ms: time_ms.saturating_sub(call.time_ms),
+                                },
+                                cwd.clone(),
+                            ));
                         }
                         continue;
                     }
@@ -152,11 +172,14 @@ pub fn events_of(mut reader: impl std::io::BufRead) -> std::io::Result<Vec<Event
                 if text.starts_with('<') || text.starts_with("[Request interrupted") {
                     continue;
                 }
-                events.push(Event {
-                    kind: EventKind::Typed,
-                    time_ms,
-                    wait_ms: last_assistant.map_or(0, |t| time_ms.saturating_sub(t)),
-                });
+                events.push((
+                    Event {
+                        kind: EventKind::Typed,
+                        time_ms,
+                        wait_ms: last_assistant.map_or(0, |t| time_ms.saturating_sub(t)),
+                    },
+                    cwd,
+                ));
             }
             _ => {}
         }

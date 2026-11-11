@@ -1064,8 +1064,9 @@ pub fn hook_records(
     // Attention events of a main transcript, from `stop` and `session-end` only (STP-29).
     let events = if (hook == "stop" || hook == "session-end") && !identity.contains('/') {
         let after = attention_cursor(root, &identity);
-        let mut events = stapel_core::attention::read_events(transcript).unwrap_or_default();
-        events.retain(|e| after.is_none_or(|c| e.time_ms > c));
+        let mut events =
+            stapel_core::attention::read_events_with_cwd(transcript).unwrap_or_default();
+        events.retain(|(e, _)| after.is_none_or(|c| e.time_ms > c));
         events
     } else {
         Vec::new()
@@ -1074,7 +1075,7 @@ pub fn hook_records(
         .iter()
         .map(|m| m.time_ms)
         .min()
-        .or_else(|| events.iter().map(|e| e.time_ms).min())?;
+        .or_else(|| events.iter().map(|(e, _)| e.time_ms).min())?;
     let tickets = stapel_core::tickets::list(root);
     let mut open = tickets
         .iter()
@@ -1107,12 +1108,27 @@ pub fn hook_records(
         }
         lines.push(serde_json::to_string(&Value::Object(record)).ok()?);
     }
-    if !events.is_empty() {
-        let sums = stapel_core::attention::sum_events(&events);
+    // Group the events by worktree ticket, else the target ticket (AC-15).
+    let mut groups: Vec<(&stapel_core::tickets::Ticket, Vec<stapel_core::attention::Event>)> =
+        Vec::new();
+    for (event, cwd) in events {
+        let owner = cwd
+            .as_deref()
+            .and_then(worktree_key)
+            .and_then(|key| tickets.iter().find(|t| t.key == key))
+            .unwrap_or(ticket);
+        match groups.iter_mut().find(|(t, _)| t.key == owner.key) {
+            Some((_, list)) => list.push(event),
+            None => groups.push((owner, vec![event])),
+        }
+    }
+    let mut extra: Vec<(&Path, String)> = Vec::new();
+    for (owner, events) in &groups {
+        let sums = stapel_core::attention::sum_events(events);
         let from = events.iter().map(|e| e.time_ms).min()?;
         let to = events.iter().map(|e| e.time_ms).max()?;
         let mut digest = sha2::Sha256::new();
-        for part in [ticket.key.as_str(), identity.as_str(), &rfc3339_millis(to)] {
+        for part in [owner.key.as_str(), identity.as_str(), &rfc3339_millis(to)] {
             digest.update(part.as_bytes());
             digest.update([0u8]);
         }
@@ -1126,7 +1142,7 @@ pub fn hook_records(
             "v": 1,
             "id": format!("a-{hex}"),
             "at": now_rfc3339(),
-            "ticket": ticket.key,
+            "ticket": owner.key,
             "kind": "attention",
             "hook": hook,
             "transcript": identity,
@@ -1139,11 +1155,28 @@ pub fn hook_records(
             "attention_ms": sums.attention_ms,
             "long_waits": sums.long_waits,
         });
-        lines.push(serde_json::to_string(&record).ok()?);
+        let line = serde_json::to_string(&record).ok()?;
+        if owner.key == ticket.key {
+            lines.push(line);
+        } else {
+            extra.push((owner.dir.as_path(), line));
+        }
+    }
+    for (dir, line) in extra {
+        stapel_core::journal::append_all(&dir.join("tokens.jsonl"), &[line]).ok()?;
     }
     if lines.is_empty() {
         return Some(());
     }
     stapel_core::journal::append_all(&ticket.dir.join("tokens.jsonl"), &lines).ok()?;
     Some(())
+}
+
+/// The key after `.claude` and `worktrees` in a path, if the path has them in a row.
+fn worktree_key(cwd: &str) -> Option<&str> {
+    let parts: Vec<&str> = cwd.split('/').collect();
+    parts
+        .windows(3)
+        .find(|w| w[0] == ".claude" && w[1] == "worktrees" && !w[2].is_empty())
+        .map(|w| w[2])
 }
