@@ -163,3 +163,60 @@ pub fn events_of(mut reader: impl std::io::BufRead) -> std::io::Result<Vec<Event
     }
     Ok(events)
 }
+
+/// The cap of one wait in the attention time: 10 minutes.
+pub const WAIT_CAP_MS: u64 = 600_000;
+
+/// The attention numbers of a list of events.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Sums {
+    /// Length of the union of the intervals.
+    pub waited_ms: u64,
+    /// Length of the union with each interval cut to its last `WAIT_CAP_MS`.
+    pub attention_ms: u64,
+    /// Events whose wait is over the cap.
+    pub long_waits: u32,
+    /// Questions asked (a call with several questions counts each).
+    pub questions: u32,
+    /// Dialogs the person answered.
+    pub dialogs: u32,
+    /// Messages the person typed.
+    pub typed: u32,
+}
+
+fn union_len(mut spans: Vec<(u64, u64)>) -> u64 {
+    spans.sort_unstable();
+    let mut total = 0;
+    let mut end = 0;
+    for (s, e) in spans {
+        let s = s.max(end);
+        if e > s {
+            total += e - s;
+            end = e;
+        }
+    }
+    total
+}
+
+/// Sum events: union of intervals, cap per interval and counts.
+pub fn sum_events(events: &[Event]) -> Sums {
+    let mut sums = Sums::default();
+    let mut full = Vec::with_capacity(events.len());
+    let mut capped = Vec::with_capacity(events.len());
+    for e in events {
+        let (s, t) = e.interval();
+        full.push((s, t));
+        capped.push((s.max(t.saturating_sub(WAIT_CAP_MS)), t));
+        if e.wait_ms > WAIT_CAP_MS {
+            sums.long_waits += 1;
+        }
+        match e.kind {
+            EventKind::Question(n) => sums.questions = sums.questions.saturating_add(n),
+            EventKind::Dialog => sums.dialogs += 1,
+            EventKind::Typed => sums.typed += 1,
+        }
+    }
+    sums.waited_ms = union_len(full);
+    sums.attention_ms = union_len(capped);
+    sums
+}
