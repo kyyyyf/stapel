@@ -305,7 +305,8 @@ END { print "</testsuite>\n</testsuites>" > out; exit bad }
 
 /// A git repository with `stapel init --prefix ABC`, ticket ABC-1, a gitignored `node_modules`
 /// folder and `[check] runner = "junit"` whose command is a shell stand-in for jest kept outside the
-/// repository. The stand-in needs exactly one argument, `PATH`, `HOME`,
+/// repository. The stand-in needs one argument (a Per-file run) or none (the suite run over every
+/// `__tests__/*.test.ts`, not logged), `PATH`, `HOME`,
 /// `JEST_JUNIT_REPORT_TEST_SUITE_ERRORS=true` and a `node_modules` link with `marker` inside;
 /// else it leaves no report. Everything is committed; the base test file is `__tests__/base.test.ts`.
 pub fn junit_repo() -> JunitRepo {
@@ -330,11 +331,12 @@ pub fn junit_repo() -> JunitRepo {
     std::fs::write(
         &script,
         format!(
-            "[ \"$#\" = 1 ] || exit 5\n\
+            "[ \"$#\" -le 1 ] || exit 5\n\
              [ -n \"$PATH\" ] && [ -n \"$HOME\" ] && [ \"$JEST_JUNIT_REPORT_TEST_SUITE_ERRORS\" = true ] || exit 3\n\
              [ -L node_modules ] && [ -e node_modules/marker ] || exit 4\n\
-             echo \"$(git rev-parse HEAD) $1\" >> '{}'\n\
-             exec awk '{}' \"$1\"\n",
+             if [ \"$#\" = 0 ]; then set -- __tests__/*.test.ts; exec awk '{1}' \"$@\"; fi\n\
+             echo \"$(git rev-parse HEAD) $1\" >> '{0}'\n\
+             exec awk '{1}' \"$1\"\n",
             log.display(),
             STAND_IN_AWK
         ),

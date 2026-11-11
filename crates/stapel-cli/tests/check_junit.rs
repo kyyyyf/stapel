@@ -686,3 +686,192 @@ fn docs_path_matching_a_glob_is_stale() {
     let (pass, line) = line_after("docs/a.md");
     assert_eq!(line, pass);
 }
+
+/// A junit ticket with one passing step `__tests__/x.test.ts::one` whose Per-file run (one argument)
+/// passes after the GREEN. The suite run (no argument) logs `args=0` to `suite.log` and then runs
+/// `body`. `old` is a report committed before the step; `timeout` replaces `timeout_secs`.
+fn suite_repo(body: &str, old: Option<&str>, timeout: u32) -> JunitRepo {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    let t = repo.tools.path();
+    std::fs::write(t.join("red.xml"), FAILED_ONE).unwrap();
+    std::fs::write(t.join("green.xml"), PASSED_ONE).unwrap();
+    std::fs::write(
+        t.join("suite.sh"),
+        format!(
+            "if [ \"$#\" = 1 ]; then\n  if [ -e src/ok.ts ]; then cat '{t}/green.xml' > junit.xml; exit 0; fi\n  cat '{t}/red.xml' > junit.xml\n  exit 1\nfi\necho \"args=$#\" >> '{t}/suite.log'\n{body}\n",
+            t = t.display()
+        ),
+    )
+    .unwrap();
+    let config = dir.join(".stapel/stapel.toml");
+    let text: String = std::fs::read_to_string(&config)
+        .unwrap()
+        .lines()
+        .map(|l| {
+            if l.starts_with("command = ") {
+                format!("command = \"sh {} {{file}}\"\n", t.join("suite.sh").display())
+            } else if l.starts_with("timeout_secs") {
+                format!("timeout_secs = {timeout}\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    std::fs::write(&config, text).unwrap();
+    if let Some(old) = old {
+        write(dir, "junit.xml", old);
+    }
+    commit(dir, "ABC-1: a suite command");
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/ok.ts", "export const ok = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: one");
+    repo
+}
+
+const PASSED_ONE: &str = "<testsuites><testsuite name=\"s\"><testcase classname=\"\" name=\" one\"/></testsuite></testsuites>\n";
+const FAILED_ONE: &str = "<testsuites><testsuite name=\"s\"><testcase classname=\"\" name=\" one\"><failure message=\"x\"/></testcase></testsuite></testsuites>\n";
+
+/// The text of the `suite:` line of a check.
+fn suite_line(text: &str) -> &str {
+    text.lines()
+        .find(|l| l.starts_with("suite: "))
+        .unwrap_or_else(|| panic!("no suite line:\n{text}"))
+}
+
+/// A shell body that writes `xml` as the report and exits with `exit`.
+fn writes(xml: &str, exit: i32) -> String {
+    format!("printf '%s' '{xml}' > junit.xml\nexit {exit}")
+}
+
+// AC-26, AC-34: the HEAD suite runs the command once without `{file}`; faults are unverified.
+#[test]
+fn suite_runs_the_whole_command() {
+    let case = |(a, b, c): (u32, u32, u32), exit: i32| {
+        let cases = |n: u32, tail: &str| {
+            (0..n)
+                .map(|i| format!("<testcase classname=\"\" name=\" t{i}{tail}\"/>"))
+                .collect::<String>()
+        };
+        let failure = "<testcase classname=\"\" name=\" bad\"><failure message=\"x\"/></testcase>";
+        let skipped = "<testcase classname=\"\" name=\" skip\"><skipped/></testcase>";
+        let xml = format!(
+            "<testsuites><testsuite name=\"s\">{}{}{}{}</testsuite></testsuites>",
+            cases(a, ""),
+            if b > 0 { failure } else { "" },
+            skipped.repeat(c as usize),
+            ""
+        );
+        let repo = suite_repo(&writes(&xml, exit), None, 60);
+        let (code, text) = check(&repo);
+        let log = std::fs::read_to_string(repo.tools.path().join("suite.log")).unwrap_or_default();
+        (repo, code, text, log)
+    };
+    // A pass: the command ran once with no argument; the counts are in the detail.
+    let (_repo, code, text, log) = case((2, 0, 1), 0);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    assert_eq!(outcome(&text, "suite"), "pass", "{text}");
+    assert!(
+        suite_line(&text).contains("2 passed, 0 failed, 1 ignored"),
+        "{text}"
+    );
+    assert_eq!(log, "args=0\n", "one run, `{{file}}` left out");
+    // A failing case.
+    let (_repo, code, text, _) = case((1, 1, 0), 1);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    assert_eq!(outcome(&text, "suite"), "fail", "{text}");
+    assert!(suite_line(&text).contains("1 failed"), "{text}");
+
+    let unverified = |body: &str, old: Option<&str>, timeout: u32, needle: &str| {
+        let repo = suite_repo(body, old, timeout);
+        let (code, text) = check(&repo);
+        assert_eq!(code, 1, "{text}");
+        assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+        assert_eq!(outcome(&text, "suite"), "unverified", "{text}");
+        assert!(
+            suite_line(&text).contains(needle),
+            "wanted {needle:?}: {text}"
+        );
+    };
+    // A committed passing report and a stand-in that writes none: the old report is removed.
+    unverified("exit 0", Some(PASSED_ONE), 60, "no report");
+    unverified("exit 0", None, 60, "no report");
+    // A timeout and a signal.
+    unverified("sleep 60", None, 10, "time limit of 10 s");
+    unverified("kill -9 $$", None, 60, "signal");
+    // A report over 16 MiB and one the reader refuses.
+    unverified(
+        "head -c 17825792 /dev/zero | tr '\\0' ' ' > junit.xml\nexit 0",
+        None,
+        60,
+        "16 MiB",
+    );
+    unverified(
+        "echo '<testsuites>' > junit.xml\nexit 0",
+        None,
+        60,
+        "report",
+    );
+}
+
+// AC-26: every test suite of the suite report is summed.
+#[test]
+fn suite_sums_every_suite() {
+    let two = |second: &str| {
+        format!(
+            "<testsuites><testsuite name=\"a\"><testcase classname=\"\" name=\" a1\"/><testcase classname=\"\" name=\" a2\"/></testsuite><testsuite name=\"b\"><testcase classname=\"\" name=\" b1\"/>{second}</testsuite></testsuites>"
+        )
+    };
+    let ok = "<testcase classname=\"\" name=\" b2\"/><testcase classname=\"\" name=\" b3\"/>";
+    let repo = suite_repo(&writes(&two(ok), 0), None, 60);
+    let (code, text) = check(&repo);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(outcome(&text, "suite"), "pass", "{text}");
+    assert!(
+        suite_line(&text).contains("5 passed, 0 failed, 0 ignored"),
+        "{text}"
+    );
+    let bad = "<testcase classname=\"\" name=\" b2\"><failure message=\"x\"/></testcase><testcase classname=\"\" name=\" b3\"/>";
+    let repo = suite_repo(&writes(&two(bad), 1), None, 60);
+    let (code, text) = check(&repo);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "suite"), "fail", "{text}");
+    assert!(
+        suite_line(&text).contains("4 passed, 1 failed, 0 ignored"),
+        "{text}"
+    );
+}
+
+// AC-35: a junit record has `"runner": "junit"` and no cargo version; a passing one is current.
+#[test]
+fn junit_record_is_current() {
+    let xml = "<testsuites><testsuite name=\"s\"><testcase classname=\"\" name=\" a\"/><testcase classname=\"\" name=\" b\"/></testsuite></testsuites>";
+    let repo = suite_repo(&writes(xml, 0), None, 60);
+    let dir = repo.dir();
+    let (code, text) = check(&repo);
+    assert_eq!(code, 0, "{text}");
+    let runs = std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/runs.jsonl")).unwrap();
+    let record: serde_json::Value =
+        serde_json::from_str(runs.lines().last().expect("a record")).unwrap();
+    assert_eq!(record["runner"], "junit", "{record}");
+    assert!(record.get("cargo").is_none(), "{record}");
+    assert_eq!(record["result"], "pass", "{record}");
+    assert_eq!(record["suite"]["outcome"], "pass", "{record}");
+    assert_eq!(record["suite"]["passed"], 2, "{record}");
+    let pass = format!(
+        "check: pass at {}",
+        &git_in(dir, &["rev-parse", "HEAD"]).trim()[..7]
+    );
+    let (_, status) = stdout(dir, &["status", "ABC-1"]);
+    assert!(status.lines().any(|l| l == pass), "{pass}\n{status}");
+    let (_, next) = stdout(dir, &["next", "ABC-1"]);
+    assert!(!next.contains("check: stale"), "{next}");
+    assert!(!next.contains("stapel check"), "{next}");
+}
