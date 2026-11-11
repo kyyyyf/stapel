@@ -249,3 +249,69 @@ fn broken_lines_are_skipped() {
     std::fs::write(&path, "").unwrap();
     assert!(read_events(&path).unwrap().is_empty());
 }
+
+#[test]
+fn cap_and_long_waits() {
+    use stapel_core::attention::{sum_events, Event};
+
+    let typed = |time_ms: u64, wait_ms: u64| Event {
+        kind: EventKind::Typed,
+        time_ms,
+        wait_ms,
+    };
+    let base: u64 = 1_800_000_000_000;
+
+    // No event: all numbers 0.
+    let none = sum_events(&[]);
+    assert_eq!((none.waited_ms, none.attention_ms, none.long_waits), (0, 0, 0));
+
+    // Separate waits around the cap: only 600 001 and 7 200 000 are long.
+    let waits = [0u64, 599_999, 600_000, 600_001, 7_200_000];
+    let events: Vec<Event> = waits
+        .iter()
+        .enumerate()
+        .map(|(i, w)| typed(base + (i as u64 + 1) * 10_000_000, *w))
+        .collect();
+    let sums = sum_events(&events);
+    assert_eq!(sums.waited_ms, 9_000_000);
+    assert_eq!(sums.attention_ms, 599_999 + 3 * 600_000);
+    assert_eq!(sums.long_waits, 2);
+
+    // Two parallel calls, results 60 s and 90 s after the same call time: one union.
+    let parallel = [
+        Event { kind: EventKind::Dialog, time_ms: base + 60_000, wait_ms: 60_000 },
+        Event { kind: EventKind::Dialog, time_ms: base + 90_000, wait_ms: 90_000 },
+    ];
+    let sums = sum_events(&parallel);
+    assert_eq!((sums.waited_ms, sums.attention_ms, sums.long_waits), (90_000, 90_000, 0));
+    // The order of the events does not matter.
+    let reversed = [parallel[1].clone(), parallel[0].clone()];
+    assert_eq!(sum_events(&reversed).waited_ms, 90_000);
+
+    // Two typed lines in a row share the line of the answer: their intervals count once.
+    let row = [typed(base + 15_000, 15_000), typed(base + 30_000, 30_000)];
+    let sums = sum_events(&row);
+    assert_eq!((sums.waited_ms, sums.attention_ms), (30_000, 30_000));
+
+    // Overlapping long waits: the union is over the cap, each interval is cut to its last 10 minutes.
+    let overlap = [typed(base + 900_000, 900_000), typed(base + 1_000_000, 700_000)];
+    let sums = sum_events(&overlap);
+    assert_eq!(sums.waited_ms, 1_000_000);
+    assert_eq!(sums.attention_ms, 700_000);
+    assert_eq!(sums.long_waits, 2);
+
+    // A result timed before its call (clock skew): wait 0, nothing waited.
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        &dir,
+        &[
+            call_line(100, "t1", "Bash", json!({"command": "ls"})),
+            result_line(40, "t1", Some(json!("user_temporary")), false),
+        ],
+    );
+    let events = read_events(&path).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].wait_ms, 0);
+    let sums = sum_events(&events);
+    assert_eq!((sums.waited_ms, sums.attention_ms, sums.long_waits), (0, 0, 0));
+}
