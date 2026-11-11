@@ -349,6 +349,11 @@ commit of a test that passes at once (SR1-9).
    `hook_tokens::token_hooks_on_a_branch`): the RED changes the missing-path case of `subagent-stop` in the
    three old tests to expect no record, so all four tests fail there. Must not change: the gap records of
    the other reasons and of `stop` and `session-end`.
+7. Fix after code review round 1 (AC-7; tests `attention::repeated_call_adds_nothing`,
+   `attention::cursor_across_tickets`): the cursor across checkouts. The RED adds to both tests a second
+   checkout (a linked worktree) where the hook runs after the first and must add nothing. The GREEN keeps
+   the latest `to` of each transcript also in a file in the git common folder, under the tokens lock; the
+   cursor is the later of the two. Must not change: the cursor inside one checkout, the token cursor.
 
 ## Review
 
