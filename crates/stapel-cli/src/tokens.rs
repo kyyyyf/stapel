@@ -1238,6 +1238,8 @@ pub fn hook_records(
 ) -> Option<()> {
     let (t, identity) = match read_for_hook(transcript) {
         Ok(read) => read,
+        // A subagent transcript that is not there yet is no gap (STP-29).
+        Err("missing") if hook == "subagent-stop" => return Some(()),
         Err(reason) => return gap_record(root, transcript, role, hook, reason),
     };
     // One hook at a time: cursors are read and records appended under `tokens.lock` (AC-15).
