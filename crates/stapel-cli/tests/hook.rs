@@ -1524,6 +1524,11 @@ fn bare_cargo_denied() {
     bash(repo.path(), "timeout 1800 cargo test")
         .code(DENY)
         .stderr(contains(text));
+    // Rustup wrapper (E2-5): `rustup run <toolchain> <program>` runs the program.
+    for command in ["rustup run stable cargo test", "rustup run nightly cargo build"] {
+        bash(repo.path(), command).code(DENY).stderr(contains(text));
+    }
+    bash(repo.path(), "rustup run stable stapel cargo test").success();
     // Precise stapel cargo (D46-1): `stapel` is an option's value there, not the program.
     for command in [
         "env -u stapel cargo test",
