@@ -612,6 +612,46 @@ impl Runner<'_> {
                 .map_err(|e| format!("no report {} for {file}: {e} (at {at})", junit.report))?;
             let suites =
                 read_report(&bytes).map_err(|e| format!("report of {file}: {e} (at {at})"))?;
+            let Some(code) = run.exit else {
+                return Err(format!("the run of {file} ended by a signal (at {at})"));
+            };
+            if suites.len() != 1 {
+                return Err(if suites.is_empty() {
+                    format!("the report of {file} holds no test suite (at {at})")
+                } else {
+                    format!(
+                        "the report of {file} holds {} test suites (at {at})",
+                        suites.len()
+                    )
+                });
+            }
+            let failed = suites[0]
+                .cases
+                .iter()
+                .filter(|c| c.outcome == CaseOutcome::Failed)
+                .count();
+            if (code == 0) != (failed == 0) {
+                return Err(format!(
+                    "exit code {code} with {failed} failed test case{} in the report of {file} (at {at})",
+                    if failed == 1 { "" } else { "s" }
+                ));
+            }
+            // A file that does not load: every case has the classname jest gives a failed suite.
+            let cases = &suites[0].cases;
+            if !cases.is_empty() && cases.iter().all(|c| c.classname == "Test suite failed to run")
+            {
+                for name in names {
+                    out.insert(
+                        TestId {
+                            dir: String::new(),
+                            file: file.clone(),
+                            name,
+                        },
+                        TestState::Compile,
+                    );
+                }
+                continue;
+            }
             for name in names {
                 let cases: Vec<_> = suites
                     .iter()
