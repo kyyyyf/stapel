@@ -88,11 +88,17 @@ const MAX_DEPTH: usize = 16;
 pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Decision {
     let working_dir = cwd;
     let cwd = input.cwd.as_deref().unwrap_or(cwd);
+    // The Hook root, computed once: the stapel root of the input `cwd`, else of the project dir,
+    // else of the working directory.
+    let hook_root = input
+        .cwd
+        .as_deref()
+        .and_then(stapel_root)
+        .or_else(|| project_dir.and_then(stapel_root))
+        .or_else(|| stapel_root(working_dir));
     match input.tool_name.as_str() {
         "Bash" => {
-            let in_stapel_repo = stapel_root(cwd).is_some()
-                || project_dir.and_then(stapel_root).is_some()
-                || stapel_root(working_dir).is_some();
+            let in_stapel_repo = hook_root.is_some();
             let command = match &input.tool_input["command"] {
                 serde_json::Value::String(command) => command.as_str(),
                 serde_json::Value::Null => "",
@@ -107,7 +113,7 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
                 return Decision::Deny(reason.into());
             }
             if input.agent_id.as_deref().is_some_and(|id| !id.is_empty())
-                && !subagent_git_ok(command, cwd, project_dir, working_dir)
+                && !subagent_git_ok(command, cwd, hook_root.as_deref())
             {
                 return Decision::Deny(format!(
                     "subagents run only these git commands in their own worktree: {}",
@@ -131,9 +137,7 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
                 return Decision::Deny(format!("hook input has no tool_input.{field}"));
             };
             let target = resolve(&cwd.join(path));
-            let in_stapel_session =
-                stapel_root(cwd).is_some() || project_dir.and_then(stapel_root).is_some();
-            if in_stapel_session && is_global_config(&target) {
+            if hook_root.is_some() && is_global_config(&target) {
                 return Decision::Deny(format!(
                     "only stapel or the human writes {}, not an agent's write tool \
                      (global git or Claude Code configuration)",
@@ -141,15 +145,8 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
                 ));
             }
             // D12-2: a hook rooted in a ticket worktree writes only inside that worktree.
-            // Hook root order: the input `cwd`, then the project dir, then the working directory.
-            let hook_root = input
-                .cwd
-                .as_deref()
-                .and_then(stapel_root)
-                .or_else(|| project_dir.and_then(stapel_root))
-                .or_else(|| stapel_root(working_dir));
-            if let Some(hook_root) = hook_root {
-                let hook_root = resolve(&hook_root);
+            if let Some(hook_root) = &hook_root {
+                let hook_root = resolve(hook_root);
                 let key = hook_root.file_name().and_then(|n| n.to_str());
                 let in_worktrees = hook_root
                     .parent()
@@ -379,22 +376,12 @@ const SUBAGENT_GIT: [&str; 12] = [
 /// True when every `git`, `cd` and `GIT_*` word of a subagent's command stays within the
 /// rules: allowed subcommands, no config or location options, paths inside the worktree.
 /// Text the parser cannot read is refused.
-fn subagent_git_ok(
-    command: &str,
-    cwd: &Path,
-    project_dir: Option<&Path>,
-    working_dir: &Path,
-) -> bool {
+fn subagent_git_ok(command: &str, cwd: &Path, hook_root: Option<&Path>) -> bool {
     if command.len() > MAX_COMMAND_LEN {
         return false;
     }
-    // The Hook root: the stapel root of `cwd`, else of the project dir, else `cwd`.
-    let root = resolve(
-        &stapel_root(cwd)
-            .or_else(|| project_dir.and_then(stapel_root))
-            .or_else(|| stapel_root(working_dir))
-            .unwrap_or_else(|| cwd.to_path_buf()),
-    );
+    // The Hook root of the call, else `cwd`.
+    let root = resolve(hook_root.unwrap_or(cwd));
     let mut at = resolve(cwd);
     let mut budget = WORK_BUDGET;
     subagent_scan(command, &root, &mut at, 0, &mut budget)
