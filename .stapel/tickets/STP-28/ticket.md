@@ -111,7 +111,7 @@ Terms:
 |---|---|---|
 | AC-1 | WHEN the ticket has a `base` THE `stapel check` and `stapel check --history` read step commits, their order and the build-input range only from the Walk, so a commit before `base` whose subject names a step of the ticket counts for nothing; without `base` it still counts. | `check_history::walk_starts_at_the_base` |
 | AC-2 | WHEN the commit hook or `stapel next` reads the steps of a ticket with a `base` THE same Walk applies: a step commit before `base` gives no hook fault and no `next` fact or action. | `hook_post::hook_walks_from_the_base`, `next::next_walks_from_the_base` |
-| AC-3 | WHEN the commits and changes after a check's HEAD touch only paths under `docs/`, the process ledger or a ticket's machine files (`tokens.jsonl` among them) THE check stays current in `status`, `next` and `close`; any other path, and under junit a `docs/` path that matches a test or input glob, makes it stale as before. | `check::docs_commits_keep_a_check_current` |
+| AC-3 | WHEN the commits and changes after a check's HEAD touch only paths under `docs/`, the process ledger or a ticket's machine files (`tokens.jsonl` among them) THE check stays current in `status`, `next` and `close`; any other path makes it stale as before. | `check::docs_commits_keep_a_check_current` |
 | AC-4 | WHEN `[check]` has `runner = "junit"` THE config reads `command` and `report` (both needed), `timeout_secs` as for cargo, `tests` (default `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`) and `inputs` (default `**/package.json`, the three lock files, `**/jest.config.*`, `**/tsconfig*.json`, `**/babel.config.*`, `**/.babelrc`, `**/.swcrc`, `**/jest.setup.*`); a cargo `[check]` reads as before. | `core::config::junit_check_keys` |
 | AC-5 | IF `command` lacks the word `{file}`, holds it twice, holds it inside a longer word or right after a word that starts with `-`, `report` or a glob is empty, absolute or holds `..`, a glob holds `{`, `}`, `[`, `]`, `!` or a backslash, `tests` is empty, a junit key stands with cargo, `cargo` stands with junit, or the runner is another word THEN loading `stapel.toml` fails with a message that names the key; after a `-` word the message says to put `{file}` right after the program. | `core::config::rejects_bad_junit_keys` |
 | AC-6 | WHEN a glob is matched THE leading `**/` also matches no folder (`**/package.json` matches `package.json`), `*` and `?` never match `/`, a trailing `/**` matches every path below at any depth but not the folder itself, and a middle `/**/` also matches no folder. | `core::config::globs_match_paths` |
@@ -132,6 +132,7 @@ Terms:
 | AC-21 | IF a Per-file run leaves no report, a report over 16 MiB or one the reader refuses THEN the step is `unverified` with the reason. | `check_junit::run_faults_are_unverified` |
 | AC-22 | IF a test file of the step holds a test call or `describe` with `.only` at the RED or the GREEN commit THEN the step tests of that file are `unverified` with a reason that names the file, `.only` and the commit, and no command runs for it. | `check_junit::only_call_is_unverified` |
 | AC-23 | IF the working tree has no `node_modules` folder THEN under junit the steps that run and the suite are `unverified` with the reason `node_modules is missing in the working tree`. | `check_junit::node_modules_missing_is_unverified` |
+| AC-36 | IF the runner is junit and a path under `docs/` after a check's HEAD matches a test or input glob THEN that path makes the check stale. | `check_junit::docs_path_matching_a_glob_is_stale` |
 | AC-24 | WHEN a commit of the Walk, a merge commit by its first-parent diff, changes a file that matches an input glob THE later steps read `unverified` with the reason `build-input-changed: <path> at <sha>` as under cargo, and no command runs for them. | `check_junit::build_input_change_is_unverified`, `check_junit::merge_brings_a_build_input` |
 | AC-25 | WHEN the runner is junit and a commit of the Walk changes `.stapel/stapel.toml`, or the first word of `command` when it is a repository path, THE later steps read `build-input-changed` for that path. | `check_junit::config_change_is_unverified` |
 | AC-26 | WHEN the runner is junit THE suite at HEAD removes the old report, runs `command` once with only the word `{file}` left out, reads every test suite of the report and sums them; it passes when the exit code is 0 and the sums hold a test case and no failure or error, and its detail counts passed, failed and ignored. | `check_junit::suite_runs_the_whole_command`, `check_junit::suite_sums_every_suite` |
@@ -173,7 +174,8 @@ stapel-cli --test <file> -- --test-threads=3`, `-p stapel-core --test <file>`; b
 |---|---|---|
 | Walk in check | a commit `ABC-1 1 RED: …` before `base` and a real step 1 after it: `check` and `--history` show one pass, no `duplicate`; the same history without `base`: `duplicate`; a merge of main into the branch after `base` | `check_history::walk_starts_at_the_base` |
 | Walk in hook, next | the same old commit: the hook after the next commit prints no fault for it; `next` names no fault and no action from it | `hook_post::hook_walks_from_the_base`, `next::next_walks_from_the_base` |
-| Staleness | a passing check, then commits of `docs/a.md`, the ledger and `tokens.jsonl`: `check: pass`; a commit of `src/x.rs`: stale; `docs/` plus `src/`: stale; under junit `docs/a.test.ts`: stale | `check::docs_commits_keep_a_check_current` |
+| Staleness | a passing check, then commits of `docs/a.md`, the ledger and `tokens.jsonl`: `check: pass`; a commit of `src/x.rs`: stale; `docs/` plus `src/`: stale | `check::docs_commits_keep_a_check_current` |
+| Staleness under junit | a passing junit check, then a commit of `docs/a.test.ts`: stale; of `docs/site/package.json`: stale; of `docs/a.md`: current | `check_junit::docs_path_matching_a_glob_is_stale` |
 | Config | the minimal junit `[check]` and its thirteen default globs; every key set; cargo `[check]` unchanged | `core::config::junit_check_keys` |
 | Bad config | no `{file}`; `{file}` twice; `--x={file}`; `--testPathPattern {file}` (the message names the place); a glob with `{a,b}`, `[ab]`, `!x` or a backslash; `report = ""`, `"/x"`, `"../x"`; `tests = []`; a glob `"a/../b"`; `command` with cargo; `cargo` with junit; `runner = "jest"`: each refused naming its key | `core::config::rejects_bad_junit_keys` |
 | Globs | `**/package.json` against `package.json` and `a/b/package.json`; `*.ts` against `a/b.ts` (no); `**/__tests__/**` against `__tests__/a.ts` and `x/__tests__/y/z.json`; `a/**` against `a` (no); `a/**/b` against `a/b`; `?` against `/` (no) | `core::config::globs_match_paths` |
@@ -362,6 +364,7 @@ AC-1 and AC-2; item 5 to AC-3; item 6 to AC-28 to AC-32; each Inputs and Externa
 | AC-22 | `check_junit::only_call_is_unverified` |
 | AC-23 | `check_junit::node_modules_missing_is_unverified` |
 | AC-24 | `check_junit::build_input_change_is_unverified`, `check_junit::merge_brings_a_build_input` |
+| AC-36 | `check_junit::docs_path_matching_a_glob_is_stale` |
 | AC-25 | `check_junit::config_change_is_unverified` |
 | AC-26 | `check_junit::suite_runs_the_whole_command`, `check_junit::suite_sums_every_suite` |
 | AC-27 | `check_junit::tests_changed_under_junit`, `check_junit::hook_faults_under_junit` |
@@ -403,10 +406,11 @@ Route: full (tags `guard`, `interface`), auto.
    reason or a compile count that step 6 does not give. Must not change: step 6.
 8. Run faults and `.only` (AC-20, AC-21, AC-22; tests `check_junit::run_faults_are_unverified`,
    `check_junit::only_call_is_unverified`). Must not change: steps 6 and 7.
-9. Dependencies and build inputs (AC-23, AC-24, AC-25; tests
+9. Dependencies and build inputs (AC-23, AC-24, AC-25, AC-36; tests
    `check_junit::node_modules_missing_is_unverified`, `check_junit::build_input_change_is_unverified`,
-   `check_junit::merge_brings_a_build_input`, `check_junit::config_change_is_unverified`):
-   `build_inputs.rs`. Must not change: cargo build inputs.
+   `check_junit::merge_brings_a_build_input`, `check_junit::config_change_is_unverified`,
+   `check_junit::docs_path_matching_a_glob_is_stale`): `build_inputs.rs`, `checkstate.rs` (the `docs/`
+   exemption of step 2 yields to the junit globs). Must not change: cargo build inputs.
 10. The suite and the record (AC-26, AC-34, AC-35; tests `check_junit::suite_runs_the_whole_command`,
     `check_junit::suite_sums_every_suite`, `check_junit::junit_record_is_current`): `Runner::suite`, the
     record; the record test fails at the RED because no junit check passes before the suite. Must not change: the cargo suite.
