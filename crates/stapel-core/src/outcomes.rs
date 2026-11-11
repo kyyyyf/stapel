@@ -7,9 +7,10 @@ use crate::config::glob_matches;
 use crate::includes::Includes;
 use crate::rust_tests::{helper_text, test_functions};
 use crate::steps::{
-    Change, Marker, Step, StepCommit, TestId, changes, git, git_text, junit_step_tests, parent,
-    show, step_tests,
+    Change, Marker, Step, StepCommit, TestId, changes, git, git_text, is_test_file,
+    junit_step_tests, parent, show, step_tests,
 };
+use crate::ts_tests::{rest_text, test_calls};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
@@ -336,6 +337,8 @@ enum Unit {
     Test(TestId),
     /// A `.rs` file's text without its test functions.
     Helpers(String),
+    /// A junit test file's text without its test calls.
+    Rest(String),
     /// Any other file, byte for byte.
     File(String),
 }
@@ -344,22 +347,27 @@ impl Unit {
     fn path(&self) -> String {
         match self {
             Unit::Test(t) => t.path(),
-            Unit::Helpers(p) | Unit::File(p) => p.clone(),
+            Unit::Helpers(p) | Unit::Rest(p) | Unit::File(p) => p.clone(),
         }
     }
     fn name(&self) -> String {
         match self {
             Unit::Test(t) => t.to_string(),
-            Unit::Helpers(p) | Unit::File(p) => p.clone(),
+            Unit::Helpers(p) | Unit::Rest(p) | Unit::File(p) => p.clone(),
         }
     }
-    fn value(&self, files: &mut Files, commit: &str) -> Option<String> {
+    fn value(&self, files: &mut Files, commit: &str, junit: bool) -> Option<String> {
         let src = files.get(commit, &self.path())?;
         match self {
+            Unit::Test(t) if junit => test_calls(&src)
+                .into_iter()
+                .find(|(n, _)| *n == t.name)
+                .map(|(_, text)| text),
             Unit::Test(t) => test_functions(&src)
                 .into_iter()
                 .find(|(n, _)| *n == t.name)
                 .map(|(_, text)| text),
+            Unit::Rest(_) => Some(rest_text(&src)),
             Unit::Helpers(_) => Some(helper_text(&src)),
             Unit::File(_) => Some(src),
         }
@@ -407,7 +415,8 @@ pub fn analyse(
     analyse_in(root, key, head, steps, Mode::Cargo)
 }
 
-/// `analyse` under a runner. Under junit the protected content of a step is not read yet.
+/// `analyse` under a runner. Under junit the protected content is each step test call, the rest of
+/// each test file the RED changed and its other changed files that match a test glob.
 pub fn analyse_in(
     root: &Path,
     key: &str,
@@ -506,17 +515,33 @@ pub fn analyse_in(
 
         // Protected content: the step tests and the other test files the RED changed.
         let mut units: Vec<Unit> = a.tests.iter().cloned().map(Unit::Test).collect();
-        // Under junit no unit is protected yet (STP-28 step 11).
-        let changed = if matches!(mode, Mode::Cargo) {
-            changed
-        } else {
-            units.clear();
-            Vec::new()
-        };
+        let junit = !matches!(mode, Mode::Cargo);
         for c in &changed {
             let Some(new) = c.new.as_deref() else {
                 continue;
             };
+            if let Mode::Junit(globs) = mode {
+                // STP-28 AC-27: the rest of a test file the RED changed, and any other file of
+                // it that matches a test glob.
+                if is_test_file(new, globs) {
+                    let rest = |s: String| rest_text(&s);
+                    let now = files.get(&red, new).map(rest).unwrap_or_default();
+                    let before = c
+                        .old
+                        .as_deref()
+                        .and_then(|o| files.get(&base, o))
+                        .map(rest)
+                        .unwrap_or_default();
+                    // Blank space and the `;` after a test call are no helper text.
+                    let bare = |s: &str| s.replace(|c: char| c.is_whitespace() || c == ';', "");
+                    if bare(&now) != bare(&before) {
+                        units.push(Unit::Rest(new.to_string()));
+                    }
+                } else if globs.iter().any(|g| glob_matches(g, new)) {
+                    units.push(Unit::File(new.to_string()));
+                }
+                continue;
+            }
             if !under_tests(new) {
                 continue;
             }
@@ -570,10 +595,10 @@ pub fn analyse_in(
         let mut stops: Vec<String> = Vec::new();
         let mut retired = Vec::new();
         for unit in &units {
-            let mut current = unit.value(&mut files, &red);
-            let at_head = unit.value(&mut files, head);
+            let mut current = unit.value(&mut files, &red, junit);
+            let at_head = unit.value(&mut files, head, junit);
             for (sha, message) in touching(root, &red, head, &unit.path())? {
-                let value = unit.value(&mut files, &sha);
+                let value = unit.value(&mut files, &sha, junit);
                 if value == current {
                     continue;
                 }
