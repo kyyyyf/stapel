@@ -891,3 +891,62 @@ fn missing_subagent_transcript_writes_nothing() {
     subagent_stop(repo.path(), dir, &path);
     assert!(!records(repo.path(), "ABC-1").is_empty());
 }
+
+#[test]
+fn bad_shared_cursor_file() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let dir = elsewhere.path();
+    // Events at 11:00:01 (typed), 11:00:20 (dialog), 11:01:25 (2 questions), 11:01:40 (dialog).
+    let path = events_transcript(dir, false);
+    // 2026-01-01T11:00:00Z in milliseconds.
+    let base_ms: u64 = 1_767_265_200_000;
+
+    let shared_file = |repo: &Path| {
+        let common = git_in(repo, &["rev-parse", "--git-common-dir"]);
+        let common = repo.join(common.trim());
+        std::fs::create_dir_all(common.join("stapel")).unwrap();
+        common.join("stapel/attention-cursors.json")
+    };
+
+    // The file is no JSON, an array, or holds no number for this transcript: no value, every event is recorded.
+    for content in ["not json".to_string(), "[]".to_string(), json!({"s-hook": "x"}).to_string()] {
+        let repo = repo_with_ticket();
+        std::fs::write(shared_file(repo.path()), &content).unwrap();
+        hook(repo.path(), dir, "session-end", &path);
+        let rs = records(repo.path(), "ABC-1");
+        let attention = attention_records(&rs);
+        assert_eq!(attention.len(), 1, "{content}: {rs:?}");
+        check_numbers(attention[0]);
+    }
+
+    // A shared value after the second event and no journal record: only the later events are recorded.
+    let repo = repo_with_ticket();
+    std::fs::write(shared_file(repo.path()), json!({"s-hook": base_ms + 50_000}).to_string()).unwrap();
+    hook(repo.path(), dir, "session-end", &path);
+    let rs = records(repo.path(), "ABC-1");
+    let attention = attention_records(&rs);
+    assert_eq!(attention.len(), 1, "{rs:?}");
+    let r = attention[0];
+    assert_eq!(r["typed"], 0, "{r}");
+    assert_eq!(r["questions"], 2, "{r}");
+    assert_eq!(r["dialogs"], 1, "{r}");
+    assert_eq!(r["from"], "2026-01-01T11:01:25.000Z", "{r}");
+    assert_eq!(r["to"], "2026-01-01T11:01:40.000Z", "{r}");
+
+    // The journal's `to` is later than the shared value: the journal wins.
+    let repo = repo_with_ticket();
+    std::fs::write(shared_file(repo.path()), json!({"s-hook": base_ms + 20_000}).to_string()).unwrap();
+    let file = tokens_path(repo.path(), "ABC-1");
+    let text = std::fs::read_to_string(&file).unwrap_or_default() + &planted_attention("s-hook", "2026-01-01T11:00:50.000Z");
+    std::fs::write(&file, text).unwrap();
+    hook(repo.path(), dir, "session-end", &path);
+    let rs = records(repo.path(), "ABC-1");
+    let attention = attention_records(&rs);
+    assert_eq!(attention.len(), 2, "{rs:?}");
+    let r = attention[1];
+    assert_eq!(r["typed"], 0, "{r}");
+    assert_eq!(r["questions"], 2, "{r}");
+    assert_eq!(r["dialogs"], 1, "{r}");
+    assert_eq!(r["from"], "2026-01-01T11:01:25.000Z", "{r}");
+    assert_eq!(r["to"], "2026-01-01T11:01:40.000Z", "{r}");
+}
