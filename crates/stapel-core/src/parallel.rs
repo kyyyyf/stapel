@@ -294,6 +294,13 @@ pub fn prune_stops(root: &Path) {
     let (Some(own), Some(stops)) = (branch_ticket(root), stops_dir(root)) else {
         return;
     };
+    // A failed listing is not an empty one: it removes no abandoned stop (STP-27 E2-3).
+    let listed = git(
+        root,
+        &["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"],
+    )
+    .is_some()
+        && git(root, &["worktree", "list", "--porcelain"]).is_some();
     let mut held: Vec<String> = branches(root)
         .into_iter()
         .filter(|b| b.full_ref.starts_with("refs/heads/"))
@@ -310,7 +317,7 @@ pub fn prune_stops(root: &Path) {
         if let Some(earlier) = earlier
             && !earlier.is_empty()
             && (closed_at(root, "HEAD", earlier)
-                || !held.iter().any(|h| h.eq_ignore_ascii_case(earlier)))
+                || (listed && !held.iter().any(|h| h.eq_ignore_ascii_case(earlier))))
         {
             let _ = std::fs::remove_file(&path);
         }
