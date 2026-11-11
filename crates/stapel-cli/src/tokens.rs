@@ -481,14 +481,32 @@ struct AttentionSum {
     to: Option<u64>,
 }
 
-/// Milliseconds as whole minutes: `35 min`, `1 h 5 min`, `2 h`.
+/// Milliseconds as whole minutes: `35 min`, `1 h 5 min`, `2 h 0 min`.
 fn duration(ms: u64) -> String {
     let minutes = ms / 60_000;
     match (minutes / 60, minutes % 60) {
         (0, m) => format!("{m} min"),
-        (h, 0) => format!("{h} h"),
         (h, m) => format!("{h} h {m} min"),
     }
+}
+
+/// The count of distinct step labels of the ticket among the subjects of every commit reachable
+/// from HEAD, merges followed; `—` when git cannot be read.
+fn step_count(root: &Path, key: &str) -> String {
+    let out = std::process::Command::new("git")
+        .args(["log", "--format=%s", "HEAD"])
+        .current_dir(root)
+        .output();
+    let Ok(out) = out else { return "—".into() };
+    if !out.status.success() {
+        return "—".into();
+    }
+    let labels: std::collections::BTreeSet<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|s| stapel_core::steps::parse_subject(key, s))
+        .map(|(label, _)| label)
+        .collect();
+    labels.len().to_string()
 }
 
 /// The sessions table (STP-5 AC-4): per session (its line with the greatest start plus duration)
@@ -858,7 +876,11 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
                 duration(waited_ms)
             ));
             let wall = a.from.zip(a.to).map_or(0, |(f, t)| t.saturating_sub(f));
-            block.push(format!("steps: —; wall time: {}", duration(wall)));
+            block.push(format!(
+                "steps: {}; wall time: {}",
+                step_count(&root, &ticket_key),
+                duration(wall)
+            ));
         }
         blocks.push(block.join("\n"));
     }
