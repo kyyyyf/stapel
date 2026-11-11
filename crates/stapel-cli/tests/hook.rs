@@ -1796,6 +1796,46 @@ fn hook_root_edges() {
     write(a, None, None, a).success();
     // No `cwd`: the project dir comes before the working directory.
     write(a, None, Some(b), b).code(DENY);
+
+    // One hook root (E2-1): no input `cwd`, the working directory at the main checkout,
+    // `CLAUDE_PROJECT_DIR` at the ABC-2 worktree, a subagent: the git guard roots at the worktree.
+    // Both checks fail on the old code (the git guard rooted at the working directory).
+    let main = pair.repo.path();
+    let git_from = |command: &str| {
+        let payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "agent_id": "agent-1",
+            "tool_name": "Bash",
+            "tool_input": { "command": command },
+        });
+        stapel(main)
+            .env("CLAUDE_PROJECT_DIR", b)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+    };
+    git_from(&format!("git -C {} status", b.join("crates").display())).success();
+    git_from(&format!("git -C {} status", main.join("crates").display())).code(DENY);
+
+    // One hook root (W2-3): `cwd` outside any stapel repository, no `CLAUDE_PROJECT_DIR`, the
+    // working directory in a stapel repository: a write of the global git config is denied.
+    let home = bare_dir();
+    let gitconfig = home.path().join(".gitconfig");
+    let payload = json!({
+        "session_id": "test",
+        "hook_event_name": "PreToolUse",
+        "cwd": out,
+        "tool_name": "Write",
+        "tool_input": { "file_path": gitconfig, "content": "x" },
+    });
+    stapel(a)
+        .env("HOME", home.path())
+        .env_remove("CLAUDE_PROJECT_DIR")
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(payload.to_string())
+        .assert()
+        .code(DENY);
 }
 
 // STP-27 AC-26 (D12-2): the guard compares the written path with the Hook root.
