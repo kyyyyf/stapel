@@ -345,3 +345,129 @@ fn exit_code_must_agree() {
         "{text}"
     );
 }
+
+/// A junit ticket with one step `__tests__/x.test.ts::one` (RED and GREEN commits) whose command is
+/// `command` with `{script}` replaced by a shell script holding `script`. `old` is a report committed
+/// before the step; `timeout` replaces `timeout_secs`. Returns the exit code and the text of check.
+fn fault_case(command: &str, script: &str, old: Option<&str>, timeout: u32) -> (i32, String) {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    let path = repo.tools.path().join("fault.sh");
+    std::fs::write(&path, script).unwrap();
+    let config = dir.join(".stapel/stapel.toml");
+    let text: String = std::fs::read_to_string(&config)
+        .unwrap()
+        .lines()
+        .map(|l| {
+            if l.starts_with("command = ") {
+                format!(
+                    "command = \"{}\"\n",
+                    command.replace("{script}", &path.display().to_string())
+                )
+            } else if l.starts_with("timeout_secs") {
+                format!("timeout_secs = {timeout}\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    std::fs::write(&config, text).unwrap();
+    if let Some(old) = old {
+        write(dir, "junit.xml", old);
+    }
+    commit(dir, "ABC-1: a faulty run");
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/ok.ts", "export const ok = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: one");
+    check(&repo)
+}
+
+// AC-20, AC-21: a run that cannot start, times out, dies, or leaves no usable report is unverified.
+#[test]
+fn run_faults_are_unverified() {
+    let reason = |(code, text): (i32, String), needle: &str| {
+        assert_eq!(code, 1, "{text}");
+        assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+        let line = text.lines().find(|l| l.starts_with("step 1: ")).unwrap();
+        assert!(line.contains(needle), "wanted {needle:?} in {line:?}");
+    };
+    let sh = "sh {script} {file}";
+    // No program.
+    reason(
+        fault_case("/nonexistent/prog {file}", "", None, 60),
+        "did not start",
+    );
+    // A sleeping stand-in meets the 10 s limit.
+    reason(fault_case(sh, "sleep 60\n", None, 10), "time limit of 10 s");
+    // A signal with no report, and with a readable one-suite report: the signal is the reason.
+    reason(fault_case(sh, "kill -9 $$\n", None, 60), "signal");
+    let good = format!("printf '%s' '{}' > junit.xml\nkill -9 $$\n", PASSED.trim());
+    reason(fault_case(sh, &good, None, 60), "signal");
+    // No report; an old committed report is removed, so it is no report either.
+    reason(fault_case(sh, "exit 0\n", None, 60), "no report");
+    reason(fault_case(sh, "exit 0\n", Some(PASSED), 60), "no report");
+    // 17 MiB.
+    let big = "head -c 17825792 /dev/zero | tr '\\0' ' ' > junit.xml\nexit 0\n";
+    reason(fault_case(sh, big, None, 60), "16 MiB");
+    // A refused report.
+    reason(
+        fault_case(sh, "echo '<testsuites>' > junit.xml\nexit 0\n", None, 60),
+        "report of",
+    );
+}
+
+// AC-22: `.only` in a test file of the step at RED or GREEN: unverified, no command runs for it.
+#[test]
+fn only_call_is_unverified() {
+    let only = |repo: &JunitRepo, text: &str, word: &str| {
+        let (code, out) = check(repo);
+        assert_eq!(code, 1, "{out}");
+        assert_eq!(outcome(&out, "step 1"), "unverified", "{out}");
+        let line = out.lines().find(|l| l.starts_with("step 1: ")).unwrap();
+        assert!(
+            line.contains("__tests__/x.test.ts") && line.contains(".only") && line.contains(word),
+            "{text}: {line}"
+        );
+        assert!(
+            repo.runs()
+                .iter()
+                .all(|l| !l.ends_with("__tests__/x.test.ts")),
+            "no command runs for the file: {:?}",
+            repo.runs()
+        );
+    };
+    // `test.only` at RED.
+    let repo = junit_repo();
+    let dir = repo.dir();
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "test.only(\"one\", () => { /* needs src/ok.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/ok.ts", "export const ok = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: one");
+    only(&repo, "test.only at RED", "RED");
+    // `describe.only` added at GREEN.
+    let repo = junit_repo();
+    let dir = repo.dir();
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/ok.ts", "export const ok = 1;\n");
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "it(\"one\", () => { /* needs src/ok.ts */ });\ndescribe.only(\"g\", () => {});\n",
+    );
+    commit(dir, "ABC-1 step 1 GREEN: one");
+    only(&repo, "describe.only at GREEN", "GREEN");
+}
