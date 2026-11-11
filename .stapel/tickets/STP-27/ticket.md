@@ -248,6 +248,9 @@ build runs; the holder is a child process the test starts and kills. Light tests
 | Merge pack diff | the base branch gains a commit after the merge: `diff.patch` of the merge pack does not show it (W-6) | `depends::merge_review_edges` |
 | Own and foreign KEY | `next ABC-1` with the own KEY on a closed branch ticket: `commit-close`, then `merge-branch`; `next ABC-1` in the `ABC-2` worktree while ABC-2 needs `merge-main`: no `merge-main` (R-10, W-7) | `parallel::merge_branch_after_close` |
 | Unknown holder hint | a lock held with an empty lock file: the wait line ends with `(a process started by an earlier cargo run may hold it)` (R-1) | `cargo_lock::second_waits_and_names_the_holder` |
+| One hook root | no input `cwd`, the working directory at the main checkout, `CLAUDE_PROJECT_DIR` at the `STP-2` worktree, input with `agent_id`: `git -C <STP-2 worktree>/crates status` allowed, `git -C <main root>/crates status` denied; input `cwd` outside any stapel repository, no `CLAUDE_PROJECT_DIR`, the working directory in a stapel repository: a `Write` of `~/.gitconfig` denied | `hook::hook_root_edges` |
+| Rustup wrapper | `rustup run stable cargo test`, `rustup run nightly cargo build`: denied with the AC-13 text; `rustup run stable stapel cargo test`: allowed | `hook::bare_cargo_denied` |
+| Failed listing | a stand-in `git` that fails `for-each-ref` and `worktree list`: `next` removes no stop of the branch ticket | `parallel::wait_edges` |
 | Abandoned earlier | `ABC-2` with a conflict stop and a `spec` stop on `ABC-1`; `ABC-1`'s worktree removed and its branch deleted: `next` removes both stops and gives no wait (R-6) | `parallel::wait_edges` |
 | Precise stapel cargo | `env -u stapel cargo test`, `xargs -I stapel cargo test`, `env -C stapel cargo test`: denied with the AC-13 text | `hook::bare_cargo_denied` |
 | Cargo run after options | `stapel cargo -q run -- ok KEY --grant X`, `stapel cargo +nightly run -- hook pre-tool-use`, `stapel cargo run -- -- ok KEY --grant X`: denied as their `stapel` forms are; bare `cargo run -- ok spec`: denied with the AC-13 text; input `cwd` outside any stapel repository, no `CLAUDE_PROJECT_DIR`, the working directory in a stapel repository: a main-session `cargo test` denied | `hook::bare_cargo_denied` |
@@ -392,7 +395,8 @@ token hooks and `init`.
   stay serial under the outer one.
 - The cargo-lock path is not a `stapel.toml` key; it uses `HOME` only, because `XDG_RUNTIME_DIR` is set in
   some processes and not in others, which would split the lock (SR1-17); tests move it with `HOME`.
-- `stapel check` also passes the lock fd to its cargo children (SR1-13). The wait is a poll, not a queue.
+- `stapel check` also passes the lock fd to its cargo children (SR1-13). The wait is no queue: any waiter
+  may take the lock next (E2-2).
 - Stop files are written to `<name>.tmp` and renamed; an unreadable one is a stop (SR1-12).
 - The trial merge reads conflicts from `git merge-tree --write-tree --name-only --no-messages`, which
   honours the attributes of the merge result; the test pins the union case (SR1-11).
@@ -665,6 +669,15 @@ Route: full (tags `guard`, `data`, `interface`), auto.
 60. Coverage of `review start` and of the merge review with a foreign KEY, no GREEN (AC-6, AC-18; tests
     `new_branch::review_start_on_a_branch`, `depends::foreign_key_no_merge_review`): the gaps of D50-1 and
     D53-2. Must not change: any code.
+61. One Hook root in the guard (AC-8; test `hook::hook_root_edges`): the RED adds the row "One hook root"
+    (E2-1, W2-3); `decide` computes the Hook root once from the input `cwd`, `CLAUDE_PROJECT_DIR` and the
+    working directory, and every branch uses it. Must not change: the decisions of
+    `hook::worktree_write_edges`.
+62. `rustup` as a wrapper (AC-13; test `hook::bare_cargo_denied`): the RED adds the row "Rustup wrapper"
+    (E2-5). Must not change: the other wrappers.
+63. No prune on a failed listing (AC-17; test `parallel::wait_edges`): the RED adds the row "Failed listing"
+    (E2-3); `prune_stops` removes no abandoned stop when listing branches or worktrees fails. Must not
+    change: the row "Abandoned earlier".
 
 ## Review
 
