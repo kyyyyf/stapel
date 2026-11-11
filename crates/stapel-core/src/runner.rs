@@ -313,7 +313,31 @@ pub fn run_cargo(
     target_dir: &Path,
     timeout: Duration,
 ) -> Result<RunResult, String> {
-    let mut cmd = Command::new(cargo);
+    let mut cmd = allowed_env_command(cargo);
+    cmd.args(args)
+        .current_dir(dir)
+        .env("CARGO_TARGET_DIR", target_dir)
+        .env("CARGO_TERM_COLOR", "never");
+    run_child(cmd, "cargo", timeout)
+}
+
+/// Runs `program args` in `dir` as `run_cargo` runs cargo: the same environment, process group and
+/// time limit, plus the variables in `extra` (STP-28 AC-10, the junit Per-file run).
+pub fn run_program(
+    program: &Path,
+    dir: &Path,
+    args: &[String],
+    extra: &[(&str, &str)],
+    timeout: Duration,
+) -> Result<RunResult, String> {
+    let mut cmd = allowed_env_command(program);
+    cmd.args(args).current_dir(dir).envs(extra.iter().copied());
+    run_child(cmd, &program.display().to_string(), timeout)
+}
+
+/// A command with an empty environment plus the allow-listed variables of the caller.
+fn allowed_env_command(program: &Path) -> Command {
+    let mut cmd = Command::new(program);
     cmd.env_clear();
     for name in ENV_ALLOW {
         if let Some(mut value) = std::env::var_os(name) {
@@ -326,17 +350,19 @@ pub fn run_cargo(
             cmd.env(name, value);
         }
     }
-    cmd.args(args)
-        .current_dir(dir)
-        .env("CARGO_TARGET_DIR", target_dir)
-        .env("CARGO_TERM_COLOR", "never")
-        .stdin(Stdio::null())
+    cmd
+}
+
+/// Starts `cmd` in its own process group with piped output and no input, and waits for it up to
+/// `timeout`; the group is killed after that. `what` names the program in messages.
+fn run_child(mut cmd: Command, what: &str, timeout: Duration) -> Result<RunResult, String> {
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     own_group(&mut cmd);
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("cargo did not start: {e}"))?;
+        .map_err(|e| format!("{what} did not start: {e}"))?;
     let out = child.stdout.take().expect("piped");
     let err = child.stderr.take().expect("piped");
     let out = read_capped(out);
@@ -353,7 +379,7 @@ pub fn run_cargo(
                 break child.wait().ok();
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(e) => return Err(format!("waiting for cargo: {e}")),
+            Err(e) => return Err(format!("waiting for {what}: {e}")),
         }
     };
     // Children of the test that outlive it would keep the pipes open; the group goes too.

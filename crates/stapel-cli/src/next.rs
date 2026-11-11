@@ -1,6 +1,6 @@
 //! `stapel next [KEY]`: the next action of a ticket, from the facts on disk (STP-20). It changes only the stops of the trial merge (STP-27).
 
-use crate::check::{base_of, history_report, read_head, shallow_refusal};
+use crate::check::{base_of, history_report, junit_globs_at, mode_of, read_head, shallow_refusal};
 use crate::fail::Fail;
 use crate::repo;
 use stapel_core::brief::assemble;
@@ -100,7 +100,8 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         };
         let found = match open {
             Some(red) => {
-                let judged = open_red(root, &red, &head).map_err(Fail::failed)?;
+                let globs = junit_globs_at(root);
+                let judged = open_red(root, &red, &head, mode_of(&globs)).map_err(Fail::failed)?;
                 if judged.is_none() {
                     open_red_label = Some(a.label.clone());
                 }

@@ -3,13 +3,31 @@
 //! `superseded by <label>` and `retired by <label>`.
 
 use crate::build_inputs::{dev_redirect, target_files};
+use crate::config::glob_matches;
 use crate::includes::Includes;
 use crate::rust_tests::{helper_text, test_functions};
 use crate::steps::{
-    Change, Marker, Step, StepCommit, TestId, changes, git, git_text, parent, show, step_tests,
+    Change, Marker, Step, StepCommit, TestId, changes, git, git_text, junit_step_tests, parent,
+    show, step_tests,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+
+/// The runner whose rules judge a step (STP-28): cargo, or junit with the test globs.
+#[derive(Debug, Clone, Copy)]
+pub enum Mode<'a> {
+    Cargo,
+    Junit(&'a [String]),
+}
+
+/// Whether a path a junit RED changes is code (STP-28 AC-13): it matches no test glob, is not under
+/// `docs/` or `.stapel/` and is not a `.md` file.
+fn is_junit_code(path: &str, globs: &[String]) -> bool {
+    !(globs.iter().any(|g| glob_matches(g, path))
+        || path.starts_with("docs/")
+        || path.starts_with(".stapel/")
+        || path.ends_with(".md"))
+}
 
 /// At most this many paths or names are named in one reason.
 pub const MAX_NAMED: usize = 20;
@@ -59,9 +77,13 @@ fn judge_red(
     red: &str,
     head: &str,
     later_greens: Vec<String>,
+    mode: Mode,
 ) -> Result<RedVerdict, String> {
     let root = files.root;
-    let tests = step_tests(root, red)?;
+    let tests = match mode {
+        Mode::Cargo => step_tests(root, red)?,
+        Mode::Junit(globs) => junit_step_tests(root, red, globs)?,
+    };
     if tests.is_empty() {
         return Ok(RedVerdict {
             tests,
@@ -75,6 +97,23 @@ fn judge_red(
     }
     let base = parent(root, red);
     let changed = changes(root, red)?;
+    if let Mode::Junit(globs) = mode {
+        let mut code: Vec<String> = changed
+            .iter()
+            .flat_map(|c| [c.old.clone(), c.new.clone()])
+            .flatten()
+            .filter(|p| is_junit_code(p, globs))
+            .collect();
+        code.sort();
+        code.dedup();
+        let fixed = (!code.is_empty()).then(|| ("red-changes-code".to_string(), named(&code)));
+        return Ok(RedVerdict {
+            tests,
+            base,
+            changed,
+            fixed,
+        });
+    }
     let mut code: Vec<String> = changed
         .iter()
         .filter(|c| is_code(files, red, &base, c))
@@ -101,14 +140,19 @@ fn judge_red(
 
 /// `no-tests` or `red-changes-code` for a RED with no step commit after it (STP-14 AC-18), by the
 /// same code as a paired step's RED; `None` when the RED is correct.
-pub fn open_red(root: &Path, red: &str, head: &str) -> Result<Option<(String, String)>, String> {
+pub fn open_red(
+    root: &Path,
+    red: &str,
+    head: &str,
+    mode: Mode,
+) -> Result<Option<(String, String)>, String> {
     let mut files = Files {
         root,
         cache: HashMap::new(),
         named: HashMap::new(),
     };
     let mut includes = Includes::new(root);
-    Ok(judge_red(&mut files, &mut includes, red, head, Vec::new())?.fixed)
+    Ok(judge_red(&mut files, &mut includes, red, head, Vec::new(), mode)?.fixed)
 }
 
 /// Contents of files at commits, read once.
@@ -360,6 +404,17 @@ pub fn analyse(
     head: &str,
     steps: &[Step],
 ) -> Result<Vec<Analysis>, String> {
+    analyse_in(root, key, head, steps, Mode::Cargo)
+}
+
+/// `analyse` under a runner. Under junit the protected content of a step is not read yet.
+pub fn analyse_in(
+    root: &Path,
+    key: &str,
+    head: &str,
+    steps: &[Step],
+    mode: Mode,
+) -> Result<Vec<Analysis>, String> {
     let mut files = Files {
         root,
         cache: HashMap::new(),
@@ -439,7 +494,7 @@ pub fn analyse(
             .filter(|c| c.marker == Marker::Green && pos(c) > pos(reds[0]))
             .map(|c| c.sha.clone())
             .collect();
-        let verdict = judge_red(&mut files, &mut includes, &red, head, later_greens)?;
+        let verdict = judge_red(&mut files, &mut includes, &red, head, later_greens, mode)?;
         a.tests = verdict.tests;
         if let Some(fixed) = verdict.fixed {
             a.fixed = Some(fixed);
@@ -451,6 +506,13 @@ pub fn analyse(
 
         // Protected content: the step tests and the other test files the RED changed.
         let mut units: Vec<Unit> = a.tests.iter().cloned().map(Unit::Test).collect();
+        // Under junit no unit is protected yet (STP-28 step 11).
+        let changed = if matches!(mode, Mode::Cargo) {
+            changed
+        } else {
+            units.clear();
+            Vec::new()
+        };
         for c in &changed {
             let Some(new) = c.new.as_deref() else {
                 continue;
@@ -480,7 +542,7 @@ pub fn analyse(
         let mut dirs: Vec<&str> = a.tests.iter().map(|t| t.dir.as_str()).collect();
         dirs.sort();
         dirs.dedup();
-        for dir in dirs {
+        for dir in dirs.into_iter().filter(|d| !d.is_empty()) {
             let listed = git(
                 root,
                 &[
