@@ -28,8 +28,8 @@ the person's last event); dialogs and questions of subagents; a display in the e
    waits that overlap count once.
 3. The hooks `stop` and `session-end` append one attention record per call to the ticket's `tokens.jsonl`;
    a repeated call adds nothing.
-4. `stapel tokens KEY` shows the attention numbers, the Plan steps and the wall time under the token
-   table, which is unchanged.
+4. `stapel tokens KEY` shows the attention numbers, the built steps (RED and GREEN labels) and the wall
+   time under the token table, which is unchanged.
 5. `stapel tokens measure FILE` prints tokens and attention numbers of a main transcript and its subagent
    files, with no ticket and no write.
 6. The `subagent-stop` hook writes no record for a transcript file that does not exist.
@@ -87,8 +87,10 @@ Terms:
   and `to` (the times of the window's first and last event) and the six attention numbers. It has no
   `role`, `model` or `source`.
 - **Attention cursor**: the latest `to` among the attention records of every ticket's `tokens.jsonl`
-  whose `transcript` is the identity; a line that is not a JSON object is skipped; without such a record,
-  no cursor.
+  whose `transcript` is the identity, or the value the hooks keep for that identity in the **shared cursor
+  file** (`attention-cursors.json` in the folder `stapel` of the git common folder, which every worktree of
+  the repository shares), whichever is later; a line that is not a JSON object is skipped, and a shared file
+  that cannot be read gives no value; without either, no cursor (E-1).
 - **Window**: the events whose time is later than the attention cursor (all without one). The token window
   of STP-26 does not bound it: a result line and a typed line are whole once they are in the file (SR1-4).
 - **Target ticket**: as in STP-26, with the window's first event in place of the first message when the
@@ -106,7 +108,7 @@ Terms:
 | AC-4 | WHEN events are summed THE waited time is the length of the union of their intervals, the attention time is that union with each interval cut to its last 600 000 ms, and the long waits are the events whose wait is over the cap. | `attention_events::cap_and_long_waits` |
 | AC-5 | IF a line is not a JSON object, has no time that can be read, is longer than 16 MiB, or the call of a result is not on an earlier line of the file THEN the reader skips that line or result and counts the rest. | `attention_events::broken_lines_are_skipped` |
 | AC-6 | WHEN the `session-end` hook, or the `stop` hook when it passes the 10-minute rule of STP-26, reads a main transcript THE hook appends one attention record for the window to the target ticket, in the same write as its token records when it has any; a window with no event gives no attention record. | `attention::stop_appends_one_record`, `attention::session_end_appends_the_rest` |
-| AC-7 | WHEN a hook runs again with no new event THE `tokens.jsonl` files stay unchanged; WHEN the attention cursor comes from another ticket's record THE window starts after it. | `attention::repeated_call_adds_nothing`, `attention::cursor_across_tickets` |
+| AC-7 | WHEN a hook runs again with no new event THE `tokens.jsonl` files stay unchanged; WHEN the attention cursor comes from another ticket's record THE window starts after it. | `attention::repeated_call_adds_nothing`, `attention::cursor_across_tickets`, `attention::bad_shared_cursor_file` |
 | AC-8 | WHEN the `subagent-stop` hook runs THE hook appends no attention record. | `attention::subagent_stop_has_no_attention` |
 | AC-15 | WHEN the events of one window have different worktree tickets THE hook appends one attention record per ticket: the events of a worktree ticket to that ticket, open or closed, and the events without one to the target ticket; each record holds the numbers, `from` and `to` of its own events. | `attention::events_split_by_worktree` |
 | AC-9 | WHEN `stapel tokens`, with or without KEY, reads a ticket that has an attention record THE report prints after that ticket's table the lines `attention: <d> dialogs, <q> questions, <t> messages; <duration> attention, <duration> waited (<n> over 10 min)` and `steps: <n>; wall time: <duration>`, the numbers summed over the ticket's attention records; an attention record is no row and no problem, and a ticket without one gets neither line. | `attention::report_shows_the_attention_lines`, `attention::report_without_attention_is_unchanged` |
@@ -135,7 +137,17 @@ Terms:
   window): it writes no attention record, also for events that have a worktree ticket, and the cursor does
   not move (D3d-1); a call that fails between the writes into two tickets' journals (the events of the
   second ticket before the first record's `to` are lost; D3d-3); a `sessionId` that holds a path separator
-  (`measure` then looks for subagent files in the folder that path names; D5-1).
+  (`measure` then looks for subagent files in the folder that path names; D5-1); a line the person typed
+  that starts with `<`: a slash command, a shell input, or a content whose first text item is an injected
+  block (measured here on 2026-11-11: 237 typed lines, 23 command lines of which most are local commands, no
+  content with two text items; E-2, R-1); one wall time rule for both outputs: the report prints the time
+  between the person's first and last event of the ticket, `measure` the time between the first and last
+  timed line of the file, so two sessions are compared with `measure` on both transcripts (E-3); waits
+  that overlap across two attention records of one ticket (the report adds the records, so that period
+  counts twice; `measure` has one union; DR-1, E-9); coverage steps in the steps line (it counts labels of
+  RED and GREEN subjects; E-6); a worktree ticket that is legacy or unreadable (it gets the record; E-5); a
+  ticket whose key is the word `measure` (R-4); a shared cursor file that someone else wrote (a value in it
+  moves the window; an unreadable file is replaced and the values of other transcripts are lost; D7-3).
 
 ## Test plan
 
@@ -160,6 +172,8 @@ case first shows that the same setup with a good input writes. Light tests run t
 | Session end | a record 1 minute old and new events: `session-end` appends the rest with `hook: "session-end"`; events and no new message: an attention record alone | `attention::session_end_appends_the_rest` |
 | Repeat | the same `session-end` input twice: the second run leaves every `tokens.jsonl` byte for byte | `attention::repeated_call_adds_nothing` |
 | Cursor | an attention record of this transcript in a closed ticket's journal with `to` at event 2: the open ticket gets the later events only; a cursor between a call and its result: that event is counted once, by its result; a token record there is no attention cursor; a line `not json` there is skipped | `attention::cursor_across_tickets` |
+| Second checkout | a linked worktree of the same repository: the hook there adds nothing for the events the first checkout recorded, and records an event added later once (parts of the Repeat and Cursor tests) | `attention::repeated_call_adds_nothing`, `attention::cursor_across_tickets` |
+| Shared cursor file | the file holds `not json`, `[]`, or a value that is no time: every event is recorded, exit 0; a shared value later than the journal's and a journal value later than the shared one: the later is the cursor | `attention::bad_shared_cursor_file` |
 | Subagent | a subagent transcript with a call and a result of source `user_temporary`: token records, no attention record | `attention::subagent_stop_has_no_attention` |
 | Split | one `session-end` call over events with `cwd` in `.claude/worktrees/ABC-1` (a closed ticket), in `.claude/worktrees/ABC-2` (the open ticket), in the main checkout, in `.claude/worktrees/ZZZ-9` (no such ticket) and without `cwd`: one record in ABC-1 with its events, one in ABC-2 with the rest; a second call adds nothing; a `cwd` that is a number counts as none | `attention::events_split_by_worktree` |
 | Report | a journal with token records and two attention records: the golden `tokens_attention.txt` holds the table as before and the two lines of AC-9 with the summed numbers; the report without KEY prints the lines in that ticket's block only; exit 0 and no `problem:` line | `attention::report_shows_the_attention_lines` |
@@ -199,7 +213,7 @@ case first shows that the same setup with a good input writes. Light tests run t
 | git | history shape, for the step count: merge commits | the distinct step labels among the subjects of every commit reachable from `HEAD` | `attention::report_counts_steps_after_a_merge` |
 | git | no repository, unborn `HEAD` | `steps: —` | `attention::report_counts_steps_after_a_merge` |
 | git | shallow clone, rebased or squashed history | the count is of the commits that are there; not promised beyond it | — |
-| git | linked worktrees | an event's ticket is read from the `cwd` of its line, not from git; a ticket that exists only in another worktree gets no record (its events go to the target ticket) | `attention::events_split_by_worktree` |
+| git | linked worktrees | an event's ticket is read from the `cwd` of its line, not from git; a ticket that exists only in another worktree gets no record (its events go to the target ticket); the cursor is shared through the git common folder, so a second worktree does not count events again | `attention::events_split_by_worktree`, `attention::cursor_across_tickets` |
 | git | other dimensions | the report reads the history of the current worktree; not promised beyond it | — |
 | cargo | every dimension | not run | — |
 | os | file permissions; symlinks | `measure` refuses a file it cannot read; links are followed | `attention::measure_refuses_bad_files` |
@@ -289,6 +303,11 @@ of `tokens.jsonl` that see the new record are the report, the token cursor of th
   `not a file`, `not readable`, `no sessionId` and `subagent transcript`. `render` became generic over the
   number of columns; the report's table is byte for byte as before (D5-4).
 - The attention line is formatted in two places, the report and `measure`, with the same text (D5-3).
+- After code review round 1 (step 7): the hooks keep the latest `to` of each transcript in
+  `attention-cursors.json` in the git common folder, as milliseconds, written through a temporary file and a
+  rename under the tokens lock after the journal appends succeed; `attention_cursor` takes the later of it
+  and the journals' value (E-1). The token cursor of STP-26 has the same limit to one checkout and is not
+  changed here (process ledger).
 - Step 6 changed three old tests of `hook_tokens`, not one: the plan had missed two that used a missing
   subagent transcript as their example of a gap record; the GREEN builder stopped and the RED was amended.
 
@@ -302,7 +321,7 @@ of `tokens.jsonl` that see the new record are the report, the token cursor of th
 | AC-4 | `attention_events::cap_and_long_waits` |
 | AC-5 | `attention_events::broken_lines_are_skipped` |
 | AC-6 | `attention::stop_appends_one_record`, `attention::session_end_appends_the_rest` |
-| AC-7 | `attention::repeated_call_adds_nothing`, `attention::cursor_across_tickets` |
+| AC-7 | `attention::repeated_call_adds_nothing`, `attention::cursor_across_tickets`, `attention::bad_shared_cursor_file` |
 | AC-8 | `attention::subagent_stop_has_no_attention` |
 | AC-15 | `attention::events_split_by_worktree` |
 | AC-9 | `attention::report_shows_the_attention_lines`, `attention::report_without_attention_is_unchanged` |
@@ -360,7 +379,20 @@ commit of a test that passes at once (SR1-9).
 
 ## Review
 
-TODO
+- Spec review, round 1 (2026-11-11): `stapel-spec-reviewer`; 15 findings, 0 HIGH, 11 MEDIUM (one outside the
+  promise, taken into it by the human as promise item 7), 4 LOW; all fixed in the text.
+- Dependency review against STP-28: three rounds, no dependency found.
+- Per-step drift reviews (`stapel-drift`) after every GREEN: 4 MEDIUM (D3-1 and D7-1 closed by coverage
+  steps 3b and 7b, D4-1 fixed in step 4c, D3d-1 deferred and listed as not promised), the rest LOW.
+- Code review, round 1 (2026-11-11), on the copy of `stapel review start`: `stapel-reviewer` (0 HIGH, 0
+  MEDIUM, 4 LOW), the external reviewer (0 HIGH, 4 MEDIUM, 5 LOW) and `stapel-drift` on the whole ticket (1
+  LOW). E-1 fixed in step 7; E-2 and E-3 deferred with the measurement and the rule that two sessions are
+  compared with `measure`; E-4 (outside the promise: dialogs of subagents) waits for the human, with the
+  measurement that 400 subagent transcripts of this repository hold 6 668 permission decisions and none by
+  the person.
+- Builder records: one file written through Bash against the instructions (B-1), one empty report (B-2);
+  three stops with a question, each correct: two caused by the orchestrator's instructions (the golden of
+  step 4c, the plan of step 6), one by the builder's own golden (step 5).
 
 ## Summary
 
