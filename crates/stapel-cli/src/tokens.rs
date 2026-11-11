@@ -1095,7 +1095,11 @@ fn attention_cursor(root: &Path, identity: &str) -> Option<u64> {
             }
         }
     }
-    cursor
+    // The shared value also covers the events a call in another checkout recorded.
+    match (cursor, read_shared_cursor(root, identity)) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 /// How far a hook call reads a transcript (STP-26).
@@ -1332,10 +1336,12 @@ pub fn hook_records(
         }
     }
     let mut extra: Vec<(&Path, String)> = Vec::new();
+    let mut newest_event: Option<u64> = None;
     for (owner, events) in &groups {
         let sums = stapel_core::attention::sum_events(events);
         let from = events.iter().map(|e| e.time_ms).min()?;
         let to = events.iter().map(|e| e.time_ms).max()?;
+        newest_event = Some(newest_event.map_or(to, |n| n.max(to)));
         let mut digest = sha2::Sha256::new();
         for part in [owner.key.as_str(), identity.as_str(), &rfc3339_millis(to)] {
             digest.update(part.as_bytes());
@@ -1374,11 +1380,46 @@ pub fn hook_records(
     for (dir, line) in extra {
         stapel_core::journal::append_all(&dir.join("tokens.jsonl"), &[line]).ok()?;
     }
-    if lines.is_empty() {
-        return Some(());
+    if !lines.is_empty() {
+        stapel_core::journal::append_all(&ticket.dir.join("tokens.jsonl"), &lines).ok()?;
     }
-    stapel_core::journal::append_all(&ticket.dir.join("tokens.jsonl"), &lines).ok()?;
+    if let Some(to) = newest_event {
+        write_shared_cursor(root, &identity, to);
+    }
     Some(())
+}
+
+const SHARED_CURSORS: &str = "attention-cursors.json";
+
+/// The shared attention cursor of `identity` from the git common folder; `None` when missing or
+/// unreadable (STP-29).
+fn read_shared_cursor(root: &Path, identity: &str) -> Option<u64> {
+    let dir = stapel_core::worktree::stapel_dir(root).ok()?;
+    let text = std::fs::read_to_string(dir.join(SHARED_CURSORS)).ok()?;
+    let map: Map<String, Value> = serde_json::from_str(&text).ok()?;
+    map.get(identity)?.as_u64()
+}
+
+/// Keeps the latest `to` of `identity` in the git common folder, through a temporary file and a
+/// rename. Failures are ignored: the records are already written.
+fn write_shared_cursor(root: &Path, identity: &str, to: u64) {
+    let Ok(dir) = stapel_core::worktree::stapel_dir(root) else {
+        return;
+    };
+    let path = dir.join(SHARED_CURSORS);
+    let mut map: Map<String, Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    let old = map.get(identity).and_then(Value::as_u64).unwrap_or(0);
+    map.insert(identity.to_string(), json!(to.max(old)));
+    let Ok(text) = serde_json::to_string(&Value::Object(map)) else {
+        return;
+    };
+    let tmp = dir.join(format!("{SHARED_CURSORS}.{}.tmp", std::process::id()));
+    if std::fs::write(&tmp, text).is_err() || std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
 }
 
 /// The key after `.claude` and `worktrees` in a path, if the path has them in a row.
