@@ -147,7 +147,14 @@ Terms:
   counts twice; `measure` has one union; DR-1, E-9); coverage steps in the steps line (it counts labels of
   RED and GREEN subjects; E-6); a worktree ticket that is legacy or unreadable (it gets the record; E-5); a
   ticket whose key is the word `measure` (R-4); a shared cursor file that someone else wrote (a value in it
-  moves the window; an unreadable file is replaced and the values of other transcripts are lost; D7-3).
+  moves the window; an unreadable file is replaced and the values of other transcripts are lost; D7-3);
+  journal lines that are discarded after the hook wrote them (a restore, a reset or a stash of the journal,
+  a worktree removed with force, a ticket branch dropped without a merge): the shared cursor still stands,
+  so those events are not recorded again (E2-1, R2-1); a hook killed between the journal append and the
+  write of the shared file (another checkout counts that window again; E2-3); a comparison of two sessions
+  where one is driven by slash commands and the other by typed text (the first shows fewer messages: count
+  the command lines of both transcripts; E2-2), or where a session is more than one transcript file
+  (`measure` reads one file; E2-4).
 
 ## Test plan
 
@@ -390,6 +397,10 @@ commit of a test that passes at once (SR1-9).
   compared with `measure`; E-4 (outside the promise: dialogs of subagents) waits for the human, with the
   measurement that 400 subagent transcripts of this repository hold 6 668 permission decisions and none by
   the person.
+- Code review, round 2 (2026-11-11), the last round: `stapel-reviewer` (0 HIGH, 0 MEDIUM, 1 LOW; it found
+  the fix of E-1 correct and every `defer` listed as not promised) and the external reviewer (0 HIGH, 1
+  MEDIUM, 4 LOW; it accepted the fates of E-2 and E-3). E2-1 (the shared cursor outlives discarded journal
+  lines) is deferred by the orchestrator and listed as not promised, for the human to see.
 - Builder records: one file written through Bash against the instructions (B-1), one empty report (B-2);
   three stops with a question, each correct: two caused by the orchestrator's instructions (the golden of
   step 4c, the plan of step 6), one by the builder's own golden (step 5).
