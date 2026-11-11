@@ -1,8 +1,0 @@
-{
-  "schema_version": 1,
-  "key": "STP-29",
-  "title": "base..HEAD walk, quiet commits and lint",
-  "base": "c681f8974fa0d4d14ced3879ce7eefa725aef710",
-  "base_branch": "main",
-  "confirmations": []
-}
