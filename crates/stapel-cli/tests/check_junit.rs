@@ -214,3 +214,134 @@ fn not_green_and_removed() {
         );
     }
 }
+
+const NOT_LOADED: &str = include_str!("../../stapel-core/tests/data/junit/b2.xml");
+const NO_SUITE: &str = include_str!("../../stapel-core/tests/data/junit/none.xml");
+const PASSED: &str = "<testsuites><testsuite name=\"s\"><testcase classname=\"\" name=\" one\"/></testsuite></testsuites>\n";
+const FAILED: &str = "<testsuites><testsuite name=\"s\"><testcase classname=\"\" name=\" one\"><failure message=\"x\"/></testcase></testsuite></testsuites>\n";
+const TWO_SUITES: &str = "<testsuites><testsuite name=\"a\"><testcase classname=\"\" name=\" one\"/></testsuite><testsuite name=\"b\"><testcase classname=\"\" name=\" one\"/></testsuite></testsuites>\n";
+const TWO_CASES: &str = "<testsuites><testsuite name=\"s\"><testcase classname=\"\" name=\" one\"/><testcase classname=\"\" name=\" one\"/></testsuite></testsuites>\n";
+const OTHER_CASE: &str = "<testsuites><testsuite name=\"s\"><testcase classname=\"\" name=\" other\"/></testsuite></testsuites>\n";
+
+/// A junit ticket with one step `__tests__/x.test.ts::one` whose Per-file run writes `red` and exits
+/// with `red_exit` while `src/ok.ts` is missing, and writes `green` and exits with `green_exit` after
+/// the GREEN commit adds it. Returns the exit code and the text of `stapel check ABC-1`.
+fn run_case(red: &str, red_exit: i32, green: &str, green_exit: i32) -> (i32, String) {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    let tools = repo.tools.path();
+    write_tool(tools, "red.xml", red);
+    write_tool(tools, "green.xml", green);
+    let script = tools.join("shaped.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "if [ -e src/ok.ts ]; then cat '{t}/green.xml' > junit.xml; exit {g}; fi\ncat '{t}/red.xml' > junit.xml\nexit {r}\n",
+            t = tools.display(),
+            g = green_exit,
+            r = red_exit
+        ),
+    )
+    .unwrap();
+    let path = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let text: String = text
+        .lines()
+        .map(|l| {
+            if l.starts_with("command = ") {
+                format!("command = \"sh {} {{file}}\"\n", script.display())
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    std::fs::write(&path, text).unwrap();
+    commit(dir, "ABC-1: a shaped run");
+    write(dir, "__tests__/x.test.ts", "it(\"one\", () => {});\n");
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/ok.ts", "export const ok = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: one");
+    check(&repo)
+}
+
+fn write_tool(tools: &Path, name: &str, text: &str) {
+    std::fs::write(tools.join(name), text).unwrap();
+}
+
+// AC-15: a file that does not load fails its step tests as a compile error.
+#[test]
+fn file_that_does_not_load_fails() {
+    // The real b2.xml shape: two cases of classname `Test suite failed to run`, exit 1.
+    let (code, text) = run_case(NOT_LOADED, 1, PASSED, 0);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    assert!(text.contains("RED 0 assert, 1 compile"), "{text}");
+    // The same at GREEN.
+    let (code, text) = run_case(NOT_LOADED, 1, NOT_LOADED, 1);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "not-green", "{text}");
+    assert!(text.contains("__tests__/x.test.ts::one"), "{text}");
+}
+
+// AC-16, AC-17, AC-18: a report of the wrong shape is unverified, with the reason.
+#[test]
+fn report_shape_is_unverified() {
+    let step = |text: &str| -> String {
+        assert_eq!(outcome(text, "step 1"), "unverified", "{text}");
+        text.lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap()
+            .to_string()
+    };
+    // No suite (the real none.xml), whatever the exit code.
+    for exit in [1, 0] {
+        let (code, text) = run_case(NO_SUITE, exit, PASSED, 0);
+        assert_eq!(code, 1, "{text}");
+        assert!(
+            step(&text).contains("holds no test suite"),
+            "exit {exit}: {text}"
+        );
+    }
+    // Two suites: the count is in the reason.
+    let (_, text) = run_case(TWO_SUITES, 0, PASSED, 0);
+    assert!(step(&text).contains("2 test suites"), "{text}");
+    // A name with two test cases, and a name with none: the name and the count.
+    let (_, text) = run_case(TWO_CASES, 0, PASSED, 0);
+    let line = step(&text);
+    assert!(
+        line.contains("__tests__/x.test.ts") && line.contains("one") && line.contains("2 test cases"),
+        "{text}"
+    );
+    let (_, text) = run_case(OTHER_CASE, 0, PASSED, 0);
+    let line = step(&text);
+    assert!(
+        line.contains("one") && line.contains("0 test cases"),
+        "{text}"
+    );
+}
+
+// AC-19: the exit code must agree with the failures of the report.
+#[test]
+fn exit_code_must_agree() {
+    let step = |text: &str| -> String {
+        assert_eq!(outcome(text, "step 1"), "unverified", "{text}");
+        text.lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap()
+            .to_string()
+    };
+    // Exit 0 with a failed test case.
+    let (_, text) = run_case(FAILED, 1, FAILED, 0);
+    let line = step(&text);
+    assert!(
+        line.contains("exit code 0") && line.contains("1 failed test case"),
+        "{text}"
+    );
+    // Exit 1 with test cases none of which failed.
+    let (_, text) = run_case(PASSED, 1, PASSED, 0);
+    let line = step(&text);
+    assert!(
+        line.contains("exit code 1") && line.contains("0 failed test cases"),
+        "{text}"
+    );
+}
