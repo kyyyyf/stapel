@@ -79,7 +79,8 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
         Ok(d) => changed.extend(d),
         Err(e) => return CheckLine::Stale(format!("cannot read the tree: {e}")),
     }
-    changed.retain(|p| !is_machine_file(p));
+    // Machine files and `docs/` do not change what a check ran (STP-28 AC-3).
+    changed.retain(|p| !is_machine_file(p) && !p.starts_with("docs/"));
     changed.sort();
     changed.dedup();
     if !changed.is_empty() {
