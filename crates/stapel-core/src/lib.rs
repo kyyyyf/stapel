@@ -12,6 +12,7 @@ pub mod hash;
 pub mod identity;
 pub mod includes;
 pub mod journal;
+pub mod junit;
 pub mod next;
 pub mod outcomes;
 pub mod page;
