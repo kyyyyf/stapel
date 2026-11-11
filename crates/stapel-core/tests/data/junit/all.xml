@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="6" failures="1" errors="0" time="0.454">
+  <testsuite name="undefined" errors="0" failures="0" skipped="1" timestamp="2026-11-11T10:50:34" time="0.227" tests="2">
+    <testcase classname=" only one" name=" only one" time="0.003">
+    </testcase>
+    <testcase classname=" other" name=" other" time="0">
+      <skipped/>
+    </testcase>
+  </testsuite>
+  <testsuite name="outer" errors="0" failures="1" skipped="1" timestamp="2026-11-11T10:50:34" time="0.24" tests="4">
+    <testcase classname="outer inner &amp; &quot;quoted&quot; &lt;tag&gt; passes" name="outer inner &amp; &quot;quoted&quot; &lt;tag&gt; passes" time="0.003">
+    </testcase>
+    <testcase classname="outer inner &amp; &quot;quoted&quot; &lt;tag&gt; fails" name="outer inner &amp; &quot;quoted&quot; &lt;tag&gt; fails" time="0.001">
+      <failure>Error: expect(received).toBe(expected) // Object.is equality
+
+Expected: 2
+Received: 1
+    at Object.&lt;anonymous&gt; (/work/repo/src/a.test.js:4:35)
+    at Promise.then.completed (/work/repo/node_modules/jest-circus/build/utils.js:298:28)
+    at new Promise (&lt;anonymous&gt;)
+    at callAsyncCircusFn (/work/repo/node_modules/jest-circus/build/utils.js:231:10)
+    at _callCircusTest (/work/repo/node_modules/jest-circus/build/run.js:316:40)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at _runTest (/work/repo/node_modules/jest-circus/build/run.js:252:3)
+    at _runTestsForDescribeBlock (/work/repo/node_modules/jest-circus/build/run.js:126:9)
+    at _runTestsForDescribeBlock (/work/repo/node_modules/jest-circus/build/run.js:121:9)
+    at _runTestsForDescribeBlock (/work/repo/node_modules/jest-circus/build/run.js:121:9)
+    at run (/work/repo/node_modules/jest-circus/build/run.js:71:3)
+    at runAndTransformResultsToJestFormat (/work/repo/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapterInit.js:122:21)
+    at jestAdapter (/work/repo/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:79:19)
+    at runTestInternal (/work/repo/node_modules/jest-runner/build/runTest.js:367:16)
+    at runTest (/work/repo/node_modules/jest-runner/build/runTest.js:444:34)
+    at Object.worker (/work/repo/node_modules/jest-runner/build/testWorker.js:106:12)</failure>
+    </testcase>
+    <testcase classname="outer is skipped" name="outer is skipped" time="0">
+      <skipped/>
+    </testcase>
+    <testcase classname="outer is todo" name="outer is todo" time="0">
+    </testcase>
+    <testcase classname=" top level" name=" top level" time="0">
+    </testcase>
+  </testsuite>
+</testsuites>

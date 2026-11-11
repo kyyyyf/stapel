@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="0" failures="0" errors="1" time="0.135">
+  <testsuite name="src/b.test.js" errors="1" failures="0" skipped="0" timestamp="1970-01-01T00:00:00" time="0" tests="0">
+    <testcase classname="Test suite failed to run" name="src/b.test.js" time="0">
+      <error>  ● Test suite failed to run
+
+    does not load
+
+    &gt; 1 | throw new Error(&apos;does not load&apos;);
+        |                                  ^
+      2 |
+
+      at Object.&lt;anonymous&gt; (src/b.test.js:1:109)
+</error>
+    </testcase>
+    <testcase classname="Test suite failed to run" name="src/b.test.js" time="0">
+      <failure>{}</failure>
+    </testcase>
+  </testsuite>
+</testsuites>
