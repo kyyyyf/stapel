@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{repo_with_ticket, stapel};
+use common::{git_config, git_in, repo_with_ticket, stapel};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -531,4 +531,97 @@ fn report_without_attention_is_unchanged() {
     let text = String::from_utf8(out).unwrap();
     assert_eq!(text, golden("tokens_report_all.txt"));
     assert!(!text.contains("attention:") && !text.contains("steps:"), "{text}");
+}
+
+#[test]
+fn report_counts_steps_after_a_merge() {
+    // Replaces the journal of ABC-1 with the given lines and returns the report of `stapel tokens ABC-1`.
+    let report = |dir: &Path, lines: &[Value]| -> String {
+        let text: String = lines.iter().map(|l| l.to_string() + "\n").collect();
+        std::fs::write(tokens_path(dir, "ABC-1"), text).unwrap();
+        let out = stapel(dir).args(["tokens", "ABC-1"]).assert().success().get_output().stdout.clone();
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("problem:"), "{text}");
+        text
+    };
+    let record = |id: &str, from: &str, to: &str| {
+        json!({
+            "v": 1, "id": id, "at": "2026-01-01T13:00:00.000Z", "ticket": "ABC-1",
+            "kind": "attention", "hook": "session-end", "transcript": "s-steps",
+            "from": from, "to": to,
+            "dialogs": 1, "questions": 2, "typed": 3,
+            "waited_ms": 120_000, "attention_ms": 60_000, "long_waits": 0,
+        })
+    };
+    let steps_line = |text: &str| -> String {
+        text.lines().find(|l| l.starts_with("steps:")).unwrap_or_else(|| panic!("{text}")).to_string()
+    };
+    let two = |a: (&str, &str), b: (&str, &str)| [record("a-one", a.0, a.1), record("a-two", b.0, b.1)];
+
+    // A git repository whose HEAD has no commit yet: the steps cannot be read.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let records = two(
+        ("2026-01-01T11:00:00.000Z", "2026-01-01T11:20:00.000Z"),
+        ("2026-01-01T11:30:00.000Z", "2026-01-01T11:59:00.000Z"),
+    );
+    assert_eq!(steps_line(&report(dir, &records)), "steps: —; wall time: 59 min");
+
+    // No git repository at all.
+    let bare = repo_with_ticket();
+    std::fs::remove_dir_all(bare.path().join(".git")).unwrap();
+    assert_eq!(steps_line(&report(bare.path(), &records)), "steps: —; wall time: 59 min");
+
+    // A git repository with a commit and no step commit: zero steps.
+    git_config(dir, "user.email", "test-user.invalid");
+    git_in(dir, &["add", "-A"]);
+    git_in(dir, &["commit", "-q", "-m", "base"]);
+    let main_branch = git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).trim().to_string();
+    assert_eq!(steps_line(&report(dir, &records)), "steps: 0; wall time: 59 min");
+
+    // Two step labels on a side branch, brought into HEAD by a merge commit; the first label has
+    // both its RED and its GREEN commit, and a commit of another ticket does not count.
+    git_in(dir, &["checkout", "-q", "-b", "side"]);
+    for subject in ["ABC-1 1 RED: one", "ABC-1 1 GREEN: one", "ABC-1 2 RED: two", "ABC-2 3 RED: other"] {
+        git_in(dir, &["commit", "-q", "--allow-empty", "-m", subject]);
+    }
+    git_in(dir, &["checkout", "-q", &main_branch]);
+    git_in(dir, &["commit", "-q", "--allow-empty", "-m", "main moves on"]);
+    git_in(dir, &["merge", "-q", "--no-ff", "-m", "Merge side", "side"]);
+    let parents = git_in(dir, &["log", "-1", "--format=%p"]);
+    assert_eq!(parents.split_whitespace().count(), 2, "{parents}");
+    assert_eq!(steps_line(&report(dir, &records)), "steps: 2; wall time: 59 min");
+
+    // Wall time from the earliest `from` to the latest `to`, whatever the order of the records.
+    let records = two(
+        ("2026-01-01T12:01:00.000Z", "2026-01-01T12:10:00.000Z"),
+        ("2026-01-01T11:00:00.000Z", "2026-01-01T11:20:00.000Z"),
+    );
+    assert_eq!(steps_line(&report(dir, &records)), "steps: 2; wall time: 1 h 10 min");
+    let records = two(
+        ("2026-01-01T11:00:00.000Z", "2026-01-01T11:20:00.000Z"),
+        ("2026-01-01T11:30:00.000Z", "2026-01-01T12:01:00.000Z"),
+    );
+    assert_eq!(steps_line(&report(dir, &records)), "steps: 2; wall time: 1 h 1 min");
+
+    // D4-1: exactly two hours.
+    let records = two(
+        ("2026-01-01T11:00:00.000Z", "2026-01-01T11:20:00.000Z"),
+        ("2026-01-01T11:30:00.000Z", "2026-01-01T13:00:00.000Z"),
+    );
+    assert_eq!(steps_line(&report(dir, &records)), "steps: 2; wall time: 2 h 0 min");
+
+    // D4-2: absent numbers and string numbers count as 0, with no problem line.
+    let odd = json!({
+        "v": 1, "id": "a-odd", "at": "2026-01-01T13:00:00.000Z", "ticket": "ABC-1",
+        "kind": "attention", "hook": "stop", "transcript": "s-steps",
+        "from": "2026-01-01T11:05:00.000Z", "to": "2026-01-01T11:10:00.000Z",
+        "dialogs": "5", "waited_ms": "9",
+    });
+    let text = report(dir, &[record("a-one", "2026-01-01T11:00:00.000Z", "2026-01-01T11:20:00.000Z"), odd]);
+    assert!(
+        text.contains("attention: 1 dialogs, 2 questions, 3 messages; 1 min attention, 2 min waited (0 over 10 min)"),
+        "{text}"
+    );
+    assert_eq!(steps_line(&text), "steps: 2; wall time: 20 min");
 }
