@@ -21,7 +21,7 @@ use stapel_core::steps::{
 };
 use stapel_core::tickets::{Status, Ticket, resolve};
 use stapel_core::time::now_rfc3339;
-use stapel_core::ts_tests::test_calls;
+use stapel_core::ts_tests::{has_only_call, test_calls};
 use stapel_core::worktree::{
     Lock, LockError, Worktree, build_input_outside, dirty_paths, resolve_tmpdir, stapel_dir,
 };
@@ -608,6 +608,9 @@ impl Runner<'_> {
                     self.timeout.as_secs()
                 ));
             }
+            if run.exit.is_none() {
+                return Err(format!("the run of {file} ended by a signal (at {at})"));
+            }
             let bytes = std::fs::read(&report)
                 .map_err(|e| format!("no report {} for {file}: {e} (at {at})", junit.report))?;
             let suites =
@@ -695,6 +698,24 @@ impl Runner<'_> {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
+        // Under junit a `.only` in a test file at RED or GREEN makes its tests unverified before any run.
+        if self.junit.is_some() {
+            for (commit, when) in [(&red.sha, "RED"), (&green.sha, "GREEN")] {
+                let mut files: Vec<String> = tests.iter().map(|t| t.path()).collect();
+                files.dedup();
+                for path in files {
+                    if show(self.root, commit, &path).is_some_and(|s| has_only_call(&s)) {
+                        return (
+                            "unverified".into(),
+                            format!(
+                                "{path} holds a .only call at {when} ({}); no command ran for it",
+                                short(commit)
+                            ),
+                        );
+                    }
+                }
+            }
+        }
         // RED: every test fails; one that passes is no RED.
         let at_red = self.at(&red.sha, tests, true);
         let at_green = self.at(&green.sha, tests, false);

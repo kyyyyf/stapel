@@ -348,6 +348,17 @@ pub fn test_calls(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Whether the file holds a `test`, `it` or `describe` call with `.only` (not after a `.`).
+pub fn has_only_call(text: &str) -> bool {
+    let c: Vec<char> = text.chars().collect();
+    let toks = lex(&c);
+    (0..toks.len()).any(|i| {
+        is_punct(toks.get(i + 1), '.')
+            && call_open(&toks, i, &["test", "it", "describe"], &["only"]).is_some()
+            && toks.get(i + 2).is_some_and(|m| m.text == "only")
+    })
+}
+
 /// The file without its test calls.
 pub fn rest_text(text: &str) -> String {
     let c: Vec<char> = text.chars().collect();
