@@ -467,6 +467,17 @@ token hooks and `init`.
     base (D52-1, the human).
   - An earlier ticket counts as present through a local branch of its key or a listed worktree on that
     branch; a worktree on a detached HEAD does not (D55-1).
+- As built (drift reviews of steps 57 to 63 and code review round 2):
+  - The `stapel cargo` skip behind a wrapper reads one shared list of value-taking wrapper options; a word
+    `stapel` as the value of an unlisted option is a deliberate form, and a boolean flag of the list
+    (`sudo -n`) fails closed (D57-1, D57-2).
+  - `cargo_runs` skips the values of `--color`, `--config`, `-C` and `-Z` before `run` (D58-1, D58-3, the
+    human).
+  - For subagents `--output-indicator-new` is denied by the `--output` prefix (R2-1, W2-2, the human); a
+    write into another stapel repository from a ticket worktree session gets the AC-26 denial (E2-6).
+  - Each guard decision and each `next` runs several git processes per listed worktree and per closed
+    ticket (E2-7); `prune_stops` lists branches and worktrees once more to detect a failed listing (D63-2,
+    the human).
 - STP-27 is built on main by the old rules with the installed binary; from step 9 on, builders run cargo
   through `target/debug/stapel cargo`, because the installed binary has no `cargo` command; `stapel init` with the new skill and builder text runs in step 17; the binary is
   reinstalled after the close (SR1-9).
@@ -681,8 +692,42 @@ Route: full (tags `guard`, `data`, `interface`), auto.
 
 ## Review
 
-TODO
+Spec review: two rounds by `stapel-spec-reviewer` (round 1: 20 findings, 5 HIGH; round 2: 15, 1 HIGH; three
+outside the promise decided by the human, SR1-18 to SR1-20). Drift review after every GREEN step that
+touched a criterion: 133 records (5 HIGH, 41 MEDIUM); the HIGH ones (D4-1, D12-2, D27-1, D46-1, and D12-1
+deferred to item 1.9) became fix steps, a criterion change or a Guarantees line. Code review round 1 (`stapel-reviewer`,
+`stapel-reviewer` with the external model, `stapel-drift` on the whole ticket): 31 records, 1 HIGH (E-1, a
+merge already on main counted as a merge round), 9 MEDIUM; fix steps 45 to 60. Code review round 2 by the
+same three: 14 records, 0 HIGH, 1 MEDIUM (E2-1, two Hook-root orders in the guard); fix steps 61 to 63.
+Coverage steps found two defects (C34-1, C42-1), fixed by steps 43 and 44. Deferred: D12-1 (Bash writes of
+a stopped ticket, item 1.9). All records and their fates are in `findings.jsonl`.
 
 ## Summary
 
-TODO
+Two tickets can now build at once, each in its own branch and worktree made by `stapel new`. Commands and
+hooks without KEY take the ticket of the current branch; the build permit covers only that ticket; a
+session in a ticket worktree writes only there. All cargo runs share one machine-wide lock through `stapel
+cargo` and `stapel check`; the guard denies bare cargo and, for subagents, git outside an allow list and
+outside their worktree. A trial merge after each commit and a dependency agent before the build stop the
+later ticket on a conflict or a confirmed dependency; the stop lifts when the earlier ticket merges into
+the base branch, which the later ticket then merges, re-checks and gets a merge review for. After close,
+`next` names the merge of the branch into main.
+
+Measures against STP-26 (the skill, rule 8):
+
+- Escaped defects of STP-26 found after its close: none known.
+- Code review HIGH and MEDIUM inside the promise: 11 over two rounds (STP-26: 2 real); 1 HIGH (E-1). Spec
+  review caught 6 HIGH and 20 MEDIUM before the build; drift review 46 HIGH and MEDIUM during it.
+- `ticket.md`: 82 KB (STP-26: 27 KB).
+- Size: about 2 560 source and 4 810 test lines added (117 and 58 removed) against an estimate of 1 100 and
+  1 700; the split limit of 1 500 source lines was passed during the fix steps of the reviews, and the
+  ticket was not split.
+- Tokens, measured by the hooks: orchestrator output about 560k over three models, cache read about 253M;
+  builder ≥365k output, 37.3M cache read; drift ≥64k / 1.9M; reviewers (internal and external) ≥111k / 4.4M;
+  research 6.4M cache read.
+- Wall time: 2026-11-03 12:21 UTC to 2026-11-11, with interruptions.
+
+Not improved: the ticket outgrew its size twice over, and most of the growth came from drift and review
+fix steps on the guard; builders broke the "Edit and Write only" rule several times and one left a stray
+process; the per-step `stapel check` was skipped for steps 55 to 63 by the human's decision for this
+ticket.
