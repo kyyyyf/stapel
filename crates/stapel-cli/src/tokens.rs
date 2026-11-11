@@ -1012,6 +1012,7 @@ pub fn hook_records(
     // One hook at a time: cursors are read and records appended under `tokens.lock` (AC-15).
     let _lock = take_tokens_lock(root)?;
     let (cursors, newest) = cursors(root, &identity);
+    // `Some(None)`: `stop` with no complete message, so no token window.
     let end = match reach {
         Reach::Stop => {
             let now = std::time::SystemTime::now()
@@ -1021,7 +1022,7 @@ pub fn hook_records(
             if newest.is_some_and(|at| now.saturating_sub(at) < STOP_WAIT_MS) {
                 return Some(());
             }
-            Some(stop_end(&t.messages)?)
+            Some(stop_end(&t.messages))
         }
         Reach::All => None,
     };
@@ -1030,12 +1031,23 @@ pub fn hook_records(
         .iter()
         .filter(|m| cursors.get(&m.model).is_none_or(|&c| m.time_ms > c))
         .filter(|m| match end {
-            Some((at, true)) => m.time_ms < at,
-            Some((at, false)) => m.time_ms <= at,
+            Some(None) => false,
+            Some(Some((at, true))) => m.time_ms < at,
+            Some(Some((at, false))) => m.time_ms <= at,
             None => true,
         })
         .collect();
-    let first = window.iter().map(|m| m.time_ms).min()?;
+    // Attention events of a main transcript, from `stop` and `session-end` only (STP-29).
+    let events = if (hook == "stop" || hook == "session-end") && !identity.contains('/') {
+        stapel_core::attention::read_events(transcript).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let first = window
+        .iter()
+        .map(|m| m.time_ms)
+        .min()
+        .or_else(|| events.iter().map(|e| e.time_ms).min())?;
     let tickets = stapel_core::tickets::list(root);
     let mut open = tickets
         .iter()
@@ -1067,6 +1079,40 @@ pub fn hook_records(
             record.insert("note".into(), json!(note));
         }
         lines.push(serde_json::to_string(&Value::Object(record)).ok()?);
+    }
+    if !events.is_empty() {
+        let sums = stapel_core::attention::sum_events(&events);
+        let from = events.iter().map(|e| e.time_ms).min()?;
+        let to = events.iter().map(|e| e.time_ms).max()?;
+        let mut digest = sha2::Sha256::new();
+        for part in [ticket.key.as_str(), identity.as_str(), &rfc3339_millis(to)] {
+            digest.update(part.as_bytes());
+            digest.update([0u8]);
+        }
+        let hex: String = digest
+            .finalize()
+            .iter()
+            .take(6)
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let record = json!({
+            "v": 1,
+            "id": format!("a-{hex}"),
+            "at": now_rfc3339(),
+            "ticket": ticket.key,
+            "kind": "attention",
+            "hook": hook,
+            "transcript": identity,
+            "from": rfc3339_millis(from),
+            "to": rfc3339_millis(to),
+            "questions": sums.questions,
+            "dialogs": sums.dialogs,
+            "typed": sums.typed,
+            "waited_ms": sums.waited_ms,
+            "attention_ms": sums.attention_ms,
+            "long_waits": sums.long_waits,
+        });
+        lines.push(serde_json::to_string(&record).ok()?);
     }
     if lines.is_empty() {
         return Some(());
