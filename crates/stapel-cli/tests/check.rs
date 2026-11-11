@@ -5990,3 +5990,43 @@ fn data_path_with_glob_characters_is_unverified() {
         changed_case(dir, &dumps, name, &path);
     }
 }
+
+// STP-28 AC-3: commits that touch only `docs/`, the ledger or a ticket's machine files keep a
+// check current.
+#[test]
+fn docs_commits_keep_a_check_current() {
+    fn status_line(dir: &Path) -> String {
+        let out = stapel(dir).args(["status", "ABC-1"]).output().unwrap();
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .find(|l| l.starts_with("check:"))
+            .unwrap_or_default()
+            .to_string()
+    }
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let head = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let record = format!(
+        "{{\"v\":1,\"kind\":\"check\",\"id\":\"c-000000000000\",\"at\":\"2026-01-01T00:00:00Z\",\"ticket\":\"ABC-1\",\"head\":\"{head}\",\"result\":\"pass\",\"steps\":[]}}\n"
+    );
+    write(dir, ".stapel/tickets/ABC-1/runs.jsonl", &record);
+    let pass = format!("check: pass at {}", &head[..7]);
+    assert_eq!(status_line(dir), pass);
+    write(dir, "docs/a.md", "notes\n");
+    commit(dir, "docs only");
+    assert_eq!(status_line(dir), pass);
+    write(dir, ".stapel/process-ledger.jsonl", "{\"v\":1}\n");
+    write(dir, ".stapel/tickets/ABC-1/tokens.jsonl", "{\"v\":1}\n");
+    commit(dir, "ledger and tokens");
+    assert_eq!(status_line(dir), pass);
+    // An uncommitted docs file keeps it current as well.
+    write(dir, "docs/b.md", "more\n");
+    assert_eq!(status_line(dir), pass);
+    // Another path makes it stale, alone or with a docs path.
+    write(dir, "crates/tiny/src/x.rs", "pub fn x() {}\n");
+    commit(dir, "source with docs");
+    let line = status_line(dir);
+    assert!(line.starts_with("check: stale"), "{line}");
+    assert!(line.contains("crates/tiny/src/x.rs"), "{line}");
+}
