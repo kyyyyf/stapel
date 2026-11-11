@@ -471,3 +471,218 @@ fn only_call_is_unverified() {
     commit(dir, "ABC-1 step 1 GREEN: one");
     only(&repo, "describe.only at GREEN", "GREEN");
 }
+
+/// A junit repository with one step `__tests__/x.test.ts::one`. `setup` runs before the first commit
+/// that names the ticket; `green` adds files to the GREEN commit.
+fn step_repo(setup: impl Fn(&Path), green: impl Fn(&Path)) -> JunitRepo {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    setup(dir);
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/ok.ts", "export const ok = 1;\n");
+    green(dir);
+    commit(dir, "ABC-1 step 1 GREEN: one");
+    repo
+}
+
+/// The line of `step 1` in the text of a check.
+fn step_one(text: &str) -> &str {
+    text.lines()
+        .find(|l| l.starts_with("step 1: "))
+        .unwrap_or_else(|| panic!("no step 1 line:\n{text}"))
+}
+
+// AC-23: no `node_modules` in the working tree: the steps that run are unverified with the reason.
+#[test]
+fn node_modules_missing_is_unverified() {
+    let repo = step_repo(|_| {}, |_| {});
+    std::fs::remove_dir_all(repo.dir().join("node_modules")).unwrap();
+    let (code, text) = check(&repo);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+    assert!(
+        step_one(&text).ends_with("unverified: node_modules is missing in the working tree"),
+        "{text}"
+    );
+    assert!(repo.runs().is_empty(), "{:?}", repo.runs());
+}
+
+// AC-24: a GREEN that changes `package.json`: `build-input-changed`, no command runs.
+#[test]
+fn build_input_change_is_unverified() {
+    let repo = step_repo(
+        |_| {},
+        |dir| write(dir, "package.json", "{\"name\": \"x\"}\n"),
+    );
+    let sha = git_in(repo.dir(), &["rev-parse", "HEAD"]);
+    let (code, text) = check(&repo);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(
+        step_one(&text),
+        format!(
+            "step 1: unverified: build-input-changed: package.json at {}",
+            &sha.trim()[..7]
+        ),
+        "{text}"
+    );
+    assert!(repo.runs().is_empty(), "{:?}", repo.runs());
+}
+
+// AC-24: a merge counts by its first-parent diff; the step before it passes, the one after reads
+// `build-input-changed` at the merge.
+#[test]
+fn merge_brings_a_build_input() {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    let main = git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    git_in(dir, &["checkout", "-q", "-b", "side"]);
+    write(dir, "jest.config.js", "module.exports = {};\n");
+    commit(dir, "main: a jest config");
+    git_in(dir, &["checkout", "-q", main.trim()]);
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/ok.ts", "export const ok = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: one");
+    git_in(
+        dir,
+        &["merge", "-q", "--no-ff", "-m", "ABC-1: merge main", "side"],
+    );
+    let merge = git_in(dir, &["rev-parse", "HEAD"]);
+    write(
+        dir,
+        "__tests__/y.test.ts",
+        "it(\"two\", () => { /* needs src/two.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 2 RED: two");
+    write(dir, "src/two.ts", "export const two = 2;\n");
+    commit(dir, "ABC-1 step 2 GREEN: two");
+    let (code, text) = check(&repo);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    assert_eq!(
+        text.lines().find(|l| l.starts_with("step 2: ")).unwrap(),
+        format!(
+            "step 2: unverified: build-input-changed: jest.config.js at {}",
+            &merge.trim()[..7]
+        ),
+        "{text}"
+    );
+    assert!(
+        repo.runs().iter().all(|l| !l.ends_with("y.test.ts")),
+        "{:?}",
+        repo.runs()
+    );
+}
+
+/// The path of the stand-in that `junit_repo` configured, read from its `command`.
+fn repo_stand_in(dir: &Path) -> String {
+    let text = std::fs::read_to_string(dir.join(".stapel/stapel.toml")).unwrap();
+    let line = text.lines().find(|l| l.starts_with("command = ")).unwrap();
+    line.trim_start_matches("command = \"sh ")
+        .trim_end_matches(" {file}\"")
+        .to_string()
+}
+
+// AC-25: a GREEN that changes `.stapel/stapel.toml`, or the repository script that `command` starts.
+#[test]
+fn config_change_is_unverified() {
+    // The configuration.
+    let repo = step_repo(
+        |_| {},
+        |dir| {
+            let path = dir.join(".stapel/stapel.toml");
+            let text = std::fs::read_to_string(&path).unwrap();
+            std::fs::write(&path, text.replace("timeout_secs = 60", "timeout_secs = 61")).unwrap();
+        },
+    );
+    let sha = git_in(repo.dir(), &["rev-parse", "HEAD"]);
+    let (code, text) = check(&repo);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(
+        step_one(&text),
+        format!(
+            "step 1: unverified: build-input-changed: .stapel/stapel.toml at {}",
+            &sha.trim()[..7]
+        ),
+        "{text}"
+    );
+    assert!(repo.runs().is_empty(), "{:?}", repo.runs());
+    // A script of the repository.
+    let repo = step_repo(
+        |dir| {
+            let stand_in = repo_stand_in(dir);
+            write(dir, "run.sh", &format!("exec sh '{stand_in}' \"$1\"\n"));
+            let path = dir.join(".stapel/stapel.toml");
+            let text: String = std::fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .map(|l| {
+                    if l.starts_with("command = ") {
+                        "command = \"./run.sh {file}\"\n".to_string()
+                    } else {
+                        format!("{l}\n")
+                    }
+                })
+                .collect();
+            std::fs::write(&path, text).unwrap();
+            commit(dir, "setup: a repository script");
+        },
+        |dir| write(dir, "run.sh", "exit 0\n"),
+    );
+    let sha = git_in(repo.dir(), &["rev-parse", "HEAD"]);
+    let (code, text) = check(&repo);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(
+        step_one(&text),
+        format!(
+            "step 1: unverified: build-input-changed: run.sh at {}",
+            &sha.trim()[..7]
+        ),
+        "{text}"
+    );
+    assert!(repo.runs().is_empty(), "{:?}", repo.runs());
+}
+
+// AC-36: under junit a path of `docs/` that matches a test or input glob makes the check stale.
+#[test]
+fn docs_path_matching_a_glob_is_stale() {
+    let line_after = |rel: &str| {
+        let repo = step_repo(|_| {}, |_| {});
+        let (code, text) = check(&repo);
+        assert_eq!(code, 0, "{text}");
+        let pass = format!(
+            "check: pass at {}",
+            &git_in(repo.dir(), &["rev-parse", "HEAD"]).trim()[..7]
+        );
+        write(repo.dir(), rel, "x\n");
+        commit(repo.dir(), "docs: a change");
+        let (_, status) = stdout(repo.dir(), &["status", "ABC-1"]);
+        let line = status
+            .lines()
+            .find(|l| l.starts_with("check: "))
+            .unwrap_or("(no check line)")
+            .to_string();
+        (pass, line)
+    };
+    let (pass, line) = line_after("docs/a.test.ts");
+    assert!(
+        line.starts_with("check: stale") && line.contains("docs/a.test.ts"),
+        "{pass} / {line}"
+    );
+    let (pass, line) = line_after("docs/site/package.json");
+    assert!(
+        line.starts_with("check: stale") && line.contains("docs/site/package.json"),
+        "{pass} / {line}"
+    );
+    let (pass, line) = line_after("docs/a.md");
+    assert_eq!(line, pass);
+}
