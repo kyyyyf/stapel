@@ -354,6 +354,9 @@ commit of a test that passes at once (SR1-9).
    checkout (a linked worktree) where the hook runs after the first and must add nothing. The GREEN keeps
    the latest `to` of each transcript also in a file in the git common folder, under the tokens lock; the
    cursor is the later of the two. Must not change: the cursor inside one checkout, the token cursor.
+7b. Coverage, no GREEN (AC-7; test `attention::bad_shared_cursor_file`): a shared cursor file that is no
+   JSON, an array, or holds a value that is no time gives no value and the hook writes its records; the
+   later of the shared and the journal value wins in both orders (D7-1, D7-2).
 
 ## Review
 
