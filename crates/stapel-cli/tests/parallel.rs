@@ -1172,6 +1172,46 @@ fn wait_edges() {
     assert!(!spec.exists() && !conflict.exists(), "the abandoned stops stayed");
     write_hook(&pair.b, "crates/x.rs").success();
 
+    // A failed listing removes no stop (E2-3): a stand-in git fails `for-each-ref` and
+    // `worktree list`; the earlier ticket is still there, so both stops stay.
+    let pair = two_ticket_worktrees();
+    build_ready(&pair.b, "ABC-2");
+    dependency_asked_and_done(&pair);
+    let spec = put_dependency_stop(&pair, &spec_stop_body());
+    let conflict = stop_path(&pair, "ABC-2", "ABC-1");
+    std::fs::write(&conflict, merge_stop_body()).unwrap();
+    let real = String::from_utf8(
+        std::process::Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let script = bin.path().join("git");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = for-each-ref ] || [ \"$a\" = worktree ]; then\n    \
+             echo 'fatal: stand-in refuses listing' >&2\n    exit 128\n  fi\ndone\nexec {} \"$@\"\n",
+            real.trim()
+        ),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!(
+        "{}:{}",
+        bin.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    next(&pair.b, Some(&path));
+    assert!(spec.exists(), "a failed listing removed the spec stop");
+    assert!(conflict.exists(), "a failed listing removed the merge stop");
+
     // The guard text for an unreadable stop (D12-8).
     let pair = two_ticket_worktrees();
     build_ready(&pair.b, "ABC-2");
