@@ -410,3 +410,61 @@ fn events_split_by_worktree() {
     assert_eq!(std::fs::read_to_string(&closed).unwrap(), first_1);
     assert_eq!(std::fs::read_to_string(tokens_path(repo.path(), "ABC-2")).unwrap(), first_2);
 }
+
+#[test]
+fn report_shows_the_attention_lines() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for args in [
+        vec!["--role", "builder", "--input", "10", "--output", "20", "--cache-read", "0"],
+        vec!["--role", "author", "--estimate", "5000"],
+        vec!["--role", "builder", "--estimate", "70"],
+    ] {
+        let mut a = vec!["tokens", "add", "ABC-1"];
+        a.extend(args);
+        stapel(dir).args(&a).assert().success();
+    }
+    let main = dir.join("main.jsonl");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/main.jsonl"),
+        &main,
+    )
+    .unwrap();
+    stapel(dir)
+        .args(["tokens", "import"])
+        .arg(&main)
+        .args(["--role", "orchestrator", "--until", "2026-01-02T00:00:00Z"])
+        .assert()
+        .success();
+    let record = |id: &str, from: &str, to: &str, n: [u64; 6]| {
+        json!({
+            "v": 1, "id": id, "at": "2026-01-01T13:00:00.000Z", "ticket": "ABC-1",
+            "kind": "attention", "hook": "session-end", "transcript": "s-report",
+            "from": from, "to": to,
+            "dialogs": n[0], "questions": n[1], "typed": n[2],
+            "waited_ms": n[3], "attention_ms": n[4], "long_waits": n[5],
+        })
+        .to_string()
+            + "\n"
+    };
+    let path = tokens_path(dir, "ABC-1");
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text += &record(
+        "a-one", "2026-01-01T11:00:00.000Z", "2026-01-01T11:40:00.000Z",
+        [2, 1, 3, 1_500_000, 1_200_000, 1],
+    );
+    text += &record(
+        "a-two", "2026-01-01T11:50:00.000Z", "2026-01-01T12:05:00.000Z",
+        [1, 2, 1, 3_900_000, 900_000, 2],
+    );
+    std::fs::write(&path, text).unwrap();
+
+    let golden = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/tokens_attention.txt"),
+    )
+    .unwrap();
+    for args in [vec!["tokens", "ABC-1"], vec!["tokens"]] {
+        let out = stapel(dir).args(&args).assert().success().get_output().stdout.clone();
+        assert_eq!(String::from_utf8(out).unwrap(), golden, "{args:?}");
+    }
+}
