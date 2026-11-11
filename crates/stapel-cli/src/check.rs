@@ -41,6 +41,51 @@ pub(crate) fn junit_globs_at(root: &Path) -> Option<Vec<String>> {
     junit_globs_of(&config.check?)
 }
 
+/// The Walk of a junit check read for build inputs (STP-28 AC-24, AC-25): input globs, the
+/// configuration, and the first word of `command` when it is a repository path.
+fn junit_inputs(
+    root: &Path,
+    key: &str,
+    at: &str,
+    bounds: Bounds,
+    check: &Check,
+) -> Result<BuildInputs, String> {
+    let mut fixed = vec![".stapel/stapel.toml".to_string()];
+    let first = check
+        .command
+        .as_deref()
+        .and_then(|c| c.split(' ').find(|w| !w.is_empty()));
+    if let Some(word) = first {
+        let path = Path::new(word);
+        if path.is_absolute() {
+            if let Ok(rel) = path.strip_prefix(root) {
+                fixed.push(rel.to_string_lossy().into_owned());
+            }
+        } else if word.contains('/') {
+            fixed.push(word.trim_start_matches("./").to_string());
+        }
+    }
+    let inputs = check.inputs.clone().unwrap_or_default();
+    build_inputs::analyse_junit(root, key, at, bounds, &inputs, &fixed)
+}
+
+/// The reason that blocks a step under junit: the first change of an input at or before the step's
+/// GREEN commit in the Walk, or of the configuration between the step's RED and GREEN (a
+/// configuration in place before the RED is the one the tests were written against). A change
+/// after the GREEN does not touch the step.
+fn junit_block(a: &Analysis, inputs: &BuildInputs, walk: &[String]) -> Option<String> {
+    let place = |c: Option<&stapel_core::steps::StepCommit>| {
+        c.and_then(|c| walk.iter().position(|s| *s == c.sha))
+    };
+    let (red, green) = (place(a.red.as_ref()), place(a.green.as_ref()));
+    inputs.walk_changes.iter().find_map(|(change, config)| {
+        let at = walk.iter().position(|s| *s == change.sha)?;
+        let after_green = green.is_some_and(|g| g < at);
+        let before_red = *config && red.is_some_and(|r| at <= r);
+        (!after_green && !before_red).then(|| changed_reason(change))
+    })
+}
+
 /// The mode that judges steps for the globs of `junit_globs_at`.
 pub(crate) fn mode_of(globs: &Option<Vec<String>>) -> Mode<'_> {
     match globs {
@@ -230,14 +275,23 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         Ok(a) => a,
         Err(e) => return refuse(e),
     };
-    // Under junit the build inputs are not read yet (STP-28 step 7).
     let inputs = if junit {
-        BuildInputs::default()
+        junit_inputs(&root, &ticket.key, &at, bounds, &check)
     } else {
-        match build_inputs::analyse(&root, &ticket.key, &at, &steps, bounds) {
-            Ok(i) => i,
+        build_inputs::analyse(&root, &ticket.key, &at, &steps, bounds)
+    };
+    let inputs = match inputs {
+        Ok(i) => i,
+        Err(e) => return refuse(e),
+    };
+    // Under junit a change blocks the steps whose GREEN is at or after it (AC-24).
+    let walk = if junit {
+        match build_inputs::range(&root, &ticket.key, &at, bounds) {
+            Ok(w) => w,
             Err(e) => return refuse(e),
         }
+    } else {
+        Vec::new()
     };
     let tmp = match resolve_tmpdir(&root) {
         Ok(t) => t,
@@ -294,6 +348,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
     let mut blocked = inputs
         .changed
         .as_ref()
+        .filter(|_| !junit)
         .map(changed_reason)
         .or(outside.map(|p| format!("build-input-outside: {}", p.display())));
     let cargo_text = if junit {
@@ -340,7 +395,11 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
     let mut steps_json = Vec::new();
     for a in &analyses {
         // A build input found above the worktree after a cargo run blocks every later step (AC-7).
-        let blocked = runner.outside.borrow().clone();
+        let blocked = if junit {
+            junit_block(a, &inputs, &walk)
+        } else {
+            runner.outside.borrow().clone()
+        };
         let (outcome, reason) = match history_outcome(a, blocked.as_deref()) {
             Some(o) => o,
             None => runner.step(a),
@@ -558,13 +617,13 @@ impl Runner<'_> {
     /// removed; each test takes the state of its one test case.
     fn at_junit(&self, junit: &JunitRun, commit: &str, tests: &[TestId]) -> At {
         let modules = self.root.join("node_modules");
-        if modules.exists() {
-            let modules =
-                std::path::absolute(&modules).map_err(|e| format!("node_modules: {e}"))?;
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(&modules, self.wt.path.join("node_modules"))
-                .map_err(|e| format!("node_modules: {e}"))?;
+        if !modules.exists() {
+            return Err("node_modules is missing in the working tree".into());
         }
+        let modules = std::path::absolute(&modules).map_err(|e| format!("node_modules: {e}"))?;
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&modules, self.wt.path.join("node_modules"))
+            .map_err(|e| format!("node_modules: {e}"))?;
         let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for t in tests {
             groups
@@ -915,18 +974,32 @@ pub(crate) fn history_report(
 ) -> Result<HistoryReport, String> {
     let globs = junit_globs_at(root);
     let analyses = analyse_in(root, key, at, steps, mode_of(&globs))?;
-    // Under junit the build inputs are not read yet (STP-28 step 7).
-    let inputs = if globs.is_some() {
-        BuildInputs::default()
-    } else {
-        build_inputs::analyse(root, key, at, steps, bounds)?
+    let junit_check = repo::load(root)
+        .ok()
+        .and_then(|c| c.check)
+        .filter(|c| c.runner == "junit");
+    let (inputs, walk) = match &junit_check {
+        Some(check) => (
+            junit_inputs(root, key, at, bounds, check)?,
+            build_inputs::range(root, key, at, bounds)?,
+        ),
+        None => (
+            build_inputs::analyse(root, key, at, steps, bounds)?,
+            Vec::new(),
+        ),
     };
-    let blocked = inputs.changed.as_ref().map(changed_reason);
     let steps = analyses
         .into_iter()
-        .map(|analysis| HistoryStep {
-            outcome: history_outcome(&analysis, blocked.as_deref()),
-            analysis,
+        .map(|analysis| {
+            let blocked = if junit_check.is_some() {
+                junit_block(&analysis, &inputs, &walk)
+            } else {
+                inputs.changed.as_ref().map(changed_reason)
+            };
+            HistoryStep {
+                outcome: history_outcome(&analysis, blocked.as_deref()),
+                analysis,
+            }
         })
         .collect();
     Ok(HistoryReport { inputs, steps })

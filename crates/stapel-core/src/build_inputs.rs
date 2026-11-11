@@ -17,6 +17,9 @@ pub struct BuildInputs {
     pub changed: Option<Change>,
     /// Build inputs at HEAD that no non-RED commit of the range changes, sorted.
     pub unchanged: Vec<String>,
+    /// Under junit: every commit of the Walk that changes an input (`false`) or a configuration
+    /// file (`true`), oldest first, with the first path of that kind.
+    pub walk_changes: Vec<(Change, bool)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -499,7 +502,60 @@ pub fn analyse(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    Ok(BuildInputs { changed, unchanged })
+    Ok(BuildInputs {
+        changed,
+        unchanged,
+        walk_changes: Vec::new(),
+    })
+}
+
+/// Reads the Walk under the junit runner (STP-28 AC-24, AC-25): the commits that change a file
+/// matching an input glob, or one of `fixed` (the configuration and the command's script). A merge
+/// counts by its diff to its first parent.
+pub fn analyse_junit(
+    root: &Path,
+    key: &str,
+    head: &str,
+    bounds: Bounds,
+    inputs: &[String],
+    fixed: &[String],
+) -> Result<BuildInputs, String> {
+    let mut out = BuildInputs::default();
+    for sha in range(root, key, head, bounds)? {
+        let raw = git(
+            root,
+            &[
+                "diff",
+                "--name-only",
+                "--no-renames",
+                "-z",
+                &parent(root, &sha),
+                &sha,
+            ],
+        )?;
+        let paths: Vec<String> = raw
+            .split(|b| *b == 0)
+            .filter(|p| !p.is_empty())
+            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .collect();
+        let input = paths
+            .iter()
+            .find(|p| inputs.iter().any(|g| crate::config::glob_matches(g, p)));
+        let config = paths.iter().find(|p| fixed.contains(p));
+        for (path, is_config) in [(input, false), (config, true)] {
+            if let Some(path) = path {
+                out.walk_changes.push((
+                    Change {
+                        path: path.clone(),
+                        sha: sha.clone(),
+                    },
+                    is_config,
+                ));
+            }
+        }
+    }
+    out.changed = out.walk_changes.first().map(|(c, _)| c.clone());
+    Ok(out)
 }
 
 /// The crate folder of a path under `crates/*/tests/`.
