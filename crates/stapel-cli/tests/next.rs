@@ -2517,3 +2517,72 @@ fn brief_refusal_names_sizes_and_title() {
     }
     assert_eq!(action(dir), format!("next: write-section Steps — {TICKET}"));
 }
+
+// STP-28 AC-2: a step commit before `base` gives no fact and no action.
+#[test]
+fn next_walks_from_the_base() {
+    fn commit(dir: &Path, files: &[(&str, &str)], subject: &str) {
+        for (rel, text) in files {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", subject],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "test-user")
+                .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+                .env("GIT_COMMITTER_NAME", "test-user")
+                .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+    fn with_old_green(with_base: bool) -> tempfile::TempDir {
+        let repo = written();
+        let dir = repo.path();
+        confirm_all(dir);
+        commit(dir, &[], "initial");
+        // A GREEN without a RED: `unpaired`.
+        commit(
+            dir,
+            &[("crates/tiny/src/lib.rs", "// green\n")],
+            "ABC-1 step 1 GREEN: code",
+        );
+        if with_base {
+            let head = std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            let head = String::from_utf8(head.stdout).unwrap().trim().to_string();
+            let mut state = state_json(dir, "ABC-1");
+            state["base"] = serde_json::json!(head);
+            write_state(dir, &state);
+            commit(dir, &[], "ABC-1: base");
+        }
+        repo
+    }
+
+    let repo = with_old_green(true);
+    let dir = repo.path();
+    assert!(facts(dir).is_empty(), "{:?}", facts(dir));
+    let text = output(dir, &[], 0);
+    assert!(!text.contains("fix-history"), "{text}");
+    assert!(!text.contains("unpaired"), "{text}");
+
+    // Without a base the old commit is a fault.
+    let repo = with_old_green(false);
+    let dir = repo.path();
+    assert_eq!(facts(dir).len(), 1, "{:?}", facts(dir));
+}

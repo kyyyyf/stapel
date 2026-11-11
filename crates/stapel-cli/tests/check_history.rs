@@ -934,3 +934,81 @@ fn twenty_steps_within_five_seconds() {
     );
     assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
 }
+
+// ---- STP-28 AC-1 ----
+
+#[test]
+fn walk_starts_at_the_base() {
+    /// Sets or removes the `base` of ABC-1 and commits the state.
+    fn set_base(dir: &Path, base: Option<&str>) {
+        let mut state = common::state_json(dir, "ABC-1");
+        match base {
+            Some(b) => state["base"] = serde_json::json!(b),
+            None => {
+                state.as_object_mut().unwrap().remove("base");
+            }
+        }
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base");
+    }
+    /// A step 1 RED before the base, then the base, then the real step 1.
+    fn old_red_then_real_step(dir: &Path, with_base: bool) {
+        add_test(dir, "old", "old_one", "assert!(true);");
+        commit(dir, "ABC-1 step 1 RED: an old red");
+        let head = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        set_base(dir, with_base.then_some(head.as_str()));
+        clean_pair(dir, "step 1", "real");
+    }
+
+    // With a base: one pass in the full check and no `duplicate` in either mode.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    old_red_then_real_step(dir, true);
+    let (code, hist, err) = history(dir);
+    assert_eq!(code, 0, "{hist}{err}");
+    assert_eq!(outcome(&hist, "step 1"), "needs-run", "{hist}");
+    assert!(!hist.contains("duplicate"), "{hist}");
+    let (code, full) = check(dir);
+    assert_eq!(code, 0, "{full}");
+    assert_eq!(outcome(&full, "step 1"), "pass", "{full}");
+    assert!(!full.contains("duplicate"), "{full}");
+
+    // A merge of a side branch after the base: its first-parent diff counts, the result stays.
+    let branch = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .trim()
+        .to_string();
+    git(dir, &["checkout", "-q", "-b", "side", "HEAD~2"]);
+    write(dir, "docs/side.md", "side\n");
+    commit(dir, "a side commit");
+    git(dir, &["checkout", "-q", &branch]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.name=test-user",
+            "-c",
+            "user.email=test-user.invalid",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "merge main",
+            "side",
+        ],
+    );
+    let (code, hist, err) = history(dir);
+    assert_eq!(code, 0, "{hist}{err}");
+    assert_eq!(outcome(&hist, "step 1"), "needs-run", "{hist}");
+    assert!(!hist.contains("duplicate"), "{hist}");
+
+    // Without a base the old commit counts.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    old_red_then_real_step(dir, false);
+    let (_, hist, err) = history(dir);
+    assert_eq!(outcome(&hist, "step 1"), "duplicate", "{hist}{err}");
+}
