@@ -103,7 +103,7 @@ fn refuse(message: impl std::fmt::Display) -> ExitCode {
 // The refusals both modes share (STP-14); each mode calls them in its own order.
 
 /// A legacy or unreadable ticket cannot be checked.
-fn status_refusal(ticket: &Ticket) -> Result<(), String> {
+pub(crate) fn status_refusal(ticket: &Ticket) -> Result<(), String> {
     match &ticket.status {
         Status::Open(_) | Status::Closed(_) => Ok(()),
         Status::Legacy(_) => Err(format!(
