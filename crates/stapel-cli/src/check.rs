@@ -418,12 +418,9 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         }
         say_step(a, &outcome, &reason);
     }
-    // Under junit the suite at HEAD is not run yet (STP-28 step 12).
-    let suite = (!junit).then(|| runner.suite());
-    if let Some(suite) = &suite {
-        ok &= suite.outcome == "pass";
-        say!("suite: {}: {}", suite.outcome, suite.detail);
-    }
+    let suite = runner.suite();
+    ok &= suite.outcome == "pass";
+    say!("suite: {}: {}", suite.outcome, suite.detail);
     say!("result: {}", if ok { "pass" } else { "fail" });
     let mut record = serde_json::json!({
         "v": 1,
@@ -434,21 +431,19 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         "head": head,
         "tool": format!("stapel {}", env!("CARGO_PKG_VERSION")),
     });
-    if suite.is_some() {
-        record["cargo"] = serde_json::json!(cargo_text);
-    } else {
+    if junit {
         record["runner"] = serde_json::json!("junit");
+    } else {
+        record["cargo"] = serde_json::json!(cargo_text);
     }
     record["result"] = serde_json::json!(if ok { "pass" } else { "fail" });
     record["steps"] = serde_json::json!(steps_json);
-    if let Some(suite) = &suite {
-        record["suite"] = serde_json::json!({
-            "outcome": suite.outcome,
-            "passed": suite.counts.0,
-            "failed": suite.counts.1,
-            "ignored": suite.counts.2,
-        });
-    }
+    record["suite"] = serde_json::json!({
+        "outcome": suite.outcome,
+        "passed": suite.counts.0,
+        "failed": suite.counts.1,
+        "ignored": suite.counts.2,
+    });
     if let Some(end) = &end {
         record["end"] = serde_json::json!(end);
     }
@@ -612,10 +607,8 @@ impl Runner<'_> {
         Ok(out)
     }
 
-    /// Runs `tests` at `commit` under junit (STP-28 AC-10, AC-11): one Per-file run per test file in
-    /// the checked-out copy, with the working tree's `node_modules` linked in and the old report
-    /// removed; each test takes the state of its one test case.
-    fn at_junit(&self, junit: &JunitRun, commit: &str, tests: &[TestId]) -> At {
+    /// Links the working tree's `node_modules` into the check copy (STP-28 AC-23).
+    fn link_modules(&self) -> Result<(), String> {
         let modules = self.root.join("node_modules");
         if !modules.exists() {
             return Err("node_modules is missing in the working tree".into());
@@ -624,6 +617,91 @@ impl Runner<'_> {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&modules, self.wt.path.join("node_modules"))
             .map_err(|e| format!("node_modules: {e}"))?;
+        Ok(())
+    }
+
+    /// The whole suite at HEAD under junit (STP-28 AC-26, AC-34): the old report removed, `command`
+    /// run once with only the word `{file}` left out, every test suite of the report summed.
+    fn suite_junit(&self, junit: &JunitRun) -> Suite {
+        let unverified = |reason: String| Suite {
+            outcome: "unverified".into(),
+            detail: reason,
+            counts: (0, 0, 0),
+        };
+        if let Err(e) = self.wt.checkout(self.head) {
+            return unverified(e);
+        }
+        if let Err(e) = self.link_modules() {
+            return unverified(e);
+        }
+        let report = self.wt.path.join(junit.report);
+        match std::fs::remove_file(&report) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return unverified(format!("{}: {e}", junit.report)),
+        }
+        let words: Vec<&str> = junit
+            .command
+            .split(' ')
+            .filter(|w| !w.is_empty() && *w != "{file}")
+            .collect();
+        let Some((program, rest)) = words.split_first() else {
+            return unverified("check.command is empty".into());
+        };
+        let args: Vec<String> = rest.iter().map(|w| w.to_string()).collect();
+        let run = match run_program(
+            Path::new(program),
+            &self.wt.path,
+            &args,
+            &[("JEST_JUNIT_REPORT_TEST_SUITE_ERRORS", "true")],
+            self.timeout,
+        ) {
+            Ok(r) => r,
+            Err(e) => return unverified(e),
+        };
+        if run.timed_out {
+            return unverified(format!(
+                "the time limit of {} s ran out",
+                self.timeout.as_secs()
+            ));
+        }
+        let Some(code) = run.exit else {
+            return unverified("the suite run ended by a signal".into());
+        };
+        let bytes = match std::fs::read(&report) {
+            Ok(b) => b,
+            Err(e) => return unverified(format!("no report {} for the suite: {e}", junit.report)),
+        };
+        let suites = match read_report(&bytes) {
+            Ok(s) => s,
+            Err(e) => return unverified(format!("report of the suite: {e}")),
+        };
+        let (mut p, mut f, mut i) = (0u64, 0u64, 0u64);
+        for case in suites.iter().flat_map(|s| s.cases.iter()) {
+            match case.outcome {
+                CaseOutcome::Passed => p += 1,
+                CaseOutcome::Failed => f += 1,
+                CaseOutcome::Skipped => i += 1,
+            }
+        }
+        let detail = format!("{p} passed, {f} failed, {i} ignored");
+        let outcome = if code == 0 && f == 0 && p + i > 0 {
+            "pass"
+        } else {
+            "fail"
+        };
+        Suite {
+            outcome: outcome.into(),
+            detail,
+            counts: (p, f, i),
+        }
+    }
+
+    /// Runs `tests` at `commit` under junit (STP-28 AC-10, AC-11): one Per-file run per test file in
+    /// the checked-out copy, with the working tree's `node_modules` linked in and the old report
+    /// removed; each test takes the state of its one test case.
+    fn at_junit(&self, junit: &JunitRun, commit: &str, tests: &[TestId]) -> At {
+        self.link_modules()?;
         let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for t in tests {
             groups
@@ -868,6 +946,9 @@ impl Runner<'_> {
     /// The whole suite at HEAD.
     /// The whole suite at HEAD: outcome, detail and the summed counts.
     fn suite(&self) -> Suite {
+        if let Some(junit) = &self.junit {
+            return self.suite_junit(junit);
+        }
         let unverified = |reason: String| Suite {
             outcome: "unverified".into(),
             detail: reason,
