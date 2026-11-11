@@ -810,3 +810,42 @@ fn measure_refuses_bad_files() {
     assert_eq!(out.stdout, b"");
     assert!(String::from_utf8(out.stderr).unwrap().contains("Usage"));
 }
+
+#[test]
+fn missing_subagent_transcript_writes_nothing() {
+    fn subagent_stop(repo: &Path, elsewhere: &Path, path: &Path) {
+        let input = json!({
+            "hook_event_name": "SubagentStop",
+            "session_id": "s-hook",
+            "cwd": elsewhere,
+            "agent_type": "stapel-builder",
+            "agent_transcript_path": path,
+        });
+        stapel(elsewhere)
+            .env("CLAUDE_PROJECT_DIR", repo)
+            .args(["hook", "subagent-stop"])
+            .write_stdin(input.to_string())
+            .assert()
+            .success()
+            .stdout("");
+    }
+    let elsewhere = tempfile::tempdir().unwrap();
+    let dir = elsewhere.path();
+    let repo = repo_with_ticket();
+
+    // A missing path: no record, no file changed.
+    let before = std::fs::read(tokens_path(repo.path(), "ABC-1")).ok();
+    let status = git_in(repo.path(), &["status", "--porcelain"]);
+    subagent_stop(repo.path(), dir, &dir.join("missing.jsonl"));
+    assert_eq!(std::fs::read(tokens_path(repo.path(), "ABC-1")).ok(), before);
+    assert!(records(repo.path(), "ABC-1").is_empty());
+    assert_eq!(git_in(repo.path(), &["status", "--porcelain"]), status);
+
+    // The same input with an existing file writes records.
+    let mut lines = vec![assistant(5, "m1", None, true)];
+    lines[0]["agentId"] = json!("agent-hook");
+    lines[0]["isSidechain"] = json!(true);
+    let path = write(dir, "sub.jsonl", &lines);
+    subagent_stop(repo.path(), dir, &path);
+    assert!(!records(repo.path(), "ABC-1").is_empty());
+}
