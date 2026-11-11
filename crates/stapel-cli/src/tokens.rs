@@ -472,6 +472,25 @@ struct Row {
     legacy_kind: Option<String>,
 }
 
+/// The sums of a ticket's attention records (STP-29 AC-9): dialogs, questions, typed, attention,
+/// waited and long waits, and the earliest `from` and latest `to`.
+#[derive(Default)]
+struct AttentionSum {
+    counts: [u64; 6],
+    from: Option<u64>,
+    to: Option<u64>,
+}
+
+/// Milliseconds as whole minutes: `35 min`, `1 h 5 min`, `2 h`.
+fn duration(ms: u64) -> String {
+    let minutes = ms / 60_000;
+    match (minutes / 60, minutes % 60) {
+        (0, m) => format!("{m} min"),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
+    }
+}
+
 /// The sessions table (STP-5 AC-4): per session (its line with the greatest start plus duration)
 /// and model, the session's output and thinking, the output of all tickets' measured records of
 /// that session (overlapping windows of one transcript and model counted once), and the gap.
@@ -719,6 +738,7 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
         // 2 for records with `imported_from`), legacy kind.
         let mut rows: std::collections::BTreeMap<(String, String, u8, String), Row> =
             Default::default();
+        let mut attention: Option<AttentionSum> = None;
         for (n, entry) in read(&path)? {
             let text = |m: &Map<String, Value>, k: &str| {
                 m.get(k).and_then(Value::as_str).unwrap_or("—").to_string()
@@ -726,6 +746,27 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
             let problem = format!("problem: .stapel/tickets/{ticket_key}/tokens.jsonl:{n}");
             match entry {
                 Entry::Problem(_) => problems.push(problem),
+                Entry::V1(m) if m.get("kind").and_then(Value::as_str) == Some("attention") => {
+                    let num = |k: &str| m.get(k).and_then(Value::as_u64).unwrap_or(0);
+                    let sum = attention.get_or_insert_with(Default::default);
+                    for (slot, k) in sum.counts.iter_mut().zip([
+                        "dialogs",
+                        "questions",
+                        "typed",
+                        "attention_ms",
+                        "waited_ms",
+                        "long_waits",
+                    ]) {
+                        *slot = slot.saturating_add(num(k));
+                    }
+                    let time = |k: &str| m.get(k).and_then(Value::as_str).and_then(parse_cli_time);
+                    if let Some(f) = time("from") {
+                        sum.from = Some(sum.from.map_or(f, |c| c.min(f)));
+                    }
+                    if let Some(t) = time("to") {
+                        sum.to = Some(sum.to.map_or(t, |c| c.max(t)));
+                    }
+                }
                 Entry::V1(m) => {
                     let num = |k: &str| m.get(k).and_then(Value::as_u64);
                     let imported = m.contains_key("imported_from");
@@ -808,6 +849,17 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
         }
         let mut block = vec![format!("ticket: {ticket_key}")];
         block.extend(render(&table));
+        if let Some(a) = attention {
+            let [dialogs, questions, typed, attention_ms, waited_ms, long] = a.counts;
+            block.push(format!(
+                "attention: {dialogs} dialogs, {questions} questions, {typed} messages; \
+                 {} attention, {} waited ({long} over 10 min)",
+                duration(attention_ms),
+                duration(waited_ms)
+            ));
+            let wall = a.from.zip(a.to).map_or(0, |(f, t)| t.saturating_sub(f));
+            block.push(format!("steps: —; wall time: {}", duration(wall)));
+        }
         blocks.push(block.join("\n"));
     }
     if key.is_none() {
