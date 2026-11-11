@@ -288,6 +288,31 @@ fn repeated_call_adds_nothing() {
     // The same input again: no new event, so the file stays byte for byte.
     hook(repo.path(), dir, "session-end", &path);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), first);
+
+    // A second checkout of the repository (a linked worktree without the first one's journal lines):
+    // the first call in `a` records the events, the same transcript in `b` records none of them again.
+    let pair = common::two_ticket_worktrees();
+    hook(&pair.a, dir, "session-end", &path);
+    assert_eq!(attention_records(&records(&pair.a, "ABC-1")).len(), 1);
+    hook(&pair.b, dir, "session-end", &path);
+    for key in ["ABC-1", "ABC-2"] {
+        let rs = records(&pair.b, key);
+        assert!(attention_records(&rs).is_empty(), "{key}: {rs:?}");
+    }
+    // An event added after the first call is recorded once, in the second checkout.
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text += &(typed(130, "later").to_string() + "\n");
+    std::fs::write(&path, text).unwrap();
+    hook(&pair.b, dir, "session-end", &path);
+    hook(&pair.b, dir, "session-end", &path);
+    let rs = records(&pair.b, "ABC-2");
+    let attention = attention_records(&rs);
+    assert_eq!(attention.len(), 1, "{rs:?}");
+    assert_eq!(attention[0]["typed"], 1, "{}", attention[0]);
+    assert_eq!(attention[0]["dialogs"], 0, "{}", attention[0]);
+    assert_eq!(attention[0]["questions"], 0, "{}", attention[0]);
+    assert_eq!(attention[0]["from"], "2026-01-01T11:02:10.000Z", "{}", attention[0]);
+    assert_eq!(attention_records(&records(&pair.a, "ABC-1")).len(), 1);
 }
 
 /// A planted attention record of the transcript `transcript` with `to` at `to`.
@@ -340,6 +365,23 @@ fn cursor_across_tickets() {
         assert_eq!(r["from"], "2026-01-01T11:01:25.000Z", "{cursor}: {r}");
         assert_eq!(r["to"], "2026-01-01T11:01:40.000Z", "{cursor}: {r}");
     }
+
+    // The cursor is in another checkout of the repository: the first call ran in `a`, the second in `b`.
+    let pair = common::two_ticket_worktrees();
+    hook(&pair.a, dir, "session-end", &path);
+    assert_eq!(attention_records(&records(&pair.a, "ABC-1")).len(), 1);
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text += &(typed(130, "later").to_string() + "\n");
+    std::fs::write(&path, text).unwrap();
+    hook(&pair.b, dir, "session-end", &path);
+    let rs = records(&pair.b, "ABC-2");
+    let attention = attention_records(&rs);
+    assert_eq!(attention.len(), 1, "{rs:?}");
+    assert_eq!(attention[0]["typed"], 1, "{}", attention[0]);
+    assert_eq!(attention[0]["dialogs"], 0, "{}", attention[0]);
+    assert_eq!(attention[0]["questions"], 0, "{}", attention[0]);
+    assert_eq!(attention[0]["from"], "2026-01-01T11:02:10.000Z", "{}", attention[0]);
+    assert!(attention_records(&records(&pair.b, "ABC-1")).is_empty());
 }
 
 #[test]
