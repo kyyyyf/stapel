@@ -29,4 +29,5 @@ pub mod tickets;
 pub mod time;
 pub mod tokens;
 pub mod triage;
+pub mod ts_tests;
 pub mod worktree;
