@@ -625,3 +625,188 @@ fn report_counts_steps_after_a_merge() {
     );
     assert_eq!(steps_line(&text), "steps: 2; wall time: 20 min");
 }
+
+/// One assistant message line with a model, a session, an optional agent and the four counts.
+fn model_line(sec: u32, id: &str, model: &str, session: &str, agent: Option<&str>, n: [u64; 4]) -> Value {
+    let mut line = json!({
+        "type": "assistant", "timestamp": time(sec), "sessionId": session, "isSidechain": agent.is_some(),
+        "message": {
+            "id": id, "model": model, "role": "assistant", "content": [{"type": "text", "text": "done"}],
+            "usage": {
+                "input_tokens": n[0], "output_tokens": n[1],
+                "cache_read_input_tokens": n[2], "cache_creation_input_tokens": n[3],
+            },
+            "stop_reason": "end_turn",
+        },
+    });
+    if let Some(agent) = agent {
+        line["agentId"] = json!(agent);
+    }
+    line
+}
+
+/// The main transcript of `events_transcript` with a message of a second model at 11:00:30; the
+/// last message of the file has no final line when `with_last_message` is set.
+fn measure_main(dir: &Path, with_last_message: bool) -> PathBuf {
+    let h = "claude-haiku-4-5-20251001";
+    let mut lines = vec![
+        typed(1, "hello"),
+        assistant(5, "m1", Some(("d1", "Bash", json!({"command": "ls"}))), true),
+        result(20, "d1", "user_temporary"),
+        assistant(25, "m2", Some(("q1", "AskUserQuestion", json!({"questions": [{"question": "a"}, {"question": "b"}]}))), true),
+        model_line(30, "h1", h, "s-hook", None, [11, 22, 33, 44]),
+        result(85, "q1", "user_temporary"),
+        assistant(90, "m3", Some(("d2", "Bash", json!({"command": "pwd"}))), true),
+        result(100, "d2", "user_permanent"),
+    ];
+    if with_last_message {
+        lines.push(assistant(110, "m4", None, false));
+    }
+    write(dir, "main.jsonl", &lines)
+}
+
+/// `<dir>/s-hook/subagents` with two files of the session, one of another session and a note.
+fn measure_subagents(dir: &Path) {
+    let h = "claude-haiku-4-5-20251001";
+    let folder = dir.join("s-hook/subagents");
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = |name: &str, lines: Vec<Value>| {
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(folder.join(name), text).unwrap();
+    };
+    file(
+        "agent-a1.jsonl",
+        vec![model_line(3000, "x1", S, "s-hook", Some("agent-a1"), [10, 20, 30, 40])],
+    );
+    file(
+        "agent-a2.jsonl",
+        vec![
+            model_line(3001, "x2", S, "s-hook", Some("agent-a2"), [100, 200, 300, 400]),
+            model_line(3002, "x3", h, "s-hook", Some("agent-a2"), [1000, 2000, 3000, 4000]),
+        ],
+    );
+    file(
+        "agent-b1.jsonl",
+        vec![model_line(3003, "x4", S, "s-other", Some("agent-b1"), [7, 7, 7, 7])],
+    );
+    std::fs::write(folder.join("notes.txt"), "not a transcript\n").unwrap();
+}
+
+fn golden_measure() -> String {
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/tokens_measure.txt")).unwrap()
+}
+
+#[test]
+fn measure_prints_tokens_and_attention() {
+    let dir = common::bare_dir();
+    let dir = dir.path();
+    let main = measure_main(dir, true);
+    measure_subagents(dir);
+    let before = common::snapshot(dir);
+    let out = stapel(dir).args(["tokens", "measure"]).arg(&main).assert().success().get_output().clone();
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), golden_measure());
+    assert_eq!(out.stderr, b"");
+    assert_eq!(common::snapshot(dir), before);
+
+    // A relative path and a link to the file give the same output.
+    stapel(dir)
+        .args(["tokens", "measure", "main.jsonl"])
+        .assert()
+        .success()
+        .stdout(golden_measure());
+    let linked = tempfile::tempdir().unwrap();
+    let link = linked.path().join("link.jsonl");
+    std::os::unix::fs::symlink(&main, &link).unwrap();
+    let text = stapel(dir).args(["tokens", "measure"]).arg(&link).assert().success().get_output().stdout.clone();
+    assert!(String::from_utf8(text).unwrap().starts_with("transcript: s-hook\n"));
+
+    // Without a subagent folder: the main rows only; a final last message has no `≥`.
+    let alone = tempfile::tempdir().unwrap();
+    let main = measure_main(alone.path(), false);
+    let text = stapel(alone.path()).args(["tokens", "measure"]).arg(&main).assert().success().get_output().stdout.clone();
+    let text = String::from_utf8(text).unwrap();
+    assert!(!text.contains("subagents"), "{text}");
+    assert!(!text.contains('≥'), "{text}");
+    assert_eq!(text.lines().filter(|l| l.starts_with("main ")).count(), 2, "{text}");
+    let sonnet = text.lines().find(|l| l.contains(S)).unwrap();
+    let cells: Vec<&str> = sonnet.split_whitespace().collect();
+    assert_eq!(cells, ["main", S, "3", "6", "9", "12"], "{text}");
+    assert!(text.ends_with("wall time: 1 min\n"), "{text}");
+
+    // One timed line: no time passes.
+    let one = tempfile::tempdir().unwrap();
+    let path = write(one.path(), "one.jsonl", &[]);
+    let text = stapel(one.path()).args(["tokens", "measure"]).arg(&path).assert().success().get_output().stdout.clone();
+    let text = String::from_utf8(text).unwrap();
+    assert!(text.starts_with("transcript: s-hook\n"), "{text}");
+    assert!(text.ends_with("wall time: 0 min\n"), "{text}");
+}
+
+#[test]
+fn measure_outside_a_repository() {
+    // A folder that is neither a stapel nor a git repository.
+    let dir = common::bare_dir();
+    let dir = dir.path();
+    let main = measure_main(dir, true);
+    measure_subagents(dir);
+    let before = common::snapshot(dir);
+    stapel(dir)
+        .args(["tokens", "measure"])
+        .arg(&main)
+        .assert()
+        .code(0)
+        .stdout(golden_measure())
+        .stderr("");
+    assert_eq!(common::snapshot(dir), before);
+}
+
+#[test]
+fn measure_refuses_bad_files() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = common::bare_dir();
+    let dir = dir.path();
+    let missing = dir.join("missing.jsonl");
+    let folder = dir.join("folder");
+    std::fs::create_dir(&folder).unwrap();
+    let fifo = dir.join("fifo.jsonl");
+    assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    let no_session = dir.join("no-session.jsonl");
+    std::fs::write(&no_session, "{\"type\":\"user\",\"timestamp\":\"2026-01-01T11:00:00.000Z\"}\n").unwrap();
+    let subagent = dir.join("subagent.jsonl");
+    let line = model_line(5, "s1", S, "s-hook", Some("agent-a1"), [1, 2, 3, 4]);
+    std::fs::write(&subagent, format!("{line}\n")).unwrap();
+    let locked = dir.join("locked.jsonl");
+    std::fs::write(&locked, "{\"sessionId\":\"s\"}\n").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let mut cases = vec![
+        (missing, "missing"),
+        (folder, "not a file"),
+        (fifo, "not a file"),
+        (no_session, "no sessionId"),
+        (subagent, "subagent"),
+    ];
+    // A process that may read any file cannot make a file unreadable.
+    if std::fs::File::open(&locked).is_err() {
+        cases.push((locked, "not readable"));
+    }
+    for (path, reason) in &cases {
+        let out = stapel(dir)
+            .args(["tokens", "measure"])
+            .arg(path)
+            .timeout(std::time::Duration::from_secs(20))
+            .assert()
+            .code(2)
+            .get_output()
+            .clone();
+        assert_eq!(out.stdout, b"", "{path:?}");
+        let err = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(err.trim_end().lines().count(), 1, "{path:?}: {err}");
+        assert!(err.contains(path.to_str().unwrap()), "{path:?}: {err}");
+        assert!(err.contains(reason), "{path:?} {reason}: {err}");
+    }
+
+    // No argument: the usage text.
+    let out = stapel(dir).args(["tokens", "measure"]).assert().code(2).get_output().clone();
+    assert_eq!(out.stdout, b"");
+    assert!(String::from_utf8(out.stderr).unwrap().contains("Usage"));
+}
