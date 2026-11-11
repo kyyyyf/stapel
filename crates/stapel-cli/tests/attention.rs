@@ -219,3 +219,55 @@ fn session_end_appends_the_rest() {
     assert_eq!(rs[1]["hook"], "session-end", "{}", rs[1]);
     check_numbers(&rs[1]);
 }
+
+#[test]
+fn subagent_stop_has_no_attention() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let dir = elsewhere.path();
+
+    // A subagent transcript: a call and its result of source `user_temporary`, every line with an agent id.
+    let mut lines = vec![
+        assistant(5, "m1", Some(("d1", "Bash", json!({"command": "ls"}))), true),
+        result(20, "d1", "user_temporary"),
+        assistant(25, "m2", None, true),
+    ];
+    for line in &mut lines {
+        line["agentId"] = json!("agent-hook");
+        line["isSidechain"] = json!(true);
+    }
+    let mut text = String::new();
+    for line in &lines {
+        text.push_str(&line.to_string());
+        text.push('\n');
+    }
+    let path = dir.join("sub.jsonl");
+    std::fs::write(&path, text).unwrap();
+
+    // The subagent-stop hook: the token records, no attention record.
+    let repo = repo_with_ticket();
+    let input = json!({
+        "hook_event_name": "SubagentStop",
+        "session_id": "s-hook",
+        "cwd": dir,
+        "agent_type": "stapel-builder",
+        "agent_transcript_path": path,
+    });
+    stapel(dir)
+        .env("CLAUDE_PROJECT_DIR", repo.path())
+        .args(["hook", "subagent-stop"])
+        .write_stdin(input.to_string())
+        .assert()
+        .success()
+        .stdout("");
+    let rs = records(repo.path(), "ABC-1");
+    assert!(!rs.is_empty(), "{rs:?}");
+    assert!(rs.iter().all(|r| r["hook"] == "subagent-stop"), "{rs:?}");
+    assert!(attention_records(&rs).is_empty(), "{rs:?}");
+
+    // The session-end hook given the same subagent transcript (an identity with an agent part): no attention record.
+    let repo = repo_with_ticket();
+    hook(repo.path(), dir, "session-end", &path);
+    let rs = records(repo.path(), "ABC-1");
+    assert!(!rs.is_empty(), "{rs:?}");
+    assert!(attention_records(&rs).is_empty(), "{rs:?}");
+}
