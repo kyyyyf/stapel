@@ -341,3 +341,72 @@ fn cursor_across_tickets() {
         assert_eq!(r["to"], "2026-01-01T11:01:40.000Z", "{cursor}: {r}");
     }
 }
+
+#[test]
+fn events_split_by_worktree() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let dir = elsewhere.path();
+    let repo = repo_with_ticket();
+    let root = repo.path().display().to_string();
+    let with_cwd = |mut line: Value, cwd: Value| {
+        line["cwd"] = cwd;
+        line
+    };
+    let tree = |key: &str| json!(format!("{root}/.claude/worktrees/{key}/crates"));
+
+    // Events of the closed ticket ABC-1 come first, the events of the rest later.
+    let lines = vec![
+        with_cwd(typed(1, "hello"), tree("ABC-1")),
+        assistant(5, "m1", Some(("d1", "Bash", json!({"command": "ls"}))), true),
+        with_cwd(result(20, "d1", "user_temporary"), tree("ABC-1")),
+        assistant(25, "m2", Some(("q1", "AskUserQuestion", json!({"questions": [{"question": "a"}, {"question": "b"}]}))), true),
+        // The main checkout: no worktree ticket.
+        with_cwd(result(85, "q1", "user_temporary"), json!(root)),
+        assistant(90, "m3", Some(("d2", "Bash", json!({"command": "pwd"}))), true),
+        // A worktree of a key with no ticket: no worktree ticket.
+        with_cwd(result(100, "d2", "user_permanent"), tree("ZZZ-9")),
+        // No `cwd` at all, then a `cwd` that is a number.
+        typed(105, "no folder"),
+        with_cwd(typed(106, "a number"), json!(7)),
+    ];
+    let path = write(dir, "split.jsonl", &lines);
+
+    stapel(repo.path()).args(["new", "Second"]).assert().success();
+    let closed = tokens_path(repo.path(), "ABC-1");
+    std::fs::write(&closed, "").unwrap();
+    stapel(repo.path()).args(["close", "ABC-1", "--reason", "merged"]).assert().success();
+
+    hook(repo.path(), dir, "session-end", &path);
+    let first_1 = std::fs::read_to_string(&closed).unwrap();
+    let first_2 = std::fs::read_to_string(tokens_path(repo.path(), "ABC-2")).unwrap();
+
+    // ABC-1: the events of its worktree.
+    let rs = records(repo.path(), "ABC-1");
+    let attention = attention_records(&rs);
+    assert_eq!(attention.len(), 1, "{rs:?}");
+    let r = attention[0];
+    assert_eq!(r["ticket"], "ABC-1", "{r}");
+    assert_eq!(r["typed"], 1, "{r}");
+    assert_eq!(r["dialogs"], 1, "{r}");
+    assert_eq!(r["questions"], 0, "{r}");
+    assert_eq!(r["waited_ms"], 15_000, "{r}");
+    assert_eq!(r["from"], "2026-01-01T11:00:01.000Z", "{r}");
+    assert_eq!(r["to"], "2026-01-01T11:00:20.000Z", "{r}");
+
+    // ABC-2, the target ticket: the rest.
+    let rs = records(repo.path(), "ABC-2");
+    let attention = attention_records(&rs);
+    assert_eq!(attention.len(), 1, "{rs:?}");
+    let r = attention[0];
+    assert_eq!(r["ticket"], "ABC-2", "{r}");
+    assert_eq!(r["typed"], 2, "{r}");
+    assert_eq!(r["dialogs"], 1, "{r}");
+    assert_eq!(r["questions"], 2, "{r}");
+    assert_eq!(r["from"], "2026-01-01T11:01:25.000Z", "{r}");
+    assert_eq!(r["to"], "2026-01-01T11:01:46.000Z", "{r}");
+
+    // The same call again: the cursor is the latest `to` of the attention records, so nothing is added.
+    hook(repo.path(), dir, "session-end", &path);
+    assert_eq!(std::fs::read_to_string(&closed).unwrap(), first_1);
+    assert_eq!(std::fs::read_to_string(tokens_path(repo.path(), "ABC-2")).unwrap(), first_2);
+}
