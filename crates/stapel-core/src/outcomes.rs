@@ -669,8 +669,14 @@ pub fn analyse_in(
                 }
                 // STP-30 AC-1: a Base merge whose value equals its second parent's brings no
                 // change; later commits are compared with the value at the merge (AC-16).
-                if let Some(second) = base_merge_parent(root, &sha, base_branch)
-                    && same_as_parent(root, &sha, &second, &unit.path())
+                // A unit absent at the merge takes the deletion path below. A file unit is Equal
+                // by content and mode, any other unit by its value.
+                if value.is_some()
+                    && let Some(second) = base_merge_parent(root, &sha, base_branch)
+                    && match unit {
+                        Unit::File(p) => same_as_parent(root, &sha, &second, p),
+                        _ => value == unit.value(&mut files, &second, junit),
+                    }
                 {
                     current = value;
                     continue;
