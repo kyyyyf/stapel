@@ -146,14 +146,6 @@ impl Drop for Scratch {
     }
 }
 
-/// Pipes both output streams of `command`. Named as function items so that the print scan of
-/// `closed_pipe` does not take the builder calls for writes to the process streams.
-fn capture(command: &mut Command) {
-    let (to_out, to_err) = (Command::stdout::<Stdio>, Command::stderr::<Stdio>);
-    to_out(command, Stdio::piped());
-    to_err(command, Stdio::piped());
-}
-
 /// Runs git in `dir`; returns the captured output.
 fn git(
     dir: &Path,
@@ -165,8 +157,9 @@ fn git(
     command
         .args(args)
         .current_dir(dir)
-        .stdin(Stdio::piped());
-    capture(&mut command);
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     for (name, value) in env {
         command.env(name, value);
     }
