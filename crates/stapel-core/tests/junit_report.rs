@@ -378,3 +378,30 @@ fn skips_content_of_unknown_elements() {
     .expect_err("unbalanced tag inside system-out");
     assert!(!err.is_empty());
 }
+
+#[test]
+fn root_reason_before_attributes() {
+    for (text, cause) in [
+        (r#"<foo a="&bar;"/>"#, "unknown root"),
+        (r#"<testsuites/><foo a="&bar;"/>"#, "more than one root element"),
+        (r#"<testsuites/><testsuites a="&bar;"/>"#, "more than one root element"),
+        ("<testsuites/><!-- c --><![CDATA[x]]>", "text outside"),
+        ("<foo><![CDATA[x]]></foo>", "unknown root"),
+    ] {
+        let err = read(text).expect_err(text);
+        assert!(err.contains(cause), "{text}: `{err}` lacks `{cause}`");
+        assert!(!err.contains("entity"), "{text}: `{err}` names the entity");
+    }
+}
+
+#[test]
+fn known_elements_still_decode() {
+    for text in [
+        r#"<testsuites><testsuite name="s"><testcase name="&bogus;"/></testsuite></testsuites>"#,
+        r#"<testsuites><testsuite name="&bogus;"/></testsuites>"#,
+        r#"<testsuites a="&bogus;"/>"#,
+    ] {
+        let err = read(text).expect_err(text);
+        assert!(err.contains("bogus"), "{text}: `{err}` lacks the entity");
+    }
+}
