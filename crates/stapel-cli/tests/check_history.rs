@@ -1263,6 +1263,78 @@ fn base_merge_mode_change_blocks() {
     );
 }
 
+// ---- STP-30 AC-1, AC-2 ----
+
+#[test]
+fn base_merge_data_file_is_no_tests_change() {
+    /// A ticket with `base_branch` main: a data file under `crates/tiny/tests/` on main, step 1, a
+    /// merge of main that brings a new text of the file (resolved to another text when `resolved`).
+    /// Returns the history output and the merge commit.
+    fn scenario(resolved: bool) -> (String, String) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        let main = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        write(dir, "crates/tiny/tests/data/table.txt", "one\n");
+        commit(dir, "a data file");
+        let mut state = common::state_json(dir, "ABC-1");
+        state["base_branch"] = serde_json::json!(main);
+        state["base"] = serde_json::json!(git(dir, &["rev-parse", "HEAD"]).trim());
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base branch");
+        git(dir, &["checkout", "-q", "-b", "ticket"]);
+        clean_pair(dir, "step 1", "one");
+        git(dir, &["checkout", "-q", &main]);
+        write(dir, "crates/tiny/tests/data/table.txt", "two\n");
+        commit(dir, "main: a new table");
+        git(dir, &["checkout", "-q", "ticket"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=test-user",
+                "-c",
+                "user.email=test-user.invalid",
+                "merge",
+                "-q",
+                "--no-ff",
+                "--no-commit",
+                &main,
+            ],
+        );
+        if resolved {
+            write(dir, "crates/tiny/tests/data/table.txt", "three\n");
+        }
+        commit(dir, "ABC-1: merge main");
+        let merge = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        let (_, text, _) = history(dir);
+        (text, merge)
+    }
+
+    let step_one = |text: &str| {
+        text.lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("no step 1:\n{text}"))
+            .to_string()
+    };
+
+    let (text, _) = scenario(false);
+    assert_eq!(step_one(&text), "step 1: needs-run", "{text}");
+
+    let (text, merge) = scenario(true);
+    assert_eq!(
+        step_one(&text),
+        "step 1: tests-changed: crates/tiny/tests/data/table.txt",
+        "{text}"
+    );
+    assert!(text.contains(&merge[..7]), "the fault is the merge: {text}");
+}
+
 // ---- STP-28 step 23 (AC-37) ----
 
 #[test]

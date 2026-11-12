@@ -1596,6 +1596,99 @@ fn merge_of_the_base_branch_blocks_nothing() {
     }
 }
 
+// STP-30 AC-1, AC-2: a fixture `a b.json` that a merge of the base branch brings into the folder of a
+// step test reads `tests-changed` only when the merge resolves it to other text.
+#[test]
+fn base_merge_fixture_is_no_tests_change() {
+    let scenario = |resolved: bool| {
+        let repo = junit_repo();
+        let dir = repo.dir();
+        let main = git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        let path = dir.join(".stapel/tickets/ABC-1/state.json");
+        let mut state: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        state["base_branch"] = serde_json::json!(main);
+        std::fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+        commit(dir, "ABC-1: base branch");
+        git_in(dir, &["checkout", "-q", "-b", "ticket"]);
+        write(
+            dir,
+            "__tests__/f.test.ts",
+            "it(\"fixed\", () => { /* needs src/f.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 1 RED: fixed");
+        write(dir, "src/f.ts", "export const f = 1;\n");
+        commit(dir, "ABC-1 step 1 GREEN: fixed");
+        git_in(dir, &["checkout", "-q", &main]);
+        write(dir, "__tests__/a b.json", "{\"a\": 1}\n");
+        commit(dir, "main: a fixture");
+        git_in(dir, &["checkout", "-q", "ticket"]);
+        git_in(dir, &["merge", "-q", "--no-ff", "--no-commit", &main]);
+        if resolved {
+            write(dir, "__tests__/a b.json", "{\"a\": 2}\n");
+        }
+        commit(dir, "ABC-1: merge main");
+        let merge = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        let (_, text) = stdout(dir, &["check", "ABC-1", "--history"]);
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("no step 1:\n{text}"))
+            .to_string();
+        (line, merge, text)
+    };
+    let (line, _, text) = scenario(false);
+    assert_eq!(line, "step 1: needs-run", "{text}");
+    let (line, merge, text) = scenario(true);
+    assert_eq!(line, "step 1: tests-changed: __tests__/a b.json", "{text}");
+    assert!(text.contains(&merge[..7]), "the fault is the merge: {text}");
+}
+
+// STP-30 AC-16: after an equal merge, an edit of the fixture is compared with its value at the merge
+// and reads `tests-changed`.
+#[test]
+fn base_merge_then_edit_is_tests_change() {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    let main = git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .trim()
+        .to_string();
+    let path = dir.join(".stapel/tickets/ABC-1/state.json");
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    state["base_branch"] = serde_json::json!(main);
+    std::fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+    commit(dir, "ABC-1: base branch");
+    git_in(dir, &["checkout", "-q", "-b", "ticket"]);
+    write(
+        dir,
+        "__tests__/f.test.ts",
+        "it(\"fixed\", () => { /* needs src/f.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: fixed");
+    write(dir, "src/f.ts", "export const f = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: fixed");
+    git_in(dir, &["checkout", "-q", &main]);
+    write(dir, "__tests__/a b.json", "{\"a\": 1}\n");
+    commit(dir, "main: a fixture");
+    git_in(dir, &["checkout", "-q", "ticket"]);
+    git_in(dir, &["merge", "-q", "--no-ff", "--no-commit", &main]);
+    commit(dir, "ABC-1: merge main");
+    let (_, text) = stdout(dir, &["check", "ABC-1", "--history"]);
+    assert!(text.contains("step 1: needs-run"), "equal merge: {text}");
+    write(dir, "__tests__/a b.json", "{\"a\": 3}\n");
+    commit(dir, "ABC-1: edit the fixture");
+    let edit = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let (_, text) = stdout(dir, &["check", "ABC-1", "--history"]);
+    assert!(
+        text.contains("step 1: tests-changed: __tests__/a b.json"),
+        "{text}"
+    );
+    assert!(text.contains(&edit[..7]), "the fault is the edit: {text}");
+}
+
 // AC-21, AC-34: a report that is a FIFO, a folder or a symbolic link is unverified with its kind in
 // the reason, for a Per-file run and for the suite; no read blocks.
 #[test]
