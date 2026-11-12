@@ -1897,3 +1897,54 @@ fn absolute_script_missing_at_commit() {
     assert!(step_one(&text).contains("did not start"), "{text}");
     assert!(repo.runs().is_empty(), "{:?}", repo.runs());
 }
+
+// STP-30 AC-10: a `stapel.toml` that exists and fails to load stops `check --history`, `lint` and
+// `next` with the load fault; none judges a step. An absent file keeps today's message.
+#[test]
+fn broken_config_is_refused() {
+    let broken: [(&str, &str, &str); 3] = [
+        ("a syntax error", "[check\nrunner = junit\n", "stapel.toml"),
+        ("an unknown runner", "", "runner"),
+        ("a folder", "", "Is a directory"),
+    ];
+    for (what, body, fault) in broken {
+        let repo = junit_repo();
+        let dir = repo.dir();
+        let path = dir.join(".stapel/stapel.toml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("runner = \"junit\""), "{text}");
+        std::fs::remove_file(&path).unwrap();
+        match what {
+            "a folder" => std::fs::create_dir(&path).unwrap(),
+            "an unknown runner" => std::fs::write(
+                &path,
+                text.replace("runner = \"junit\"", "runner = \"gradle\""),
+            )
+            .unwrap(),
+            _ => std::fs::write(&path, body).unwrap(),
+        }
+        for (args, want) in [
+            (vec!["check", "--history"], 2),
+            (vec!["lint"], 2),
+            (vec!["next"], 1),
+        ] {
+            let (code, text) = stdout(dir, &args);
+            assert_eq!(code, want, "{what}: {args:?}: {text}");
+            assert!(text.contains(fault), "{what}: {args:?}: {text}");
+            assert!(
+                !text.contains("run stapel init"),
+                "{what}: {args:?} reads it as absent: {text}"
+            );
+            assert!(!text.contains("step 1"), "{what}: {args:?}: {text}");
+        }
+    }
+    // An absent file keeps today's message.
+    let repo = junit_repo();
+    let dir = repo.dir();
+    std::fs::remove_file(dir.join(".stapel/stapel.toml")).unwrap();
+    for args in [vec!["check", "--history"], vec!["lint"]] {
+        let (code, text) = stdout(dir, &args);
+        assert_eq!(code, 2, "{args:?}: {text}");
+        assert!(text.contains("no .stapel/stapel.toml here or above"), "{args:?}: {text}");
+    }
+}
