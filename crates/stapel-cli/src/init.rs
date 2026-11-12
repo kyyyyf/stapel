@@ -882,11 +882,11 @@ fn plan_pre_push(root: &Path, local: bool, plan: &mut Vec<Step>) -> Result<Optio
     match std::fs::read(&path) {
         Ok(bytes) if String::from_utf8_lossy(&bytes).contains(PRE_PUSH_MARKER) => {
             let text = String::from_utf8_lossy(&bytes).into_owned();
-            if local && !text.contains(LOCAL_MARKER) {
+            if text != wanted {
                 plan.push(Step {
                     rel: path.display().to_string(),
                     content: wanted.into(),
-                    label: format!("updated: {rel} (pre-push: refuses .stapel/ in new commits)"),
+                    label: format!("updated: {rel} (pre-push)"),
                     executable: true,
                 });
             } else if !is_executable(&path) {
