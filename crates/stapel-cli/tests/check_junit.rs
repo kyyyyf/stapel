@@ -2076,3 +2076,116 @@ fn broken_config_is_refused() {
         assert!(text.contains("no .stapel/stapel.toml here or above"), "{args:?}: {text}");
     }
 }
+
+// STP-30 AC-1, AC-2 (d2-1, d2-2, d2-3): a step test call at a merge of the base branch is compared
+// by its value, and by its mode only for a file unit; a deletion by the merge keeps the protected text.
+#[test]
+fn base_merge_step_test_unit() {
+    const FILE: &str = "__tests__/f.test.ts";
+    const MAIN_TEXT: &str = "it(\"fixed\", () => { /* needs src/f.ts, main */ });\n";
+
+    /// A ticket with `base_branch` main: step 1 adds the call `fixed`. For `equal`, `mode`, `third`
+    /// and `first` main adds the same file with another call text and the merge resolves it by
+    /// `kind`; for `deleted-same` and `deleted-other` main adds a note and the merge deletes the file,
+    /// which a later commit adds again with the protected text or another one. Returns the history
+    /// output and the last commit.
+    fn scenario(kind: &str) -> (String, String) {
+        let repo = junit_repo();
+        let dir = repo.dir();
+        let main = git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        let path = dir.join(".stapel/tickets/ABC-1/state.json");
+        let mut state: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        state["base_branch"] = serde_json::json!(main);
+        std::fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+        commit(dir, "ABC-1: base branch");
+        git_in(dir, &["checkout", "-q", "-b", "ticket"]);
+        let protected = "it(\"fixed\", () => { /* needs src/f.ts */ });\n";
+        write(dir, FILE, protected);
+        commit(dir, "ABC-1 step 1 RED: fixed");
+        write(dir, "src/f.ts", "export const f = 1;\n");
+        commit(dir, "ABC-1 step 1 GREEN: fixed");
+        let deleted = kind.starts_with("deleted");
+        git_in(dir, &["checkout", "-q", &main]);
+        if deleted {
+            write(dir, "NOTES.md", "notes\n");
+        } else {
+            write(dir, FILE, MAIN_TEXT);
+        }
+        commit(dir, "main: a change");
+        git_in(dir, &["checkout", "-q", "ticket"]);
+        // A conflict of the merge is no failure here: the test resolves it.
+        std::process::Command::new("git")
+            .args(["merge", "-q", "--no-ff", "--no-commit", &main])
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        match kind {
+            "equal" => write(dir, FILE, MAIN_TEXT),
+            "mode" => {
+                use std::os::unix::fs::PermissionsExt;
+                write(dir, FILE, MAIN_TEXT);
+                std::fs::set_permissions(dir.join(FILE), std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+            }
+            "third" => write(
+                dir,
+                FILE,
+                "it(\"fixed\", () => { /* needs src/f.ts, third */ });\n",
+            ),
+            "first" => write(dir, FILE, protected),
+            _ => std::fs::remove_file(dir.join(FILE)).unwrap(),
+        }
+        commit(dir, "ABC-1: merge main");
+        let mut last = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        if deleted {
+            let again = if kind == "deleted-same" {
+                protected
+            } else {
+                "it(\"fixed\", () => { /* needs src/f.ts, again */ });\n"
+            };
+            write(dir, FILE, again);
+            commit(dir, "ABC-1: add the test file again");
+            last = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        }
+        let (_, text) = stdout(dir, &["check", "ABC-1", "--history"]);
+        (text, last)
+    }
+    let step_one = |text: &str| {
+        text.lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("no step 1:\n{text}"))
+            .to_string()
+    };
+
+    // Equal to the second parent, and a mode change with an equal blob: no `tests-changed`.
+    for kind in ["equal", "mode"] {
+        let (text, _) = scenario(kind);
+        assert_eq!(step_one(&text), "step 1: needs-run", "{kind}: {text}");
+    }
+
+    // The first parent's text keeps the protected text.
+    let (text, _) = scenario("first");
+    assert_eq!(step_one(&text), "step 1: needs-run", "first: {text}");
+
+    // A text that is not the second parent's: `tests-changed` at the merge.
+    let (text, merge) = scenario("third");
+    assert!(
+        step_one(&text).starts_with("step 1: tests-changed: "),
+        "third: {text}"
+    );
+    assert!(text.contains(&merge[..7]), "the fault is the merge: {text}");
+
+    // Deleted by the merge: a later re-add is compared with the protected text.
+    let (text, _) = scenario("deleted-same");
+    assert_eq!(step_one(&text), "step 1: needs-run", "deleted-same: {text}");
+    let (text, again) = scenario("deleted-other");
+    assert!(
+        step_one(&text).starts_with("step 1: tests-changed: "),
+        "deleted-other: {text}"
+    );
+    assert!(text.contains(&again[..7]), "the fault is the re-add: {text}");
+}
