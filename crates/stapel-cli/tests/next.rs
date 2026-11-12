@@ -2586,3 +2586,113 @@ fn next_walks_from_the_base() {
     let dir = repo.path();
     assert_eq!(facts(dir).len(), 1, "{:?}", facts(dir));
 }
+
+// STP-31 AC-20: in Local mode a missing, stale or foreign pre-push hook is the first fact.
+#[test]
+fn local_mode_names_a_missing_pre_push() {
+    use std::os::unix::fs::PermissionsExt;
+
+    const HOOK: &str = ".git/hooks/pre-push";
+    const FACT: &str = "blocked: the stapel pre-push hook is missing or stale at ";
+
+    fn make_local(dir: &Path) {
+        let path = dir.join(".stapel/stapel.toml");
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("\n[repository]\nhistory = \"local\"\n");
+        std::fs::write(path, text).unwrap();
+    }
+
+    // The text and the JSON line must both name the fact first, then the action `init`.
+    fn assert_missing(dir: &Path, at: &str, ticket: bool) {
+        let text = output(dir, &[], 0);
+        let lines: Vec<&str> = text.lines().collect();
+        let first = lines
+            .iter()
+            .position(|l| l.starts_with("blocked: "))
+            .unwrap_or_else(|| panic!("no fact in: {text}"));
+        assert!(
+            lines[first].starts_with(FACT) && lines[first].ends_with("; run stapel init"),
+            "{text}"
+        );
+        assert!(lines[first].contains(at), "{text}");
+        assert_eq!(*lines.last().unwrap(), "next: init — stapel init", "{text}");
+        if ticket {
+            assert!(lines[0].starts_with("ticket: ABC-1"), "{text}");
+        }
+        let json = output(dir, &["--json"], 0);
+        let v: serde_json::Value = serde_json::from_str(json.trim()).unwrap();
+        let fact = v["facts"][0].as_str().unwrap();
+        assert!(
+            fact.starts_with(&FACT["blocked: ".len()..]) && fact.contains(at),
+            "{json}"
+        );
+        assert_eq!(v["action"], "init", "{json}");
+        assert_eq!(v["command"], "stapel init", "{json}");
+    }
+
+    fn no_fact(dir: &Path) {
+        let text = output(dir, &[], 0);
+        assert!(!text.contains("pre-push hook is missing"), "{text}");
+        assert!(!text.contains("next: init"), "{text}");
+    }
+
+    // The hook in place: no fact.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    make_local(dir);
+    stapel(dir).arg("init").assert().success();
+    no_fact(dir);
+
+    // The hook with the shared text is stale.
+    std::fs::write(
+        dir.join(HOOK),
+        "#!/bin/sh\n# stapel: pre-push guard, installed by `stapel init`.\nexit 0\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(dir.join(HOOK), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_missing(dir, HOOK, true);
+    stapel(dir).arg("init").assert().success();
+    no_fact(dir);
+
+    // Not executable.
+    std::fs::set_permissions(dir.join(HOOK), std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_missing(dir, HOOK, true);
+    stapel(dir).arg("init").assert().success();
+    no_fact(dir);
+
+    // Deleted.
+    std::fs::remove_file(dir.join(HOOK)).unwrap();
+    assert_missing(dir, HOOK, true);
+    stapel(dir).arg("init").assert().success();
+    no_fact(dir);
+
+    // A foreign hook.
+    std::fs::write(dir.join(HOOK), "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(dir.join(HOOK), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_missing(dir, HOOK, true);
+
+    // `core.hooksPath` set to a folder without a hook.
+    std::fs::write(
+        dir.join(HOOK),
+        "#!/bin/sh\n# stapel: pre-push guard, installed by `stapel init`.\nexit 0\n",
+    )
+    .unwrap();
+    common::git_config(dir, "core.hooksPath", ".husky");
+    std::fs::create_dir_all(dir.join(".husky")).unwrap();
+    assert_missing(dir, ".husky/pre-push", true);
+
+    // No open ticket: the fact still comes first, and the action is `init`.
+    let repo = common::stapel_repo();
+    let dir = repo.path();
+    make_local(dir);
+    std::fs::remove_file(dir.join(HOOK)).unwrap();
+    assert_missing(dir, HOOK, false);
+    stapel(dir).arg("init").assert().success();
+    no_fact(dir);
+
+    // Shared mode without a hook: no fact.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    std::fs::remove_file(dir.join(HOOK)).unwrap();
+    no_fact(dir);
+}
