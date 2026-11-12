@@ -61,7 +61,9 @@ impl Reader {
             } else {
                 let end = rest.find('<').unwrap_or(rest.len());
                 let (chunk, tail) = rest.split_at(end);
-                decode(chunk)?;
+                if self.unknown == 0 {
+                    decode(chunk)?;
+                }
                 if self.stack.is_empty() && !chunk.trim().is_empty() {
                     return Err("the report has text outside its root element".into());
                 }
@@ -86,6 +88,9 @@ impl Reader {
             return skip_to(r, "-->", "a comment");
         }
         if let Some(r) = after.strip_prefix("![CDATA[") {
+            if self.stack.is_empty() {
+                return Err("the report has text outside its root element".into());
+            }
             return skip_to(r, "]]>", "a CDATA section");
         }
         if after.starts_with('!') {
@@ -97,7 +102,7 @@ impl Reader {
             self.close(name)?;
             return Ok(&r[end + 1..]);
         }
-        let (name, attrs, empty, tail) = open_tag(after)?;
+        let (name, attrs, empty, tail) = open_tag(after, self.unknown == 0)?;
         self.open(name, &attrs)?;
         if empty {
             self.close(name)?;
@@ -114,12 +119,15 @@ impl Reader {
             false
         } else {
             match (name, parent) {
+                (_, None) if self.roots > 0 => {
+                    return Err("the report has more than one root element".into());
+                }
                 ("testsuites" | "testsuite", None) => {
                     self.roots += 1;
-                    if self.roots > 1 {
-                        return Err("the report has more than one root element".into());
-                    }
                     true
+                }
+                (_, None) => {
+                    return Err(format!("unknown root <{name}>: the report has no <testsuites> element"));
                 }
                 ("testsuite", Some("testsuites")) => true,
                 ("testcase", Some("testsuite")) => true,
@@ -201,9 +209,9 @@ fn skip_to<'a>(text: &'a str, end: &str, what: &str) -> Result<&'a str, String> 
 }
 
 /// Reads `name attr="v" ... (/)>` after a `<`; returns the name, the decoded attributes, whether the
-/// tag is empty (`/>`), and the text after the tag.
+/// tag is empty (`/>`), and the text after the tag. Values are not decoded when `decode_values` is false.
 #[allow(clippy::type_complexity)]
-fn open_tag(after: &str) -> Result<(&str, Vec<(String, String)>, bool, &str), String> {
+fn open_tag(after: &str, decode_values: bool) -> Result<(&str, Vec<(String, String)>, bool, &str), String> {
     let name_end = after
         .find(|c: char| c.is_whitespace() || c == '/' || c == '>')
         .ok_or("a tag is not closed")?;
@@ -234,7 +242,8 @@ fn open_tag(after: &str) -> Result<(&str, Vec<(String, String)>, bool, &str), St
         if body[..close].contains('<') {
             return Err(format!("an attribute of <{name}> holds `<`"));
         }
-        attrs.push((key.to_string(), decode(&body[..close])?));
+        let value = if decode_values { decode(&body[..close])? } else { String::new() };
+        attrs.push((key.to_string(), value));
         rest = &body[close + 1..];
     }
 }
