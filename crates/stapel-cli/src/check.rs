@@ -1052,13 +1052,19 @@ fn read_report_file(path: &Path, name: &str, what: &str) -> Result<Vec<u8>, Stri
         Some("a folder")
     } else if kind.is_fifo() {
         Some("a FIFO")
+    } else if kind.is_socket() {
+        Some("a socket")
+    } else if kind.is_block_device() {
+        Some("a block device")
+    } else if kind.is_char_device() {
+        Some("a character device")
     } else if !kind.is_file() {
-        Some("not a regular file")
+        Some("of an unknown kind")
     } else {
         None
     };
     if let Some(what_it_is) = not_regular {
-        return Err(format!("the report {name} of {what} is {what_it_is}, not a regular file"));
+        return Err(format!("the report {name} of {what} is {what_it_is}"));
     }
     if meta.len() > MAX_REPORT as u64 {
         return Err(format!("the report of {what} is over {} MiB", MAX_REPORT / 1024 / 1024));
