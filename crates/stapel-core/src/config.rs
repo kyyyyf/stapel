@@ -42,6 +42,23 @@ pub struct Config {
     /// `[roles]`: agent type to token role (STP-26); absent means the default rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roles: Option<BTreeMap<String, String>>,
+    /// `[repository]` (STP-31 AC-4); absent means the shared mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<Repository>,
+}
+
+/// `[repository]`: where the process files live in git history.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Repository {
+    pub history: History,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum History {
+    Local,
+    Shared,
 }
 
 /// `[check]`: how `stapel check` runs a ticket's tests (STP-4 AC-7).
