@@ -6,7 +6,7 @@ use stapel_core::build_inputs;
 use stapel_core::build_inputs::{Bounds, BuildInputs, Change};
 use stapel_core::config::{Check, validate_cargo, validate_path_cargo};
 use stapel_core::journal::{append, new_id};
-use stapel_core::junit::{Outcome as CaseOutcome, read_report};
+use stapel_core::junit::{MAX_REPORT, Outcome as CaseOutcome, read_report};
 use stapel_core::outcomes::{
     Analysis, MAX_NAMED, Mode, analyse_in, history_outcome, named, open_red, passing,
 };
@@ -301,7 +301,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         Ok(w) => w,
         Err(e) => return refuse(e),
     };
-    // Under junit no cargo is found, checked or locked.
+    // Under junit no cargo is found or checked; the lock is taken as under cargo (AC-40).
     let cargo = if junit {
         PathBuf::new()
     } else {
@@ -324,13 +324,9 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         }
     }
     // One cargo run at a time on the machine; the lock lives until the check ends (STP-27 AC-11).
-    let _cargo_lock = if junit {
-        None
-    } else {
-        match crate::cargo::take("stapel check") {
-            Ok(l) => l,
-            Err(e) => return refuse(e),
-        }
+    let _cargo_lock = match crate::cargo::take("stapel check") {
+        Ok(l) => l,
+        Err(e) => return refuse(e),
     };
     if _cargo_lock.is_some() {
         // SAFETY: the check is still single-threaded here; no cargo run or reader thread has started.
@@ -745,16 +741,22 @@ impl Runner<'_> {
                     self.timeout.as_secs()
                 ));
             }
-            if run.exit.is_none() {
+            let Some(code) = run.exit else {
                 return Err(format!("the run of {file} ended by a signal (at {at})"));
+            };
+            let size = std::fs::metadata(&report)
+                .map_err(|e| format!("no report {} for {file}: {e} (at {at})", junit.report))?
+                .len();
+            if size > MAX_REPORT as u64 {
+                return Err(format!(
+                    "the report of {file} is over {} MiB (at {at})",
+                    MAX_REPORT / 1024 / 1024
+                ));
             }
             let bytes = std::fs::read(&report)
                 .map_err(|e| format!("no report {} for {file}: {e} (at {at})", junit.report))?;
             let suites =
                 read_report(&bytes).map_err(|e| format!("report of {file}: {e} (at {at})"))?;
-            let Some(code) = run.exit else {
-                return Err(format!("the run of {file} ended by a signal (at {at})"));
-            };
             if suites.len() != 1 {
                 return Err(if suites.is_empty() {
                     format!("the report of {file} holds no test suite (at {at})")
@@ -796,7 +798,7 @@ impl Runner<'_> {
                 let cases: Vec<_> = suites
                     .iter()
                     .flat_map(|s| s.cases.iter())
-                    .filter(|c| c.name.trim() == name)
+                    .filter(|c| c.name.trim() == name.trim())
                     .collect();
                 let [case] = cases.as_slice() else {
                     return Err(format!(
