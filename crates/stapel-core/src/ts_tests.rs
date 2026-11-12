@@ -277,24 +277,77 @@ struct Call {
     end: usize,
 }
 
+/// The index of the `)` that closes the `(` at `open`, or the last token.
+fn match_close(toks: &[Token], open: usize) -> usize {
+    let mut level = 0usize;
+    for (k, u) in toks.iter().enumerate().skip(open) {
+        match u.kind {
+            Kind::Punct('(') => level += 1,
+            Kind::Punct(')') => {
+                level -= 1;
+                if level == 0 {
+                    return k;
+                }
+            }
+            _ => {}
+        }
+    }
+    toks.len().saturating_sub(1)
+}
+
+/// For a `describe` word at `i` with a modifier other than `.only` or `.skip` (`each`, `todo`,
+/// `concurrent`, `skip.each`, …) returns the index where its whole call chain ends: every call of
+/// `describe.each([…])('t', …)` and a tagged template form belong to it.
+fn hidden_describe_end(toks: &[Token], i: usize) -> Option<usize> {
+    let t = &toks[i];
+    if t.kind != Kind::Word || t.text != "describe" {
+        return None;
+    }
+    if i > 0 && toks[i - 1].kind == Kind::Punct('.') {
+        return None;
+    }
+    let mut j = i + 1;
+    let mut mods: Vec<&str> = Vec::new();
+    while is_punct(toks.get(j), '.') {
+        match toks.get(j + 1) {
+            Some(m) if m.kind == Kind::Word => mods.push(m.text.as_str()),
+            _ => return None,
+        }
+        j += 2;
+    }
+    if mods.is_empty() || mods == ["only"] || mods == ["skip"] {
+        return None;
+    }
+    let mut end = None;
+    loop {
+        match toks.get(j) {
+            Some(Token { kind: Kind::Str(_), .. }) => j += 1,
+            Some(Token { kind: Kind::Punct('('), .. }) => {
+                let close = match_close(toks, j);
+                end = Some(close);
+                j = close + 1;
+            }
+            _ => break,
+        }
+    }
+    end
+}
+
 fn calls(c: &[char]) -> Vec<Call> {
     let toks = lex(c);
     let mut out = Vec::new();
-    // (paren depth after the describe's `(`, its title; `None` hides the calls below it)
+    // (index of the token that ends the describe's call, its title; `None` hides the calls below it)
     let mut stack: Vec<(usize, Option<String>)> = Vec::new();
-    let mut depth = 0usize;
     for (i, t) in toks.iter().enumerate() {
+        while stack.last().is_some_and(|(end, _)| *end < i) {
+            stack.pop();
+        }
         match &t.kind {
-            Kind::Punct('(') => depth += 1,
-            Kind::Punct(')') => {
-                depth = depth.saturating_sub(1);
-                while stack.last().is_some_and(|(d, _)| *d > depth) {
-                    stack.pop();
-                }
-            }
             Kind::Word => {
-                if let Some(open) = call_open(&toks, i, &["describe"], &["only", "skip"]) {
-                    stack.push((depth + 1, literal_title(&toks, open)));
+                if let Some(end) = hidden_describe_end(&toks, i) {
+                    stack.push((end, None));
+                } else if let Some(open) = call_open(&toks, i, &["describe"], &["only", "skip"]) {
+                    stack.push((match_close(&toks, open), literal_title(&toks, open)));
                 } else if let Some(open) = call_open(&toks, i, &["test", "it"], &["only", "skip"]) {
                     let Some(title) = literal_title(&toks, open) else {
                         continue;
@@ -353,9 +406,16 @@ pub fn has_only_call(text: &str) -> bool {
     let c: Vec<char> = text.chars().collect();
     let toks = lex(&c);
     (0..toks.len()).any(|i| {
-        is_punct(toks.get(i + 1), '.')
-            && call_open(&toks, i, &["test", "it", "describe"], &["only"]).is_some()
-            && toks.get(i + 2).is_some_and(|m| m.text == "only")
+        let t = &toks[i];
+        t.kind == Kind::Word
+            && ["test", "it", "describe"].contains(&t.text.as_str())
+            && !(i > 0 && toks[i - 1].kind == Kind::Punct('.'))
+            && is_punct(toks.get(i + 1), '.')
+            && toks.get(i + 2).is_some_and(|m| m.kind == Kind::Word && m.text == "only")
+            && match toks.get(i + 3) {
+                Some(n) => matches!(n.kind, Kind::Punct('(' | '.') | Kind::Str(_)),
+                None => false,
+            }
     })
 }
 
