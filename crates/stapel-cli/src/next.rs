@@ -189,17 +189,16 @@ pub fn run(key: Option<&str>, json: bool) -> Result<(), Fail> {
 /// The text of `stapel next` for the repository at `root`, one string per output line.
 pub fn text_at(root: &Path) -> Result<Vec<String>, Fail> {
     let config = repo::load(root).map_err(Fail::failed)?;
-    lines(root, &config, None, false)
+    // A refusal that still carries the AC-20 fact and action prints them (STP-31 ER2-2).
+    match lines_parts(root, &config, None, false) {
+        (out, None) => Ok(out),
+        (out, Some(_)) if !out.is_empty() => Ok(out),
+        (_, Some(fail)) => Err(fail),
+    }
 }
 
 /// In Local mode a missing or stale pre-push hook is the first fact and `init` the action, in every
 /// case of `next` (STP-31 AC-20).
-fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<Vec<String>, Fail> {
-    match lines_parts(root, config, key, json) {
-        (out, None) => Ok(out),
-        (_, Some(fail)) => Err(fail),
-    }
-}
 
 /// The output lines and, when `next` refuses, the refusal; a refusal still prints the AC-20 fact.
 fn lines_parts(
