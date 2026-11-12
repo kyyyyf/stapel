@@ -58,8 +58,8 @@ fn junit_inputs(
         .and_then(|c| c.split(' ').find(|w| !w.is_empty()));
     if let Some(word) = first {
         if Path::new(word).is_absolute() {
-            if let Some(rel) = script_under(root, word) {
-                fixed.push(rel.to_string());
+            if let Some(rel) = input_under(root, word) {
+                fixed.push(rel);
             }
         } else if word.contains('/') {
             fixed.push(word.trim_start_matches("./").to_string());
@@ -67,6 +67,24 @@ fn junit_inputs(
     }
     let inputs = check.inputs.clone().unwrap_or_default();
     build_inputs::analyse_junit(root, key, at, bounds, &inputs, &fixed)
+}
+
+/// The repository path of the absolute `word` under `root`, with `.` and empty parts dropped and
+/// `..` parts resolved: a fixed build input whatever its spelling (STP-28 AC-25, STP-30 CR1-E4).
+fn input_under(root: &Path, word: &str) -> Option<String> {
+    let rel = Path::new(word).strip_prefix(root).ok()?;
+    let mut parts: Vec<&str> = Vec::new();
+    for c in rel.components() {
+        match c {
+            std::path::Component::Normal(p) => parts.push(p.to_str()?),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                parts.pop()?;
+            }
+            _ => return None,
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 /// The part of the absolute `word` below `root`, when it has no `.`, `..` or empty part (STP-30 AC-6).
