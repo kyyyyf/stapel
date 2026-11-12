@@ -804,3 +804,44 @@ fn foreign_repository_real_pushes() {
         base
     );
 }
+
+// STP-31 AC-22 (ER2-1): `init` run in a linked worktree plans the hook where the main worktree
+// resolves it.
+#[test]
+fn init_from_a_worktree_fixes_the_main_hook() {
+    fn make_local_in(dir: &std::path::Path) {
+        let path = dir.join(".stapel/stapel.toml");
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("\n[repository]\nhistory = \"local\"\n");
+        std::fs::write(path, text).unwrap();
+    }
+
+    fn next_text(dir: &std::path::Path) -> String {
+        let out = stapel(dir).arg("next").assert().get_output().stdout.clone();
+        String::from_utf8(out).unwrap()
+    }
+
+    let pair = common::two_ticket_worktrees();
+    let main = pair.repo.path();
+    let a = &pair.a;
+    make_local_in(main);
+    make_local_in(a);
+
+    // `core.hooksPath = .husky`, no hook yet: the hook lands in the main checkout.
+    git_config(main, "core.hooksPath", ".husky");
+    std::fs::create_dir_all(main.join(".husky")).unwrap();
+    stapel(a).arg("init").assert().success();
+    assert!(main.join(".husky/pre-push").exists());
+    assert!(!a.join(".husky/pre-push").exists());
+    let text = next_text(a);
+    assert!(!text.contains("pre-push hook is missing"), "{text}");
+
+    // The default hooks folder: the hook deleted, `init` in the worktree writes it in the main one.
+    git_in(main, &["config", "--unset", "core.hooksPath"]);
+    std::fs::remove_file(main.join(".husky/pre-push")).unwrap();
+    stapel(a).arg("init").assert().success();
+    assert!(main.join(".git/hooks/pre-push").exists());
+    assert!(!a.join(".git/hooks/pre-push").exists());
+    let text = next_text(a);
+    assert!(!text.contains("pre-push hook is missing"), "{text}");
+}
