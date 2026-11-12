@@ -56,10 +56,9 @@ fn junit_inputs(
         .as_deref()
         .and_then(|c| c.split(' ').find(|w| !w.is_empty()));
     if let Some(word) = first {
-        let path = Path::new(word);
-        if path.is_absolute() {
-            if let Ok(rel) = path.strip_prefix(root) {
-                fixed.push(rel.to_string_lossy().into_owned());
+        if Path::new(word).is_absolute() {
+            if let Some(rel) = script_under(root, word) {
+                fixed.push(rel.to_string());
             }
         } else if word.contains('/') {
             fixed.push(word.trim_start_matches("./").to_string());
@@ -67,6 +66,14 @@ fn junit_inputs(
     }
     let inputs = check.inputs.clone().unwrap_or_default();
     build_inputs::analyse_junit(root, key, at, bounds, &inputs, &fixed)
+}
+
+/// The part of the absolute `word` below `root`, when it has no `.`, `..` or empty part (STP-30 AC-6).
+fn script_under<'a>(root: &Path, word: &'a str) -> Option<&'a str> {
+    let rel = word.strip_prefix(root.to_str()?.trim_end_matches('/'))?.strip_prefix('/')?;
+    rel.split('/')
+        .all(|p| !p.is_empty() && p != "." && p != "..")
+        .then_some(rel)
 }
 
 /// The change that blocks a step under junit (AC-24, AC-25, AC-39), the first one in the Walk:
@@ -561,6 +568,17 @@ impl Runner<'_> {
         Some(why)
     }
 
+    /// The program of a junit run: an absolute path under the root is the same path in the check copy
+    /// (STP-30 AC-6); any other path or name runs as given.
+    fn script_path(&self, program: &str) -> PathBuf {
+        if Path::new(program).is_absolute()
+            && let Some(rel) = script_under(self.root, program)
+        {
+            return self.wt.path.join(rel);
+        }
+        PathBuf::from(program)
+    }
+
     fn package(&self, commit: &str, dir: &str) -> Result<String, String> {
         package_name(self.root, commit, dir)
     }
@@ -664,7 +682,7 @@ impl Runner<'_> {
         };
         let args: Vec<String> = rest.iter().map(|w| w.to_string()).collect();
         let run = match run_program(
-            Path::new(program),
+            &self.script_path(program),
             &self.wt.path,
             &args,
             &[("JEST_JUNIT_REPORT_TEST_SUITE_ERRORS", "true")],
@@ -747,7 +765,7 @@ impl Runner<'_> {
                 })
                 .collect();
             let run = run_program(
-                Path::new(program),
+                &self.script_path(program),
                 &self.wt.path,
                 &args,
                 &[("JEST_JUNIT_REPORT_TEST_SUITE_ERRORS", "true")],
