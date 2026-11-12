@@ -255,27 +255,37 @@ fn decode(s: &str) -> Result<String, String> {
             "quot" => out.push('"'),
             "apos" => out.push('\''),
             _ => {
-                let digits = |d: &str, radix: u32| {
-                    if !d.is_empty() && d.chars().all(|c| c.is_digit(radix)) {
-                        u32::from_str_radix(d, radix).ok()
-                    } else {
-                        None
-                    }
-                };
-                let code = if let Some(hex) = body.strip_prefix("#x") {
-                    digits(hex, 16)
+                let (digits, radix) = if let Some(hex) = body.strip_prefix("#x") {
+                    (hex, 16)
                 } else if let Some(dec) = body.strip_prefix('#') {
-                    digits(dec, 10)
+                    (dec, 10)
                 } else {
-                    None
+                    return Err(format!("the entity `&{body};` is not known"));
+                };
+                let refuse = |cause: &str| {
+                    Err(format!("the character reference `&{body};` is not known: it {cause}"))
+                };
+                if digits.starts_with(['+', '-']) {
+                    return refuse("has a sign");
+                }
+                if digits.is_empty() {
+                    return refuse("has no digits");
+                }
+                if !digits.chars().all(|c| c.is_digit(radix)) {
+                    return Err(format!("the entity `&{body};` is not known"));
+                }
+                let code = match u32::from_str_radix(digits, radix) {
+                    Ok(c) if c <= 0x10FFFF => c,
+                    _ => return refuse("is above 10FFFF"),
                 };
                 // XML 1.0 `Char`: tab, line feed, carriage return and the ranges from #x20
-                let xml_char = |c: &u32| {
-                    matches!(*c, 0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF)
-                };
-                match code.filter(xml_char).and_then(char::from_u32) {
+                let xml_char = matches!(
+                    code,
+                    0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF
+                );
+                match char::from_u32(code).filter(|_| xml_char) {
                     Some(c) => out.push(c),
-                    None => return Err(format!("the entity `&{body};` is not known")),
+                    None => return refuse("is not an XML 1.0 character"),
                 }
             }
         }

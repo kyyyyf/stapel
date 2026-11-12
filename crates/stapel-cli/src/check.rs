@@ -682,9 +682,9 @@ impl Runner<'_> {
         let Some(code) = run.exit else {
             return unverified("the suite run ended by a signal".into());
         };
-        let bytes = match std::fs::read(&report) {
+        let bytes = match read_report_file(&report, junit.report, "the suite") {
             Ok(b) => b,
-            Err(e) => return unverified(format!("no report {} for the suite: {e}", junit.report)),
+            Err(e) => return unverified(e),
         };
         let suites = match read_report(&bytes) {
             Ok(s) => s,
@@ -762,17 +762,8 @@ impl Runner<'_> {
             let Some(code) = run.exit else {
                 return Err(format!("the run of {file} ended by a signal (at {at})"));
             };
-            let size = std::fs::metadata(&report)
-                .map_err(|e| format!("no report {} for {file}: {e} (at {at})", junit.report))?
-                .len();
-            if size > MAX_REPORT as u64 {
-                return Err(format!(
-                    "the report of {file} is over {} MiB (at {at})",
-                    MAX_REPORT / 1024 / 1024
-                ));
-            }
-            let bytes = std::fs::read(&report)
-                .map_err(|e| format!("no report {} for {file}: {e} (at {at})", junit.report))?;
+            let bytes = read_report_file(&report, junit.report, &file)
+                .map_err(|e| format!("{e} (at {at})"))?;
             let suites =
                 read_report(&bytes).map_err(|e| format!("report of {file}: {e} (at {at})"))?;
             if suites.len() != 1 {
@@ -1028,6 +1019,33 @@ impl Runner<'_> {
 
 fn short(sha: &str) -> &str {
     &sha[..sha.len().min(7)]
+}
+
+/// Reads the report of a Per-file run (`what` is the test file) or of the suite (`what` is
+/// `the suite`). The kind and the size are checked before the read, so a FIFO does not block it.
+fn read_report_file(path: &Path, name: &str, what: &str) -> Result<Vec<u8>, String> {
+    use std::os::unix::fs::FileTypeExt;
+    let meta = std::fs::symlink_metadata(path)
+        .map_err(|e| format!("no report {name} for {what}: {e}"))?;
+    let kind = meta.file_type();
+    let not_regular = if kind.is_symlink() {
+        Some("a symbolic link")
+    } else if kind.is_dir() {
+        Some("a folder")
+    } else if kind.is_fifo() {
+        Some("a FIFO")
+    } else if !kind.is_file() {
+        Some("not a regular file")
+    } else {
+        None
+    };
+    if let Some(what_it_is) = not_regular {
+        return Err(format!("the report {name} of {what} is {what_it_is}, not a regular file"));
+    }
+    if meta.len() > MAX_REPORT as u64 {
+        return Err(format!("the report of {what} is over {} MiB", MAX_REPORT / 1024 / 1024));
+    }
+    std::fs::read(path).map_err(|e| format!("no report {name} for {what}: {e}"))
 }
 
 /// The reason of `unverified` when a commit of the ticket changed a build input.
