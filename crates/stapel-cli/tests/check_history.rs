@@ -1419,6 +1419,241 @@ fn base_merge_other_parents() {
     }
 }
 
+// ---- STP-30 AC-5, AC-14, AC-15 ----
+
+#[test]
+fn base_merge_brings_cargo_inputs() {
+    /// A ticket with `base_branch` main: step 1, a merge of main that brings a build input with a new
+    /// text through `change` (resolved to another text when `resolved`). Returns the history
+    /// line of step 1 and the merge commit.
+    fn scenario(change: &dyn Fn(&Path, &str), resolved: bool) -> (String, String) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        let main = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        let mut state = common::state_json(dir, "ABC-1");
+        state["base_branch"] = serde_json::json!(main);
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base branch");
+        git(dir, &["checkout", "-q", "-b", "ticket"]);
+        clean_pair(dir, "step 1", "one");
+        git(dir, &["checkout", "-q", &main]);
+        change(dir, "from main");
+        commit(dir, "main: an input");
+        git(dir, &["checkout", "-q", "ticket"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=test-user",
+                "-c",
+                "user.email=test-user.invalid",
+                "merge",
+                "-q",
+                "--no-ff",
+                "--no-commit",
+                &main,
+            ],
+        );
+        if resolved {
+            change(dir, "resolved");
+        }
+        commit(dir, "ABC-1: merge main");
+        let merge = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        let (_, text, _) = history(dir);
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("no step 1:\n{text}"))
+            .to_string();
+        (line, merge)
+    }
+
+    /// A new file with the text.
+    fn file(path: &'static str) -> Box<dyn Fn(&Path, &str)> {
+        Box::new(move |dir, text| write(dir, path, &format!("// {text}\n")))
+    }
+
+    let inputs: Vec<(&str, Box<dyn Fn(&Path, &str)>)> = vec![
+        (
+            "crates/tiny/Cargo.toml",
+            Box::new(|dir, text| {
+                let old = read(dir, "crates/tiny/Cargo.toml");
+                let old = old.split("\n[lib]").next().unwrap().to_string();
+                write(
+                    dir,
+                    "crates/tiny/Cargo.toml",
+                    &format!("{old}\n[lib]\npath = \"src/{}.rs\"\n", text.replace(' ', "_")),
+                );
+            }),
+        ),
+        ("crates/tiny/build.rs", file("crates/tiny/build.rs")),
+        ("crates/tiny/rust-toolchain", file("crates/tiny/rust-toolchain")),
+        (
+            "crates/tiny/rust-toolchain.toml",
+            file("crates/tiny/rust-toolchain.toml"),
+        ),
+        (".cargo/config", file(".cargo/config")),
+        (".cargo/config.toml", file(".cargo/config.toml")),
+    ];
+
+    for (path, change) in &inputs {
+        let (line, _) = scenario(change.as_ref(), false);
+        assert_eq!(line, "step 1: needs-run", "equal {path}");
+        let (line, merge) = scenario(change.as_ref(), true);
+        assert_eq!(
+            line,
+            format!(
+                "step 1: unverified: build-input-changed: {path} at {}",
+                &merge[..7]
+            ),
+            "resolved {path}"
+        );
+    }
+}
+
+#[test]
+fn base_merge_mixed_entries() {
+    /// A ticket with `base_branch` main: build inputs exist before the ticket, step 1, a merge of
+    /// main that `bring`s changes, `resolve` changes the merge result. Returns the history line of
+    /// step 1 and the merge commit.
+    fn scenario(
+        bring: &dyn Fn(&Path),
+        resolve: &dyn Fn(&Path),
+    ) -> (String, String) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        let main = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        write(dir, "crates/tiny/build.rs", "fn main() {}\n");
+        commit(dir, "setup: a build script");
+        let mut state = common::state_json(dir, "ABC-1");
+        state["base_branch"] = serde_json::json!(main);
+        state["base"] = serde_json::json!(git(dir, &["rev-parse", "HEAD"]).trim());
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base branch");
+        git(dir, &["checkout", "-q", "-b", "ticket"]);
+        clean_pair(dir, "step 1", "one");
+        git(dir, &["checkout", "-q", &main]);
+        bring(dir);
+        commit(dir, "main: inputs");
+        git(dir, &["checkout", "-q", "ticket"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=test-user",
+                "-c",
+                "user.email=test-user.invalid",
+                "merge",
+                "-q",
+                "--no-ff",
+                "--no-commit",
+                &main,
+            ],
+        );
+        resolve(dir);
+        commit(dir, "ABC-1: merge main");
+        let merge = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        let (_, text, _) = history(dir);
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("no step 1:\n{text}"))
+            .to_string();
+        (line, merge)
+    }
+
+    // A rename of a build script: the new path is equal at the merge, the old one is brought back.
+    let rename = |dir: &Path| {
+        git(dir, &["mv", "crates/tiny/build.rs", "crates/other_build.rs"]);
+    };
+    let (line, _) = scenario(&rename, &|_| {});
+    assert_eq!(line, "step 1: needs-run", "equal rename");
+    let (line, merge) = scenario(&rename, &|dir| {
+        write(dir, "crates/tiny/build.rs", "fn main() { /* kept */ }\n");
+    });
+    assert!(
+        line.starts_with("step 1: unverified: build-input-changed: ")
+            && line.ends_with(&format!(" at {}", &merge[..7])),
+        "a rename with one path resolved: {line}"
+    );
+
+    // Two inputs brought: one equal at the merge, one resolved to other content.
+    let two = |dir: &Path| {
+        write(dir, ".cargo/config.toml", "# from main\n");
+        write(dir, "crates/tiny/other/build.rs", "// from main\n");
+    };
+    let (line, _) = scenario(&two, &|_| {});
+    assert_eq!(line, "step 1: needs-run", "two equal inputs");
+    let (line, merge) = scenario(&two, &|dir| {
+        write(dir, "crates/tiny/other/build.rs", "// resolved\n");
+    });
+    assert_eq!(
+        line,
+        format!(
+            "step 1: unverified: build-input-changed: crates/tiny/other/build.rs at {}",
+            &merge[..7]
+        ),
+        "one equal, one resolved"
+    );
+}
+
+#[test]
+fn cargo_fixture_beside_step_test() {
+    /// A data file `crates/tiny/tests/table.txt` (present before the ticket when `before`), step 1,
+    /// then `change` after the GREEN. Returns the history line of step 1 and the changing commit.
+    fn scenario(before: bool, change: &dyn Fn(&Path)) -> (String, String) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        if before {
+            write(dir, "crates/tiny/tests/table.txt", "one\n");
+            commit(dir, "setup: a data file");
+        }
+        clean_pair(dir, "step 1", "one");
+        change(dir);
+        commit(dir, "ABC-1: the data file");
+        let sha = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        let (_, text, _) = history(dir);
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("no step 1:\n{text}"))
+            .to_string();
+        (line, sha)
+    }
+
+    let path = "crates/tiny/tests/table.txt";
+
+    let (line, sha) = scenario(false, &|dir| write(dir, path, "one\n"));
+    assert_eq!(
+        line,
+        format!("step 1: unverified: build-input-changed: {path} at {}", &sha[..7]),
+        "added"
+    );
+
+    let (line, sha) = scenario(true, &|dir| std::fs::remove_file(dir.join(path)).unwrap());
+    assert_eq!(
+        line,
+        format!("step 1: unverified: build-input-changed: {path} at {}", &sha[..7]),
+        "deleted"
+    );
+
+    let (line, sha) = scenario(true, &|dir| write(dir, path, "two\n"));
+    assert_eq!(line, format!("step 1: tests-changed: {path}"), "changed");
+    let _ = sha;
+}
+
 // ---- STP-28 step 23 (AC-37) ----
 
 #[test]
