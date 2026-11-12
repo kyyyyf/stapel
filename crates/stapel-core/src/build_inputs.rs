@@ -146,12 +146,14 @@ fn base_merge_parent(root: &Path, sha: &str, base_branch: Option<&str>) -> Optio
     Some(second)
 }
 
-/// Whether `path` has the same content at the merge as at its second parent (both absent counts).
+/// Whether `path` has the same content and mode at the merge as at its second parent (both absent
+/// counts).
 fn same_as_parent(root: &Path, sha: &str, second: &str, path: &str) -> bool {
     let id = |commit: &str| {
-        git(root, &["rev-parse", "-q", "--verify", &format!("{commit}:{path}")])
+        git(root, &["ls-tree", "-z", commit, "--", path])
             .ok()
-            .map(|b| String::from_utf8_lossy(&b).trim().to_string())
+            .map(|b| String::from_utf8_lossy(&b).trim_end_matches('\0').to_string())
+            .filter(|s| !s.is_empty())
     };
     id(sha) == id(second)
 }
