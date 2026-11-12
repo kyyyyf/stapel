@@ -300,3 +300,96 @@ fn lint_exit_codes_and_order() {
     assert_eq!(code, 2, "{lines:?} {err}");
     git_in(dir, &["checkout", "-q", main.trim()]);
 }
+
+// AC-29: a Named test stands in a column headed `Test` or `Tests`, or in a Plan step's test list;
+// a name whose file is missing is reported; code names in other cells are ignored.
+#[test]
+fn named_tests_from_test_columns() {
+    let repo = cargo_repo(&["t"]);
+    let dir = repo.path();
+    commit(dir, "base");
+    std::fs::remove_file(dir.join("crates/stapel-core/tests/x.rs")).unwrap();
+    ticket(
+        dir,
+        "ABC-1",
+        "# ABC-1\n\n## Proof\n\n| Criterion | Tests |\n|---|---|\n| AC-1 | `x::t` |\n\n\
+         ## Design\n\n| Part | Design |\n|---|---|\n| a | `check::run_check` |\n",
+        true,
+    );
+    ticket(
+        dir,
+        "ABC-2",
+        "# ABC-2\n\n## Design\n\n| Part | Design |\n|---|---|\n| a | `check::run_check` |\n\n\
+         ## Plan\n\n1. First (tests `y::planned`): `a.rs`, see `check::run_check`.\n",
+        false,
+    );
+    commit(dir, "ABC-2 step 1 RED: first");
+    commit(dir, "ABC-2 step 1 GREEN: first");
+
+    // The file `x.rs` is gone; the code name in a `Design` cell is no test.
+    let (code, lines, err) = lint(dir, &["ABC-1"]);
+    assert_eq!(code, 1, "{lines:?} {err}");
+    assert_eq!(lines, ["ABC-1 names x::t, which does not exist"]);
+
+    // A Plan step's test list counts, and only it.
+    let (code, lines, err) = lint(dir, &["ABC-2"]);
+    assert_eq!(code, 1, "{lines:?} {err}");
+    assert_eq!(lines, ["ABC-2 names y::planned, which does not exist"]);
+}
+
+// AC-31: the file part of a Named test is a known cargo form with `::` (`core::config`), else
+// the first segment; the rest is the name and may hold `::`.
+#[test]
+fn module_path_names() {
+    let repo = cargo_repo(&[]);
+    let dir = repo.path();
+    commit(dir, "base");
+    write(
+        dir,
+        "crates/stapel-core/tests/x.rs",
+        &format!(
+            "{}mod m {{\n    #[test]\n    fn t() {{}}\n}}\n",
+            x_source(&["top"])
+        ),
+    );
+    write(
+        dir,
+        "crates/stapel-core/tests/config.rs",
+        &x_source(&["real"]),
+    );
+    ticket(
+        dir,
+        "ABC-1",
+        "# ABC-1\n\n| Criterion | Tests |\n|---|---|\n\
+         | AC-1 | `x::top`, `x::m::t`, `core::config::real` |\n",
+        true,
+    );
+    commit(dir, "ABC-1 step 1 RED: module tests");
+
+    // `x::m::t` is test `m::t` of file `x`; as a step test it is named and no fault.
+    let (code, lines, err) = lint(dir, &["ABC-1"]);
+    assert_eq!(
+        (code, lines),
+        (0, vec!["lint: ABC-1 clean".to_string()]),
+        "{err}"
+    );
+
+    ticket(
+        dir,
+        "ABC-1",
+        "# ABC-1\n\n| Criterion | Tests |\n|---|---|\n\
+         | AC-1 | `x::top`, `x::m::t`, `core::config::real`, `x::m::gone`, \
+         `core::config::gone`, `x::nomod::t` |\n",
+        true,
+    );
+    let (code, lines, err) = lint(dir, &["ABC-1"]);
+    assert_eq!(code, 1, "{lines:?} {err}");
+    assert_eq!(
+        lines,
+        [
+            "ABC-1 names core::config::gone, which does not exist",
+            "ABC-1 names x::m::gone, which does not exist",
+            "ABC-1 names x::nomod::t, which does not exist",
+        ]
+    );
+}
