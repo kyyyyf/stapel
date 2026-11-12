@@ -947,3 +947,122 @@ fn keeps_identity_and_encoding() {
         assert!(!new_raw.windows(7).any(|w| w == b"gpgsig "));
     }
 }
+
+// STP-31 AC-15, AC-13 (CR2-2, CR2-3, ER2-6): a commit stored with a malformed ident is copied, a
+// `mergetag` and a `gpgsig-sha256` header are dropped, and a base branch named `-x` is refused
+// naming `--onto`.
+#[test]
+fn copies_odd_commits_and_base_names() {
+    use std::io::Write;
+
+    fn raw_commit(dir: &Path, commit: &str) -> Vec<u8> {
+        let out = std::process::Command::new("git")
+            .args(["cat-file", "commit", commit])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        out.stdout
+    }
+
+    fn write_literally(dir: &Path, raw: &[u8]) -> String {
+        let mut child = std::process::Command::new("git")
+            .args(["hash-object", "-t", "commit", "-w", "--literally", "--stdin"])
+            .current_dir(dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(raw).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    }
+
+    /// The raw commit without its `tree` and `parent` lines.
+    fn after_parents(raw: &[u8]) -> Vec<u8> {
+        let mut rest = raw;
+        while rest.starts_with(b"tree ") || rest.starts_with(b"parent ") {
+            let eol = rest.iter().position(|b| *b == b'\n').unwrap();
+            rest = &rest[eol + 1..];
+        }
+        rest.to_vec()
+    }
+
+    let repo = base_repo();
+    let dir = repo.path();
+    let tmp = bare_dir();
+    commit(
+        dir,
+        2,
+        &[
+            ("src/one.txt", "1\n"),
+            (".stapel/tickets/ABC-1/state.json", "{\"key\":\"ABC-1\"}\n"),
+        ],
+        "one",
+    );
+    commit(dir, 3, &[("src/two.txt", "2\n")], "two");
+    commit(dir, 4, &[("src/three.txt", "3\n")], "three");
+
+    let originals: Vec<String> = commits(dir, "main..ABC-1").into_iter().map(|(_, h)| h).collect();
+    let bodies: [(&[u8], &[u8]); 3] = [
+        (
+            b"author <e@example.invalid> 1767261600 +0000\n\
+              committer c <c@example.invalid> 1767261600 +0000\n",
+            b"\nempty name\n",
+        ),
+        (
+            b"author a <a@example.invalid> 1767261600 +0000\n\
+              committer c <c@example.invalid> 1767261600 +0000\n\
+              mergetag object 0123456789012345678901234567890123456789\n \
+              type commit\n tag v1\n \n note\n",
+            b"\ntagged\n",
+        ),
+        (
+            b"author a <a@example.invalid> 1767261600 +0000\n\
+              committer c <c@example.invalid> 1767261600 +0000\n\
+              gpgsig-sha256 -----BEGIN PGP SIGNATURE-----\n \n abc\n -----END PGP SIGNATURE-----\n",
+            b"\nsigned\n",
+        ),
+    ];
+    let mut parent = rev(dir, "main");
+    let mut sources: Vec<String> = Vec::new();
+    for (original, (head, message)) in originals.iter().zip(bodies) {
+        let tree = git_n(dir, 1, &["rev-parse", &format!("{original}^{{tree}}")]);
+        let mut raw: Vec<u8> = format!("tree {}\nparent {parent}\n", tree.trim()).into_bytes();
+        raw.extend_from_slice(head);
+        raw.extend_from_slice(message);
+        parent = write_literally(dir, &raw);
+        sources.push(parent.clone());
+    }
+    git_n(dir, 1, &["update-ref", "refs/heads/ABC-1", &parent]);
+
+    export(dir, "main", tmp.path());
+    let exported: Vec<String> = commits(dir, "main..export/ABC-1").into_iter().map(|(_, h)| h).collect();
+    assert_eq!(exported.len(), 3);
+    let expected: [Vec<u8>; 3] = [
+        [bodies[0].0, bodies[0].1].concat(),
+        b"author a <a@example.invalid> 1767261600 +0000\n\
+          committer c <c@example.invalid> 1767261600 +0000\n\ntagged\n"
+            .to_vec(),
+        b"author a <a@example.invalid> 1767261600 +0000\n\
+          committer c <c@example.invalid> 1767261600 +0000\n\nsigned\n"
+            .to_vec(),
+    ];
+    for (new, want) in exported.iter().zip(&expected) {
+        assert_eq!(
+            String::from_utf8_lossy(&after_parents(&raw_commit(dir, new))),
+            String::from_utf8_lossy(want)
+        );
+    }
+    assert_eq!(sources.len(), 3);
+
+    // A base branch that reads as an option is refused naming `--onto`.
+    let repo = ticket_repo();
+    let dir = repo.path();
+    ticket_branch(dir, "ABC-3", Some("-x"), "red");
+    let out = stapel(dir).args(["export", "ABC-3"]).assert().code(1);
+    let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(err.contains("--onto"), "{err}");
+    assert_eq!(export_refs(dir), "");
+}
