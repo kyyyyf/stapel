@@ -405,3 +405,23 @@ fn known_elements_still_decode() {
         assert!(err.contains("bogus"), "{text}: `{err}` lacks the entity");
     }
 }
+
+// STP-30 step 19 (d10-1, d10-2): the read of an open report is bounded by the read itself, not by
+// the size seen before the open.
+#[test]
+fn read_is_bounded() {
+    use stapel_core::junit::{read_open_report, MAX_REPORT};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("report.xml");
+    std::fs::write(&path, "<testsuites/>").unwrap();
+    let mut first = std::fs::File::open(&path).unwrap();
+    // The file grows past 16 MiB through a second handle after the first one is open.
+    let grower = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+    grower.set_len(MAX_REPORT as u64 + 1024).unwrap();
+    let err = read_open_report(&mut first).expect_err("a report that grew over 16 MiB is refused");
+    assert!(err.contains("16 MiB"), "{err}");
+    // A file that stays within the bound is read whole.
+    std::fs::write(&path, "<testsuites/>").unwrap();
+    let mut small = std::fs::File::open(&path).unwrap();
+    assert_eq!(read_open_report(&mut small).unwrap(), b"<testsuites/>");
+}
