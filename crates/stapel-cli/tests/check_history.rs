@@ -1180,6 +1180,89 @@ fn merge_of_the_base_branch_blocks_nothing() {
     );
 }
 
+// ---- STP-30 AC-3 ----
+
+#[test]
+fn base_merge_mode_change_blocks() {
+    /// A ticket with `base_branch` main: step 1, a merge of main that brings `path` as a regular
+    /// file with `content`, `resolve` changes the path in the merge (the blob stays equal), step 2.
+    /// Returns the history output and the merge commit.
+    fn scenario(path: &str, content: &str, resolve: &dyn Fn(&Path)) -> (String, String) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        let main = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        let mut state = common::state_json(dir, "ABC-1");
+        state["base_branch"] = serde_json::json!(main);
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base branch");
+        git(dir, &["checkout", "-q", "-b", "ticket"]);
+        clean_pair(dir, "step 1", "one");
+        git(dir, &["checkout", "-q", &main]);
+        write(dir, path, content);
+        commit(dir, "main: a file");
+        git(dir, &["checkout", "-q", "ticket"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=test-user",
+                "-c",
+                "user.email=test-user.invalid",
+                "merge",
+                "-q",
+                "--no-ff",
+                "--no-commit",
+                &main,
+            ],
+        );
+        resolve(&dir.join(path));
+        commit(dir, "ABC-1: merge main");
+        let merge = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        clean_pair(dir, "step 2", "two");
+        let (_, text) = check(dir);
+        (text, merge)
+    }
+
+    let paths = ["crates/tiny/build.rs", "crates/tiny/tests/data/fixture.txt"];
+
+    // Control: an equal blob and an equal mode blocks nothing.
+    for path in paths {
+        let (text, _) = scenario(path, "fn main() {}\n", &|_| {});
+        assert_eq!(outcome(&text, "step 2"), "pass", "{path}: {text}");
+    }
+
+    // An executable bit with an equal blob blocks at the merge.
+    for path in paths {
+        let (text, merge) = scenario(path, "fn main() {}\n", &|file| {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        });
+        assert_ne!(outcome(&text, "step 2"), "pass", "{path}: {text}");
+        assert!(
+            text.contains(&format!("{path} at {}", &merge[..7])),
+            "{path}: {text}"
+        );
+    }
+
+    // A regular file turned into a link with the same blob blocks at the merge.
+    let link = "crates/tiny/tests/data/link.txt";
+    let (text, merge) = scenario(link, "target.txt", &|file| {
+        std::fs::remove_file(file).unwrap();
+        std::os::unix::fs::symlink("target.txt", file).unwrap();
+    });
+    assert_ne!(outcome(&text, "step 2"), "pass", "{text}");
+    assert!(
+        text.contains(&format!("{link} at {}", &merge[..7])),
+        "{text}"
+    );
+}
+
 // ---- STP-28 step 23 (AC-37) ----
 
 #[test]
