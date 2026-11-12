@@ -1670,6 +1670,45 @@ fn base_merge_fixture_is_no_tests_change() {
     assert!(text.contains(&merge[..7]), "the fault is the merge: {text}");
 }
 
+// STP-30 AC-1 (CR1-E3): a fixture present at the RED, deleted on main and brought by a merge of the
+// base branch is absent at the merge and at its second parent: no `tests-changed`.
+#[test]
+fn base_merge_deletes_fixture() {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    let main = git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .trim()
+        .to_string();
+    let path = dir.join(".stapel/tickets/ABC-1/state.json");
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    state["base_branch"] = serde_json::json!(main);
+    std::fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+    write(dir, "__tests__/a b.json", "{\"a\": 1}\n");
+    commit(dir, "ABC-1: base branch with a fixture");
+    git_in(dir, &["checkout", "-q", "-b", "ticket"]);
+    write(
+        dir,
+        "__tests__/f.test.ts",
+        "it(\"fixed\", () => { /* needs src/f.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: fixed");
+    write(dir, "src/f.ts", "export const f = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: fixed");
+    git_in(dir, &["checkout", "-q", &main]);
+    git_in(dir, &["rm", "-q", "__tests__/a b.json"]);
+    commit(dir, "main: the fixture is gone");
+    git_in(dir, &["checkout", "-q", "ticket"]);
+    git_in(dir, &["merge", "-q", "--no-ff", "-m", "ABC-1: merge main", &main]);
+    let (_, text) = stdout(dir, &["check", "ABC-1", "--history"]);
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("step 1: "))
+        .unwrap_or_else(|| panic!("no step 1:\n{text}"))
+        .to_string();
+    assert_eq!(line, "step 1: needs-run", "{text}");
+}
+
 // STP-30 AC-1, AC-2 (CR1-E1): a fixture `x[1].json` is a path, not a pattern: a merge that resolves
 // it to a third text blocks, a merge that brings it equal passes.
 #[test]
