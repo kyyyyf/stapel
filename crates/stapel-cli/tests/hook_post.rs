@@ -1364,3 +1364,55 @@ fn hook_walks_from_the_base() {
     let text = assert_fault(hook(dir), "no base");
     assert!(text.contains("step 1: duplicate"), "{text}");
 }
+
+// STP-30 AC-11 (d9-3): the hook prints the load fault for an unreadable file and a validation
+// error; a dangling link and a closed ticket stay silent.
+#[test]
+fn broken_config_kinds() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    fn answer(result: (i32, String, String), what: &str) -> String {
+        let (code, out, err) = result;
+        assert_eq!(code, 0, "{what}: {out}{err}");
+        assert_eq!(err, "", "{what}");
+        let answer: serde_json::Value = serde_json::from_str(&out)
+            .unwrap_or_else(|e| panic!("{what}: stdout is not one JSON object ({e}):\n{out}"));
+        answer["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{what}: no additionalContext text:\n{out}"))
+            .to_string()
+    }
+    let repo = failing();
+    let dir = repo.path();
+    let path = dir.join(".stapel/stapel.toml");
+    let good = std::fs::read_to_string(&path).unwrap();
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let text = answer(hook(dir), "an unreadable file");
+    assert!(text.contains("stapel.toml"), "{text}");
+    assert!(!text.contains("is HEAD"), "a step line: {text}");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let invalid = good.replace(
+        "runner = \"cargo\"",
+        "runner = \"junit\"\ncommand = \"sh run.sh\"",
+    );
+    assert_ne!(invalid, good, "the fixture config has no cargo runner line");
+    std::fs::write(&path, invalid).unwrap();
+    let text = answer(hook(dir), "a validation error");
+    assert!(text.contains("{file}"), "{text}");
+    assert!(!text.contains("is HEAD"), "a step line: {text}");
+
+    std::fs::remove_file(&path).unwrap();
+    symlink(dir.join("nowhere.toml"), &path).unwrap();
+    assert_silent(hook(dir), "a dangling link");
+    std::fs::remove_file(&path).unwrap();
+
+    // A closed ticket: silent on a broken file.
+    std::fs::write(&path, &good).unwrap();
+    close(dir);
+    std::fs::write(&path, "[check\nrunner = junit\n").unwrap();
+    assert_silent(hook(dir), "a closed ticket");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    assert_silent(hook(dir), "a closed ticket, unreadable");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+}

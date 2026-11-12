@@ -2256,3 +2256,57 @@ fn absolute_script_edges() {
     let seen = script_log(&repo);
     assert!(!seen.is_empty() && seen.iter().all(|v| v == "sibling"), "{seen:?}");
 }
+
+// STP-30 AC-10 (d8-1, d8-2): an unreadable file and a validation error give the load fault; a
+// dangling link and an absent file give today's refusal; `next` judges no step in any of them.
+#[test]
+fn broken_config_kinds() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    const REFUSAL: &str = "no .stapel/stapel.toml here or above";
+    for what in ["unreadable", "validation", "dangling", "absent"] {
+        let repo = junit_repo();
+        let dir = repo.dir();
+        let path = dir.join(".stapel/stapel.toml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("command = "), "{text}");
+        let fault = match what {
+            "unreadable" => {
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+                "stapel.toml"
+            }
+            "validation" => {
+                // The line that starts with `command = `, not a commented `# command = …` line.
+                let at = text.find("\ncommand = ").unwrap() + 1;
+                let end = at + text[at..].find('\n').unwrap();
+                let mut changed = text.clone();
+                changed.replace_range(at..end, "command = \"sh run.sh\"");
+                std::fs::write(&path, changed).unwrap();
+                "{file}"
+            }
+            "dangling" => {
+                std::fs::remove_file(&path).unwrap();
+                symlink(dir.join("nowhere.toml"), &path).unwrap();
+                REFUSAL
+            }
+            _ => {
+                std::fs::remove_file(&path).unwrap();
+                REFUSAL
+            }
+        };
+        for (args, want) in [
+            (vec!["check", "--history"], 2),
+            (vec!["lint"], 2),
+            (vec!["next"], 1),
+        ] {
+            let (code, out) = stdout(dir, &args);
+            assert_eq!(code, want, "{what}: {args:?}: {out}");
+            assert!(out.contains(fault), "{what}: {args:?}: {out}");
+            if what == "unreadable" || what == "validation" {
+                assert!(!out.contains(REFUSAL), "{what}: {args:?}: {out}");
+            }
+            assert!(!out.contains("step 1"), "{what}: {args:?}: {out}");
+            assert!(!out.contains("pass"), "{what}: {args:?}: {out}");
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).ok();
+    }
+}
