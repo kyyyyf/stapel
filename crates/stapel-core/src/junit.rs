@@ -102,7 +102,7 @@ impl Reader {
             self.close(name)?;
             return Ok(&r[end + 1..]);
         }
-        let (name, attrs, empty, tail) = open_tag(after, self.unknown == 0)?;
+        let (name, attrs, empty, tail) = open_tag(after)?;
         self.open(name, &attrs)?;
         if empty {
             self.close(name)?;
@@ -111,9 +111,6 @@ impl Reader {
     }
 
     fn open(&mut self, name: &str, attrs: &[(String, String)]) -> Result<(), String> {
-        let attr = |key: &str| {
-            attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).unwrap_or_default()
-        };
         let parent = self.stack.last().map(String::as_str);
         let known = if self.unknown > 0 {
             false
@@ -141,6 +138,13 @@ impl Reader {
             }
         };
         if known {
+            let mut decoded = Vec::with_capacity(attrs.len());
+            for (k, v) in attrs {
+                decoded.push((k.as_str(), decode(v)?));
+            }
+            let attr = |key: &str| {
+                decoded.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone()).unwrap_or_default()
+            };
             match name {
                 "testsuite" => {
                     self.suite = Some(Suite { name: attr("name"), cases: Vec::new() });
@@ -209,9 +213,10 @@ fn skip_to<'a>(text: &'a str, end: &str, what: &str) -> Result<&'a str, String> 
 }
 
 /// Reads `name attr="v" ... (/)>` after a `<`; returns the name, the decoded attributes, whether the
-/// tag is empty (`/>`), and the text after the tag. Values are not decoded when `decode_values` is false.
+/// tag is empty (`/>`), and the text after the tag. The values stay raw: the caller decodes them only
+/// for an element it knows.
 #[allow(clippy::type_complexity)]
-fn open_tag(after: &str, decode_values: bool) -> Result<(&str, Vec<(String, String)>, bool, &str), String> {
+fn open_tag(after: &str) -> Result<(&str, Vec<(String, String)>, bool, &str), String> {
     let name_end = after
         .find(|c: char| c.is_whitespace() || c == '/' || c == '>')
         .ok_or("a tag is not closed")?;
@@ -242,8 +247,7 @@ fn open_tag(after: &str, decode_values: bool) -> Result<(&str, Vec<(String, Stri
         if body[..close].contains('<') {
             return Err(format!("an attribute of <{name}> holds `<`"));
         }
-        let value = if decode_values { decode(&body[..close])? } else { String::new() };
-        attrs.push((key.to_string(), value));
+        attrs.push((key.to_string(), body[..close].to_string()));
         rest = &body[close + 1..];
     }
 }
