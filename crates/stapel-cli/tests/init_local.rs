@@ -445,3 +445,36 @@ fn pre_push_text_follows_the_mode() {
         .stderr(contains("not from stapel"));
     assert_eq!(read(dir, ".git/hooks/pre-push"), "#!/bin/sh\nexit 0\n");
 }
+
+// STP-31 AC-11: in the local mode `init` ends with the checklist, on every run; shared mode prints none.
+#[test]
+fn prints_the_checklist() {
+    let golden = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/init_local_checklist.txt"),
+    )
+    .unwrap();
+    let repo = git_repo();
+    let dir = repo.path();
+    let first = stapel(dir)
+        .args(["init", "--local", "--prefix", "ABC"])
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    let out = String::from_utf8(first.stdout).unwrap();
+    assert!(out.ends_with(&golden), "{out}");
+    let second = stapel(dir).arg("init").output().unwrap();
+    assert!(second.status.success());
+    let out = String::from_utf8(second.stdout).unwrap();
+    assert!(out.contains("already set up"), "{out}");
+    assert!(out.ends_with(&golden), "{out}");
+
+    let repo = git_repo();
+    let dir = repo.path();
+    let shared = stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .output()
+        .unwrap();
+    assert!(shared.status.success());
+    let out = String::from_utf8(shared.stdout).unwrap();
+    assert!(!out.contains("checklist:"), "{out}");
+}
