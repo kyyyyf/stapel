@@ -671,9 +671,13 @@ pub fn analyse_in(
                 // change; later commits are compared with the value at the merge (AC-16).
                 // A unit absent at the merge takes the deletion path below. Under cargo a file
                 // unit is Equal by content and mode; under junit, as any other unit, by its value.
-                if value.is_some()
+                // A file unit absent at the merge and at the second parent is Equal as well.
+                if (value.is_some() || matches!(unit, Unit::File(_)))
                     && let Some(second) = base_merge_parent(root, &sha, base_branch)
                     && match unit {
+                        Unit::File(_) if value.is_none() => {
+                            unit.value(&mut files, &second, junit).is_none()
+                        }
                         Unit::File(p) if !junit => same_as_parent(root, &sha, &second, p),
                         _ => value == unit.value(&mut files, &second, junit),
                     }
