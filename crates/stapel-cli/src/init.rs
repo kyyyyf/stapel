@@ -137,7 +137,11 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
         include_str!("../assets/config/external-states.yml").into(),
         &mut plan,
     );
-    plan_ignore_index(&root, &mut plan)?;
+    let is_local = config
+        .repository
+        .as_ref()
+        .is_some_and(|r| r.history == History::Local);
+    plan_ignore_index(&root, is_local, &mut plan)?;
     plan_hooks(&root, &mut plan)?;
     plan_pre_push(&root, &mut plan)?;
     let mut kept = false;
@@ -558,15 +562,40 @@ fn plan_create(root: &Path, rel: &'static str, content: String, plan: &mut Vec<S
     }
 }
 
-fn plan_ignore_index(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
+fn plan_ignore_index(root: &Path, local: bool, plan: &mut Vec<Step>) -> Result<(), String> {
+    if local {
+        let exclude = git_path(root, "info/exclude")?;
+        let attributes = git_path(root, "info/attributes")?;
+        plan_append_lines(root, &exclude, &IGNORE_LINES, plan)?;
+        return plan_append_lines(root, &attributes, &UNION_LINES, plan);
+    }
     plan_append_lines(root, ".gitignore", &IGNORE_LINES, plan)?;
     plan_append_lines(root, ".gitattributes", &UNION_LINES, plan)
+}
+
+/// The path git prints for `--git-path name`, as written relative to `root` or absolute when it
+/// lies outside `root`.
+fn git_path(root: &Path, name: &str) -> Result<String, String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--git-path", name])
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("could not run git: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("git could not name the path {name}"));
+    }
+    let printed = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+    let abs = root.join(&printed);
+    Ok(match abs.strip_prefix(root) {
+        Ok(rel) => rel.display().to_string(),
+        Err(_) => abs.display().to_string(),
+    })
 }
 
 /// Plans appending the lines of `lines` that `rel` lacks; a file that is not UTF-8 stays untouched.
 fn plan_append_lines(
     root: &Path,
-    rel: &'static str,
+    rel: &str,
     lines: &[&str],
     plan: &mut Vec<Step>,
 ) -> Result<(), String> {
