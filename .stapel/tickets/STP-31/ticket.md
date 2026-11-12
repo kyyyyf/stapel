@@ -177,13 +177,13 @@ stapel-cli --test <file> -- --test-threads=3`, `-p stapel-core --test config`; b
 
 | Input | Type | Bounds | Empty | Invalid | Precision | Test |
 |---|---|---|---|---|---|---|
-| `init --local` | flag | — | absent: the mode of `stapel.toml`, else shared | on a shared `stapel.toml`: exit 1 | — | `init_local::local_flag_refused_on_a_shared_config` |
-| `init --prefix` | string | as before | as before | as before | — | `init::rejects_bad_prefix` |
+| `--local` of `init` | flag | — | absent: the mode of `stapel.toml`, else shared | on a shared `stapel.toml`: exit 1 | — | `init_local::local_flag_refused_on_a_shared_config` |
+| `--prefix` of `init` | string | as before | as before | as before | — | `init::rejects_bad_prefix` |
 | `[repository] history` | string | `local`, `shared` | table absent: shared | other value or key: load fails | exact case | `core::config::repository_history_key` |
 | Exclude and attributes files | UTF-8 text | any | missing: made | not UTF-8: exit 1 | lines compared with trailing spaces trimmed, as `.gitignore` | `init_local::refuses_a_non_utf8_exclude_file` |
 | pre-push input line | four words | any count | no line: exit 0 | a line of other shape: skipped | full sha | `init_local::pre_push_refuses_process_files` |
 | `export KEY` | branch name | any | absent: the current branch | no branch, no Branch state, detached `HEAD`: exit 1 | exact | `export::export_key_and_refusals` |
-| `export --onto` | git revision | any | absent: the upstream of `base_branch` | no commit, starts with `-`, unrelated, holds `.stapel`, empty range: exit 1 | resolved once at the start | `export::export_refusals` |
+| `--onto` of `export` | git revision | any | absent: the upstream of `base_branch` | no commit, starts with `-`, unrelated, holds `.stapel`, empty range: exit 1 | resolved once at the start | `export::export_refusals` |
 
 ### External states
 

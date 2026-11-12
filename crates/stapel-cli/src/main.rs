@@ -39,6 +39,9 @@ enum Command {
         /// Asked interactively when omitted.
         #[arg(long)]
         prefix: Option<String>,
+        /// Keep the process files out of the shared history (first run only).
+        #[arg(long)]
+        local: bool,
     },
     /// Create a ticket: a folder with ticket.md and state.json.
     New {
@@ -266,7 +269,7 @@ enum HookCommand {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::Init { prefix } => init::run(prefix),
+        Command::Init { prefix, local } => init::run(prefix, local),
         Command::New { title, tracker } => {
             return fail::finish(new::run(&title, tracker.as_deref()));
         }

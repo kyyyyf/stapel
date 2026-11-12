@@ -1,7 +1,7 @@
 //! `stapel init`: the `.stapel/` layout in the repository root.
 
 use serde_json::{json, Value};
-use stapel_core::config::{starter_toml, validate_prefix, Config};
+use stapel_core::config::{starter_toml, validate_prefix, Config, History};
 use std::io::{BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -68,7 +68,7 @@ exit 0
 /// Test-only switch: treat stdin as a terminal so the prefix prompt can be driven from a pipe.
 const ASSUME_TTY: &str = "STAPEL_ASSUME_TTY";
 
-pub fn run(prefix: Option<String>) -> Result<(), String> {
+pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
     let root = repo_root()?;
 
     // Read and check everything first, so a refusal leaves the repository untouched.
@@ -81,6 +81,17 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
         let text = std::fs::read_to_string(&config_path).map_err(|e| format!("{CONFIG}: {e}"))?;
         let config =
             Config::parse_at(&text, &root).map_err(|e| format!("{CONFIG} cannot be read: {e}"))?;
+        let is_local = config
+            .repository
+            .as_ref()
+            .is_some_and(|r| r.history == History::Local);
+        if local && !is_local {
+            return Err(format!(
+                "{CONFIG} is in shared mode; --local applies only to the first stapel init. To \
+                 switch, add [repository] with history = \"local\" to it, remove stapel's lines \
+                 from .gitignore and .gitattributes, and run stapel init"
+            ));
+        }
         if prefix.is_some() {
             say!(
                 "{CONFIG} already exists, the ticket key stays {}; edit the file to change it",
@@ -103,7 +114,10 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
         };
         validate_prefix(&prefix)?;
         let cargo = root.join("Cargo.toml").is_file();
-        let text = starter_toml(&prefix, cargo);
+        let mut text = starter_toml(&prefix, cargo);
+        if local {
+            text.push_str("\n[repository]\nhistory = \"local\"\n");
+        }
         let config = Config::parse_at(&text, &root)
             .map_err(|e| format!("the starter configuration cannot be read: {e}"))?;
         plan_create(&root, CONFIG, text, &mut plan);
