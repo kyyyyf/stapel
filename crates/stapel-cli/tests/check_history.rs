@@ -1335,6 +1335,90 @@ fn base_merge_data_file_is_no_tests_change() {
     assert!(text.contains(&merge[..7]), "the fault is the merge: {text}");
 }
 
+// ---- STP-30 AC-4 ----
+
+#[test]
+fn base_merge_other_parents() {
+    /// `kind` is `base` (a merge of main, `base_branch` main), `no-base-branch`, `ref-gone`
+    /// (`base_branch` names a ref that does not exist), `other` (a merge of a branch that main does
+    /// not contain) or `octopus` (one merge of main and of another branch). Main or the other branch
+    /// brings the test file `new.rs`. Returns the check output and the merge commit.
+    fn scenario(kind: &str) -> (String, String) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        let main = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        let mut state = common::state_json(dir, "ABC-1");
+        match kind {
+            "no-base-branch" => {}
+            "ref-gone" => state["base_branch"] = serde_json::json!("deleted-branch"),
+            _ => state["base_branch"] = serde_json::json!(main),
+        }
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base branch");
+        git(dir, &["branch", "other"]);
+        git(dir, &["checkout", "-q", "-b", "ticket"]);
+        clean_pair(dir, "step 1", "one");
+        let test_file = "#[test]\nfn from_main() {\n    assert_eq!(tiny::add(1, 1), 2);\n}\n";
+        let mut merged = vec![main.clone()];
+        if kind == "other" {
+            git(dir, &["checkout", "-q", "other"]);
+            write(dir, "crates/tiny/tests/new.rs", test_file);
+            commit(dir, "other: a test file");
+            merged = vec!["other".to_string()];
+        } else {
+            git(dir, &["checkout", "-q", &main]);
+            write(dir, "crates/tiny/tests/new.rs", test_file);
+            commit(dir, "main: a test file");
+        }
+        if kind == "octopus" {
+            git(dir, &["checkout", "-q", "other"]);
+            write(dir, "NOTES.md", "notes\n");
+            commit(dir, "other: a note");
+            merged.push("other".to_string());
+        }
+        git(dir, &["checkout", "-q", "ticket"]);
+        let mut args = vec![
+            "-c",
+            "user.name=test-user",
+            "-c",
+            "user.email=test-user.invalid",
+            "merge",
+            "-q",
+            "--no-ff",
+            "--no-commit",
+        ];
+        args.extend(merged.iter().map(String::as_str));
+        git(dir, &args);
+        commit(dir, "ABC-1: merge");
+        let merge = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        clean_pair(dir, "step 2", "two");
+        let (_, text) = check(dir);
+        (text, merge)
+    }
+
+    // Control: a merge of the base branch blocks nothing.
+    let (text, _) = scenario("base");
+    assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
+
+    for kind in ["no-base-branch", "ref-gone", "other", "octopus"] {
+        let (text, merge) = scenario(kind);
+        assert_eq!(outcome(&text, "step 2"), "unverified", "{kind}: {text}");
+        assert!(
+            text.contains(&format!(
+                "build-input-changed: crates/tiny/tests/new.rs at {}",
+                &merge[..7]
+            )),
+            "{kind}: {text}"
+        );
+    }
+}
+
 // ---- STP-28 step 23 (AC-37) ----
 
 #[test]
