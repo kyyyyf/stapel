@@ -169,3 +169,143 @@ fn refuses_bad_character_references() {
         assert_eq!(suites[0].cases[0].name, expect, "{good}");
     }
 }
+
+#[test]
+fn refuses_misplaced_elements() {
+    let refused = |what: &str, bytes: &[u8]| -> String { read_report(bytes).expect_err(what) };
+    let place = "in a place the reader does not know";
+    assert!(refused(
+        "nested testsuite",
+        b"<testsuites><testsuite name=\"a\"><testsuite name=\"b\"/></testsuite></testsuites>"
+    )
+    .contains(place));
+    assert!(refused(
+        "nested testsuite under a root testsuite",
+        b"<testsuite name=\"a\"><testsuite name=\"b\"/></testsuite>"
+    )
+    .contains(place));
+    assert!(refused("testcase under testsuites", b"<testsuites><testcase name=\"x\"/></testsuites>")
+        .contains(place));
+    assert!(refused(
+        "failure under testsuite",
+        b"<testsuites><testsuite><failure/></testsuite></testsuites>"
+    )
+    .contains(place));
+    assert!(refused("second root", b"<testsuites/><testsuites/>").contains("more than one root"));
+    assert!(refused("two suites as roots", b"<testsuite name=\"a\"/><testsuite name=\"b\"/>")
+        .contains("more than one root"));
+    assert!(refused("text after the root", b"<testsuites/>junk").contains("text outside"));
+    assert!(refused("text before the root", b"junk<testsuites/>").contains("text outside"));
+    assert!(refused("unknown root", b"<report><testsuite name=\"a\"/></report>")
+        .contains("no <testsuites>"));
+    assert!(refused("invalid utf-8", b"<testsuites name=\"\xff\"/>").contains("UTF-8"));
+    assert!(refused("empty file", b"").contains("empty"));
+    let mut big = b"<testsuites/>".to_vec();
+    big.extend(std::iter::repeat(b' ').take(16 * 1024 * 1024 + 1));
+    assert!(refused("over the limit", &big).contains("16 MiB"));
+}
+
+#[test]
+fn refusals_name_their_cause() {
+    let cause = |what: &str, bytes: &[u8], needle: &str| {
+        let err = read_report(bytes).expect_err(what);
+        assert!(err.contains(needle), "{what}: `{err}` lacks `{needle}`");
+    };
+    cause("blank", b"  \n", "empty");
+    cause("text", b"this is not a report", "text outside");
+    cause(
+        "doctype",
+        b"<?xml version=\"1.0\"?><!DOCTYPE testsuites [<!ENTITY x \"y\">]><testsuites/>",
+        "DOCTYPE",
+    );
+    cause(
+        "unknown entity",
+        b"<testsuites><testsuite name=\"&foo;\"/></testsuites>",
+        "`&foo;` is not known",
+    );
+    cause(
+        "unknown entity in text",
+        b"<testsuites><testsuite name=\"s\"><testcase name=\"a\"><failure>&foo;</failure></testcase></testsuite></testsuites>",
+        "`&foo;` is not known",
+    );
+    cause(
+        "mismatched close",
+        b"<testsuites><testsuite name=\"s\"><testcase name=\"a\"></testsuite></testsuites>",
+        "does not match <testcase>",
+    );
+    cause(
+        "stray close",
+        b"<testsuites><testsuite name=\"s\"></testsuite></testsuite></testsuites>",
+        "does not match <testsuites>",
+    );
+    cause("close with no open", b"</testsuites>", "has no open element");
+    cause("not closed", b"<testsuites><testsuite name=\"s\">", "<testsuite> is not closed");
+    cause("bad reference", b"<testsuites><testsuite name=\"&#xZZ;\"/></testsuites>", "is not known");
+    cause("control character", b"<testsuites><testsuite name=\"&#x1;\"/></testsuites>", "is not known");
+    cause("signed reference", b"<testsuites><testsuite name=\"&#+65;\"/></testsuites>", "is not known");
+    cause("unterminated comment", b"<testsuites><!-- never closed", "a comment is not closed");
+    cause(
+        "unterminated CDATA",
+        b"<testsuites><testsuite name=\"s\"><system-out><![CDATA[x</system-out></testsuite></testsuites>",
+        "a CDATA section is not closed",
+    );
+    cause(
+        "unterminated processing instruction",
+        b"<testsuites><?php never closed",
+        "a processing instruction is not closed",
+    );
+    // UTF-16 with a byte order mark is not UTF-8
+    let mut utf16 = vec![0xFF, 0xFE];
+    for unit in "<testsuites/>".encode_utf16() {
+        utf16.extend(unit.to_le_bytes());
+    }
+    cause("UTF-16", &utf16, "not valid UTF-8");
+    cause("invalid UTF-8", b"<testsuites name=\"\xff\"/>", "not valid UTF-8");
+    let mut big = b"<testsuites/>".to_vec();
+    big.extend(std::iter::repeat(b' ').take(16 * 1024 * 1024 + 1));
+    cause("over 16 MiB", &big, "over 16 MiB");
+}
+
+#[test]
+fn reads_unusual_valid_reports() {
+    // a BOM, single quotes, spaces around `=`, a foreign encoding declaration, a processing instruction
+    let xml = "\u{feff}<?xml version='1.0' encoding='ISO-8859-1'?><?stylesheet href='x'?>\n\
+        <testsuites >\n<testsuite  name = 'a b'  tests='1'>\
+        <testcase classname = 'c' name = 'one' />\
+        </testsuite></testsuites>\n";
+    let suites = read(xml).unwrap();
+    assert_eq!(suites.len(), 1);
+    assert_eq!(suites[0].name, "a b");
+    assert_eq!(cases(&suites[0]), vec![("one", Outcome::Passed)]);
+
+    // a testcase inside an unknown element is skipped; mixed outcomes; a missing name
+    let xml = "<testsuites><testsuite name=\"s\">\
+        <extra><testcase name=\"hidden\"><failure/></testcase></extra>\
+        <testcase classname=\"c\" name=\"p\"/>\
+        <testcase classname=\"c\" name=\"f\"><failure message=\"m\"/></testcase>\
+        <testcase classname=\"c\" name=\"e\"><error/></testcase>\
+        <testcase classname=\"c\" name=\"k\"><skipped/></testcase>\
+        <testcase classname=\"c\"/>\
+        </testsuite><testsuite><testcase name=\"n\"/></testsuite></testsuites>";
+    let suites = read(xml).unwrap();
+    assert_eq!(suites.len(), 2);
+    assert_eq!(
+        cases(&suites[0]),
+        vec![
+            ("p", Outcome::Passed),
+            ("f", Outcome::Failed),
+            ("e", Outcome::Failed),
+            ("k", Outcome::Skipped),
+            ("", Outcome::Passed),
+        ]
+    );
+    assert_eq!(suites[1].name, "");
+    assert_eq!(cases(&suites[1]), vec![("n", Outcome::Passed)]);
+
+    // a single testsuite as the root
+    let suites = read("<testsuite name=\"root\"><testcase name=\"t\"/></testsuite>").unwrap();
+    assert_eq!(suites.len(), 1);
+    assert_eq!(cases(&suites[0]), vec![("t", Outcome::Passed)]);
+
+    assert_eq!(read("<testsuites/>").unwrap().len(), 0);
+}
