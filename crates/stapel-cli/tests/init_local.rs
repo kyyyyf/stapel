@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{git_in, git_repo, read, snapshot, stapel};
+use common::{git_config, git_in, git_repo, read, snapshot, stapel};
 use predicates::str::contains;
 use stapel_core::config::{Config, History};
 
@@ -190,4 +190,202 @@ fn refuses_a_non_utf8_exclude_file() {
         assert_eq!(snapshot(dir), before);
         assert_eq!(std::fs::read(&file).unwrap(), b"abc\xff\n");
     }
+}
+
+fn commit_all(dir: &std::path::Path, message: &str) -> String {
+    git_in(dir, &["add", "-A"]);
+    git_in(
+        dir,
+        &[
+            "-c",
+            "user.email=a@b.c",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            message,
+        ],
+    );
+    git_in(dir, &["rev-parse", "HEAD"]).trim().to_string()
+}
+
+fn make_local(dir: &std::path::Path) {
+    let path = dir.join(".stapel/stapel.toml");
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.push_str("\n[repository]\nhistory = \"local\"\n");
+    std::fs::write(&path, text).unwrap();
+}
+
+// STP-31 AC-7: a stapel pre-push inside the work tree goes to the exclude file.
+#[test]
+fn pre_push_in_a_tracked_hooks_folder() {
+    // A relative hooks folder with a tracked hook.
+    let repo = git_repo();
+    let dir = repo.path();
+    git_config(dir, "core.hooksPath", ".husky");
+    std::fs::create_dir_all(dir.join(".husky")).unwrap();
+    std::fs::write(dir.join(".husky/pre-commit"), "#!/bin/sh\nexit 0\n").unwrap();
+    commit_all(dir, "husky");
+    stapel(dir)
+        .args(["init", "--local", "--prefix", "ABC"])
+        .assert()
+        .success();
+    assert!(dir.join(".husky/pre-push").exists());
+    let exclude = read(dir, ".git/info/exclude");
+    assert!(exclude.contains("/.husky/pre-push\n"), "{exclude}");
+    let status = git_in(dir, &["status", "--porcelain", "--", ".husky"]);
+    assert_eq!(status, "");
+    // A second run adds nothing.
+    stapel(dir).arg("init").assert().success();
+    assert_eq!(read(dir, ".git/info/exclude"), exclude);
+
+    // An absolute hooks folder inside the work tree.
+    let repo = git_repo();
+    let dir = repo.path();
+    let hooks = dir.canonicalize().unwrap().join("hooks-here");
+    git_config(dir, "core.hooksPath", hooks.to_str().unwrap());
+    stapel(dir)
+        .args(["init", "--local", "--prefix", "ABC"])
+        .assert()
+        .success();
+    assert!(hooks.join("pre-push").exists());
+    let exclude = read(dir, ".git/info/exclude");
+    assert!(exclude.contains("/hooks-here/pre-push\n"), "{exclude}");
+
+    // The default folder inside the git folder: no line.
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--local", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let exclude = read(dir, ".git/info/exclude");
+    assert!(!exclude.contains("pre-push"), "{exclude}");
+
+    // A hooks folder outside the work tree: the current warning, no line.
+    let repo = git_repo();
+    let dir = repo.path();
+    let outside = tempfile::tempdir().unwrap();
+    git_config(dir, "core.hooksPath", outside.path().to_str().unwrap());
+    stapel(dir)
+        .args(["init", "--local", "--prefix", "ABC"])
+        .assert()
+        .success()
+        .stderr(contains("is outside the repository"));
+    let exclude = read(dir, ".git/info/exclude");
+    assert!(!exclude.contains("pre-push"), "{exclude}");
+
+    // A hook that is not stapel's stays and gets no line.
+    let repo = git_repo();
+    let dir = repo.path();
+    git_config(dir, "core.hooksPath", ".husky");
+    std::fs::create_dir_all(dir.join(".husky")).unwrap();
+    std::fs::write(dir.join(".husky/pre-push"), "#!/bin/sh\nexit 0\n").unwrap();
+    stapel(dir)
+        .args(["init", "--local", "--prefix", "ABC"])
+        .assert()
+        .success()
+        .stderr(contains("not from stapel"));
+    let exclude = read(dir, ".git/info/exclude");
+    assert!(!exclude.contains("pre-push"), "{exclude}");
+
+    // A stapel hook from a shared install, then the local mode: the line is added.
+    let repo = git_repo();
+    let dir = repo.path();
+    git_config(dir, "core.hooksPath", ".husky");
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    assert!(dir.join(".husky/pre-push").exists());
+    make_local(dir);
+    stapel(dir).arg("init").assert().success();
+    let exclude = read(dir, ".git/info/exclude");
+    assert!(exclude.contains("/.husky/pre-push\n"), "{exclude}");
+}
+
+fn run_hook(dir: &std::path::Path, input: &str, agent: bool) -> std::process::Output {
+    use std::io::Write;
+    let mut cmd = std::process::Command::new(dir.join(".git/hooks/pre-push"));
+    cmd.current_dir(dir)
+        .env_remove("CLAUDECODE")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    if agent {
+        cmd.env("CLAUDECODE", "1");
+    }
+    let mut child = cmd.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+// STP-31 AC-8: the local pre-push refuses new commits that carry `.stapel/`.
+#[test]
+fn pre_push_refuses_process_files() {
+    let repo = git_repo();
+    let dir = repo.path();
+    std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+    let plain = commit_all(dir, "plain");
+    stapel(dir)
+        .args(["init", "--local", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let with = commit_all(dir, "process files");
+    git_in(dir, &["rm", "-r", "-q", "--cached", ".stapel"]);
+    git_in(
+        dir,
+        &[
+            "-c",
+            "user.email=a@b.c",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "drop process files",
+        ],
+    );
+    let without = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let zero = "0".repeat(40);
+    let line = |sha: &str| format!("refs/heads/feat {sha} refs/heads/feat {zero}\n");
+    let code = |out: &std::process::Output| out.status.code();
+
+    let out = run_hook(dir, &line(&plain), false);
+    assert_eq!(code(&out), Some(0));
+    let out = run_hook(dir, &line(&with), false);
+    assert_eq!(code(&out), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        stderr.contains(
+            "stapel: refs/heads/feat carries .stapel/; push the branch that stapel export writes"
+        ),
+        "{stderr}"
+    );
+    // A tip that removes `.stapel/` on top of a commit that has it, neither on a remote.
+    assert_eq!(code(&run_hook(dir, &line(&without), false)), Some(1));
+    // Two lines, the second carrying `.stapel/`.
+    let two = format!("{}{}", line(&plain), line(&with));
+    assert_eq!(code(&run_hook(dir, &two, false)), Some(1));
+    // A line of three words is skipped; an all-zero local sha; empty input.
+    let three = format!("refs/heads/feat {with} refs/heads/feat\n");
+    assert_eq!(code(&run_hook(dir, &three, false)), Some(0));
+    let deleted = format!("(delete) {zero} refs/heads/feat {with}\n");
+    assert_eq!(code(&run_hook(dir, &deleted, false)), Some(0));
+    assert_eq!(code(&run_hook(dir, "", false)), Some(0));
+    // The agent refusal comes first.
+    let out = run_hook(dir, &line(&plain), true);
+    assert_eq!(code(&out), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("agent session"));
+    // The same history already on the remote's ref.
+    git_in(dir, &["update-ref", "refs/remotes/origin/feat", &without]);
+    assert_eq!(code(&run_hook(dir, &line(&without), false)), Some(0));
 }
