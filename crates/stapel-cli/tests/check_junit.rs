@@ -1024,6 +1024,38 @@ fn tests_changed_under_junit() {
     assert_eq!(line, "step 1: needs-run", "a file the RED left alone");
 }
 
+// AC-42: a GREEN that edits a file in the folder of a step test's file, which matches a test glob and
+// is no test file, reads `tests-changed`; the same file in another folder is free.
+#[test]
+fn fixture_beside_a_test_is_protected() {
+    let case = |edit: &str| {
+        let repo = junit_repo();
+        let dir = repo.dir();
+        write(dir, "__tests__/data.json", "{\"a\": 1}\n");
+        write(dir, "other/data.test.json", "{\"a\": 1}\n");
+        commit(dir, "ABC-1: fixtures");
+        write(
+            dir,
+            "__tests__/f.test.ts",
+            "it(\"fixed\", () => { /* needs src/f.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 1 RED: fixed");
+        write(dir, "src/f.ts", "export const f = 1;\n");
+        write(dir, edit, "{\"a\": 2}\n");
+        commit(dir, "ABC-1 step 1 GREEN: fixed");
+        let (_, text) = stdout(dir, &["check", "ABC-1", "--history"]);
+        text.lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("{edit}: no step 1:\n{text}"))
+            .to_string()
+    };
+    assert_eq!(
+        case("__tests__/data.json"),
+        "step 1: tests-changed: __tests__/data.json"
+    );
+    assert_eq!(case("other/data.test.json"), "step 1: needs-run");
+}
+
 // AC-27: the commit hook prints the `tests-changed` fault of a GREEN that edits a helper line.
 #[test]
 fn hook_faults_under_junit() {
