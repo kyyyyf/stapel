@@ -1264,6 +1264,67 @@ fn empty_sources_count_as_absent() {
     );
 }
 
+// ---- STP-30 AC-11 ----
+
+// A `stapel.toml` that fails to load: the hook after a commit of an open ticket prints the load
+// fault in place of every step line, also during a merge, and exits 0. A commit of no ticket
+// stays silent.
+#[test]
+fn broken_config_is_reported() {
+    fn answer(result: (i32, String, String), what: &str) -> String {
+        let (code, out, err) = result;
+        assert_eq!(code, 0, "{what}: {out}{err}");
+        assert_eq!(err, "", "{what}");
+        let answer: serde_json::Value = serde_json::from_str(&out)
+            .unwrap_or_else(|e| panic!("{what}: stdout is not one JSON object ({e}):\n{out}"));
+        answer["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{what}: no additionalContext text:\n{out}"))
+            .to_string()
+    }
+    fn assert_fault_only(text: &str, what: &str) {
+        assert!(text.contains("stapel.toml"), "{what}: {text}");
+        assert!(!text.contains("is HEAD"), "{what}: a step line: {text}");
+        assert!(!text.contains("stop and ask"), "{what}: a step line: {text}");
+        assert!(!text.contains("details:"), "{what}: a step line: {text}");
+        assert!(!text.contains("duplicate"), "{what}: a step line: {text}");
+    }
+
+    let repo = failing();
+    let dir = repo.path();
+    assert_fault(hook(dir), "control: a valid config");
+    let path = dir.join(".stapel/stapel.toml");
+    let good = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, "[check\nrunner = junit\n").unwrap();
+
+    let text = answer(hook(dir), "a syntax error");
+    assert_fault_only(&text, "a syntax error");
+
+    // During a merge.
+    let head = git(dir, &["rev-parse", "HEAD"]);
+    std::fs::write(dir.join(".git/MERGE_HEAD"), &head).unwrap();
+    let text = answer(hook(dir), "a merge");
+    assert_fault_only(&text, "a merge");
+    std::fs::remove_file(dir.join(".git/MERGE_HEAD")).unwrap();
+
+    // A folder in place of the file.
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    let text = answer(hook(dir), "a folder");
+    assert_fault_only(&text, "a folder");
+    std::fs::remove_dir(&path).unwrap();
+
+    // A commit of no ticket: nothing.
+    std::fs::write(&path, "[check\nrunner = junit\n").unwrap();
+    git(dir, &["commit", "-q", "--allow-empty", "-m", "plain commit"]);
+    assert_silent(hook(dir), "a commit of no ticket");
+
+    // The valid config again, on a ticket commit: the step lines return.
+    std::fs::write(&path, good).unwrap();
+    git(dir, &["reset", "-q", "--soft", "HEAD~1"]);
+    assert_fault(hook(dir), "the config is valid again");
+}
+
 // ---- STP-28 AC-2 ----
 
 #[test]
