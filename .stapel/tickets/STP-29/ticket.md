@@ -407,4 +407,61 @@ commit of a test that passes at once (SR1-9).
 
 ## Summary
 
-TODO
+stapel now counts the person's attention. The reader `attention.rs` takes three kinds of events from a main
+transcript of Claude Code: a question, a dialog the person answered (a tool result whose permission source
+starts with `user`) and a typed message, each with its wait. The times are unions of the waits: attention
+(each wait up to 10 minutes) and waited (in full). The hooks `stop` and `session-end` append one attention
+record per ticket to `tokens.jsonl`, split by the worktree folder of each event's line, after a cursor that
+every worktree shares through the git common folder. `stapel tokens KEY` prints the attention line and the
+steps line under the token table; `stapel tokens measure FILE` prints tokens and attention numbers of any
+main transcript with no ticket and no write. The `subagent-stop` hook no longer writes an empty record for
+a transcript file that does not exist.
+
+For the pilot: two sessions are compared with `stapel tokens measure` on both main transcripts (one code,
+one wall time rule); the comparable numbers are the counts and the capped attention time; command lines
+are counted in both transcripts by hand; the subagent transcripts are searched for a person's permission
+source (E-4).
+
+Measures against STP-26 (the nearest ticket in kind; STP-27 had 63 steps):
+
+- Escaped defects of earlier tickets found here: one of STP-26 (the token cursor reads only the journals
+  of the hook's own checkout, so a session that changes checkouts records tokens twice; process ledger).
+- Code review HIGH and MEDIUM inside the promise: 4 over two rounds (STP-26: 2), all from the external
+  reviewer, none HIGH: E-1 fixed (step 7), E-2, E-3 and E2-1 deferred and listed as not promised. Spec
+  review caught 11 MEDIUM before the build; the per-step drift reviews 4 MEDIUM during it (one a real
+  deviation from the Spec, the whole-hours duration text, fixed in step 4c).
+- `ticket.md`: 40.7 KB before this section (STP-26: 27.3 KB); the Not promised list is a third of the Spec.
+- Size: 1 925 lines added and 10 removed in 9 files under `crates/`, against an estimate of 500 source and
+  800 test lines; the tests are about three quarters of it.
+- Steps: 12 planned (9 pairs, 3 coverage), 14 built: one fix pair and one coverage commit after code
+  review round 1 (ledger decision 2026-11-12: such steps do not count toward the limit of 12).
+- Tokens, measured by the hooks: builder 133k output, 6.4M cache read; drift 15k / 0.3M; reviewers 38k /
+  0.9M; depends 7k / 0.2M. Orchestrator 256k / 96.5M: not comparable, because this one session also held
+  the project review, the plan changes of 2026-11-10 and 2026-11-11, the pilot clones and the withdrawn
+  split of A1 before this ticket began; the rule "a new session for each ticket" was not kept.
+- Wall time: 2026-11-11 about 10:55 UTC (the ticket made) to 2026-11-12 about 06:45 UTC, with a night and
+  a period without the person in it; the build of 12 steps took about five hours of the first day.
+
+The person's part, counted by hand (the hooks of this ticket were not live in its own session): 3
+confirmation dialogs (`stapel ok`), 3 ledger decisions, 6 answers to questions (the frame's three choices,
+the frame, the finding outside the promise at spec review, one LOW finding of step 1, E-4, the step limit).
+One of the six came from a LOW finding that a drift reviewer tagged `outside`; later requests told the
+reviewers to use that tag only for a proposal to widen the promise, and no further stop of that kind came.
+
+Process notes:
+
+- Builders stopped with a question three times, each time rightly: twice because the orchestrator's
+  request contradicted the Spec (a golden line in step 4c; two old tests the plan of step 6 had missed),
+  once over the builder's own golden (step 5). One builder wrote a file through Bash (B-1), one returned an
+  empty report (B-2).
+- `stapel check` was refused six times because another session's check held the repository's check lock,
+  and waited more than ten minutes for the cargo lock five times; one full check ran only because
+  `ticket.md` had changed (ledger finding 2026-11-11).
+- The dependency review against STP-28 ran four times, each time because one of the two tickets' text had
+  changed; it found no dependency each time.
+- `stapel close` cannot close a ticket that has no step commit (the first STP-29, withdrawn; ledger).
+
+Not verified: the hooks of this ticket did not run in this session, because the `stapel` on PATH is the
+build before it; `measure` was not run on a real transcript by the built binary. Both are checked after
+the binary is installed from `main`: one `stapel tokens measure` on this session's transcript, and one
+`stop` that leaves an attention record.
