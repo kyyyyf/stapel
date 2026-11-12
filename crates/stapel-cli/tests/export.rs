@@ -674,3 +674,59 @@ fn export_leaves_the_checkout() {
     assert!(state(dir) == before);
     assert_eq!(leftovers(tmp.path()), Vec::<String>::new());
 }
+
+// STP-31 AC-21: from a subfolder or a linked worktree the process paths and the `.stapel` check are
+// read from the top of the tree, and `export/ABC-1` is the same as from the root.
+#[test]
+fn export_from_a_subfolder() {
+    let repo = rewrite_repo();
+    let dir = repo.path();
+    let tmp = bare_dir();
+    let run_in = |cwd: &Path| {
+        stapel(cwd)
+            .env("TMPDIR", tmp.path())
+            .args(["export", "ABC-1", "--onto", "main"])
+            .assert()
+            .success();
+    };
+
+    run_in(dir);
+    let from_root = rev(dir, "export/ABC-1");
+    git_n(dir, 1, &["update-ref", "-d", "refs/heads/export/ABC-1"]);
+
+    run_in(&dir.join("src"));
+    assert_eq!(rev(dir, "export/ABC-1"), from_root);
+    // Process paths are as in `main`: only its settings file.
+    let kept: Vec<_> = entries(dir, "export/ABC-1")
+        .into_keys()
+        .filter(|p| is_process_path(p))
+        .collect();
+    assert_eq!(kept, [".claude/settings.json"]);
+    git_n(dir, 1, &["update-ref", "-d", "refs/heads/export/ABC-1"]);
+
+    // A linked worktree of the ticket, run from its subfolder.
+    let linked = bare_dir();
+    let linked_dir = linked.path().join("wt");
+    git_n(
+        dir,
+        1,
+        &["worktree", "add", "-q", "--detach", linked_dir.to_str().unwrap(), "ABC-1"],
+    );
+    run_in(&linked_dir.join("src"));
+    assert_eq!(rev(dir, "export/ABC-1"), from_root);
+    git_n(dir, 1, &["update-ref", "-d", "refs/heads/export/ABC-1"]);
+
+    // The `.stapel` check of the Onto tree is read from the top too.
+    git_n(dir, 3, &["checkout", "-q", "main"]);
+    commit(dir, 3, &[(".stapel/x.txt", "x\n")], "main with process files");
+    git_n(dir, 3, &["checkout", "-q", "ABC-1"]);
+    let before = export_refs(dir);
+    let err = stapel(&dir.join("src"))
+        .env("TMPDIR", tmp.path())
+        .args(["export", "ABC-1", "--onto", "main"])
+        .assert()
+        .code(1);
+    let err = String::from_utf8_lossy(&err.get_output().stderr).into_owned();
+    assert!(err.contains(".stapel"), "{err}");
+    assert_eq!(export_refs(dir), before);
+}
