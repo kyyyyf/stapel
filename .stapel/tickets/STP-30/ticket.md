@@ -29,12 +29,12 @@ a correct close).
    relative one does (CR2-5).
 3. The JUnit reader refuses an unknown root, a second root and CDATA outside the root, each with its
    cause, and skips the content of unknown elements without decoding it (CR2-7, CR2-11).
-4. When `stapel.toml` exists and fails to load, `stapel check --history`, `stapel lint` and `stapel next`
-   fail with the load fault and the commit hook prints the fault and lets the commit pass; none falls back
-   to cargo (CR2-8).
+4. When `stapel.toml` is a file that fails to load, `stapel check --history`, `stapel lint` and `stapel
+   next` fail with the load fault and the commit hook prints the fault and lets the commit pass; none falls
+   back to cargo; the root is found as before (CR2-8).
 5. A report path that is a link, folder, FIFO, socket or device is not opened and is named by its kind;
    the 16 MiB bound of a regular report holds as before (d21-1, d21-2).
-6. Tests for the base merge: build inputs of the cargo runner (`Cargo.toml`, `Cargo.lock`, `build.rs`, a
+6. Tests for the base merge: build inputs of the cargo runner (`Cargo.toml`, `build.rs`, a
    toolchain file, `.cargo/config`), a mode-only or symlink change with an equal blob, a ticket whose base
    branch merges another branch, a deleted base branch ref, an octopus merge, a rename with mixed paths, a
    merge that brings one equal and one resolved input; a fixture added, deleted or changed beside a cargo
@@ -63,6 +63,15 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   Rejected: freeing a unit only when the second parent did not change it since the ticket's RED.
 - 2026-11-12: Assumption (missing config, SR1-1): an absent `stapel.toml` keeps today's behaviour; only a
   file that exists and fails to parse or validate is a load fault.
+- 2026-11-12: Decision (Cargo.lock, the human, recommended, step 4): `Cargo.lock` is dropped from AC-14 and
+  promise item 6; it is no build input in the code, also outside a merge, and `--locked` fails a stale lock
+  file. Rejected: making it a build input (widens the promise; a dependency update would block a step).
+- 2026-11-12: Decision (root lookup, the human, recommended, d8-3, d9-1): the root is found as before, by a
+  regular `.stapel/stapel.toml`; a folder or a dangling link in its place gives today's refusal and leaves
+  the hooks silent. Rejected: any entry marks the root for every command and hook (a broken nested entry
+  would hide a valid outer root).
+- 2026-11-12: Decision (check cadence, the human, ledger): `stapel check` runs once at the end of the
+  build, before code review.
 - 2026-11-12: Assumption (script root, SR1-9): "under the root" is a lexical prefix test against the root
   of the checkout where the check runs, for a path without `.`, `..` or empty parts.
 - 2026-11-12: Assumption (config fault, SR2-1, SR2-4): `stapel next` fails with the load fault as `check
@@ -82,24 +91,24 @@ Terms (the others as in STP-28):
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN a Base merge changes a Protected unit that is Equal at the merge THE change gives no `tests-changed`, under cargo and junit. | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change` |
-| AC-2 | IF a Base merge resolves a Protected unit that exists at both its parents to a value other than at its second parent THEN the merge gives `tests-changed` with the merge as fault commit, as before. | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change` |
+| AC-1 | WHEN a Base merge changes a Protected unit that is Equal at the merge THE change gives no `tests-changed`, under cargo and junit. | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit` |
+| AC-2 | IF a Base merge resolves a Protected unit that exists at both its parents to a value other than at its second parent THEN the merge gives `tests-changed` with the merge as fault commit, as before. | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit` |
 | AC-16 | WHEN a commit after an Equal Base merge changes the Protected unit THE commit is compared with the unit's value at the merge and gives `tests-changed`. | `check_junit::base_merge_then_edit_is_tests_change` |
-| AC-3 | IF a Base merge brings a path whose blob equals that at the second parent but whose mode differs (an executable bit, a link) THEN the path is not Equal at the merge: a build input gives `build-input-changed` at the merge, a data file or fixture gives `tests-changed` at the merge. | `check_history::base_merge_mode_change_blocks` |
+| AC-3 | IF a Base merge brings a path whose blob equals that at the second parent but whose mode differs (an executable bit, a link) THEN the path is not Equal at the merge and gives `build-input-changed` at the merge when it is a build input or, under cargo, a data file or fixture beside a step test (STP-13); under junit the mode of a fixture is not part of its value, as before. | `check_history::base_merge_mode_change_blocks`, `check_history::base_merge_mode_outcomes`, `check_junit::base_merge_mode_change_blocks` |
 | AC-4 | IF the ticket has no `base_branch`, its `base_branch` ref is gone, the merge's second parent is not an ancestor of that ref, or the merge has more than two parents THEN the merge is no Base merge and its changes block as before. | `check_history::base_merge_other_parents` |
 | AC-5 | WHEN a rename entry of a Base merge has one path Equal at the merge and the other not, or the merge brings one Equal and one resolved build input THE entry, or the resolved input, gives `build-input-changed` at the merge, as a change outside a Base merge does. | `check_history::base_merge_mixed_entries` |
-| AC-14 | WHEN a Base merge under cargo brings `Cargo.toml`, `Cargo.lock`, `build.rs`, `rust-toolchain`, `rust-toolchain.toml`, `.cargo/config` or `.cargo/config.toml` Equal at the merge THE step is not blocked; resolved to other content, it is `build-input-changed` at the merge. | `check_history::base_merge_brings_cargo_inputs` |
+| AC-14 | WHEN a Base merge under cargo brings `Cargo.toml`, `build.rs`, `rust-toolchain`, `rust-toolchain.toml`, `.cargo/config` or `.cargo/config.toml` Equal at the merge THE step is not blocked; resolved to other content, it is `build-input-changed` at the merge. | `check_history::base_merge_brings_cargo_inputs` |
 | AC-15 | WHEN under cargo a commit after GREEN adds or deletes a data file beside a step test THE step is `build-input-changed` (STP-13); a content change of that file gives `tests-changed`; no junit rule of STP-28 AC-42 applies. | `check_history::cargo_fixture_beside_step_test` |
-| AC-6 | WHEN the first word of `command` is an absolute path under the root of the checkout where the check runs, with no `.`, `..` or empty part, THE Per-file runs and the suite run the script at that path relative to the check copy, as it is at the run's commit; any other absolute path runs as given. | `check_junit::absolute_script_runs_at_step_commit` |
-| AC-18 | IF the script that AC-6 maps is absent at the run's commit THEN the run cannot start and the step is `unverified` with that reason (STP-28 AC-20). | `check_junit::absolute_script_missing_at_commit` |
-| AC-7 | IF the first top-level element of a report is not `testsuites` or `testsuite` THEN the reader refuses the report with a reason that names that element as an unknown root. | `junit_report::refuses_unknown_roots` |
-| AC-17 | IF a top-level element follows the root, whatever its name, THEN the reader refuses the report as one with more than one root element. | `junit_report::refuses_second_roots` |
+| AC-6 | WHEN the first word of `command` is an absolute path under the root of the checkout where the check runs, with no `.`, `..` or empty part, THE Per-file runs and the suite run the script at that path relative to the check copy, as it is at the run's commit; any other absolute path runs as given. | `check_junit::absolute_script_runs_at_step_commit`, `check_junit::absolute_script_edges` |
+| AC-18 | IF the script that AC-6 maps is absent at the run's commit THEN the run cannot start and the step is `unverified` with that reason (STP-28 AC-20). | `check_junit::absolute_script_missing_at_commit`, `check_junit::absolute_script_edges` |
+| AC-7 | IF the first top-level element of a report is not `testsuites` or `testsuite` THEN the reader refuses the report with a reason that names that element as an unknown root. | `junit_report::refuses_unknown_roots`, `junit_report::root_reason_before_attributes` |
+| AC-17 | IF a top-level element follows the root, whatever its name, THEN the reader refuses the report as one with more than one root element. | `junit_report::refuses_second_roots`, `junit_report::root_reason_before_attributes` |
 | AC-8 | IF a report holds a CDATA section outside its root element THEN the reader refuses it as text outside the root. | `junit_report::refuses_cdata_outside_root` |
-| AC-9 | WHEN the reader is inside an element it does not know THE text and the attributes there are skipped without decoding, so an unknown entity or a bad character reference there is no refusal; tags there must still balance. | `junit_report::skips_content_of_unknown_elements` |
-| AC-10 | IF `.stapel/stapel.toml` exists (a folder, an unreadable file or a dangling link included) and fails to load THEN `stapel check --history` and `stapel lint` exit 2 and `stapel next` fails, each with the load fault and judging no step; an absent file keeps today's behaviour. | `check_junit::broken_config_is_refused` |
-| AC-11 | IF `.stapel/stapel.toml` exists and fails to load THEN the commit hook, after a commit whose HEAD names an open ticket, also during a merge, prints the load fault in place of every step line, the lines of parallel tickets following as before, and exits 0. | `hook_post::broken_config_is_reported` |
+| AC-9 | WHEN the reader is inside an element it does not know THE text and the attributes there are skipped without decoding, so an unknown entity or a bad character reference there is no refusal; tags there must still balance. | `junit_report::skips_content_of_unknown_elements`, `junit_report::known_elements_still_decode` |
+| AC-10 | IF `.stapel/stapel.toml` is a file that fails to read, parse or validate THEN `stapel check --history` and `stapel lint` exit 2 and `stapel next` fails, each with the load fault and printing no step line; a folder or a dangling link in its place, or no entry, gives today's refusal that no `.stapel/stapel.toml` is here or above, with no fallback to cargo. | `check_junit::broken_config_is_refused`, `check_junit::broken_config_kinds` |
+| AC-11 | IF `.stapel/stapel.toml` is a file that fails to load THEN the commit hook, after a commit whose HEAD names an open ticket, also during a merge, prints the load fault in place of every step line, the lines of parallel tickets following as before, and exits 0; with a folder or a dangling link in its place the hook stays silent as before. | `hook_post::broken_config_is_reported`, `hook_post::broken_config_kinds`, `hook_post::config_fault_with_parallel_conflict` |
 | AC-12 | IF the report path is a link, a folder, a FIFO, a socket, a block device or a character device THEN the report is not opened and the run is `unverified` with a reason that names that kind once. | `check_junit::report_kinds_are_named` |
-| AC-13 | WHEN the report is a regular file THE size bound holds as before: a report of exactly 16 MiB is read and a longer one is `unverified` as over 16 MiB (a coverage criterion). | `check_junit::report_size_bound` |
+| AC-13 | WHEN the report is a regular file THE size bound holds as before: a report of exactly 16 MiB is read and a longer one is `unverified` as over 16 MiB (a coverage criterion). | `check_junit::report_size_bound`, `junit_report::read_is_bounded` |
 
 ### Guarantees
 
@@ -131,6 +140,9 @@ junit_report`; before each GREEN also `--test ticket_drift`.
 | Base merge, later edit | an equal merge, then a GREEN edit of the fixture: `tests-changed` at the edit | `check_junit::base_merge_then_edit_is_tests_change` |
 | Base merge, cargo | a data file under `crates/x/tests/` brought equal: pass; resolved: `tests-changed` | `check_history::base_merge_data_file_is_no_tests_change` |
 | Base merge, mode | `chmod +x` with an equal blob on a build input and on a fixture; a regular file turned into a link with the same blob | `check_history::base_merge_mode_change_blocks` |
+| Base merge, mode outcomes | the outcome per path: `build-input-changed` for `build.rs` with `chmod +x`, for `build.rs` turned into a link and for a cargo fixture with `chmod +x`; an equal link at both parents passes | `check_history::base_merge_mode_outcomes` |
+| Base merge, junit mode | a junit input (`package.json`) with `chmod +x` and an equal blob at a merge: `build-input-changed`; a fixture with only `chmod +x`: pass | `check_junit::base_merge_mode_change_blocks` |
+| Base merge, step test unit | a step test resolved equal while its file differs elsewhere: pass; a step-test file with only a mode change: pass; a step test resolved to the first parent's text: `tests-changed`; a step test deleted by a merge and re-added later: compared with the protected text | `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit` |
 | Base merge, cargo inputs | the seven named cargo inputs: equal and resolved | `check_history::base_merge_brings_cargo_inputs` |
 | Base merge, parents | no `base_branch`; the ref deleted; a merge of another branch; an octopus merge of main and another branch | `check_history::base_merge_other_parents` |
 | Base merge, entries | a rename with one equal and one changed path; one equal and one resolved input | `check_history::base_merge_mixed_entries` |
@@ -141,8 +153,15 @@ junit_report`; before each GREEN also `--test ticket_drift`.
 | Reader second root | `<testsuites/><foo/>`; `<testsuite/><testsuite/>` | `junit_report::refuses_second_roots` |
 | Reader CDATA | `<![CDATA[x]]>` before and after the root | `junit_report::refuses_cdata_outside_root` |
 | Reader skips | `&nbsp;` and `&#0;` inside `<system-out>` and in an attribute of `<properties>`; an unbalanced tag inside `<system-out>` still refused | `junit_report::skips_content_of_unknown_elements` |
-| Broken config | `stapel.toml` with a syntax error, with an unknown `runner` and as a folder: `check --history` and `lint` exit 2 and `next` fails with the fault; no `stapel.toml`: as before | `check_junit::broken_config_is_refused` |
-| Broken config, hook | the hook after a commit of an open ticket with a failing step and during a merge: the fault, no step line; a commit of no ticket: nothing | `hook_post::broken_config_is_reported` |
+| Broken config | `stapel.toml` with a syntax error and with an unknown `runner`: `check --history` and `lint` exit 2 and `next` fails with the fault; a folder in its place or no `stapel.toml`: today's refusal | `check_junit::broken_config_is_refused` |
+| Broken config, hook | the hook after a commit of an open ticket with a failing step and during a merge: the fault, no step line; a folder in place of `stapel.toml`: silent; a commit of no ticket: nothing |
+| Broken config kinds | an unreadable `stapel.toml` (mode 000) and a validation error: the fault for `check --history`, `lint` and `next`; a dangling link: today's refusal; no file: `next` as before; no step line at all | `check_junit::broken_config_kinds` |
+| Broken config kinds, hook | the hook on an unreadable file and a validation error: the fault; a dangling link: silent; a closed ticket: silent | `hook_post::broken_config_kinds` |
+| Config fault beside a parallel ticket | a config fault and a conflict with a parallel ticket: the fault line, then the conflict line | `hook_post::config_fault_with_parallel_conflict` |
+| Script edges | a script present at HEAD but absent at RED; the script missing for the suite run; `/<root>2/run.sh` beside the root runs as given | `check_junit::absolute_script_edges` |
+| Reader root before attributes | `<foo a="&bar;"/>`: unknown root; `<testsuites/><foo a="&bar;"/>`: second root; a comment before a CDATA outside the root: text outside the root | `junit_report::root_reason_before_attributes` |
+| Reader known elements | `<testcase name="&bogus;">` in a known place is still refused for the entity | `junit_report::known_elements_still_decode` |
+| Bounded read | a report file opened, then grown past 16 MiB through a second handle: refused as over 16 MiB | `junit_report::read_is_bounded` | `hook_post::broken_config_is_reported` |
 | Report kinds | a link, a folder, a FIFO, a socket left as the report | `check_junit::report_kinds_are_named` |
 | Report size | a report of exactly 16 MiB and of 16 MiB plus one byte | `check_junit::report_size_bound` |
 
@@ -154,7 +173,7 @@ junit_report`; before each GREEN also `--test ticket_drift`.
 | `base_branch` | branch name | one character / any | absent: no Base merge | ref gone: no Base merge | exact ref `refs/heads/<name>` | `check_history::base_merge_other_parents` |
 | report file | XML | — / 16 MiB | refused as before | unknown root, second root, CDATA outside the root: refused; unknown content: skipped | exact names | `junit_report::refuses_unknown_roots` |
 | report path kind | file system entry | — | missing: refused as before | link, folder, FIFO, socket, device: `unverified` with the kind (devices not tested) | not opened | `check_junit::report_kinds_are_named` |
-| `.stapel/stapel.toml` | TOML | — | absent: as before | a folder, unreadable, a dangling link, a parse or validation error: AC-10, AC-11 | the load fault as given | `check_junit::broken_config_is_refused` |
+| `.stapel/stapel.toml` | TOML | — | absent, a folder or a dangling link: today's refusal | unreadable, a parse or validation error: AC-10, AC-11 | the load fault as given | `check_junit::broken_config_is_refused` |
 
 ### External states
 
@@ -228,7 +247,35 @@ to AC-12, AC-13; item 6 to AC-3 to AC-5, AC-14, AC-15.
 - `junit_globs_at` returns `Result`, with an absent file as `None`; `history_report` passes the load fault
   up; `check --history` and `lint` refuse with exit 2 and `next` fails; `hook_faults` returns the fault in
   place of its step lines, and the hook adds the trial-merge lines as before.
-- `read_report_file` names the kind from `symlink_metadata` and opens only a regular file, with
+
+### As built (steps 1 to 11)
+
+- Step 1: `same_as_parent` compares the `git ls-tree` entry (mode and blob).
+- Step 2: `analyse_in` takes `base_branch`; in the `touching` loop a Base merge whose path is Equal sets
+  `current` and goes on. Step 13 compares the unit's value instead of the whole path (d2-1).
+- Step 3: `base_merge_parent` returns no parent for a merge with a `^3` parent.
+- Step 5: `script_under(root, word)` maps an absolute path under the root without `.`, `..` or empty parts;
+  `Runner::script_path` uses it for the Per-file run and the suite; `junit_inputs` uses it, so such a
+  script stays a fixed input (STP-28 AC-25, AC-39) and a path with dot parts no longer is.
+- Steps 6 and 7: every element without a parent is a root; an unknown first root is refused as "unknown
+  root <name>: the report has no <testsuites> element" (the old wording kept for STP-28 tests); CDATA with
+  an empty stack is text outside the root; `open_tag` returns raw values and `open` decodes them only for
+  known elements.
+- Step 8: `repo::open` takes any entry at `.stapel/stapel.toml` as the root; step 16 restores the lookup by
+  a regular file (the human, d8-3). `junit_globs_at` and `history_report` still read the config with
+  `.ok()`; they run only after `repo::open` succeeded; step 17 makes `junit_globs_at` return `Result`.
+- Step 9: `hook_faults` resolves the ticket of HEAD before the merge check and returns `stapel: <load
+  fault>` for an open ticket (every hook line starts with `stapel: `); `config_root` in `hook.rs` goes back
+  to `stapel_root` in step 16.
+- Step 10: `read_report_file` names a socket, a block and a character device, else "of an unknown kind";
+  the reason is "the report X of Y is <kind>"; the socket test makes a socket with `python3`. The one-open
+  read is step 19 (d10-1).
+- History: the commits of steps 7 and 8 interleaved (two builders at once); they were replayed in step
+  order with the human's leave (tag `stp30-before-reorder`).
+- The RED commits of steps 2 and 9 were amended before their GREEN and not rerun on their own trees; the
+  final `stapel check` shows them.
+- `read_report_file` names the kind from `symlink_metadata` and opens only a regular file, through a
+  stapel-core function that reads an open file with the bound, with
   `O_NOFOLLOW | O_NONBLOCK`; it checks the open file is regular and reads through `take(MAX_REPORT + 1)`
   (d21-1: Design intent, not a criterion; a race cannot be made in a test).
 
@@ -236,24 +283,24 @@ to AC-12, AC-13; item 6 to AC-3 to AC-5, AC-14, AC-15.
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change` |
-| AC-2 | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change` |
-| AC-3 | `check_history::base_merge_mode_change_blocks` |
+| AC-1 | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit` |
+| AC-2 | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit` |
+| AC-3 | `check_history::base_merge_mode_change_blocks`, `check_history::base_merge_mode_outcomes`, `check_junit::base_merge_mode_change_blocks` |
 | AC-4 | `check_history::base_merge_other_parents` |
 | AC-5 | `check_history::base_merge_mixed_entries` |
-| AC-6 | `check_junit::absolute_script_runs_at_step_commit` |
-| AC-7 | `junit_report::refuses_unknown_roots` |
+| AC-6 | `check_junit::absolute_script_runs_at_step_commit`, `check_junit::absolute_script_edges` |
+| AC-7 | `junit_report::refuses_unknown_roots`, `junit_report::root_reason_before_attributes` |
 | AC-8 | `junit_report::refuses_cdata_outside_root` |
-| AC-9 | `junit_report::skips_content_of_unknown_elements` |
-| AC-10 | `check_junit::broken_config_is_refused` |
-| AC-11 | `hook_post::broken_config_is_reported` |
+| AC-9 | `junit_report::skips_content_of_unknown_elements`, `junit_report::known_elements_still_decode` |
+| AC-10 | `check_junit::broken_config_is_refused`, `check_junit::broken_config_kinds` |
+| AC-11 | `hook_post::broken_config_is_reported`, `hook_post::broken_config_kinds`, `hook_post::config_fault_with_parallel_conflict` |
 | AC-12 | `check_junit::report_kinds_are_named` |
-| AC-13 | `check_junit::report_size_bound` |
+| AC-13 | `check_junit::report_size_bound`, `junit_report::read_is_bounded` |
 | AC-14 | `check_history::base_merge_brings_cargo_inputs` |
 | AC-15 | `check_history::cargo_fixture_beside_step_test` |
 | AC-16 | `check_junit::base_merge_then_edit_is_tests_change` |
-| AC-17 | `junit_report::refuses_second_roots` |
-| AC-18 | `check_junit::absolute_script_missing_at_commit` |
+| AC-17 | `junit_report::refuses_second_roots`, `junit_report::root_reason_before_attributes` |
+| AC-18 | `check_junit::absolute_script_missing_at_commit`, `check_junit::absolute_script_edges` |
 
 ## Plan
 
@@ -286,6 +333,33 @@ Route: full (tag `guard`), auto.
 10. Report kinds (AC-12; test `check_junit::report_kinds_are_named`): `check.rs`, the one-open read of
     Design. RED fails on the socket.
 11. Report size coverage (AC-13; test `check_junit::report_size_bound`): a coverage commit.
+
+Fix steps after the drift reviews of the build (they do not count toward the limit of 12, ledger
+2026-11-12):
+
+12. Mode outcomes per path (d1-1, d1-2, d1-3; tests `check_history::base_merge_mode_outcomes`,
+    `check_junit::base_merge_mode_change_blocks`): a coverage step; a test that fails becomes a RED with its
+    GREEN in this step.
+13. Unit value at a Base merge (d2-1, d2-2, d2-3; tests `check_history::base_merge_step_test_unit`,
+    `check_junit::base_merge_step_test_unit`): `outcomes.rs`, `build_inputs.rs`. Equal compares the unit's
+    value at the merge with that at the second parent, and the mode for a file unit; a unit absent at the
+    merge takes the deletion path as before.
+14. Script edges (d5-2; test `check_junit::absolute_script_edges`): a coverage step.
+15. Reader order and known elements (d6-1, d6-3, d7-1, d7-2; tests
+    `junit_report::root_reason_before_attributes`, `junit_report::known_elements_still_decode`): `junit.rs`;
+    the root is judged before its attribute values are decoded; the doc comment of `open_tag` names raw
+    values.
+16. Root lookup as before (d8-3, d9-1; tests `check_junit::broken_config_is_refused`,
+    `hook_post::broken_config_is_reported`): the RED changes the folder cases of both tests to today's
+    refusal and a silent hook; the GREEN restores `repo::open` and `config_root` to `stapel_root`.
+17. Config fault kinds (d8-1, d8-2, d8-4, d9-3; tests `check_junit::broken_config_kinds`,
+    `hook_post::broken_config_kinds`): `check.rs`; `junit_globs_at` returns `Result`; a coverage step for
+    the cases that already hold.
+18. Config fault beside a parallel ticket (d9-2; test `hook_post::config_fault_with_parallel_conflict`): a
+    coverage step.
+19. Bounded report read (d10-1, d10-2; test `junit_report::read_is_bounded`): a stapel-core function reads
+    an open regular file through `take(MAX_REPORT + 1)`; `read_report_file` opens with `O_NOFOLLOW |
+    O_NONBLOCK` and checks the open file is regular.
 
 ## Review
 
