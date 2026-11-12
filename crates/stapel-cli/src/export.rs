@@ -19,10 +19,70 @@ const REMOVE: [&str; 4] = [
 ];
 
 pub fn run(key: Option<&str>, onto: Option<&str>) -> Result<(), Fail> {
-    let key = key.ok_or_else(|| Fail::failed("no ticket key; name the ticket: stapel export KEY"))?;
-    let onto = onto.ok_or_else(|| Fail::failed("no Onto ref; name it with --onto <ref>"))?;
     let cwd = std::env::current_dir().map_err(|e| Fail::failed(e.to_string()))?;
-    export(&cwd, key, onto).map_err(Fail::failed)
+    let key = match key {
+        Some(key) => key.to_string(),
+        None => stapel_core::parallel::current_branch(&cwd)
+            .ok_or_else(|| Fail::failed("no ticket key and no current branch; name the ticket: stapel export KEY"))?,
+    };
+    if let Some(root) = stapel_core::guard::stapel_root(&cwd) {
+        let config = crate::repo::load(&root).map_err(Fail::failed)?;
+        if stapel_core::tickets::key_number(&config, &key).is_none() {
+            return Err(Fail::failed(format!(
+                "{key} does not match the ticket key pattern {} of stapel.toml",
+                config.tickets.key
+            )));
+        }
+    }
+    let base_branch = branch_state(&cwd, &key).map_err(Fail::failed)?;
+    let onto = match onto {
+        Some(onto) => onto.to_string(),
+        None => upstream_of(&cwd, base_branch.as_deref()).map_err(Fail::failed)?,
+    };
+    export(&cwd, &key, &onto).map_err(Fail::failed)
+}
+
+/// The `base_branch` of the Branch state of `key`: `.stapel/tickets/<key>/state.json` as it is in
+/// the commit `refs/heads/<key>`.
+fn branch_state(dir: &Path, key: &str) -> Result<Option<String>, String> {
+    let source = format!("refs/heads/{key}");
+    git(dir, &["rev-parse", "--verify", "--end-of-options", &source], &[], b"")
+        .map_err(|_| format!("no branch {key}"))?;
+    let path = format!(".stapel/tickets/{key}/state.json");
+    let raw = git(dir, &["show", &format!("{source}:{path}")], &[], b"")
+        .map_err(|_| format!("branch {key} has no {path}"))?;
+    let value: serde_json::Value = serde_json::from_slice(&raw)
+        .map_err(|e| format!("{path} in branch {key} is not valid JSON: {e}"))?;
+    if !value.is_object() {
+        return Err(format!("{path} in branch {key} is not a JSON object"));
+    }
+    Ok(value
+        .get("base_branch")
+        .and_then(|b| b.as_str())
+        .map(String::from))
+}
+
+/// The full name of the upstream of `base_branch`, the Onto ref when `--onto` is absent.
+fn upstream_of(dir: &Path, base_branch: Option<&str>) -> Result<String, String> {
+    let base = base_branch.ok_or("the Branch state has no base_branch; name the Onto ref with --onto <ref>")?;
+    let name = git(
+        dir,
+        &["for-each-ref", "--format=%(upstream)", &format!("refs/heads/{base}")],
+        &[],
+        b"",
+    )
+    .map(text)
+    .unwrap_or_default()
+    .lines()
+    .next()
+    .unwrap_or("")
+    .to_string();
+    if name.is_empty() {
+        return Err(format!(
+            "branch {base} has no upstream; name the Onto ref with --onto <ref>"
+        ));
+    }
+    Ok(name)
 }
 
 /// A folder of the system's temporary folder that goes away with the value.

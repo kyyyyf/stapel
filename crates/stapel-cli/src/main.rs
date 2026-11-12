@@ -89,7 +89,8 @@ enum Command {
     },
     /// Write the branch `export/<KEY>`: the ticket's commits without the process files.
     Export {
-        /// The ticket key.
+        /// The ticket key; without it, the current branch.
+        #[arg(allow_hyphen_values = true)]
         key: Option<String>,
         /// The ref the commits are taken onto.
         #[arg(long, allow_hyphen_values = true)]
