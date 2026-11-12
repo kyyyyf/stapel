@@ -138,11 +138,11 @@ junit_report`; before each GREEN also `--test ticket_drift`.
 |---|---|---|
 | Base merge, junit | a fixture `a b.json` brought by a merge of main into a step test folder, equal: pass; resolved to other text: `tests-changed` at the merge | `check_junit::base_merge_fixture_is_no_tests_change` |
 | Base merge, later edit | an equal merge, then a GREEN edit of the fixture: `tests-changed` at the edit | `check_junit::base_merge_then_edit_is_tests_change` |
-| Base merge, cargo | a data file under `crates/x/tests/` brought equal: pass; resolved: `tests-changed` | `check_history::base_merge_data_file_is_no_tests_change` |
+| Base merge, cargo | a data file in the tests folder of a crate brought equal: pass; resolved: `tests-changed` | `check_history::base_merge_data_file_is_no_tests_change` |
 | Base merge, mode | `chmod +x` with an equal blob on a build input and on a fixture; a regular file turned into a link with the same blob | `check_history::base_merge_mode_change_blocks` |
 | Base merge, mode outcomes | the outcome per path: `build-input-changed` for `build.rs` with `chmod +x`, for `build.rs` turned into a link and for a cargo fixture with `chmod +x`; an equal link at both parents passes | `check_history::base_merge_mode_outcomes` |
 | Base merge, junit mode | a junit input (`package.json`) with `chmod +x` and an equal blob at a merge: `build-input-changed`; a fixture with only `chmod +x`: pass | `check_junit::base_merge_mode_change_blocks` |
-| Base merge, step test unit | a step test resolved equal while its file differs elsewhere: pass; a step-test file with only a mode change: pass; a step test resolved to the first parent's text: `tests-changed`; a step test deleted by a merge and re-added later: compared with the protected text | `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit` |
+| Base merge, step test unit | a step test resolved equal while its file differs elsewhere: pass; a step-test file with only a mode change: pass; a step test resolved to the first parent's text (the ticket's own protected text): no change; resolved to a third text: `tests-changed` at the merge; a step test deleted by a merge and re-added later: the same text passes, another text gives `tests-changed` at the re-add; under junit an edit elsewhere in the file changes the rest unit | `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit` |
 | Base merge, cargo inputs | the seven named cargo inputs: equal and resolved | `check_history::base_merge_brings_cargo_inputs` |
 | Base merge, parents | no `base_branch`; the ref deleted; a merge of another branch; an octopus merge of main and another branch | `check_history::base_merge_other_parents` |
 | Base merge, entries | a rename with one equal and one changed path; one equal and one resolved input | `check_history::base_merge_mixed_entries` |
@@ -274,6 +274,18 @@ to AC-12, AC-13; item 6 to AC-3 to AC-5, AC-14, AC-15.
   order with the human's leave (tag `stp30-before-reorder`).
 - The RED commits of steps 2 and 9 were amended before their GREEN and not rerun on their own trees; the
   final `stapel check` shows them.
+- Step 12, 14, 17 and 18: coverage commits; their tests passed at once.
+- Step 13: the Base-merge shortcut runs only for a unit present at the merge; a file unit is Equal by
+  `same_as_parent` (content and mode), a test, helper or rest unit by its value; a unit absent at the
+  merge takes the deletion path.
+- Step 15: coverage commit; the doc comment of `open_tag` is a plain `STP-30:` commit (no behaviour).
+- Step 16: `repo::open` and `config_root` find the root by `stapel_root` again.
+- Step 17: `junit_globs_at` returns `Result`; `history_report`, `next` and `lint` pass the fault up, the
+  hook path ignores it after `hook_faults` has reported it; a plain `STP-30:` commit, no test sees it.
+- Step 19: `junit::read_open_report` reads an open file through `take(MAX_REPORT + 1)`;
+  `read_report_file` keeps the kind check by `symlink_metadata`, opens with `O_NOFOLLOW | O_NONBLOCK`,
+  checks the open file is regular and reads through it. Its RED failed by compile error (the function did
+  not exist).
 - `read_report_file` names the kind from `symlink_metadata` and opens only a regular file, through a
   stapel-core function that reads an open file with the bound, with
   `O_NOFOLLOW | O_NONBLOCK`; it checks the open file is regular and reads through `take(MAX_REPORT + 1)`
