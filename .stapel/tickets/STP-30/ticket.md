@@ -91,15 +91,15 @@ Terms (the others as in STP-28):
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN a Base merge changes a Protected unit that is Equal at the merge THE change gives no `tests-changed`, under cargo and junit. | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit` |
-| AC-2 | IF a Base merge resolves a Protected unit that exists at both its parents to a value other than at its second parent THEN the merge gives `tests-changed` with the merge as fault commit, as before. | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit` |
+| AC-1 | WHEN a Base merge changes a Protected unit that is Equal at the merge THE change gives no `tests-changed`, under cargo and junit. | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit`, `check_history::base_merge_glob_names`, `check_junit::base_merge_glob_names`, `check_junit::base_merge_deletes_fixture` |
+| AC-2 | IF a Base merge resolves a Protected unit that exists at both its parents to a value other than at its second parent THEN the merge gives `tests-changed` with the merge as fault commit, as before. | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit`, `check_history::base_merge_glob_names`, `check_junit::base_merge_glob_names` |
 | AC-16 | WHEN a commit after an Equal Base merge changes the Protected unit THE commit is compared with the unit's value at the merge and gives `tests-changed`. | `check_junit::base_merge_then_edit_is_tests_change` |
-| AC-3 | IF a Base merge brings a path whose blob equals that at the second parent but whose mode differs (an executable bit, a link) THEN the path is not Equal at the merge and gives `build-input-changed` at the merge when it is a build input or, under cargo, a data file or fixture beside a step test (STP-13); under junit the mode of a fixture is not part of its value, as before. | `check_history::base_merge_mode_change_blocks`, `check_history::base_merge_mode_outcomes`, `check_junit::base_merge_mode_change_blocks` |
+| AC-3 | IF a Base merge brings a path whose blob equals that at the second parent but whose mode differs (an executable bit, a link) THEN the path is not Equal at the merge and gives `build-input-changed` at the merge when it is a build input or, under cargo, a data file or fixture beside a step test (STP-13); under junit the mode of a fixture is not part of its value, as before. | `check_history::base_merge_mode_change_blocks`, `check_history::base_merge_mode_outcomes`, `check_junit::base_merge_mode_change_blocks`, `check_junit::base_merge_fixture_mode_only` |
 | AC-4 | IF the ticket has no `base_branch`, its `base_branch` ref is gone, the merge's second parent is not an ancestor of that ref, or the merge has more than two parents THEN the merge is no Base merge and its changes block as before. | `check_history::base_merge_other_parents` |
 | AC-5 | WHEN a rename entry of a Base merge has one path Equal at the merge and the other not, or the merge brings one Equal and one resolved build input THE entry, or the resolved input, gives `build-input-changed` at the merge, as a change outside a Base merge does. | `check_history::base_merge_mixed_entries` |
 | AC-14 | WHEN a Base merge under cargo brings `Cargo.toml`, `build.rs`, `rust-toolchain`, `rust-toolchain.toml`, `.cargo/config` or `.cargo/config.toml` Equal at the merge THE step is not blocked; resolved to other content, it is `build-input-changed` at the merge. | `check_history::base_merge_brings_cargo_inputs` |
 | AC-15 | WHEN under cargo a commit after GREEN adds or deletes a data file beside a step test THE step is `build-input-changed` (STP-13); a content change of that file gives `tests-changed`; no junit rule of STP-28 AC-42 applies. | `check_history::cargo_fixture_beside_step_test` |
-| AC-6 | WHEN the first word of `command` is an absolute path under the root of the checkout where the check runs, with no `.`, `..` or empty part, THE Per-file runs and the suite run the script at that path relative to the check copy, as it is at the run's commit; any other absolute path runs as given. | `check_junit::absolute_script_runs_at_step_commit`, `check_junit::absolute_script_edges` |
+| AC-6 | WHEN the first word of `command` is an absolute path under the root of the checkout where the check runs, with no `.`, `..` or empty part, THE Per-file runs and the suite run the script at that path relative to the check copy, as it is at the run's commit; any other absolute path runs as given. | `check_junit::absolute_script_runs_at_step_commit`, `check_junit::absolute_script_edges`, `check_junit::absolute_script_dot_path_is_input` |
 | AC-18 | IF the script that AC-6 maps is absent at the run's commit THEN the run cannot start and the step is `unverified` with that reason (STP-28 AC-20). | `check_junit::absolute_script_missing_at_commit`, `check_junit::absolute_script_edges` |
 | AC-7 | IF the first top-level element of a report is not `testsuites` or `testsuite` THEN the reader refuses the report with a reason that names that element as an unknown root. | `junit_report::refuses_unknown_roots`, `junit_report::root_reason_before_attributes` |
 | AC-17 | IF a top-level element follows the root, whatever its name, THEN the reader refuses the report as one with more than one root element. | `junit_report::refuses_second_roots`, `junit_report::root_reason_before_attributes` |
@@ -161,7 +161,11 @@ junit_report`; before each GREEN also `--test ticket_drift`.
 | Script edges | a script present at HEAD but absent at RED; the script missing for the suite run; `/<root>2/run.sh` beside the root runs as given | `check_junit::absolute_script_edges` |
 | Reader root before attributes | `<foo a="&bar;"/>`: unknown root; `<testsuites/><foo a="&bar;"/>`: second root; a comment before a CDATA outside the root: text outside the root | `junit_report::root_reason_before_attributes` |
 | Reader known elements | `<testcase name="&bogus;">` in a known place is still refused for the entity | `junit_report::known_elements_still_decode` |
-| Bounded read | a report file opened, then grown past 16 MiB through a second handle: refused as over 16 MiB | `junit_report::read_is_bounded` | `hook_post::broken_config_is_reported` |
+| Bounded read | a report file opened, then grown past 16 MiB through a second handle: refused as over 16 MiB | `junit_report::read_is_bounded` |
+| Base merge, glob names | a data file and a build input named `d[1].txt` and `x[1].json`, resolved by a Base merge to a third text: `tests-changed` or `build-input-changed` at the merge; brought equal: pass | `check_history::base_merge_glob_names`, `check_junit::base_merge_glob_names` |
+| Base merge, junit fixture mode | a fixture of step 1 with only a mode change at a Base merge: step 1 passes; a fixture equal in content to the second parent but not in mode: step 1 passes | `check_junit::base_merge_fixture_mode_only` |
+| Base merge deletes a fixture | a fixture present at RED, deleted on main, brought by a Base merge (absent at both): no `tests-changed` | `check_junit::base_merge_deletes_fixture` |
+| Script with dot parts | `/<root>/./run.sh` changed between RED and GREEN: `build-input-changed`, as STP-28 | `check_junit::absolute_script_dot_path_is_input` | `hook_post::broken_config_is_reported` |
 | Report kinds | a link, a folder, a FIFO, a socket left as the report | `check_junit::report_kinds_are_named` |
 | Report size | a report of exactly 16 MiB and of 16 MiB plus one byte | `check_junit::report_size_bound` |
 
@@ -182,7 +186,7 @@ junit_report`; before each GREEN also `--test ticket_drift`.
 | git | history shape: merge of the base branch, of another branch, octopus, with resolved conflicts | AC-1 to AC-5 | `check_history::base_merge_other_parents` |
 | git | file mode and link entries in a merge | compared with the blob (AC-3) | `check_history::base_merge_mode_change_blocks` |
 | git | renames in a merge | AC-5 | `check_history::base_merge_mixed_entries` |
-| git | paths with spaces, glob characters, newlines | read NUL-separated with literal paths; a space tested | `check_junit::base_merge_fixture_is_no_tests_change` |
+| git | paths with spaces, glob characters, newlines | read NUL-separated with literal paths (`:(literal)`); a space and `[ ]` tested | `check_junit::base_merge_fixture_is_no_tests_change`, `check_junit::base_merge_glob_names` |
 | git | non-UTF-8 paths, shallow clone, SHA-256, submodules, rebase, squash | as STP-28 | — |
 | git | the base branch ref deleted or moved | a deleted ref: no Base merge; a moved ref: the ancestor test at check time | `check_history::base_merge_other_parents` |
 | git | linked worktrees | the checkout root is the worktree's root (AC-6); the check copy as before | `check_junit::absolute_script_runs_at_step_commit` |
@@ -295,12 +299,12 @@ to AC-12, AC-13; item 6 to AC-3 to AC-5, AC-14, AC-15.
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit` |
-| AC-2 | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit` |
-| AC-3 | `check_history::base_merge_mode_change_blocks`, `check_history::base_merge_mode_outcomes`, `check_junit::base_merge_mode_change_blocks` |
+| AC-1 | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit`, `check_history::base_merge_glob_names`, `check_junit::base_merge_glob_names`, `check_junit::base_merge_deletes_fixture` |
+| AC-2 | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit`, `check_history::base_merge_glob_names`, `check_junit::base_merge_glob_names` |
+| AC-3 | `check_history::base_merge_mode_change_blocks`, `check_history::base_merge_mode_outcomes`, `check_junit::base_merge_mode_change_blocks`, `check_junit::base_merge_fixture_mode_only` |
 | AC-4 | `check_history::base_merge_other_parents` |
 | AC-5 | `check_history::base_merge_mixed_entries` |
-| AC-6 | `check_junit::absolute_script_runs_at_step_commit`, `check_junit::absolute_script_edges` |
+| AC-6 | `check_junit::absolute_script_runs_at_step_commit`, `check_junit::absolute_script_edges`, `check_junit::absolute_script_dot_path_is_input` |
 | AC-7 | `junit_report::refuses_unknown_roots`, `junit_report::root_reason_before_attributes` |
 | AC-8 | `junit_report::refuses_cdata_outside_root` |
 | AC-9 | `junit_report::skips_content_of_unknown_elements`, `junit_report::known_elements_still_decode` |
@@ -372,6 +376,23 @@ Fix steps after the drift reviews of the build (they do not count toward the lim
 19. Bounded report read (d10-1, d10-2; test `junit_report::read_is_bounded`): a stapel-core function reads
     an open regular file through `take(MAX_REPORT + 1)`; `read_report_file` opens with `O_NOFOLLOW |
     O_NONBLOCK` and checks the open file is regular.
+
+Fix steps after code review round 1 (not counted toward the limit of 12):
+
+20. Literal paths at a Base merge (AC-1, AC-2, CR1-E1; tests `check_history::base_merge_glob_names`,
+    `check_junit::base_merge_glob_names`): `build_inputs.rs` `same_as_parent` reads `:(literal)<path>`.
+21. Junit fixture mode (AC-3, CR1-E2, CR1-D4; test `check_junit::base_merge_fixture_mode_only`): `outcomes.rs`; a
+    junit file unit is Equal by content only.
+22. A fixture absent at both (AC-1, CR1-E3; test `check_junit::base_merge_deletes_fixture`): `outcomes.rs`; a file
+    unit absent at the merge and at the second parent is Equal; a test, helper or rest unit keeps the
+    deletion path.
+23. Dot parts stay an input (AC-6, CR1-E4; test `check_junit::absolute_script_dot_path_is_input`): `check.rs`;
+    `junit_inputs` takes every absolute script path under the root as a fixed input, as STP-28 did; only
+    the mapping into the check copy needs a path without dot or empty parts.
+
+After step 23 one plain `STP-30:` commit with no behaviour change: remove `config_root` (CR1-D1, CR1-R1),
+reflow the long lines (CR1-D2, CR1-R2), a typed over-size error in place of matching `MiB` (CR1-D3,
+CR1-R3).
 
 ## Review
 
