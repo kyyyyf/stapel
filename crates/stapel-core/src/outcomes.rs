@@ -2,7 +2,7 @@
 //! `unpaired`, `duplicate`, `no-tests`, `red-changes-code`, `tests-changed`; and the notes
 //! `superseded by <label>` and `retired by <label>`.
 
-use crate::build_inputs::{dev_redirect, target_files};
+use crate::build_inputs::{base_merge_parent, dev_redirect, same_as_parent, target_files};
 use crate::config::glob_matches;
 use crate::includes::Includes;
 use crate::rust_tests::{helper_text, test_functions};
@@ -412,7 +412,7 @@ pub fn analyse(
     head: &str,
     steps: &[Step],
 ) -> Result<Vec<Analysis>, String> {
-    analyse_in(root, key, head, steps, None, Mode::Cargo)
+    analyse_in(root, key, head, steps, None, None, Mode::Cargo)
 }
 
 /// `analyse` under a runner. Under junit the protected content is each step test call, the rest of
@@ -423,6 +423,7 @@ pub fn analyse_in(
     head: &str,
     steps: &[Step],
     base: Option<&str>,
+    base_branch: Option<&str>,
     mode: Mode,
 ) -> Result<Vec<Analysis>, String> {
     let mut files = Files {
@@ -664,6 +665,14 @@ pub fn analyse_in(
             for (sha, message) in touching(root, &red, head, &unit.path())? {
                 let value = unit.value(&mut files, &sha, junit);
                 if value == current {
+                    continue;
+                }
+                // STP-30 AC-1: a Base merge whose value equals its second parent's brings no
+                // change; later commits are compared with the value at the merge (AC-16).
+                if let Some(second) = base_merge_parent(root, &sha, base_branch)
+                    && same_as_parent(root, &sha, &second, &unit.path())
+                {
+                    current = value;
                     continue;
                 }
                 let step_of = by_sha.get(&sha);

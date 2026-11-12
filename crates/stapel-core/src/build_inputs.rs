@@ -129,7 +129,7 @@ pub fn range(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Vec<S
 
 /// The second parent of a merge commit of the Walk that merged the base branch: a second parent
 /// that is an ancestor of `refs/heads/<base_branch>` (STP-28 AC-43).
-fn base_merge_parent(root: &Path, sha: &str, base_branch: Option<&str>) -> Option<String> {
+pub(crate) fn base_merge_parent(root: &Path, sha: &str, base_branch: Option<&str>) -> Option<String> {
     let branch = base_branch?;
     let second = git(
         root,
@@ -148,7 +148,7 @@ fn base_merge_parent(root: &Path, sha: &str, base_branch: Option<&str>) -> Optio
 
 /// Whether `path` has the same content and mode at the merge as at its second parent (both absent
 /// counts).
-fn same_as_parent(root: &Path, sha: &str, second: &str, path: &str) -> bool {
+pub(crate) fn same_as_parent(root: &Path, sha: &str, second: &str, path: &str) -> bool {
     let id = |commit: &str| {
         git(root, &["ls-tree", "-z", commit, "--", path])
             .ok()
