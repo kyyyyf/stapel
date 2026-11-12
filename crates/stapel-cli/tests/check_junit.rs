@@ -1056,6 +1056,44 @@ fn fixture_beside_a_test_is_protected() {
     assert_eq!(case("other/data.test.json"), "step 1: needs-run");
 }
 
+// AC-42: a fixture a GREEN adds beside a step test's file, or a later commit deletes, reads
+// `tests-changed`, though the RED left it alone.
+#[test]
+fn fixture_added_or_deleted_is_protected() {
+    let case = |fixture_before: bool, green: &dyn Fn(&Path)| {
+        let repo = junit_repo();
+        let dir = repo.dir();
+        if fixture_before {
+            write(dir, "__tests__/data.json", "{\"a\": 1}\n");
+            commit(dir, "ABC-1: fixture");
+        }
+        write(
+            dir,
+            "__tests__/f.test.ts",
+            "it(\"fixed\", () => { /* needs src/f.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 1 RED: fixed");
+        write(dir, "src/f.ts", "export const f = 1;\n");
+        green(dir);
+        commit(dir, "ABC-1 step 1 GREEN: fixed");
+        let (_, text) = stdout(dir, &["check", "ABC-1", "--history"]);
+        text.lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("no step 1:\n{text}"))
+            .to_string()
+    };
+    assert_eq!(
+        case(false, &|dir| write(dir, "__tests__/data.json", "{\"a\": 2}\n")),
+        "step 1: tests-changed: __tests__/data.json",
+        "added by the GREEN"
+    );
+    assert_eq!(
+        case(true, &|dir| std::fs::remove_file(dir.join("__tests__/data.json")).unwrap()),
+        "step 1: tests-changed: __tests__/data.json",
+        "deleted after the RED"
+    );
+}
+
 // AC-27: a RED that only adds a test call, or only reformats the rest of the file, leaves the rest
 // of that file unprotected: a GREEN that edits a helper reads `needs-run`.
 #[test]

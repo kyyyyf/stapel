@@ -78,13 +78,14 @@ fn names_a_missing_test() {
     ticket(
         dir,
         "ABC-1",
-        "# ABC-1\n\n## Proof\n\n| AC-1 | one | `x::here`, `x::gone` |\n",
+        "# ABC-1\n\n## Proof\n\n| Criterion | Claim | Tests |\n|---|---|---|\n| AC-1 | one | `x::here`, `x::gone` |\n\n\
+         | AC-9 | no header | `x::hdrless_gone` |\n",
         true,
     );
     ticket(
         dir,
         "ABC-2",
-        "# ABC-2\n\n## Spec\n\n| AC-1 | rows of an open ticket are plans | `x::row_gone` |\n\n\
+        "# ABC-2\n\n## Spec\n\n| Criterion | Claim | Tests |\n|---|---|---|\n| AC-1 | rows of an open ticket are plans | `x::row_gone` |\n\n\
          ## Plan\n\n1. First (tests `x::here`, `x::gone_one`): `a.rs`.\n\
          2. Second (test `x::gone_two`): `b.rs`.\n",
         false,
@@ -124,14 +125,15 @@ fn step_test_named_by_no_ticket() {
     ticket(
         dir,
         "ABC-1",
-        "# ABC-1\n\n## Spec\n\n| AC-1 | a | `x::by_stem`, `stapel-core/x::by_dir` |\n\n\
+        "# ABC-1\n\n## Spec\n\n| Criterion | Claim | Tests |\n|---|---|---|\n| AC-1 | a | `x::by_stem`, `stapel-core/x::by_dir` |\n\n\
          ## Plan\n\n1. Five (tests `x::by_plan`): `x.rs`.\n",
         false,
     );
     ticket(
         dir,
         "ABC-2",
-        "# ABC-2\n\n| AC-1 | b | `core::x::by_suffix` |\n",
+        "# ABC-2\n\n| Criterion | Claim | Tests |\n|---|---|---|\n| AC-1 | b | `core::x::by_suffix` |\n\n\
+         | AC-9 | no header | `x::by_plan` |\n",
         false,
     );
 
@@ -149,7 +151,7 @@ fn step_test_named_by_no_ticket() {
     ticket(
         dir,
         "ABC-2",
-        "# ABC-2\n\n| AC-1 | b | `core::x::by_suffix`, `x::by_plan`, `x::nobody` |\n",
+        "# ABC-2\n\n| Criterion | Claim | Tests |\n|---|---|---|\n| AC-1 | b | `core::x::by_suffix`, `x::by_plan`, `x::nobody` |\n",
         false,
     );
     let (code, lines, err) = lint(dir, &["ABC-1"]);
@@ -183,7 +185,7 @@ fn lint_under_junit() {
     ticket(
         dir,
         "ABC-1",
-        "# ABC-1\n\n| AC-1 | x | `src/a.test.ts::a b` |\n",
+        "# ABC-1\n\n| Criterion | Claim | Tests |\n|---|---|---|\n| AC-1 | x | `src/a.test.ts::a b` |\n",
         false,
     );
     let (code, lines, err) = lint(dir, &["ABC-1"]);
@@ -197,8 +199,9 @@ fn lint_under_junit() {
     ticket(
         dir,
         "ABC-1",
-        "# ABC-1\n\n| AC-1 | x | `src/a.test.ts::a b`, `src/missing.test.ts::x`, \
-         `src/a.test.ts::gone` |\n",
+        "# ABC-1\n\n| Criterion | Claim | Tests |\n|---|---|---|\n| AC-1 | x | `src/a.test.ts::a b`, `src/missing.test.ts::x`, \
+         `src/a.test.ts::gone` |\n\n\
+         | AC-9 | no header | `src/nohdr.test.ts::nope` |\n",
         true,
     );
     let (code, lines, err) = lint(dir, &["ABC-1"]);
@@ -227,7 +230,7 @@ fn lint_exit_codes_and_order() {
     ticket(
         dir,
         "ABC-3",
-        "# ABC-3\n\n| AC-1 | c | `x::named_ok` |\n",
+        "# ABC-3\n\n| Criterion | Claim | Tests |\n|---|---|---|\n| AC-1 | c | `x::named_ok` |\n",
         true,
     );
     ticket(dir, "ABC-2", "# ABC-2\n", false);
@@ -241,7 +244,8 @@ fn lint_exit_codes_and_order() {
     ticket(
         dir,
         "ABC-1",
-        "# ABC-1\n\n| AC-1 | a | `x::zzz_gone`, `x::aaa_gone`, `x::named_ok` |\n",
+        "# ABC-1\n\n| Criterion | Claim | Tests |\n|---|---|---|\n| AC-1 | a | `x::zzz_gone`, `x::aaa_gone`, `x::named_ok` |\n\n\
+         | AC-9 | no header | `x::hdrless_gone` |\n",
         true,
     );
     write(
@@ -391,5 +395,27 @@ fn module_path_names() {
             "ABC-1 names x::m::gone, which does not exist",
             "ABC-1 names x::nomod::t, which does not exist",
         ]
+    );
+}
+
+// AC-29: a table whose block has no separator line has no header: its rows name no test, for a
+// closed ticket as for the step-test check.
+#[test]
+fn rows_without_header_name_no_test() {
+    let repo = cargo_repo(&["here"]);
+    let dir = repo.path();
+    ticket(
+        dir,
+        "ABC-1",
+        "# ABC-1\n\n| AC-1 | one | `x::here`, `x::gone` |\n",
+        true,
+    );
+    commit(dir, "base");
+    commit(dir, "ABC-1 step 1 RED: here");
+    let (code, lines, err) = lint(dir, &["ABC-1"]);
+    assert_eq!(
+        (code, lines),
+        (0, vec!["lint: ABC-1 clean".to_string()]),
+        "{err}"
     );
 }
