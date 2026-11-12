@@ -1488,3 +1488,72 @@ fn input_window_edges() {
         }
     }
 }
+
+// AC-43: a merge of the base branch that brings a build input unchanged blocks nothing; resolved to
+// other content, or in a ticket without `base_branch`, it blocks.
+#[test]
+fn merge_of_the_base_branch_blocks_nothing() {
+    /// Steps 1 and 2 around a merge of main that brings `jest.config.js`; returns the output of
+    /// the check and the merge commit.
+    fn scenario(base_branch: bool, resolved: bool) -> (String, String) {
+        let repo = junit_repo();
+        let dir = repo.dir();
+        let main = git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        if base_branch {
+            let path = dir.join(".stapel/tickets/ABC-1/state.json");
+            let mut state: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            state["base_branch"] = serde_json::json!(main);
+            std::fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+            commit(dir, "ABC-1: base branch");
+        }
+        git_in(dir, &["checkout", "-q", "-b", "ticket"]);
+        write(
+            dir,
+            "__tests__/x.test.ts",
+            "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 1 RED: one");
+        write(dir, "src/ok.ts", "export const ok = 1;\n");
+        commit(dir, "ABC-1 step 1 GREEN: one");
+        git_in(dir, &["checkout", "-q", &main]);
+        write(dir, "jest.config.js", "module.exports = {};\n");
+        commit(dir, "main: a jest config");
+        git_in(dir, &["checkout", "-q", "ticket"]);
+        git_in(dir, &["merge", "-q", "--no-ff", "--no-commit", &main]);
+        if resolved {
+            write(dir, "jest.config.js", "module.exports = { bail: 1 };\n");
+        }
+        commit(dir, "ABC-1: merge main");
+        let merge = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        write(
+            dir,
+            "__tests__/y.test.ts",
+            "it(\"two\", () => { /* needs src/two.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 2 RED: two");
+        write(dir, "src/two.ts", "export const two = 2;\n");
+        commit(dir, "ABC-1 step 2 GREEN: two");
+        let (_, text) = check(&repo);
+        (text, merge)
+    }
+
+    let (text, _) = scenario(true, false);
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
+    assert!(!text.contains("build-input-changed"), "{text}");
+
+    for (base_branch, resolved) in [(true, true), (false, false)] {
+        let (text, merge) = scenario(base_branch, resolved);
+        assert_eq!(
+            text.lines().find(|l| l.starts_with("step 2: ")).unwrap(),
+            format!(
+                "step 2: unverified: build-input-changed: jest.config.js at {}",
+                &merge[..7]
+            ),
+            "base_branch {base_branch}, resolved {resolved}: {text}"
+        );
+    }
+}

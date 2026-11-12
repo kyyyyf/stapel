@@ -1100,3 +1100,82 @@ fn walk_reads_only_the_range() {
     }
     let _ = std::fs::remove_file(&trace_file);
 }
+
+// ---- STP-28 AC-43 ----
+
+#[test]
+fn merge_of_the_base_branch_blocks_nothing() {
+    /// A ticket with `base_branch` main: step 1, a merge of main that brings the test file
+    /// `new.rs` (resolved to other content when `resolved`), step 2. Returns the check output and
+    /// the merge commit.
+    fn scenario(resolved: bool) -> (String, String) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        let main = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        let mut state = common::state_json(dir, "ABC-1");
+        state["base_branch"] = serde_json::json!(main);
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base branch");
+        git(dir, &["checkout", "-q", "-b", "ticket"]);
+        clean_pair(dir, "step 1", "one");
+        git(dir, &["checkout", "-q", &main]);
+        write(
+            dir,
+            "crates/tiny/tests/new.rs",
+            "#[test]\nfn from_main() {\n    assert_eq!(tiny::add(1, 1), 2);\n}\n",
+        );
+        commit(dir, "main: a test file");
+        git(dir, &["checkout", "-q", "ticket"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=test-user",
+                "-c",
+                "user.email=test-user.invalid",
+                "merge",
+                "-q",
+                "--no-ff",
+                "--no-commit",
+                &main,
+            ],
+        );
+        if resolved {
+            write(
+                dir,
+                "crates/tiny/tests/new.rs",
+                "#[test]\nfn from_main() {\n    assert_eq!(tiny::add(2, 2), 4);\n}\n",
+            );
+        }
+        commit(dir, "ABC-1: merge main");
+        let merge = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        clean_pair(dir, "step 2", "two");
+        let (_, text) = check(dir);
+        (text, merge)
+    }
+
+    let (text, _) = scenario(false);
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
+    assert!(!text.contains("build-input-changed"), "{text}");
+
+    let (text, merge) = scenario(true);
+    assert_eq!(
+        outcome(&text, "step 2"),
+        "unverified",
+        "a merge that resolves the file to other content blocks: {text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "build-input-changed: crates/tiny/tests/new.rs at {}",
+            &merge[..7]
+        )),
+        "{text}"
+    );
+}
