@@ -10,7 +10,7 @@ investigation in the chat of 2026-11-11.
 **Problem.** `stapel check` runs only cargo tests, so the TypeScript pilot repository cannot be checked;
 every check and commit hook walks the whole first-parent history (1035 commits here, more in the pilot).
 
-**Plan item:** A1 (1.11 and 1.12).
+**Plan item:** A1 and A1b (items 1.11, 1.12 and the lint part of 1.6; ledger decision of 2026-11-12).
 
 **Risk tags:** `guard` (the check is the RED/GREEN boundary; a wrong report read lets untested code pass),
 `interface` (new `[check]` keys, a new command).
@@ -95,6 +95,10 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   and that parent is on the base branch) blocks no step and not the suite; a merge that resolves the file
   to other content still blocks. Rejected: the STP-13 rule unchanged, so every ticket that merges main
   with a new test file cannot close.
+- 2026-11-12: Decision (scope and follow-up, the human, ledger): STP-28 keeps promise items 1 to 6, so A1b
+  is done inside it; it has 23 Plan steps and closes after code review round 2 with text fixes only; the
+  code defects and the coverage of round 2 go to a follow-up ticket A1c before A2. Rejected: moving items
+  4 to 6 to A1b; fix steps 24 to 26 and a third review round.
 
 ## Spec
 
@@ -111,9 +115,9 @@ Terms:
   its own by a space (a `describe` without such a title hides its calls); its **text** runs to its `)`.
 - **Step test**: under junit, `<test file>::<name>` of a test call that the RED commit adds or whose text
   it changes; under cargo, as STP-4.
-- **Base merge input**: a build input that a merge commit of the Walk changes, whose content at the merge
+- **Base merge input**: any change that a merge commit of the Walk brings whose content at the merge
   equals its content at the merge's second parent, where that parent is an ancestor of the `base_branch`
-  of `state.json`.
+  of `state.json`; under junit `.stapel/stapel.toml` and the command's script are never one.
 - **Per-file run**: `command` with `{file}` replaced by one test file's path, run in the check copy
   after its old `report` file is removed.
 - **Named test**: backtick text holding `::` in a table column headed `Test` or `Tests`, or in a Plan
@@ -150,7 +154,7 @@ Terms:
 | AC-24 | WHEN a commit of the Walk, a merge commit by its first-parent diff, changes a file that matches an input glob, and it is no Base merge input, THE later steps read `unverified` with the reason `build-input-changed: <path> at <sha>` as under cargo, and no command runs for them. | `check_junit::build_input_change_is_unverified`, `check_junit::merge_brings_a_build_input` |
 | AC-25 | WHEN the runner is junit and a commit of the Walk after the ticket's first RED changes `.stapel/stapel.toml` THE steps whose RED lies before that commit read `build-input-changed` for it; a change at or before the first RED blocks no step. | `check_junit::config_change_is_unverified`, `check_junit::config_change_after_first_red` |
 | AC-26 | WHEN the runner is junit THE suite at HEAD removes the old report, runs `command` once with only the word `{file}` left out, reads every test suite of the report and sums them; it passes when the exit code is 0 and the sums hold a test case and no failure or error, and its detail counts passed, failed and ignored. | `check_junit::suite_runs_the_whole_command`, `check_junit::suite_sums_every_suite` |
-| AC-27 | WHEN the runner is junit THE outcome `tests-changed` also protects the rest of a test file whose rest the RED changed, ignoring changes of whitespace and `;` only, and the other files the RED changed that match a test glob, in `check`, `check --history` and the commit hook; a RED that changes only test calls of a file leaves its rest unprotected, as the cargo helper rule does. | `check_junit::tests_changed_under_junit`, `check_junit::hook_faults_under_junit`, `check_junit::same_file_helper_is_not_protected` |
+| AC-27 | WHEN the runner is junit THE outcome `tests-changed` also protects the rest of a test file whose rest the RED changed, and the other files the RED changed that match a test glob, in `check`, `check --history` and the commit hook; the gate that decides whether the RED changed the rest ignores whitespace and `;`, the protected rest is then compared exactly, and a deleted protected file is a change; a RED that changes only test calls of a file leaves its rest unprotected, as the cargo helper rule does. | `check_junit::tests_changed_under_junit`, `check_junit::hook_faults_under_junit`, `check_junit::same_file_helper_is_not_protected` |
 | AC-28 | WHEN `stapel lint [KEY]` runs THE ticket is KEY; without KEY it is the branch ticket, else the one open ticket. | `lint::lint_exit_codes_and_order` |
 | AC-29 | IF a Checked test does not exist at HEAD, its file missing included THEN lint prints `<KEY> names <test>, which does not exist`. | `lint::names_a_missing_test`, `lint::named_tests_from_test_columns`, `lint::rows_without_header_name_no_test` |
 | AC-30 | IF a step test of the ticket's RED commits on the Walk exists at HEAD and no ticket of the checkout names it in a table row THEN lint prints `<test> is a step test of <KEY> and no ticket names it`. | `lint::step_test_named_by_no_ticket` |
@@ -165,7 +169,7 @@ Terms:
 | AC-40 | WHEN a junit check runs THE check and its suite take the machine-wide cargo lock as a cargo check does. | `cargo_lock::junit_check_takes_the_lock`, `cargo_lock::junit_lock_edges` |
 | AC-41 | WHEN a build input or configuration change blocks a junit step THE commit hook and `next` name that change's commit as the step's fault commit. | `check_junit::fault_commit_is_the_blocking_change`, `check_junit::config_fault_commit` |
 | AC-42 | WHEN the runner is junit and a GREEN or later commit changes, adds or deletes a file that matches a test glob, is no test file and lies in the folder of a step test's file THE step reads `tests-changed`. | `check_junit::fixture_beside_a_test_is_protected`, `check_junit::fixture_added_or_deleted_is_protected` |
-| AC-43 | WHEN a build input changed on the Walk is a Base merge input THE input blocks no step and not the suite, under cargo and junit; a merge that resolves it to other content, or a ticket without `base_branch`, blocks as before. | `check_history::merge_of_the_base_branch_blocks_nothing`, `check_junit::merge_of_the_base_branch_blocks_nothing` |
+| AC-43 | WHEN a change on the Walk is a Base merge input THE change blocks no step and not the suite, under cargo and junit; a merge that resolves it to other content, or a ticket without `base_branch`, blocks as before. | `check_history::merge_of_the_base_branch_blocks_nothing`, `check_junit::merge_of_the_base_branch_blocks_nothing` |
 
 ### Guarantees
 
@@ -179,7 +183,10 @@ Terms:
   check time (three runs per test file and step, under the machine-wide lock); `lint` for test names that
   hold `|` or a backtick; under junit a helper, `beforeEach` or `describe` title of a test file whose rest
   the RED did not change (the cargo helper rule has the same limit); a run script that is not the first word of `command` as a build input; under
-  cargo, a `docs/` file that a test reads (here only this repository's lint reads `docs/`).
+  cargo, a `docs/` file that a test reads (here only this repository's lint reads `docs/`); an agent that
+  merges its own side branch into the local base branch before merging that branch (subagents do not
+  switch branches and only the orchestrator merges); the round-2 defects and coverage left to A1c (ledger
+  2026-11-12): CR2-4, CR2-5, CR2-7, CR2-8, CR2-11, d20-2, d20-3, d21-1, d21-2, d22-1.
 
 ## Test plan
 
@@ -399,33 +406,38 @@ AC-1, AC-2 and AC-37; item 5 to AC-3; item 6 to AC-28 to AC-32; each Inputs and 
   and the guard keep their rules.
 - `stapel lint` is `crates/stapel-cli/src/lint.rs`; `ticket_drift.rs` stays this repository's full lint.
 
-### Design as built (steps 1 to 12)
+### Design as built (steps 1 to 23)
 
-- `outcomes.rs`: `Mode::{Cargo, Junit(&[String])}` picks the rules; `analyse_in` takes it, `analyse` is
-  the cargo form. Under junit `is_junit_code` (AC-13) judges the RED, step tests come from
-  `ts_tests::test_calls`, and the protected units add `Unit::Rest` (the rest of a test file, compared with
-  whitespace and `;` removed) and `Unit::File` (another test-glob file the RED changed).
-- `check.rs`: `at_junit` groups step tests by file, runs `run_program` once per file with the word
-  `{file}` replaced and `JEST_JUNIT_REPORT_TEST_SUITE_ERRORS=true`, removes the old report first, and
-  checks in this order: timeout, signal, report read, one suite, exit code against failures, the load
-  failure classname, then one case per name. `suite_junit` drops the word `{file}`, sums every suite and
-  passes on exit 0 with a case and no failure. `link_modules` symlinks the working tree's `node_modules`
-  into the copy or gives the AC-23 reason. `junit_block` blocks a step by the first walk change of an
-  input at or before its GREEN, or of the configuration or script after its RED and not after its GREEN.
-- `junit.rs`: `read_report(bytes) -> Result<Vec<Suite>, String>`, a single-pass reader with a stack of
-  open elements; it refuses over 16 MiB, invalid UTF-8, empty text, misplaced known elements and unknown
-  entities; a BOM is dropped.
-- `ts_tests.rs`: a token lexer (`lex`) with a regular-expression rule by the previous token;
-  `test_calls`, `rest_text` and `has_only_call` (a `test`, `it` or `describe` followed by `.only` and a
-  call).
-- `build_inputs.rs`: `analyse_junit` reads each commit of the range by its first-parent diff and records
-  `walk_changes` (an input-glob path, or `.stapel/stapel.toml` and the command's script) in order;
-  `changed` is the first of them.
+- `outcomes.rs`: `Mode::{Cargo, Junit(&[String])}` picks the rules; `analyse_in` takes it. Under junit
+  `is_junit_code` judges the RED (AC-13), step tests come from `ts_tests::test_calls`, and the protected
+  units add `Unit::Rest` and `Unit::File`. The gate compares the rest before and at the RED with
+  whitespace and `;` removed; the protected rest is then compared exactly at each later commit. For each
+  folder of a step test file, every non-test file matching a test glob, also one a later commit adds or
+  deletes, is a `Unit::File`; a deletion counts as a change (AC-42, AC-27).
+- `build_inputs.rs`: `check_base` reads only `base..HEAD` and checks that `base` is the first parent of
+  its oldest commit (an empty range needs HEAD equal to `base`); `range` and the position maps read the
+  same range. `base_merge_parent` gives a merge's second parent when it is an ancestor of
+  `refs/heads/<base_branch>`; `same_as_parent` compares a path there and at the merge. Under cargo every
+  hit of such a merge is skipped when all its paths are unchanged; `analyse_junit` skips an input-glob
+  path so, but never `.stapel/stapel.toml` or the script (AC-43).
+- `check.rs`: `junit_block` blocks a step by the first `walk_changes` entry: an input at or before its
+  GREEN; `.stapel/stapel.toml` anywhere after its RED; the script after its RED and not after its GREEN.
+  The hook and `next` take that change as the fault commit (AC-41). `at_junit` and `suite_junit` run
+  `run_program` with `JEST_JUNIT_REPORT_TEST_SUITE_ERRORS=true`, remove the old report first and read it
+  through `read_report_file`, which refuses a symbolic link, a folder, a FIFO or another non-regular file
+  and a size over 16 MiB from `symlink_metadata` before the read. Both names are trimmed before the
+  compare. `link_modules` links the working tree's `node_modules`. A check under either runner takes the
+  machine-wide cargo lock and sets the held mark for its children (AC-40).
+- `junit.rs`: `read_report` is a single-pass reader with a stack of open elements; a character reference
+  is refused with its own cause: a sign, no digits, above `10FFFF`, or no XML 1.0 character (AC-38).
+- `ts_tests.rs`: a token lexer; a `describe` scope ends at its closing token; a `describe` with a
+  modifier other than `.only` or `.skip`, or an `each` form, hides its calls; `has_only_call` counts
+  `.only` followed by a call, `.each` or a tagged template.
+- `lint.rs`: Named tests come only from columns headed `Test` or `Tests` of tables with a separator line,
+  and from the test lists of Plan steps; the file part is a known cargo form or the first segment, a
+  name may hold `::` (`nested_test` follows `mod` blocks), and a name whose file is missing is reported.
 - Tests: `common::junit_repo` and its stand-in outside the repository (`JunitRepo::runs` reads its log);
   the real reports of F-10 lie in the core crate's `tests/data/junit/`.
-- `lint.rs`: names come from backtick text with `::` in any table row and in Plan items; `exists` reads
-  a script path with the lexer and a cargo name by `cargo_forms`, and skips a cargo name whose module is
-  no test file at HEAD (d12-1, fixed in step 19).
 
 ## Proof
 
@@ -565,8 +577,34 @@ Route: full (tags `guard`, `interface`), auto.
 
 ## Review
 
-TODO
+- Spec review: two rounds by `stapel-spec-reviewer` (round 1 with one HIGH, round 2 without HIGH).
+- Drift: `stapel-drift` after every GREEN step (steps 1 to 23) and after the merge of main.
+- Code review: round 1 and round 2, each with `stapel-reviewer` on Sonnet, an external `stapel-reviewer`
+  on Fable and a whole-ticket drift review.
+- HIGH and MEDIUM findings inside the promise by stage (`findings.jsonl`): spec review 1 HIGH, 13 MEDIUM;
+  step drift 3 HIGH (d9-1, d12-1, M-1), 24 MEDIUM; code review round 1 0 HIGH, 2 MEDIUM; code review
+  round 2 1 HIGH (CR2-1, the plan text, fixed by the ledger decision of 2026-11-12), 5 MEDIUM.
+- Round 2 left to A1c (ledger 2026-11-12): a base merge against `tests-changed` (CR2-4), an absolute
+  script path in `command` (CR2-5), reader roots, CDATA outside the root and entities in skipped elements
+  (CR2-7, CR2-11), the silent cargo fallback when `stapel.toml` fails to load (CR2-8), the read between
+  metadata and content (d21-1, d21-2), and coverage d20-2, d20-3, d22-1.
 
 ## Summary
 
-TODO
+- Built: promise items 1 to 6 by 43 criteria in 23 Plan steps: the `junit` runner with its keys, lexer,
+  report reader, Per-file runs, suite and outcomes; the `base..HEAD` walk; the `docs/` staleness rule;
+  `stapel lint [KEY]`. The final check passes with 912 tests.
+- Improved: the spec named its external states from real jest-junit runs, which corrected two remembered
+  facts before the build; each fix step had a RED test that failed first.
+- Not improved: the ticket outgrew its 12-step frame (23 steps by the human's leave) and its size; drift
+  found three HIGH defects after the spec review; round 2 still found code defects, left to A1c.
+- Process problems seen:
+  - Builders wrote files with shell scripts seven times despite the rule.
+  - One builder ran `pkill -f` on a pattern that could match other sessions' wait loops.
+  - One builder ran `cargo fmt` over 29 files (reverted before the commit).
+  - `stapel check` refused at once, four times, while another worktree's check held the repository-wide
+    check lock, instead of waiting.
+  - After the merge of main, `stapel next` blocked the fix of its own block (fix-history pointed at the
+    steps the base-merge fix had to repair).
+  - The installed binary was older than the branch, so the hook printed stale faults until the close.
+  - Two sessions changed the plan of the same item in parallel (CR2-1).
