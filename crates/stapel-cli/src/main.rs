@@ -5,6 +5,7 @@ mod cargo;
 mod check;
 mod close;
 mod depends;
+mod export;
 mod fail;
 mod findings;
 mod hook;
@@ -85,6 +86,14 @@ enum Command {
     Depends {
         /// The ticket key; without it, the branch ticket.
         key: Option<String>,
+    },
+    /// Write the branch `export/<KEY>`: the ticket's commits without the process files.
+    Export {
+        /// The ticket key.
+        key: Option<String>,
+        /// The ref the commits are taken onto.
+        #[arg(long, allow_hyphen_values = true)]
+        onto: Option<String>,
     },
     /// Close a ticket: its confirmations stop permitting code writes. Only a person closes.
     Close {
@@ -368,6 +377,9 @@ fn main() -> ExitCode {
         Command::Hook(HookCommand::SessionEnd) => return hook::session_end(),
         Command::Check { key, list, history } => {
             return check::run(key.as_deref(), list, history);
+        }
+        Command::Export { key, onto } => {
+            return fail::finish(export::run(key.as_deref(), onto.as_deref()));
         }
         Command::Lint { key } => return lint::run(key.as_deref()),
         Command::Cargo { args } => return cargo::run(&args),
