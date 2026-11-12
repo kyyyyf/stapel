@@ -1056,6 +1056,44 @@ fn fixture_beside_a_test_is_protected() {
     assert_eq!(case("other/data.test.json"), "step 1: needs-run");
 }
 
+// AC-27: a RED that only adds a test call, or only reformats the rest of the file, leaves the rest
+// of that file unprotected: a GREEN that edits a helper reads `needs-run`.
+#[test]
+fn same_file_helper_is_not_protected() {
+    let case = |reformat: bool| {
+        let repo = junit_repo();
+        let dir = repo.dir();
+        if reformat {
+            write(
+                dir,
+                "__tests__/base.test.ts",
+                "const  helper = 1 ;\nit(\"base\", () => {});\nit(\"keeps\", () => { /* needs src/index.ts */ });\nit(\"more\", () => { /* needs src/m.ts */ });\n",
+            );
+        } else {
+            write(
+                dir,
+                "__tests__/base.test.ts",
+                "const helper = 1;\nit(\"base\", () => {});\nit(\"keeps\", () => { /* needs src/index.ts */ });\nit(\"more\", () => { /* needs src/m.ts */ });\n",
+            );
+        }
+        commit(dir, "ABC-1 step 1 RED: more");
+        write(dir, "src/m.ts", "export const m = 1;\n");
+        write(
+            dir,
+            "__tests__/base.test.ts",
+            "const helper = 2;\nit(\"base\", () => {});\nit(\"keeps\", () => { /* needs src/index.ts */ });\nit(\"more\", () => { /* needs src/m.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 1 GREEN: more");
+        let (_, text) = stdout(dir, &["check", "ABC-1", "--history"]);
+        text.lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("no step 1:\n{text}"))
+            .to_string()
+    };
+    assert_eq!(case(false), "step 1: needs-run", "only a test call added");
+    assert_eq!(case(true), "step 1: needs-run", "spaces and `;` only");
+}
+
 // AC-27: the commit hook prints the `tests-changed` fault of a GREEN that edits a helper line.
 #[test]
 fn hook_faults_under_junit() {
