@@ -418,6 +418,18 @@ fn rejects_bad_junit_keys() {
     );
 }
 
+// STP-28 AC-5: a `command` with no program before `{file}` is refused, naming `command`.
+#[test]
+fn rejects_command_without_program() {
+    for command in ["{file}", " {file}"] {
+        let e = with_check(&format!(
+            "runner = \"junit\"\ncommand = \"{command}\"\nreport = \"r.xml\""
+        ))
+        .expect_err(&format!("{command:?} was accepted"));
+        assert!(e.contains("check.command"), "{command:?}: {e}");
+    }
+}
+
 // STP-28 AC-6: the glob matcher.
 #[test]
 fn globs_match_paths() {
