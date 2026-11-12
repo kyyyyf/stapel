@@ -1310,8 +1310,7 @@ fn broken_config_is_reported() {
     // A folder in place of the file.
     std::fs::remove_file(&path).unwrap();
     std::fs::create_dir(&path).unwrap();
-    let text = answer(hook(dir), "a folder");
-    assert_fault_only(&text, "a folder");
+    assert_silent(hook(dir), "a folder");
     std::fs::remove_dir(&path).unwrap();
 
     // A commit of no ticket: nothing.
