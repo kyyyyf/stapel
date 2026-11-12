@@ -599,6 +599,45 @@ pub fn analyse_in(
                 }
             }
         }
+        // STP-28 AC-42: under junit, each non-test file matching a test glob in the folder of a
+        // step test's file, as at the RED.
+        if let Mode::Junit(globs) = mode {
+            let mut folders: Vec<String> = a
+                .tests
+                .iter()
+                .map(|t| {
+                    let p = t.path();
+                    p.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default()
+                })
+                .collect();
+            folders.sort();
+            folders.dedup();
+            for folder in folders {
+                let prefix = if folder.is_empty() {
+                    String::new()
+                } else {
+                    format!("{folder}/")
+                };
+                let mut args = vec!["ls-tree", "-z", "--name-only", red.as_str(), "--"];
+                let literal = format!(":(literal){prefix}");
+                if !prefix.is_empty() {
+                    args.push(&literal);
+                }
+                let listed = git(root, &args)?;
+                for path in listed.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+                    let path = String::from_utf8_lossy(path).into_owned();
+                    let known = units
+                        .iter()
+                        .any(|u| matches!(u, Unit::File(p) | Unit::Rest(p) if *p == path));
+                    if !known
+                        && !is_test_file(&path, globs)
+                        && globs.iter().any(|g| glob_matches(g, &path))
+                    {
+                        units.push(Unit::File(path));
+                    }
+                }
+            }
+        }
         let mut changed_units = Vec::new();
         // The commits where the walk of a changed unit stopped.
         let mut stops: Vec<String> = Vec::new();
