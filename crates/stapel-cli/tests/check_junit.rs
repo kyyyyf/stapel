@@ -2396,6 +2396,48 @@ fn absolute_script_edges() {
     assert!(!seen.is_empty() && seen.iter().all(|v| v == "sibling"), "{seen:?}");
 }
 
+// STP-30 AC-6 (CR1-E4): an absolute script with a `.` part is a fixed input, as in STP-28.
+#[test]
+fn absolute_script_dot_path_is_input() {
+    let repo = step_repo(
+        |dir| {
+            let stand_in = repo_stand_in(dir);
+            write(dir, "run.sh", &format!("#!/bin/sh\nexec sh '{stand_in}' \"$1\"\n"));
+            std::fs::set_permissions(
+                dir.join("run.sh"),
+                std::os::unix::fs::PermissionsExt::from_mode(0o755),
+            )
+            .unwrap();
+            let path = dir.join(".stapel/stapel.toml");
+            let text: String = std::fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .map(|l| {
+                    if l.starts_with("command = ") {
+                        format!("command = \"{}/./run.sh {{file}}\"\n", dir.display())
+                    } else {
+                        format!("{l}\n")
+                    }
+                })
+                .collect();
+            std::fs::write(&path, text).unwrap();
+            commit(dir, "setup: an absolute script with a dot part");
+        },
+        |dir| write(dir, "run.sh", "#!/bin/sh\nexit 0\n"),
+    );
+    let sha = git_in(repo.dir(), &["rev-parse", "HEAD"]);
+    let (code, text) = check(&repo);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(
+        step_one(&text),
+        format!(
+            "step 1: unverified: build-input-changed: run.sh at {}",
+            &sha.trim()[..7]
+        ),
+        "{text}"
+    );
+}
+
 // STP-30 AC-10 (d8-1, d8-2): an unreadable file and a validation error give the load fault; a
 // dangling link and an absent file give today's refusal; `next` judges no step in any of them.
 #[test]
