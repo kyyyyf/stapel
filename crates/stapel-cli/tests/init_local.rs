@@ -703,3 +703,104 @@ END { print "</testsuite>\n</testsuites>" > out; exit bad }
     let status = git_in(dir, &["status", "--porcelain", "--untracked-files=no"]);
     assert_eq!(status, "", "{status}");
 }
+
+// STP-31 AC-18 (ER1-10): the checklist's two `git add` lines commit the installed files, and real
+// `git push` calls reach a bare remote: `main` is refused by the pre-push, the export branch goes through.
+#[test]
+fn foreign_repository_real_pushes() {
+    // A real push as the person runs it: without the agent variables.
+    fn push(dir: &std::path::Path, args: &[&str]) -> (bool, String) {
+        let out = std::process::Command::new("git")
+            .arg("push")
+            .args(args)
+            .current_dir(dir)
+            .env_remove("CLAUDECODE")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT")
+            .output()
+            .unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    }
+
+    let repo = git_repo();
+    let remote = common::bare_dir();
+    let dir = repo.path();
+    git_in(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git_config(dir, "user.email", "test-user.invalid");
+    git_in(remote.path(), &["init", "-q", "--bare"]);
+    git_config(dir, "remote.origin.url", &remote.path().display().to_string());
+    git_config(dir, "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
+    git_config(dir, "core.hooksPath", ".husky");
+    std::fs::create_dir_all(dir.join(".husky")).unwrap();
+    std::fs::write(dir.join(".husky/pre-commit"), "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::write(dir.join("index.ts"), "export const one = 1;\n").unwrap();
+    let base = commit_all(dir, "initial");
+
+    // The person pushed `main` once, so `origin/main` exists.
+    let (ok, err) = push(dir, &["origin", &format!("{base}:refs/heads/main")]);
+    assert!(ok, "{err}");
+    git_config(dir, "branch.main.remote", "origin");
+    git_config(dir, "branch.main.merge", "refs/heads/main");
+    assert_eq!(
+        git_in(dir, &["rev-parse", "refs/remotes/origin/main"]).trim(),
+        base
+    );
+
+    stapel(dir)
+        .args(["init", "--local", "--prefix", "ABC"])
+        .assert()
+        .success();
+    // The checklist's two lines, as printed.
+    git_in(dir, &["add", ".stapel"]);
+    git_in(
+        dir,
+        &[
+            "add",
+            "-f",
+            ".claude/skills/stapel",
+            ".claude/agents/stapel-*.md",
+            ".claude/settings.json",
+        ],
+    );
+    git_in(
+        dir,
+        &[
+            "-c",
+            "user.email=a@b.c",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "install stapel",
+        ],
+    );
+    assert!(
+        git_in(dir, &["status", "--porcelain"]).is_empty(),
+        "{}",
+        git_in(dir, &["status", "--porcelain"])
+    );
+
+    stapel(dir).args(["new", "First"]).assert().success();
+    let wt = dir.join(".claude/worktrees/ABC-1");
+    std::fs::write(wt.join("feature.ts"), "export const f = 1;\n").unwrap();
+    commit_all(&wt, "ABC-1 step 1 GREEN: feature");
+    stapel(dir).args(["export", "ABC-1"]).assert().success();
+    let tip = git_in(dir, &["rev-parse", "export/ABC-1"]).trim().to_string();
+
+    let (ok, err) = push(dir, &["origin", "main"]);
+    assert!(!ok, "{err}");
+    assert!(err.contains("stapel export"), "{err}");
+    let (ok, err) = push(dir, &["origin", "export/ABC-1:ABC-1"]);
+    assert!(ok, "{err}");
+    assert_eq!(
+        git_in(remote.path(), &["rev-parse", "refs/heads/ABC-1"]).trim(),
+        tip
+    );
+    assert_eq!(
+        git_in(remote.path(), &["rev-parse", "refs/heads/main"]).trim(),
+        base
+    );
+}
