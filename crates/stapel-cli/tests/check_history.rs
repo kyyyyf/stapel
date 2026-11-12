@@ -1426,6 +1426,75 @@ fn base_merge_data_file_is_no_tests_change() {
     assert!(text.contains(&merge[..7]), "the fault is the merge: {text}");
 }
 
+// STP-30 AC-1, AC-2 (CR1-E1): a data file named `d[1].txt` is a path, not a pattern: a merge that
+// resolves it to a third text blocks, a merge that brings it equal passes.
+#[test]
+fn base_merge_glob_names() {
+    fn scenario(resolved: bool) -> (String, String) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        let main = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        write(dir, "crates/tiny/tests/data/d[1].txt", "one\n");
+        commit(dir, "a data file");
+        let mut state = common::state_json(dir, "ABC-1");
+        state["base_branch"] = serde_json::json!(main);
+        state["base"] = serde_json::json!(git(dir, &["rev-parse", "HEAD"]).trim());
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base branch");
+        git(dir, &["checkout", "-q", "-b", "ticket"]);
+        clean_pair(dir, "step 1", "one");
+        git(dir, &["checkout", "-q", &main]);
+        write(dir, "crates/tiny/tests/data/d[1].txt", "two\n");
+        commit(dir, "main: a new table");
+        git(dir, &["checkout", "-q", "ticket"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=test-user",
+                "-c",
+                "user.email=test-user.invalid",
+                "merge",
+                "-q",
+                "--no-ff",
+                "--no-commit",
+                &main,
+            ],
+        );
+        if resolved {
+            write(dir, "crates/tiny/tests/data/d[1].txt", "three\n");
+        }
+        commit(dir, "ABC-1: merge main");
+        let merge = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        let (_, text, _) = history(dir);
+        (text, merge)
+    }
+
+    let step_one = |text: &str| {
+        text.lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("no step 1:\n{text}"))
+            .to_string()
+    };
+
+    let (text, _) = scenario(false);
+    assert_eq!(step_one(&text), "step 1: needs-run", "{text}");
+
+    let (text, merge) = scenario(true);
+    assert_eq!(
+        step_one(&text),
+        "step 1: tests-changed: crates/tiny/tests/data/d[1].txt",
+        "{text}"
+    );
+    assert!(text.contains(&merge[..7]), "the fault is the merge: {text}");
+}
+
 // ---- STP-30 AC-4 ----
 
 #[test]
