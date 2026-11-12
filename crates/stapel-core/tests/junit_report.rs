@@ -137,3 +137,35 @@ fn refuses_malformed_reports() {
     big.extend(std::iter::repeat(b' ').take(16 * 1024 * 1024 + 1));
     refused("over 16 MiB", &big);
 }
+
+#[test]
+fn refuses_bad_character_references() {
+    let name_of = |reference: &str| {
+        read(&format!("<testsuites><testsuite name=\"s\"><testcase classname=\"c\" name=\"a{reference}b\"/></testsuite></testsuites>"))
+    };
+    for bad in [
+        "&#0;", "&#x1;", "&#xFFFE;", "&#+65;", "&#-65;", "&#x+41;", "&#x-41;", "&#8;", "&#xB;",
+        "&#xD800;", "&#xDFFF;", "&#xFFFF;", "&#x110000;", "&#;", "&#x;",
+    ] {
+        let err = name_of(bad).expect_err(bad);
+        assert!(!err.is_empty(), "{bad}: the reason is empty");
+    }
+    // in text as well
+    let xml = "<testsuites><testsuite name=\"s\"><testcase classname=\"c\" name=\"a\"><failure>&#x1;</failure></testcase></testsuite></testsuites>";
+    assert!(read(xml).is_err());
+
+    for (good, expect) in [
+        ("&#9;", "a\tb"),
+        ("&#x10FFFF;", "a\u{10FFFF}b"),
+        ("&#xA;", "a\nb"),
+        ("&#13;", "a\rb"),
+        ("&#x20;", "a b"),
+        ("&#xD7FF;", "a\u{D7FF}b"),
+        ("&#xE000;", "a\u{E000}b"),
+        ("&#xFFFD;", "a\u{FFFD}b"),
+        ("&#x10000;", "a\u{10000}b"),
+    ] {
+        let suites = name_of(good).unwrap_or_else(|e| panic!("{good}: {e}"));
+        assert_eq!(suites[0].cases[0].name, expect, "{good}");
+    }
+}
