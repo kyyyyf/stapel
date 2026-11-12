@@ -389,3 +389,59 @@ fn pre_push_refuses_process_files() {
     git_in(dir, &["update-ref", "refs/remotes/origin/feat", &without]);
     assert_eq!(code(&run_hook(dir, &line(&without), false)), Some(0));
 }
+
+// STP-31 AC-9: a stapel pre-push gets the text of the run's mode; a foreign one stays.
+#[test]
+fn pre_push_text_follows_the_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = git_repo();
+    let dir = repo.path();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let hook = dir.join(".git/hooks/pre-push");
+    let shared_text = std::fs::read_to_string(&hook).unwrap();
+
+    // To the local mode: the hook is updated and stays executable.
+    make_local(dir);
+    stapel(dir)
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(contains("updated: .git/hooks/pre-push (pre-push"));
+    let local_text = std::fs::read_to_string(&hook).unwrap();
+    assert_ne!(local_text, shared_text);
+    assert_ne!(hook.metadata().unwrap().permissions().mode() & 0o111, 0);
+    // A second run changes nothing.
+    stapel(dir).arg("init").assert().success();
+    assert_eq!(std::fs::read_to_string(&hook).unwrap(), local_text);
+
+    // Back to the shared mode: the hook is updated again.
+    let config = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(
+        &config,
+        text.replace("history = \"local\"", "history = \"shared\""),
+    )
+    .unwrap();
+    stapel(dir)
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(contains("updated: .git/hooks/pre-push (pre-push"));
+    assert_eq!(std::fs::read_to_string(&hook).unwrap(), shared_text);
+    assert_ne!(hook.metadata().unwrap().permissions().mode() & 0o111, 0);
+
+    // A foreign hook is kept with the warning.
+    let repo = git_repo();
+    let dir = repo.path();
+    std::fs::create_dir_all(dir.join(".git/hooks")).unwrap();
+    std::fs::write(dir.join(".git/hooks/pre-push"), "#!/bin/sh\nexit 0\n").unwrap();
+    stapel(dir)
+        .args(["init", "--local", "--prefix", "ABC"])
+        .assert()
+        .success()
+        .stderr(contains("not from stapel"));
+    assert_eq!(read(dir, ".git/hooks/pre-push"), "#!/bin/sh\nexit 0\n");
+}
