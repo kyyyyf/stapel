@@ -131,6 +131,9 @@ pub fn range(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Vec<S
 /// that is an ancestor of `refs/heads/<base_branch>` (STP-28 AC-43).
 pub(crate) fn base_merge_parent(root: &Path, sha: &str, base_branch: Option<&str>) -> Option<String> {
     let branch = base_branch?;
+    if git(root, &["rev-parse", "--verify", "-q", &format!("{sha}^3")]).is_ok() {
+        return None;
+    }
     let second = git(
         root,
         &["rev-parse", "--verify", "-q", &format!("{sha}^2")],
