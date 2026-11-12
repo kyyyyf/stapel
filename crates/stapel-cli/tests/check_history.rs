@@ -1012,3 +1012,91 @@ fn walk_starts_at_the_base() {
     let (_, hist, err) = history(dir);
     assert_eq!(outcome(&hist, "step 1"), "duplicate", "{hist}{err}");
 }
+
+// ---- STP-28 AC-37 ----
+
+#[test]
+fn walk_reads_only_the_range() {
+    /// The `git log` and `git rev-list` calls in a `GIT_TRACE` file that read a history without a
+    /// `..` range; a call limited to one commit (`-1`, `-n 1`) does not count.
+    fn wide_walks(trace: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        for line in trace.lines() {
+            let Some((_, call)) = line.split_once(" git ") else {
+                continue;
+            };
+            let mut words = call.split_whitespace();
+            let mut sub = None;
+            while let Some(w) = words.next() {
+                if w == "-c" || w == "-C" {
+                    words.next();
+                } else if !w.starts_with('-') {
+                    sub = Some(w.trim_matches('\''));
+                    break;
+                }
+            }
+            if !matches!(sub, Some("log" | "rev-list")) {
+                continue;
+            }
+            let args: Vec<&str> = call.split_whitespace().collect();
+            let one = args.contains(&"-1") || args.windows(2).any(|w| w == ["-n", "1"]);
+            if !call.contains("..") && !one {
+                found.push(line.to_string());
+            }
+        }
+        found
+    }
+
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let base = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let mut state = common::state_json(dir, "ABC-1");
+    state["base"] = serde_json::json!(base);
+    write(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+    );
+    commit(dir, "ABC-1: base");
+    clean_pair(dir, "step 1", "alpha");
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git commit -m x"},
+        "cwd": dir,
+    })
+    .to_string();
+
+    let trace_file = dir.join("..").join(format!(
+        "{}-trace.txt",
+        dir.file_name().unwrap().to_string_lossy()
+    ));
+    let runs: Vec<(&str, Vec<&str>, Option<&str>)> = vec![
+        ("check", vec!["check", "ABC-1"], None),
+        ("check --history", vec!["check", "ABC-1", "--history"], None),
+        ("hook", vec!["hook", "post-tool-use"], Some(payload.as_str())),
+        ("next", vec!["next", "ABC-1"], None),
+        ("lint", vec!["lint", "ABC-1"], None),
+    ];
+    for (label, args, stdin) in runs {
+        let _ = std::fs::remove_file(&trace_file);
+        let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cmd = stapel(dir);
+        cmd.args(&args)
+            .env("GIT_TRACE", &trace_file)
+            .env("CARGO_BUILD_JOBS", "2");
+        if let Some(stdin) = stdin {
+            cmd.write_stdin(stdin.to_string());
+        }
+        cmd.output().unwrap();
+        let trace = std::fs::read_to_string(&trace_file).unwrap_or_default();
+        assert!(trace.contains("git "), "{label}: no git calls traced");
+        let wide = wide_walks(&trace);
+        assert!(
+            wide.is_empty(),
+            "{label} reads the whole history:\n{}",
+            wide.join("\n")
+        );
+    }
+    let _ = std::fs::remove_file(&trace_file);
+}
