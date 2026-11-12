@@ -1205,20 +1205,27 @@ const IN_PROGRESS: [&str; 5] = [
 /// subject of `HEAD`, a ticket that is not open, no step commits, a refusal of the history check,
 /// or any error.
 pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
-    for name in IN_PROGRESS {
-        let path = git_text(root, &["rev-parse", "--git-path", name]).ok()?;
-        if root.join(path.trim()).exists() {
-            return None;
-        }
-    }
     let head = read_head(root).ok()?;
     let subject = git_text(root, &["log", "-1", "--format=%s", &head]).ok()?;
     // The key: the subject's prefix up to the first space or colon.
     let word = subject
         .split(|c: char| c.is_whitespace() || c == ':')
         .next()
-        .filter(|w| !w.is_empty())?;
-    let ticket = resolve(root, Some(word)).ok()?;
+        .filter(|w| !w.is_empty());
+    let ticket = word.and_then(|w| resolve(root, Some(w)).ok());
+    // A `stapel.toml` that fails to load: its fault in place of every step line, also during an
+    // operation, for a `HEAD` that names an open ticket (STP-30 AC-11).
+    if let Err(fault) = repo::load(root) {
+        let open = ticket.is_some_and(|t| matches!(t.status, Status::Open(_)));
+        return open.then(|| vec![format!("stapel: {fault}")]);
+    }
+    for name in IN_PROGRESS {
+        let path = git_text(root, &["rev-parse", "--git-path", name]).ok()?;
+        if root.join(path.trim()).exists() {
+            return None;
+        }
+    }
+    let ticket = ticket?;
     if !matches!(ticket.status, Status::Open(_)) {
         return None;
     }
