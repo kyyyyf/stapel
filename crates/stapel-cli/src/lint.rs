@@ -40,7 +40,7 @@ fn is_separator(line: &str) -> bool {
 }
 
 /// Named tests in table rows: backtick text holding `::`, trimmed, in a column headed `Test` or
-/// `Tests`. A block of rows without a separator line has no header and counts in every column.
+/// `Tests`. A block of rows without a separator line has no header and names no test.
 fn table_names(text: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let mut block: Vec<&str> = Vec::new();
@@ -56,20 +56,19 @@ fn table_names(text: &str) -> BTreeSet<String> {
             continue;
         }
         let headed = block.get(1).is_some_and(|l| is_separator(l));
-        let (columns, rows): (Option<Vec<usize>>, &[&str]) = if headed {
-            let at = cells(block[0])
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| matches!(c.trim(), "Test" | "Tests"))
-                .map(|(i, _)| i)
-                .collect();
-            (Some(at), &block[2..])
-        } else {
-            (None, &block[..])
-        };
-        for row in rows {
+        if !headed {
+            block.clear();
+            continue;
+        }
+        let columns: Vec<usize> = cells(block[0])
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| matches!(c.trim(), "Test" | "Tests"))
+            .map(|(i, _)| i)
+            .collect();
+        for row in &block[2..] {
             for (at, cell) in cells(row).into_iter().enumerate() {
-                if columns.as_ref().is_some_and(|c| !c.contains(&at)) {
+                if !columns.contains(&at) {
                     continue;
                 }
                 out.extend(

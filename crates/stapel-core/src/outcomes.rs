@@ -623,7 +623,23 @@ pub fn analyse_in(
                 if !prefix.is_empty() {
                     args.push(&literal);
                 }
-                let listed = git(root, &args)?;
+                let mut listed = git(root, &args)?;
+                // A file a later commit adds or deletes in the folder is protected as well.
+                let range = format!("{red}..{head}");
+                let touched = git(
+                    root,
+                    &["log", "-z", "--format=", "--name-only", "--no-renames", &range],
+                )?;
+                for path in touched.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+                    let direct = std::str::from_utf8(path)
+                        .ok()
+                        .and_then(|p| p.strip_prefix(prefix.as_str()))
+                        .is_some_and(|rest| !rest.contains('/'));
+                    if direct {
+                        listed.push(0);
+                        listed.extend_from_slice(path);
+                    }
+                }
                 for path in listed.split(|b| *b == 0).filter(|p| !p.is_empty()) {
                     let path = String::from_utf8_lossy(path).into_owned();
                     let known = units
@@ -674,6 +690,11 @@ pub fn analyse_in(
                         break;
                     }
                     if at_head.is_none() {
+                        // STP-28 AC-42: under junit a protected file that is gone is changed.
+                        if junit && matches!(unit, Unit::File(_)) && current.is_some() {
+                            changed_units.push(unit.name());
+                            stops.push(sha.clone());
+                        }
                         break;
                     }
                     continue;
