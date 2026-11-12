@@ -2189,3 +2189,54 @@ fn base_merge_step_test_unit() {
     );
     assert!(text.contains(&again[..7]), "the fault is the re-add: {text}");
 }
+
+// STP-30 d5-2: script edges of an absolute first word under the root.
+#[test]
+fn absolute_script_edges() {
+    use std::os::unix::fs::PermissionsExt;
+    let exec = |p: &Path| std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // Present at HEAD, absent at the RED and the GREEN: the steps cannot start.
+    let repo = absolute_script_repo(|d| format!("{}/late.sh", d.display()), false);
+    let dir = repo.dir();
+    let stand_in = repo.tools.path().join("stand-in.sh").display().to_string();
+    write(dir, ".gitignore", "node_modules/\n");
+    write(dir, "late.sh", &format!("#!/bin/sh\nexec sh '{stand_in}' \"$@\"\n"));
+    exec(&dir.join("late.sh"));
+    commit(dir, "ABC-1: the script arrives after the step");
+    let (_, text) = check(&repo);
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+    assert!(step_one(&text).contains("did not start"), "{text}");
+
+    // Present at the step, deleted at HEAD: the HEAD run of the step and the suite run cannot start.
+    let repo = absolute_script_repo(|d| format!("{}/run.sh", d.display()), false);
+    let dir = repo.dir();
+    std::fs::remove_file(dir.join("run.sh")).unwrap();
+    commit(dir, "ABC-1: the script is deleted");
+    let (_, text) = check(&repo);
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+    assert_eq!(outcome(&text, "suite"), "unverified", "{text}");
+    assert!(suite_line(&text).contains("did not start"), "{text}");
+
+    // A sibling whose name starts with the root runs as given, not at the step's commit.
+    let repo = absolute_script_repo(|d| format!("{}2/run.sh", d.display()), true);
+    let dir = repo.dir();
+    let sibling = std::path::PathBuf::from(format!("{}2", dir.display()));
+    let log = repo.tools.path().join("script.log");
+    std::fs::create_dir_all(&sibling).unwrap();
+    std::fs::write(
+        sibling.join("run.sh"),
+        format!(
+            "#!/bin/sh\necho sibling >> '{}'\nexec sh '{}' \"$@\"\n",
+            log.display(),
+            repo.tools.path().join("stand-in.sh").display()
+        ),
+    )
+    .unwrap();
+    exec(&sibling.join("run.sh"));
+    let (_, text) = check(&repo);
+    let _ = std::fs::remove_dir_all(&sibling);
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    let seen = script_log(&repo);
+    assert!(!seen.is_empty() && seen.iter().all(|v| v == "sibling"), "{seen:?}");
+}
