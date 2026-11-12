@@ -882,12 +882,38 @@ fn pre_push_path(root: &Path) -> Result<PathBuf, String> {
 
 /// In Local mode: the Pre-push path, relative to `root`, when the file there is missing, not
 /// executable or not the Local-mode text, and `init` could write it (inside the work tree).
+/// A hook without stapel's marker is not ours and gives no fact. `git` runs in the main worktree
+/// (the first entry of `git worktree list --porcelain`), where a relative hooks path is settled.
 pub(crate) fn stale_local_pre_push(root: &Path) -> Option<String> {
-    let path = pre_push_path(root).ok()?;
-    let rel = path.strip_prefix(root).ok()?.display().to_string();
-    let fresh =
-        std::fs::read_to_string(&path).is_ok_and(|t| t == LOCAL_PRE_PUSH) && is_executable(&path);
+    let main = main_worktree(root).unwrap_or_else(|| root.to_path_buf());
+    let path = pre_push_path(&main).ok()?;
+    let rel = path.strip_prefix(&main).ok()?.display().to_string();
+    let fresh = match std::fs::read(&path) {
+        Ok(bytes) => {
+            let text = String::from_utf8_lossy(&bytes);
+            if !text.contains(PRE_PUSH_MARKER) {
+                return None;
+            }
+            text == LOCAL_PRE_PUSH && is_executable(&path)
+        }
+        Err(_) => false,
+    };
     (!fresh).then_some(rel)
+}
+
+/// The first worktree that `git worktree list --porcelain` names.
+fn main_worktree(root: &Path) -> Option<PathBuf> {
+    let out = Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let first = text.lines().next()?.strip_prefix("worktree ")?;
+    Some(PathBuf::from(first))
 }
 
 /// Plans the git pre-push hook in the hooks directory git uses (`core.hooksPath` included).
