@@ -334,3 +334,35 @@ fn character_reference_causes() {
         }
     }
 }
+
+#[test]
+fn refuses_unknown_roots() {
+    for (text, name) in [("<foo/>", "foo"), ("<foo/><testsuites/>", "foo"), ("<a/><b/>", "a")] {
+        let err = read(text).expect_err(text);
+        assert!(err.contains("unknown root"), "{text}: `{err}` lacks `unknown root`");
+        assert!(err.contains(&format!("<{name}>")), "{text}: `{err}` does not name <{name}>");
+    }
+}
+
+#[test]
+fn refuses_second_roots() {
+    for text in ["<testsuites/><foo/>", "<testsuite/><testsuite/>"] {
+        let err = read(text).expect_err(text);
+        assert!(
+            err.contains("more than one root element"),
+            "{text}: `{err}` lacks `more than one root element`"
+        );
+    }
+}
+
+#[test]
+fn refuses_cdata_outside_root() {
+    for text in [
+        "<![CDATA[x]]><testsuites/>",
+        "<testsuites/><![CDATA[x]]>",
+        "<![CDATA[x]]><testsuites/><![CDATA[y]]>",
+    ] {
+        let err = read(text).expect_err(text);
+        assert!(err.contains("text outside"), "{text}: `{err}` lacks `text outside`");
+    }
+}
