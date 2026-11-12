@@ -1720,6 +1720,40 @@ fn report_must_be_a_regular_file() {
     }
 }
 
+// STP-30 AC-12: a report that is a link, a folder, a FIFO or a socket is not opened; the reason
+// names that kind once.
+#[test]
+fn report_kinds_are_named() {
+    let kinds = [
+        (
+            "a FIFO",
+            "mkfifo junit.xml\n(timeout 10 sh -c ': > junit.xml' >/dev/null 2>&1 &)\nexit 0\n",
+        ),
+        ("a folder", "mkdir junit.xml\nexit 0\n"),
+        (
+            "a symbolic link",
+            "echo '<testsuites/>' > real.xml\nln -s real.xml junit.xml\nexit 0\n",
+        ),
+        (
+            "a socket",
+            "python3 -c \"import socket; socket.socket(socket.AF_UNIX).bind('junit.xml')\"\nexit 0\n",
+        ),
+    ];
+    for (kind, body) in kinds {
+        let (code, text) = fault_case("sh {script} {file}", body, None, 60);
+        assert_eq!(code, 1, "{kind}: {text}");
+        assert_eq!(outcome(&text, "step 1"), "unverified", "{kind}: {text}");
+        let line = text.lines().find(|l| l.starts_with("step 1: ")).unwrap();
+        assert_eq!(line.matches(kind).count(), 1, "per-file {kind}: {line}");
+
+        let repo = suite_repo(body, None, 60);
+        let (code, text) = check(&repo);
+        assert_eq!(code, 1, "{kind}: {text}");
+        assert_eq!(outcome(&text, "suite"), "unverified", "{kind}: {text}");
+        assert_eq!(suite_line(&text).matches(kind).count(), 1, "suite {kind}: {text}");
+    }
+}
+
 // STP-28 step 23 (AC-41): a `stapel.toml` change after step 2's RED is the fault commit of step 2
 // in the hook and in `next`, though HEAD lies later.
 #[test]
