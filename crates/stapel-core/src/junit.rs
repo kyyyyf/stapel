@@ -8,6 +8,9 @@
 /// The largest report the reader takes.
 pub const MAX_REPORT: usize = 16 * 1024 * 1024;
 
+/// The reason `read_open_report` gives for a file over `MAX_REPORT` bytes.
+pub const OVER_SIZE: &str = "the report is over 16 MiB";
+
 /// Reads an open regular file through `take(MAX_REPORT + 1)`, so a file that grows after the check
 /// is still bounded; more than `MAX_REPORT` bytes is refused as over 16 MiB.
 pub fn read_open_report(file: &mut std::fs::File) -> Result<Vec<u8>, String> {
@@ -17,7 +20,7 @@ pub fn read_open_report(file: &mut std::fs::File) -> Result<Vec<u8>, String> {
         .read_to_end(&mut bytes)
         .map_err(|e| format!("the report cannot be read: {e}"))?;
     if bytes.len() > MAX_REPORT {
-        return Err(format!("the report is over {} MiB", MAX_REPORT / 1024 / 1024));
+        return Err(OVER_SIZE.to_string());
     }
     Ok(bytes)
 }

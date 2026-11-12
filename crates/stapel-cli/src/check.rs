@@ -6,7 +6,7 @@ use stapel_core::build_inputs;
 use stapel_core::build_inputs::{Bounds, BuildInputs, Change};
 use stapel_core::config::{Check, validate_cargo, validate_path_cargo};
 use stapel_core::journal::{append, new_id};
-use stapel_core::junit::{MAX_REPORT, Outcome as CaseOutcome, read_open_report, read_report};
+use stapel_core::junit::{MAX_REPORT, OVER_SIZE, Outcome as CaseOutcome, read_open_report, read_report};
 use stapel_core::outcomes::{
     Analysis, MAX_NAMED, Mode, analyse_in, history_outcome, named, open_red, passing,
 };
@@ -89,7 +89,9 @@ fn input_under(root: &Path, word: &str) -> Option<String> {
 
 /// The part of the absolute `word` below `root`, when it has no `.`, `..` or empty part (STP-30 AC-6).
 fn script_under<'a>(root: &Path, word: &'a str) -> Option<&'a str> {
-    let rel = word.strip_prefix(root.to_str()?.trim_end_matches('/'))?.strip_prefix('/')?;
+    let rel = word
+        .strip_prefix(root.to_str()?.trim_end_matches('/'))?
+        .strip_prefix('/')?;
     rel.split('/')
         .all(|p| !p.is_empty() && p != "." && p != "..")
         .then_some(rel)
@@ -315,7 +317,15 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
     };
     let at = end.clone().unwrap_or_else(|| head.clone());
     let junit = globs.is_some();
-    let analyses = match analyse_in(&root, &ticket.key, &at, &steps, bounds.base, bounds.base_branch, mode_of(&globs)) {
+    let analyses = match analyse_in(
+        &root,
+        &ticket.key,
+        &at,
+        &steps,
+        bounds.base,
+        bounds.base_branch,
+        mode_of(&globs),
+    ) {
         Ok(a) => a,
         Err(e) => return refuse(e),
     };
@@ -1103,7 +1113,7 @@ fn read_report_file(path: &Path, name: &str, what: &str) -> Result<Vec<u8>, Stri
         return Err(format!("the report {name} of {what} is not a regular file"));
     }
     read_open_report(&mut file).map_err(|e| {
-        if e.contains("MiB") {
+        if e == OVER_SIZE {
             format!("the report of {what} is over {} MiB", MAX_REPORT / 1024 / 1024)
         } else {
             format!("no report {name} for {what}: {e}")

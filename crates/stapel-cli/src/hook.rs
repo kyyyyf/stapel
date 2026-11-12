@@ -163,7 +163,7 @@ fn token_root(payload: &serde_json::Value) -> Option<PathBuf> {
         .get("cwd")
         .and_then(|c| c.as_str())
         .filter(|c| !c.is_empty())
-        .and_then(|c| config_root(&here.join(c)));
+        .and_then(|c| stapel_root(&here.join(c)));
     if from_cwd.is_some() {
         return from_cwd;
     }
@@ -171,12 +171,7 @@ fn token_root(payload: &serde_json::Value) -> Option<PathBuf> {
         Some(dir) => here.join(dir),
         None => here,
     };
-    config_root(&source)
-}
-
-/// The root above `start`: the nearest folder with a regular `.stapel/stapel.toml`.
-fn config_root(start: &std::path::Path) -> Option<PathBuf> {
-    stapel_root(start)
+    stapel_root(&source)
 }
 
 /// The agent type as shown in a note: each control character as one space, cut to 64 characters.
