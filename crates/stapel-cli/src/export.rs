@@ -19,7 +19,11 @@ const REMOVE: [&str; 4] = [
 ];
 
 pub fn run(key: Option<&str>, onto: Option<&str>) -> Result<(), Fail> {
-    let cwd = std::env::current_dir().map_err(|e| Fail::failed(e.to_string()))?;
+    let here = std::env::current_dir().map_err(|e| Fail::failed(e.to_string()))?;
+    // Every git call runs at the top of the work tree, so the pathspecs are the same from a subfolder.
+    let cwd = git(&here, &["rev-parse", "--show-toplevel"], &[], b"")
+        .map(|top| PathBuf::from(text(top)))
+        .map_err(Fail::failed)?;
     let key = match key {
         Some(key) => key.to_string(),
         None => stapel_core::parallel::current_branch(&cwd)
