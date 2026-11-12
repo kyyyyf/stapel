@@ -204,8 +204,20 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
     if new_folders {
         say!("note: restart Claude Code so that it loads the new agents and skill");
     }
+    if is_local {
+        say!("{}", LOCAL_CHECKLIST.trim_end());
+    }
     Ok(())
 }
+
+/// The person's manual steps after `init` in the local mode.
+const LOCAL_CHECKLIST: &str = "checklist:
+1. Commit the installed files on the base branch: git add -f .stapel .claude/skills/stapel .claude/agents/stapel-*.md .claude/settings.json
+2. Fill in [check] command in .stapel/stapel.toml.
+3. Restart Claude Code and see \"stapel next\" at session start.
+4. Run stapel init again after anything changes core.hooksPath (husky does on npm install).
+5. Push only the export/<KEY> branches that stapel export writes.
+";
 
 /// The text of an existing `stapel.toml` with the `[roles]` row of each installed agent that the
 /// table lacks, every other line kept; `None` when there is no `[roles]` table or no row is missing.
