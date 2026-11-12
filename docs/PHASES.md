@@ -295,7 +295,7 @@ Changed on 2026-11-10 (ledger): after 1.13 only 1.11 with 1.12 (one ticket) and 
   long history); a commit that touches only `docs/`, the process ledger or a ticket's `tokens.jsonl` does
   not make a check stale (ledger 2026-10-22). Light route when its investigation shows about 100 mechanical
   lines and no risk tag; else taken with 1.12.
-- 1.12 the `junit` runner: `[check] runner = "junit"`, `command` (a template with `{tests}`), `report`
+- 1.12 the `junit` runner: `[check] runner = "junit"`, `command` (a template with `{file}`, one run per test file; STP-28), `report`
   (the XML path), a timeout; test identity `<file>::<name>`; the outcomes of STP-4 and STP-14 unchanged;
   `lint` finds TypeScript tests by name.
 - 1.13 two ticket builds at once (ledger 2026-11-02): one ticket per session, each on its own branch and
@@ -444,8 +444,8 @@ minutes (attention). A rule of the elaboration skill that catches nothing is rem
 
 ### Candidates without a place in the order
 
-Not a plan; each needs a ledger decision to enter it. The `base..HEAD` walk of item 1.11 (taken when a
-measurement shows a slow walk); `stapel lint` (item 1.6); `stapel ship` with the
+Not a plan; each needs a ledger decision to enter it. The other checks of `stapel lint` (item 1.6; its two
+test-name checks are built in STP-28); `stapel ship` with the
 review map (item 1.7); guard items 1.9 and 1.10; an import from the method or from a tracker when a real
 user asks; the index; autonomy levels; an editor extension; more languages; removal of the five empty
 crates; one short plan document in place of `docs/PLAN.md` and this file.
