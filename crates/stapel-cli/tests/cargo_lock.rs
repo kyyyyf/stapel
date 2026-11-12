@@ -642,3 +642,115 @@ fn junit_check_takes_the_lock() {
     let text = std::fs::read_to_string(&out).unwrap();
     assert!(text.contains("step 1: pass"), "{text}");
 }
+
+// STP-28 AC-40: the holder line names the junit check; the held mark reaches the Per-file and the
+// suite commands; with the mark set the check takes no lock; a refused check leaves the lock free.
+#[test]
+fn junit_lock_edges() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let lock_dir = home.join(".cache/stapel");
+    std::fs::create_dir_all(&lock_dir).unwrap();
+    let standin = Standin::new(root.path());
+    let repo = common::junit_repo();
+    let dir = repo.dir();
+
+    // `command` goes through a wrapper that records the mark and the holder line, then runs the
+    // junit stand-in.
+    let toml = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    let line = text.lines().find(|l| l.starts_with("command = ")).unwrap();
+    let inner = line
+        .trim_start_matches("command = \"sh ")
+        .trim_end_matches(" {file}\"")
+        .to_string();
+    let wrapper = root.path().join("wrap.sh");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "echo \"${{STAPEL_CARGO_LOCK_HELD-unset}}\" >> '{ctl}/junit-marks'\n\
+             cat \"$HOME/.cache/stapel/cargo.lock\" > '{ctl}/junit-holder'\n\
+             exec sh '{inner}' \"$@\"\n",
+            ctl = standin.ctl.display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        &toml,
+        text.replace(
+            line,
+            &format!("command = \"sh {} {{file}}\"", wrapper.display()),
+        ),
+    )
+    .unwrap();
+    commit_all(dir, "wrapper");
+    std::fs::write(
+        dir.join("__tests__/x.test.ts"),
+        "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+    )
+    .unwrap();
+    commit_all(dir, "ABC-1 step 1 RED: one");
+    std::fs::write(dir.join("src/ok.ts"), "export const ok = 1;\n").unwrap();
+    commit_all(dir, "ABC-1 step 1 GREEN: one");
+    git(dir, &["switch", "-q", "-c", "ABC-1"]);
+
+    // The lock is free: the holder line names the check, the mark is the check's pid.
+    let mut check = standin
+        .command(dir, &home, &["check", "ABC-1"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid = check.id();
+    wait_exit(&mut check, "the check");
+    let holder = std::fs::read_to_string(standin.ctl.join("junit-holder")).unwrap();
+    assert!(
+        holder.starts_with(&format!("ABC-1, pid {pid}, since 20")),
+        "{holder}"
+    );
+    assert!(holder.trim_end().ends_with(", stapel check"), "{holder}");
+    let marks = std::fs::read_to_string(standin.ctl.join("junit-marks")).unwrap();
+    assert!(marks.lines().count() >= 2, "Per-file and suite runs: {marks}");
+    for mark in marks.lines() {
+        assert_eq!(mark, pid.to_string(), "marks: {marks}");
+    }
+
+    // The mark is set: the lock stays held elsewhere, the check does not wait and writes no line.
+    let _ = std::fs::remove_file(standin.ctl.join("junit-marks"));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(lock_dir.join("cargo.lock"))
+        .unwrap();
+    file.lock().unwrap();
+    let err = root.path().join("marked.err");
+    let mut cmd = standin.command(dir, &home, &["check", "ABC-1"]);
+    cmd.env("STAPEL_CARGO_LOCK_HELD", "4242");
+    let mut child = spawn_to(cmd, &err);
+    wait_exit(&mut child, "the marked check");
+    let text = std::fs::read_to_string(&err).unwrap();
+    assert!(!text.contains(WAIT_LINE), "{text}");
+    let marks = std::fs::read_to_string(standin.ctl.join("junit-marks")).unwrap();
+    assert!(!marks.is_empty(), "no junit run");
+    for mark in marks.lines() {
+        assert_eq!(mark, "4242", "marks: {marks}");
+    }
+    let line = std::fs::read_to_string(lock_dir.join("cargo.lock")).unwrap();
+    assert!(line.is_empty(), "a holder line was written: {line}");
+    drop(file);
+
+    // A refused check (an unknown ticket) leaves the lock free.
+    let out = standin
+        .command(dir, &home, &["check", "ABC-77"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(lock_dir.join("cargo.lock"))
+        .unwrap();
+    assert!(file.try_lock().is_ok(), "the lock is still held");
+}

@@ -1179,3 +1179,65 @@ fn merge_of_the_base_branch_blocks_nothing() {
         "{text}"
     );
 }
+
+// ---- STP-28 step 23 (AC-37) ----
+
+#[test]
+fn base_edges() {
+    /// Sets the `base` of ABC-1 and commits the state.
+    fn set_base(dir: &Path, base: &str) {
+        let mut state = common::state_json(dir, "ABC-1");
+        state["base"] = serde_json::json!(base);
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base");
+    }
+
+    // A base after HEAD is no ancestor of HEAD: both checks refuse.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    clean_pair(dir, "step 1", "alpha");
+    let before = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    commit(dir, "a later commit");
+    let later = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    git(dir, &["checkout", "-q", "--detach", &before]);
+    set_base(dir, &later);
+    let out = {
+        let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
+        stapel(dir).args(["check", "ABC-1"]).output().unwrap()
+    };
+    let full = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(2), "{full}");
+    assert!(full.contains("state.json has base"), "{full}");
+    let (code, hist, err) = history(dir);
+    assert_eq!(code, 2, "{hist}{err}");
+    assert!(err.contains("state.json has base"), "{err}");
+
+    // HEAD equal to the base: an empty Walk is no refusal of the base.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    clean_pair(dir, "step 1", "alpha");
+    let head = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let mut state = common::state_json(dir, "ABC-1");
+    state["base"] = serde_json::json!(head);
+    write(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+    );
+    let (code, hist, err) = history(dir);
+    assert!(
+        !format!("{hist}{err}").contains("state.json has base"),
+        "{hist}{err}"
+    );
+    // The empty Walk holds no step commits; that is the only complaint.
+    assert_eq!(code, 2, "{hist}{err}");
+    assert!(err.contains("no step commits"), "{err}");
+}

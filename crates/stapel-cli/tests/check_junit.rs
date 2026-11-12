@@ -1626,3 +1626,78 @@ fn report_must_be_a_regular_file() {
         assert!(suite_line(&text).contains(kind), "suite {kind}: {text}");
     }
 }
+
+// STP-28 step 23 (AC-41): a `stapel.toml` change after step 2's RED is the fault commit of step 2
+// in the hook and in `next`, though HEAD lies later.
+#[test]
+fn config_fault_commit() {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem.");
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | WHEN a thing happens THE command does it. | `x::one` |",
+    );
+    set_section(dir, "ABC-1", "Design", "The design.");
+    set_section(dir, "ABC-1", "Proof", "The proof.");
+    set_section(dir, "ABC-1", "Plan", "Route: full, auto.\n\n1. One (AC-1).\n2. Two (AC-1).");
+    for stage in ["description", "spec", "design", "proof", "plan"] {
+        stapel(dir).args(["ok", stage]).assert().success();
+    }
+    commit(dir, "ABC-1: the ticket is confirmed");
+    add_step(dir, 1, "x", "one");
+    write(
+        dir,
+        "__tests__/y.test.ts",
+        "it(\"two\", () => { /* needs src/two.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 2 RED: two");
+    bump_config(dir, 61);
+    commit(dir, "ABC-1: a configuration change");
+    let fault = git_in(dir, &["rev-parse", "HEAD"]).trim()[..7].to_string();
+    write(dir, "src/two.ts", "export const two = 2;\n");
+    commit(dir, "ABC-1 step 2 GREEN: two");
+    let head = git_in(dir, &["rev-parse", "HEAD"]).trim()[..7].to_string();
+    assert_ne!(fault, head);
+
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "git commit -m x", "description": "test" },
+        "tool_response": { "stdout": "", "stderr": "" },
+        "cwd": dir,
+    });
+    let out = stapel(dir)
+        .args(["hook", "post-tool-use"])
+        .write_stdin(payload.to_string())
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let answer: serde_json::Value = serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("stdout is not one JSON object ({e}):\n{text}"));
+    let context = answer["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no additionalContext:\n{text}"));
+    assert!(
+        context.lines().any(|l| l
+            == format!(
+                "step 2: unverified: build-input-changed: .stapel/stapel.toml at {fault}"
+            )),
+        "{context}"
+    );
+    assert!(
+        context.contains(&format!("{fault} is the fault commit"))
+            || context.contains(&format!("stapel: {fault}")),
+        "{context}"
+    );
+
+    let out = stapel(dir).arg("next").output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let want = format!(
+        "blocked: step 2: unverified at {fault} — build-input-changed: .stapel/stapel.toml"
+    );
+    assert!(text.lines().any(|l| l.starts_with(&want)), "{want}\n{text}");
+}

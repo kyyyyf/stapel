@@ -108,3 +108,26 @@ fn has_only_call_cases() {
         assert!(!has_only_call(src), "{src}");
     }
 }
+
+// STP-28 step 23 (AC-7): an `it` under `describe.each` with a tagged template table is no test call.
+#[test]
+fn describe_each_template_hides_calls() {
+    let src = "describe.each`\n  a | b\n  ${1} | ${2}\n`('adds $a', ({ a, b }) => {\n  it('hidden', () => {});\n});\ntest('seen', () => {});";
+    assert_eq!(names(src), vec!["seen"]);
+}
+
+// STP-28 step 23 (AC-7): hidden and titled `describe` scopes nest and follow each other.
+#[test]
+fn describe_scope_cases() {
+    // A hidden describe inside a titled one.
+    let src = "describe('a', () => {\n  describe.each([1])('h', () => { it('hidden', () => {}); });\n  it('kept', () => {});\n});";
+    assert_eq!(names(src), vec!["a kept"]);
+
+    // A titled describe inside a hidden one.
+    let src = "describe.todo('h', () => {\n  describe('b', () => { it('hidden', () => {}); });\n});\ntest('top', () => {});";
+    assert_eq!(names(src), vec!["top"]);
+
+    // A titled describe after a hidden one.
+    let src = "describe.each([1])('h', () => { it('hidden', () => {}); });\ndescribe('c', () => { it('d', () => {}); });";
+    assert_eq!(names(src), vec!["c d"]);
+}
