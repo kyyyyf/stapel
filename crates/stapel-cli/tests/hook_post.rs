@@ -1416,3 +1416,52 @@ fn broken_config_kinds() {
     assert_silent(hook(dir), "a closed ticket, unreadable");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 }
+
+// STP-30 AC-4 (d9-2): the lines of parallel tickets follow the config fault.
+#[test]
+fn config_fault_with_parallel_conflict() {
+    fn lines_with(n: u32, text: &str) -> String {
+        (1..=10)
+            .map(|i| {
+                if i == n {
+                    format!("{text}\n")
+                } else {
+                    format!("line {i}\n")
+                }
+            })
+            .collect()
+    }
+    let pair = common::two_ticket_worktrees();
+    let (a, b) = (pair.a.as_path(), pair.b.as_path());
+    write(a, "src/shared.txt", &lines_with(2, "from a"));
+    commit(a, "ABC-1: wip");
+    write(b, "src/shared.txt", &lines_with(2, "from b"));
+    commit(b, "ABC-2: wip");
+    let conflict = "stapel: ABC-2 conflicts with ABC-1 in src/shared.txt; ABC-2 waits for ABC-1";
+
+    // Control: a valid config gives the conflict line.
+    let (code, out, err) = hook(b);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains(conflict), "control: {out}");
+
+    // A broken config: the fault line, then the conflict line.
+    write(b, ".stapel/stapel.toml", "[check\nrunner = junit\n");
+    let (code, out, err) = hook(b);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(err, "");
+    let answer: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let text = answer["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    let fault = lines
+        .iter()
+        .position(|l| l.contains("stapel.toml"))
+        .unwrap_or_else(|| panic!("no fault line:\n{text}"));
+    let found = lines
+        .iter()
+        .position(|l| *l == conflict)
+        .unwrap_or_else(|| panic!("no conflict line:\n{text}"));
+    assert!(fault < found, "the fault comes first:\n{text}");
+    assert!(!text.contains("is HEAD"), "a step line:\n{text}");
+}
