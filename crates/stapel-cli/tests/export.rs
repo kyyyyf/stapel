@@ -363,6 +363,55 @@ fn drops_against_clean_parent_trees() {
     assert!(entries(dir, &new[0].1).contains_key("src/evil.txt"));
 }
 
+// STP-31 AC-16 (ER2-4): the merge that `git pull` made on local main is dropped, its children take
+// the later parent; a merge of two code lines stays.
+#[test]
+fn drops_pull_merges() {
+    let repo = git_repo();
+    let dir = repo.path();
+    let tmp = bare_dir();
+    git_n(dir, 1, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    commit(dir, 1, &[("src/a.txt", "a1\n")], "base");
+    git_n(dir, 1, &["branch", "up"]);
+    // Local main holds the install commit, which changes only `.stapel/`.
+    commit(dir, 2, &[(".stapel/process-ledger.jsonl", "{}\n")], "install");
+    // The origin gets a new commit; the Onto ref sits on it.
+    git_n(dir, 3, &["checkout", "-q", "up"]);
+    commit(dir, 3, &[("src/origin.txt", "origin\n")], "origin work");
+    git_n(dir, 3, &["branch", "onto"]);
+    git_n(dir, 3, &["branch", "side"]);
+    // The pull: a merge of the new origin commit into local main.
+    git_n(dir, 4, &["checkout", "-q", "main"]);
+    git_n(dir, 4, &["merge", "-q", "--no-ff", "-m", "pull", "up"]);
+    git_n(dir, 5, &["checkout", "-q", "-b", "ABC-1", "main"]);
+    commit(
+        dir,
+        5,
+        &[("src/red.txt", "red\n"), (".stapel/tickets/ABC-1/state.json", "{}\n")],
+        "RED",
+    );
+    git_n(dir, 6,&["checkout", "-q", "side"]);
+    commit(dir, 6, &[("src/side.txt", "side\n")], "side work");
+    git_n(dir, 7, &["checkout", "-q", "ABC-1"]);
+    git_n(
+        dir,
+        7,
+        &["merge", "-q", "--no-ff", "-m", "merge side", "side"],
+    );
+
+    export(dir, "onto", tmp.path());
+
+    let new = commits(dir, "onto..export/ABC-1");
+    let subjects: Vec<_> = new.iter().map(|(s, _)| s.as_str()).collect();
+    assert_eq!(subjects, ["RED", "side work", "merge side"]);
+    let by = |s: &str| new.iter().find(|(x, _)| x == s).unwrap().1.clone();
+    assert_eq!(parents(dir, &by("RED")), [rev(dir, "onto")]);
+    assert_eq!(
+        parents(dir, &by("merge side")),
+        [by("RED"), by("side work")]
+    );
+}
+
 /// A repository with `stapel init --prefix ABC` committed on `main`.
 fn ticket_repo() -> TempDir {
     let repo = common::stapel_repo();
