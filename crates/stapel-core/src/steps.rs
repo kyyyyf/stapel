@@ -1,6 +1,8 @@
 //! A ticket's steps from git history (STP-4 AC-1): step commits, labels and step tests.
 
+use crate::config::glob_matches;
 use crate::rust_tests::test_functions;
+use crate::ts_tests::test_calls;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -52,12 +54,20 @@ pub struct TestId {
 
 impl std::fmt::Display for TestId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.dir.is_empty() {
+            return write!(f, "{}::{}", self.file, self.name);
+        }
         write!(f, "{}/{}::{}", self.dir, self.file, self.name)
     }
 }
 
 impl TestId {
+    /// The repository path of the test's file. A junit test (STP-28) has an empty `dir` and the
+    /// repository path as `file`.
     pub fn path(&self) -> String {
+        if self.dir.is_empty() {
+            return self.file.clone();
+        }
         format!("crates/{}/tests/{}.rs", self.dir, self.file)
     }
 }
@@ -103,8 +113,21 @@ pub fn parse_subject(key: &str, subject: &str) -> Option<(String, Marker)> {
     (!label.is_empty()).then(|| (label.to_string(), marker))
 }
 
-/// The ticket's step commits on the first-parent history of `head`, oldest first.
-pub fn step_commits(root: &Path, key: &str, head: &str) -> Result<Vec<StepCommit>, String> {
+/// The Walk: `base..head` with a `base`, else `head` (the history from the root).
+pub fn walk_range(base: Option<&str>, head: &str) -> String {
+    match base {
+        Some(base) => format!("{base}..{head}"),
+        None => head.to_string(),
+    }
+}
+
+/// The ticket's step commits on the Walk (first-parent, after `base` when given), oldest first.
+pub fn step_commits(
+    root: &Path,
+    key: &str,
+    head: &str,
+    base: Option<&str>,
+) -> Result<Vec<StepCommit>, String> {
     // Fields are split on NUL, which a commit message cannot hold.
     let raw = git(
         root,
@@ -114,7 +137,7 @@ pub fn step_commits(root: &Path, key: &str, head: &str) -> Result<Vec<StepCommit
             "--first-parent",
             "--reverse",
             "--format=%H%x00%s%x00%B",
-            head,
+            &walk_range(base, head),
         ],
     )?;
     let fields: Vec<String> = raw
@@ -267,6 +290,48 @@ pub fn step_tests(root: &Path, red: &str) -> Result<Vec<TestId>, String> {
                 out.push(TestId {
                     dir: dir.clone(),
                     file: file.clone(),
+                    name,
+                });
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// Whether a path is a junit test file (STP-28): it matches a test glob and is named `*.ts`,
+/// `*.tsx`, `*.js`, `*.jsx`, `*.mts`, `*.cts`, `*.mjs` or `*.cjs`.
+pub fn is_test_file(path: &str, globs: &[String]) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let script = name.rsplit_once('.').is_some_and(|(_, ext)| {
+        ["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"].contains(&ext)
+    });
+    script && globs.iter().any(|g| glob_matches(g, path))
+}
+
+/// The step tests of a RED commit under the junit runner: test calls of test files whose text it
+/// adds or changes; identity `<file>::<name>`.
+pub fn junit_step_tests(root: &Path, red: &str, globs: &[String]) -> Result<Vec<TestId>, String> {
+    let base = parent(root, red);
+    let mut out = Vec::new();
+    for change in changes(root, red)? {
+        let Some(new) = &change.new else { continue };
+        if !is_test_file(new, globs) {
+            continue;
+        }
+        let now = show(root, red, new).unwrap_or_default();
+        let before: BTreeMap<String, String> = change
+            .old
+            .as_deref()
+            .and_then(|old| show(root, &base, old))
+            .map(|src| test_calls(&src).into_iter().collect())
+            .unwrap_or_default();
+        for (name, text) in test_calls(&now) {
+            if before.get(&name) != Some(&text) {
+                out.push(TestId {
+                    dir: String::new(),
+                    file: new.clone(),
                     name,
                 });
             }

@@ -258,6 +258,107 @@ pub fn two_ticket_worktrees() -> Pair {
     Pair { repo, a, b }
 }
 
+/// A junit repository (STP-28): the repository `repo` with ticket ABC-1 and `[check] runner =
+/// "junit"`, and the folder `tools` that holds the test stand-in and its log.
+pub struct JunitRepo {
+    pub repo: TempDir,
+    pub tools: TempDir,
+}
+
+impl JunitRepo {
+    pub fn dir(&self) -> &Path {
+        self.repo.path()
+    }
+
+    /// The lines `<commit> <test file>` of the stand-in's runs, oldest first.
+    pub fn runs(&self) -> Vec<String> {
+        std::fs::read_to_string(self.tools.path().join("runs.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(String::from)
+            .collect()
+    }
+}
+
+/// The awk program of the stand-in: one test case per `it(` or `test(` line with a double-quoted
+/// title, named with a leading space as jest-junit names a top-level test. `.skip` is skipped; a
+/// line with `needs <path>` fails while that path is missing in the copy.
+const STAND_IN_AWK: &str = r#"
+BEGIN { out = "junit.xml"; print "<?xml version=\"1.0\"?>\n<testsuites>\n<testsuite name=\"s\">" > out }
+/(^|[^.A-Za-z_])(it|test)(\.skip)?\("/ {
+  line = $0
+  skip = (line ~ /\.skip\(/)
+  match(line, /\("[^"]*"/)
+  title = substr(line, RSTART + 2, RLENGTH - 3)
+  failed = 0
+  if (match(line, /needs [^ ]+/)) {
+    path = substr(line, RSTART + 6, RLENGTH - 6)
+    if (system("test -e " path) != 0) failed = 1
+  }
+  body = ""
+  if (skip) body = "<skipped/>"
+  else if (failed) { body = "<failure message=\"missing\"/>"; bad = 1 }
+  printf "<testcase classname=\"\" name=\" %s\">%s</testcase>\n", title, body > out
+}
+END { print "</testsuite>\n</testsuites>" > out; exit bad }
+"#;
+
+/// A git repository with `stapel init --prefix ABC`, ticket ABC-1, a gitignored `node_modules`
+/// folder and `[check] runner = "junit"` whose command is a shell stand-in for jest kept outside the
+/// repository. The stand-in needs one argument (a Per-file run) or none (the suite run over every
+/// `__tests__/*.test.ts`, not logged), `PATH`, `HOME`,
+/// `JEST_JUNIT_REPORT_TEST_SUITE_ERRORS=true` and a `node_modules` link with `marker` inside;
+/// else it leaves no report. Everything is committed; the base test file is `__tests__/base.test.ts`.
+pub fn junit_repo() -> JunitRepo {
+    let repo = git_repo();
+    let tools = bare_dir();
+    let dir = repo.path();
+    git_config(dir, "user.email", "test-user.invalid");
+    let put = |rel: &str, text: &str| {
+        let path = dir.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    put(".gitignore", "node_modules/\n");
+    put("src/index.ts", "export const one = 1;\n");
+    put(
+        "__tests__/base.test.ts",
+        "const helper = 1;\nit(\"base\", () => {});\nit(\"keeps\", () => { /* needs src/index.ts */ });\n",
+    );
+    put("node_modules/marker", "x\n");
+    let script = tools.path().join("stand-in.sh");
+    let log = tools.path().join("runs.log");
+    std::fs::write(
+        &script,
+        format!(
+            "[ \"$#\" -le 1 ] || exit 5\n\
+             [ -n \"$PATH\" ] && [ -n \"$HOME\" ] && [ \"$JEST_JUNIT_REPORT_TEST_SUITE_ERRORS\" = true ] || exit 3\n\
+             [ -L node_modules ] && [ -e node_modules/marker ] || exit 4\n\
+             if [ \"$#\" = 0 ]; then set -- __tests__/*.test.ts; exec awk '{1}' \"$@\"; fi\n\
+             echo \"$(git rev-parse HEAD) $1\" >> '{0}'\n\
+             exec awk '{1}' \"$1\"\n",
+            log.display(),
+            STAND_IN_AWK
+        ),
+    )
+    .unwrap();
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    stapel(dir).args(["new", "First"]).assert().success();
+    let path = dir.join(".stapel/stapel.toml");
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.push_str(&format!(
+        "\n[check]\nrunner = \"junit\"\ncommand = \"sh {} {{file}}\"\nreport = \"junit.xml\"\ntimeout_secs = 60\n",
+        script.display()
+    ));
+    std::fs::write(&path, text).unwrap();
+    git_in(dir, &["add", "-A"]);
+    git_in(dir, &["commit", "-q", "-m", "initial"]);
+    JunitRepo { repo, tools }
+}
+
 /// The grants folder inside the git directory of `dir`.
 pub fn grants_dir(dir: &Path) -> std::path::PathBuf {
     dir.join(".git/stapel/grants")

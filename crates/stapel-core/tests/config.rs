@@ -272,3 +272,186 @@ fn rejects_bad_roles() {
     let ok = "k".repeat(64);
     parse(&format!("\"{ok}\" = \"{ok}\"")).expect("64 bytes are accepted");
 }
+
+fn with_check(rows: &str) -> Result<Config, String> {
+    Config::parse(&format!("{}\n[check]\n{rows}\n", default_toml("STP")))
+}
+
+// STP-28 AC-4: the junit `[check]` keys and their defaults; a cargo `[check]` reads as before.
+#[test]
+fn junit_check_keys() {
+    let minimal =
+        with_check("runner = \"junit\"\ncommand = \"npx jest {file}\"\nreport = \"junit.xml\"")
+            .unwrap();
+    let check = minimal.check.unwrap();
+    assert_eq!(check.runner, "junit");
+    assert_eq!(check.command.as_deref(), Some("npx jest {file}"));
+    assert_eq!(check.report.as_deref(), Some("junit.xml"));
+    assert_eq!(check.timeout_secs, 900);
+    assert_eq!(
+        check.tests.as_deref().unwrap(),
+        ["**/*.test.*", "**/*.spec.*", "**/__tests__/**"]
+    );
+    assert_eq!(
+        check.inputs.as_deref().unwrap(),
+        [
+            "**/package.json",
+            "**/package-lock.json",
+            "**/yarn.lock",
+            "**/pnpm-lock.yaml",
+            "**/jest.config.*",
+            "**/tsconfig*.json",
+            "**/babel.config.*",
+            "**/.babelrc",
+            "**/.swcrc",
+            "**/jest.setup.*",
+        ]
+    );
+
+    let full = with_check(
+        "runner = \"junit\"\ncommand = \"jest {file}\"\nreport = \"out/r.xml\"\ntimeout_secs = 60\n\
+         tests = [\"t/**\"]\ninputs = []",
+    )
+    .unwrap()
+    .check
+    .unwrap();
+    assert_eq!(full.timeout_secs, 60);
+    assert_eq!(full.tests.as_deref().unwrap(), ["t/**"]);
+    assert_eq!(full.inputs.as_deref().unwrap(), &[] as &[String]);
+
+    let cargo = with_check("runner = \"cargo\"\ntimeout_secs = 900")
+        .unwrap()
+        .check
+        .unwrap();
+    assert_eq!(
+        (&cargo.command, &cargo.report, &cargo.tests, &cargo.inputs),
+        (&None, &None, &None, &None)
+    );
+}
+
+// STP-28 AC-5: a bad junit `[check]` fails the load with a message that names the key.
+#[test]
+fn rejects_bad_junit_keys() {
+    let junit = |extra: &str| {
+        let mut rows = String::from("runner = \"junit\"\n");
+        for key in ["command", "report"] {
+            if !extra.contains(&format!("{key} =")) {
+                let v = if key == "command" {
+                    "jest {file}"
+                } else {
+                    "r.xml"
+                };
+                rows.push_str(&format!("{key} = \"{v}\"\n"));
+            }
+        }
+        with_check(&format!("{rows}{extra}"))
+    };
+    junit("").expect("the base case loads");
+
+    for (extra, key) in [
+        ("command = \"jest\"", "check.command"),
+        ("command = \"jest {file} {file}\"", "check.command"),
+        ("command = \"jest x{file}\"", "check.command"),
+        ("command = \"jest {file}y\"", "check.command"),
+        ("command = \"jest --x={file}\"", "check.command"),
+        (
+            "command = \"jest --testPathPattern {file}\"",
+            "check.command",
+        ),
+        ("report = \"\"", "check.report"),
+        ("report = \"/x\"", "check.report"),
+        ("report = \"../x\"", "check.report"),
+        ("tests = []", "check.tests"),
+        ("tests = [\"a/../b\"]", "check.tests"),
+        ("tests = [\"\"]", "check.tests"),
+        ("tests = [\"/a\"]", "check.tests"),
+        ("tests = [\"{a,b}\"]", "check.tests"),
+        ("tests = [\"[ab]\"]", "check.tests"),
+        ("tests = [\"!x\"]", "check.tests"),
+        ("tests = [\"a\\\\b\"]", "check.tests"),
+        ("inputs = [\"a/../b\"]", "check.inputs"),
+        ("inputs = [\"x}\"]", "check.inputs"),
+        ("cargo = \"/usr/bin/cargo\"", "check.cargo"),
+    ] {
+        let e = junit(extra).expect_err(&format!("{extra} was accepted"));
+        assert!(e.contains(key), "{extra}: {e}");
+    }
+    let e = junit("command = \"jest --testPathPattern {file}\"").unwrap_err();
+    assert!(e.contains("right after the program"), "{e}");
+
+    for rows in [
+        "runner = \"cargo\"\ncommand = \"jest {file}\"",
+        "runner = \"cargo\"\nreport = \"r.xml\"",
+        "runner = \"cargo\"\ntests = [\"a\"]",
+        "runner = \"cargo\"\ninputs = [\"a\"]",
+        "runner = \"cargo\"\ncargo = \"/usr/bin/cargo\"\ncommand = \"x {file}\"",
+        "command = \"jest {file}\"",
+    ] {
+        let e = with_check(rows).expect_err(&format!("{rows:?} was accepted"));
+        assert!(
+            [
+                "check.command",
+                "check.report",
+                "check.tests",
+                "check.inputs"
+            ]
+            .iter()
+            .any(|k| e.contains(k)),
+            "{rows:?}: {e}"
+        );
+    }
+    let e = with_check("runner = \"junit\"\ncommand = \"jest {file}\"\nreport = \"r.xml\"\ncargo = \"/usr/bin/cargo\"")
+        .unwrap_err();
+    assert!(e.contains("check.cargo"), "{e}");
+    let e = with_check("runner = \"jest\"").unwrap_err();
+    assert!(e.contains("check.runner"), "{e}");
+    // The junit runner needs both keys.
+    assert!(
+        with_check("runner = \"junit\"\ncommand = \"jest {file}\"")
+            .unwrap_err()
+            .contains("check.report")
+    );
+    assert!(
+        with_check("runner = \"junit\"\nreport = \"r.xml\"")
+            .unwrap_err()
+            .contains("check.command")
+    );
+}
+
+// STP-28 AC-5: a `command` with no program before `{file}` is refused, naming `command`.
+#[test]
+fn rejects_command_without_program() {
+    for command in ["{file}", " {file}"] {
+        let e = with_check(&format!(
+            "runner = \"junit\"\ncommand = \"{command}\"\nreport = \"r.xml\""
+        ))
+        .expect_err(&format!("{command:?} was accepted"));
+        assert!(e.contains("check.command"), "{command:?}: {e}");
+    }
+}
+
+// STP-28 AC-6: the glob matcher.
+#[test]
+fn globs_match_paths() {
+    use stapel_core::config::glob_matches as m;
+    assert!(m("**/package.json", "package.json"));
+    assert!(m("**/package.json", "a/b/package.json"));
+    assert!(!m("**/package.json", "a/xpackage.json"));
+    assert!(!m("*.ts", "a/b.ts"));
+    assert!(m("*.ts", "b.ts"));
+    assert!(m("**/*.test.*", "a/b.test.ts"));
+    assert!(m("**/__tests__/**", "__tests__/a.ts"));
+    assert!(m("**/__tests__/**", "x/__tests__/y/z.json"));
+    assert!(!m("**/__tests__/**", "x/__tests__"));
+    assert!(!m("a/**", "a"));
+    assert!(m("a/**", "a/b"));
+    assert!(m("a/**", "a/b/c/d"));
+    assert!(m("a/**/b", "a/b"));
+    assert!(m("a/**/b", "a/x/y/b"));
+    assert!(!m("a/**/b", "a/xb"));
+    assert!(m("a?c", "abc"));
+    assert!(!m("a?c", "a/c"));
+    assert!(!m("a*c", "a/c"));
+    assert!(m("tsconfig*.json", "tsconfig.json"));
+    assert!(m("tsconfig*.json", "tsconfig.build.json"));
+}

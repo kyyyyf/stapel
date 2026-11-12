@@ -295,7 +295,7 @@ Changed on 2026-11-10 (ledger): after 1.13 only 1.11 with 1.12 (one ticket) and 
   long history); a commit that touches only `docs/`, the process ledger or a ticket's `tokens.jsonl` does
   not make a check stale (ledger 2026-10-22). Light route when its investigation shows about 100 mechanical
   lines and no risk tag; else taken with 1.12.
-- 1.12 the `junit` runner: `[check] runner = "junit"`, `command` (a template with `{tests}`), `report`
+- 1.12 the `junit` runner: `[check] runner = "junit"`, `command` (a template with `{file}`, one run per test file; STP-28), `report`
   (the XML path), a timeout; test identity `<file>::<name>`; the outcomes of STP-4 and STP-14 unchanged;
   `lint` finds TypeScript tests by name.
 - 1.13 two ticket builds at once (ledger 2026-11-02): one ticket per session, each on its own branch and
@@ -332,12 +332,20 @@ Items. Changed on 2026-11-11 (ledger, two decisions): A1 is split, A3 runs in pa
 `base..HEAD` walk leaves the plan (measured: `stapel next` walks the 1035 commits of this repository in
 0.05 s, and a ticket made by `stapel new` has a base that bounds its range). Each ticket has its own session.
 
-- A1 (item 1.12, STP-28): the `junit` runner, with the text of that item above without its `lint` clause.
+Changed on 2026-11-12 (ledger, the human): STP-28 had built the `base..HEAD` walk, the `docs/` rule and
+`stapel lint` before the decisions of 2026-11-11 reached it, so A1 keeps them, A1b is done inside A1, and
+the code defects of its second code review go to A1c.
+
+- A1 (items 1.11, 1.12 and the `lint` part of 1.6, STP-28): the `junit` runner; the `base..HEAD` walk; a
+  commit that touches only `docs/` does not make a check stale; `stapel lint [KEY]` with two checks for
+  both runners: a test the ticket names does not exist, and a step test no ticket names. A1b is done here.
 - A3 (item 1.14), in parallel with A1: see below.
-- A1b (the rest of items 1.11 and 1.6 that the pilot needs; after A1 closes): a commit that touches only
-  `docs/` does not make a check stale (the process ledger and a ticket's `tokens.jsonl` are machine files
-  already); `stapel lint [KEY]` with two checks for both runners: a test the ticket names does not exist,
-  and a step test no ticket names.
+- A1c (follow-up of STP-28, before A2): the defects and coverage its second code review left: a merge of
+  the base branch that brings a fixture still gives `tests-changed`; an absolute script path in `command`
+  runs the working tree's script; the report reader's roots, CDATA outside the root and entities in
+  skipped elements; a silent cargo fallback when `stapel.toml` fails to load; the report read between its
+  metadata and its content; tests for build inputs, negatives and cargo fixtures brought by a base merge
+  (CR2-4, CR2-5, CR2-7, CR2-8, CR2-11, d20-2, d20-3, d21-1, d21-2, d22-1).
 - A2 (item 2.1, widened; depends on A1): `stapel init` on a foreign repository: no `[check] cargo`, the
   skill and the agents, a smoke ticket that proves the hooks and the junit runner, the person's checklist
   printed at the end. Widened: the files `init` installs stay out of the shared git history of that
@@ -436,8 +444,8 @@ minutes (attention). A rule of the elaboration skill that catches nothing is rem
 
 ### Candidates without a place in the order
 
-Not a plan; each needs a ledger decision to enter it. The `base..HEAD` walk of item 1.11 (taken when a
-measurement shows a slow walk); `stapel lint` (item 1.6); `stapel ship` with the
+Not a plan; each needs a ledger decision to enter it. The other checks of `stapel lint` (item 1.6; its two
+test-name checks are built in STP-28); `stapel ship` with the
 review map (item 1.7); guard items 1.9 and 1.10; an import from the method or from a tracker when a real
 user asks; the index; autonomy levels; an editor extension; more languages; removal of the five empty
 crates; one short plan document in place of `docs/PLAN.md` and this file.

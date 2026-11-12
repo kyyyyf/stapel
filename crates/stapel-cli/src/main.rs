@@ -10,6 +10,7 @@ mod findings;
 mod hook;
 mod init;
 mod ledger;
+mod lint;
 mod new;
 mod next;
 mod ok;
@@ -111,6 +112,11 @@ enum Command {
         /// Print the outcomes history alone gives, without cargo; other steps read `needs-run`.
         #[arg(long, conflicts_with = "list")]
         history: bool,
+    },
+    /// Report the tests a ticket names that do not exist and the step tests no ticket names.
+    Lint {
+        /// The ticket key; without it, the branch ticket or the only open ticket.
+        key: Option<String>,
     },
     /// Run `cargo` under the machine-wide cargo lock; agents run cargo only this way.
     Cargo {
@@ -360,6 +366,7 @@ fn main() -> ExitCode {
         Command::Check { key, list, history } => {
             return check::run(key.as_deref(), list, history);
         }
+        Command::Lint { key } => return lint::run(key.as_deref()),
         Command::Cargo { args } => return cargo::run(&args),
         Command::Brief { key, step } => return fail::finish(brief::run(&key, &step)),
         Command::Depends { key } => return fail::finish(depends::run(key.as_deref())),

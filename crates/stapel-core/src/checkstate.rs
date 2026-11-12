@@ -79,7 +79,19 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
         Ok(d) => changed.extend(d),
         Err(e) => return CheckLine::Stale(format!("cannot read the tree: {e}")),
     }
-    changed.retain(|p| !is_machine_file(p));
+    // Machine files and `docs/` do not change what a check ran (STP-28 AC-3).
+    // Under junit a `docs/` path that matches a test or input glob stays (AC-36).
+    let junit_globs: Vec<&String> = match config.check.as_ref().filter(|c| c.runner == "junit") {
+        Some(c) => c.tests.iter().chain(c.inputs.iter()).flatten().collect(),
+        None => Vec::new(),
+    };
+    changed.retain(|p| {
+        !is_machine_file(p)
+            && (!p.starts_with("docs/")
+                || junit_globs
+                    .iter()
+                    .any(|g| crate::config::glob_matches(g, p)))
+    });
     changed.sort();
     changed.dedup();
     if !changed.is_empty() {

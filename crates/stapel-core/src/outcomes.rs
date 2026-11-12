@@ -3,13 +3,32 @@
 //! `superseded by <label>` and `retired by <label>`.
 
 use crate::build_inputs::{dev_redirect, target_files};
+use crate::config::glob_matches;
 use crate::includes::Includes;
 use crate::rust_tests::{helper_text, test_functions};
 use crate::steps::{
-    Change, Marker, Step, StepCommit, TestId, changes, git, git_text, parent, show, step_tests,
+    Change, Marker, Step, StepCommit, TestId, changes, git, git_text, is_test_file,
+    junit_step_tests, parent, show, step_tests,
 };
+use crate::ts_tests::{rest_text, test_calls};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+
+/// The runner whose rules judge a step (STP-28): cargo, or junit with the test globs.
+#[derive(Debug, Clone, Copy)]
+pub enum Mode<'a> {
+    Cargo,
+    Junit(&'a [String]),
+}
+
+/// Whether a path a junit RED changes is code (STP-28 AC-13): it matches no test glob, is not under
+/// `docs/` or `.stapel/` and is not a `.md` file.
+fn is_junit_code(path: &str, globs: &[String]) -> bool {
+    !(globs.iter().any(|g| glob_matches(g, path))
+        || path.starts_with("docs/")
+        || path.starts_with(".stapel/")
+        || path.ends_with(".md"))
+}
 
 /// At most this many paths or names are named in one reason.
 pub const MAX_NAMED: usize = 20;
@@ -59,9 +78,13 @@ fn judge_red(
     red: &str,
     head: &str,
     later_greens: Vec<String>,
+    mode: Mode,
 ) -> Result<RedVerdict, String> {
     let root = files.root;
-    let tests = step_tests(root, red)?;
+    let tests = match mode {
+        Mode::Cargo => step_tests(root, red)?,
+        Mode::Junit(globs) => junit_step_tests(root, red, globs)?,
+    };
     if tests.is_empty() {
         return Ok(RedVerdict {
             tests,
@@ -75,6 +98,23 @@ fn judge_red(
     }
     let base = parent(root, red);
     let changed = changes(root, red)?;
+    if let Mode::Junit(globs) = mode {
+        let mut code: Vec<String> = changed
+            .iter()
+            .flat_map(|c| [c.old.clone(), c.new.clone()])
+            .flatten()
+            .filter(|p| is_junit_code(p, globs))
+            .collect();
+        code.sort();
+        code.dedup();
+        let fixed = (!code.is_empty()).then(|| ("red-changes-code".to_string(), named(&code)));
+        return Ok(RedVerdict {
+            tests,
+            base,
+            changed,
+            fixed,
+        });
+    }
     let mut code: Vec<String> = changed
         .iter()
         .filter(|c| is_code(files, red, &base, c))
@@ -101,14 +141,19 @@ fn judge_red(
 
 /// `no-tests` or `red-changes-code` for a RED with no step commit after it (STP-14 AC-18), by the
 /// same code as a paired step's RED; `None` when the RED is correct.
-pub fn open_red(root: &Path, red: &str, head: &str) -> Result<Option<(String, String)>, String> {
+pub fn open_red(
+    root: &Path,
+    red: &str,
+    head: &str,
+    mode: Mode,
+) -> Result<Option<(String, String)>, String> {
     let mut files = Files {
         root,
         cache: HashMap::new(),
         named: HashMap::new(),
     };
     let mut includes = Includes::new(root);
-    Ok(judge_red(&mut files, &mut includes, red, head, Vec::new())?.fixed)
+    Ok(judge_red(&mut files, &mut includes, red, head, Vec::new(), mode)?.fixed)
 }
 
 /// Contents of files at commits, read once.
@@ -292,6 +337,8 @@ enum Unit {
     Test(TestId),
     /// A `.rs` file's text without its test functions.
     Helpers(String),
+    /// A junit test file's text without its test calls.
+    Rest(String),
     /// Any other file, byte for byte.
     File(String),
 }
@@ -300,22 +347,27 @@ impl Unit {
     fn path(&self) -> String {
         match self {
             Unit::Test(t) => t.path(),
-            Unit::Helpers(p) | Unit::File(p) => p.clone(),
+            Unit::Helpers(p) | Unit::Rest(p) | Unit::File(p) => p.clone(),
         }
     }
     fn name(&self) -> String {
         match self {
             Unit::Test(t) => t.to_string(),
-            Unit::Helpers(p) | Unit::File(p) => p.clone(),
+            Unit::Helpers(p) | Unit::Rest(p) | Unit::File(p) => p.clone(),
         }
     }
-    fn value(&self, files: &mut Files, commit: &str) -> Option<String> {
+    fn value(&self, files: &mut Files, commit: &str, junit: bool) -> Option<String> {
         let src = files.get(commit, &self.path())?;
         match self {
+            Unit::Test(t) if junit => test_calls(&src)
+                .into_iter()
+                .find(|(n, _)| *n == t.name)
+                .map(|(_, text)| text),
             Unit::Test(t) => test_functions(&src)
                 .into_iter()
                 .find(|(n, _)| *n == t.name)
                 .map(|(_, text)| text),
+            Unit::Rest(_) => Some(rest_text(&src)),
             Unit::Helpers(_) => Some(helper_text(&src)),
             Unit::File(_) => Some(src),
         }
@@ -360,6 +412,19 @@ pub fn analyse(
     head: &str,
     steps: &[Step],
 ) -> Result<Vec<Analysis>, String> {
+    analyse_in(root, key, head, steps, None, Mode::Cargo)
+}
+
+/// `analyse` under a runner. Under junit the protected content is each step test call, the rest of
+/// each test file the RED changed and its other changed files that match a test glob.
+pub fn analyse_in(
+    root: &Path,
+    key: &str,
+    head: &str,
+    steps: &[Step],
+    base: Option<&str>,
+    mode: Mode,
+) -> Result<Vec<Analysis>, String> {
     let mut files = Files {
         root,
         cache: HashMap::new(),
@@ -374,7 +439,15 @@ pub fn analyse(
     for c in &all {
         by_sha.insert(c.sha.clone(), (c.label.clone(), c.marker));
     }
-    let order = git_text(root, &["rev-list", "--first-parent", "--reverse", head])?;
+    let order = git_text(
+        root,
+        &[
+            "rev-list",
+            "--first-parent",
+            "--reverse",
+            &crate::steps::walk_range(base, head),
+        ],
+    )?;
     for (i, sha) in order.lines().enumerate() {
         position.insert(sha.to_string(), i);
     }
@@ -439,7 +512,7 @@ pub fn analyse(
             .filter(|c| c.marker == Marker::Green && pos(c) > pos(reds[0]))
             .map(|c| c.sha.clone())
             .collect();
-        let verdict = judge_red(&mut files, &mut includes, &red, head, later_greens)?;
+        let verdict = judge_red(&mut files, &mut includes, &red, head, later_greens, mode)?;
         a.tests = verdict.tests;
         if let Some(fixed) = verdict.fixed {
             a.fixed = Some(fixed);
@@ -451,10 +524,33 @@ pub fn analyse(
 
         // Protected content: the step tests and the other test files the RED changed.
         let mut units: Vec<Unit> = a.tests.iter().cloned().map(Unit::Test).collect();
+        let junit = !matches!(mode, Mode::Cargo);
         for c in &changed {
             let Some(new) = c.new.as_deref() else {
                 continue;
             };
+            if let Mode::Junit(globs) = mode {
+                // STP-28 AC-27: the rest of a test file the RED changed, and any other file of
+                // it that matches a test glob.
+                if is_test_file(new, globs) {
+                    let rest = |s: String| rest_text(&s);
+                    let now = files.get(&red, new).map(rest).unwrap_or_default();
+                    let before = c
+                        .old
+                        .as_deref()
+                        .and_then(|o| files.get(&base, o))
+                        .map(rest)
+                        .unwrap_or_default();
+                    // Blank space and the `;` after a test call are no helper text.
+                    let bare = |s: &str| s.replace(|c: char| c.is_whitespace() || c == ';', "");
+                    if bare(&now) != bare(&before) {
+                        units.push(Unit::Rest(new.to_string()));
+                    }
+                } else if globs.iter().any(|g| glob_matches(g, new)) {
+                    units.push(Unit::File(new.to_string()));
+                }
+                continue;
+            }
             if !under_tests(new) {
                 continue;
             }
@@ -480,7 +576,7 @@ pub fn analyse(
         let mut dirs: Vec<&str> = a.tests.iter().map(|t| t.dir.as_str()).collect();
         dirs.sort();
         dirs.dedup();
-        for dir in dirs {
+        for dir in dirs.into_iter().filter(|d| !d.is_empty()) {
             let listed = git(
                 root,
                 &[
@@ -503,15 +599,70 @@ pub fn analyse(
                 }
             }
         }
+        // STP-28 AC-42: under junit, each non-test file matching a test glob in the folder of a
+        // step test's file, as at the RED.
+        if let Mode::Junit(globs) = mode {
+            let mut folders: Vec<String> = a
+                .tests
+                .iter()
+                .map(|t| {
+                    let p = t.path();
+                    p.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default()
+                })
+                .collect();
+            folders.sort();
+            folders.dedup();
+            for folder in folders {
+                let prefix = if folder.is_empty() {
+                    String::new()
+                } else {
+                    format!("{folder}/")
+                };
+                let mut args = vec!["ls-tree", "-z", "--name-only", red.as_str(), "--"];
+                let literal = format!(":(literal){prefix}");
+                if !prefix.is_empty() {
+                    args.push(&literal);
+                }
+                let mut listed = git(root, &args)?;
+                // A file a later commit adds or deletes in the folder is protected as well.
+                let range = format!("{red}..{head}");
+                let touched = git(
+                    root,
+                    &["log", "-z", "--format=", "--name-only", "--no-renames", &range],
+                )?;
+                for path in touched.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+                    let direct = std::str::from_utf8(path)
+                        .ok()
+                        .and_then(|p| p.strip_prefix(prefix.as_str()))
+                        .is_some_and(|rest| !rest.contains('/'));
+                    if direct {
+                        listed.push(0);
+                        listed.extend_from_slice(path);
+                    }
+                }
+                for path in listed.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+                    let path = String::from_utf8_lossy(path).into_owned();
+                    let known = units
+                        .iter()
+                        .any(|u| matches!(u, Unit::File(p) | Unit::Rest(p) if *p == path));
+                    if !known
+                        && !is_test_file(&path, globs)
+                        && globs.iter().any(|g| glob_matches(g, &path))
+                    {
+                        units.push(Unit::File(path));
+                    }
+                }
+            }
+        }
         let mut changed_units = Vec::new();
         // The commits where the walk of a changed unit stopped.
         let mut stops: Vec<String> = Vec::new();
         let mut retired = Vec::new();
         for unit in &units {
-            let mut current = unit.value(&mut files, &red);
-            let at_head = unit.value(&mut files, head);
+            let mut current = unit.value(&mut files, &red, junit);
+            let at_head = unit.value(&mut files, head, junit);
             for (sha, message) in touching(root, &red, head, &unit.path())? {
-                let value = unit.value(&mut files, &sha);
+                let value = unit.value(&mut files, &sha, junit);
                 if value == current {
                     continue;
                 }
@@ -539,6 +690,11 @@ pub fn analyse(
                         break;
                     }
                     if at_head.is_none() {
+                        // STP-28 AC-42: under junit a protected file that is gone is changed.
+                        if junit && matches!(unit, Unit::File(_)) && current.is_some() {
+                            changed_units.push(unit.name());
+                            stops.push(sha.clone());
+                        }
                         break;
                     }
                     continue;

@@ -4,20 +4,24 @@
 use crate::repo;
 use stapel_core::build_inputs;
 use stapel_core::build_inputs::{Bounds, BuildInputs, Change};
-use stapel_core::config::{validate_cargo, validate_path_cargo};
+use stapel_core::config::{Check, validate_cargo, validate_path_cargo};
 use stapel_core::journal::{append, new_id};
+use stapel_core::junit::{MAX_REPORT, Outcome as CaseOutcome, read_report};
 use stapel_core::outcomes::{
-    Analysis, MAX_NAMED, analyse, history_outcome, named, open_red, passing,
+    Analysis, MAX_NAMED, Mode, analyse_in, history_outcome, named, open_red, passing,
 };
 use stapel_core::runner::{
-    Parsed, TestState, cargo_version, parse_run, resolve_cargo, run_cargo, summary_counts,
+    Parsed, TestState, cargo_version, parse_run, resolve_cargo, run_cargo, run_program,
+    summary_counts,
 };
 use stapel_core::rust_tests::test_functions;
 use stapel_core::steps::{
-    Marker, Step, TestId, git_text, package_name, show, step_commits, step_tests, steps,
+    Marker, Step, TestId, git_text, junit_step_tests, package_name, show, step_commits, step_tests,
+    steps,
 };
 use stapel_core::tickets::{Status, Ticket, resolve};
 use stapel_core::time::now_rfc3339;
+use stapel_core::ts_tests::{has_only_call, test_calls};
 use stapel_core::worktree::{
     Lock, LockError, Worktree, build_input_outside, dirty_paths, resolve_tmpdir, stapel_dir,
 };
@@ -25,6 +29,78 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
+
+/// The test globs of a junit `[check]`; `None` under cargo.
+fn junit_globs_of(check: &Check) -> Option<Vec<String>> {
+    (check.runner == "junit").then(|| check.tests.clone().unwrap_or_default())
+}
+
+/// The test globs of the repository's `[check]` when its runner is junit.
+pub(crate) fn junit_globs_at(root: &Path) -> Option<Vec<String>> {
+    let config = repo::load(root).ok()?;
+    junit_globs_of(&config.check?)
+}
+
+/// The Walk of a junit check read for build inputs (STP-28 AC-24, AC-25): input globs, the
+/// configuration, and the first word of `command` when it is a repository path.
+fn junit_inputs(
+    root: &Path,
+    key: &str,
+    at: &str,
+    bounds: Bounds,
+    check: &Check,
+) -> Result<BuildInputs, String> {
+    let mut fixed = vec![".stapel/stapel.toml".to_string()];
+    let first = check
+        .command
+        .as_deref()
+        .and_then(|c| c.split(' ').find(|w| !w.is_empty()));
+    if let Some(word) = first {
+        let path = Path::new(word);
+        if path.is_absolute() {
+            if let Ok(rel) = path.strip_prefix(root) {
+                fixed.push(rel.to_string_lossy().into_owned());
+            }
+        } else if word.contains('/') {
+            fixed.push(word.trim_start_matches("./").to_string());
+        }
+    }
+    let inputs = check.inputs.clone().unwrap_or_default();
+    build_inputs::analyse_junit(root, key, at, bounds, &inputs, &fixed)
+}
+
+/// The change that blocks a step under junit (AC-24, AC-25, AC-39), the first one in the Walk:
+/// an input change at or before the step's GREEN commit; a change of `.stapel/stapel.toml` after
+/// the step's RED commit, wherever it falls (a configuration in place at or before the ticket's
+/// first RED blocks no step, as that RED is not after it); a change of the command's script after
+/// the step's RED up to its GREEN commit.
+fn junit_block<'a>(a: &Analysis, inputs: &'a BuildInputs, walk: &[String]) -> Option<&'a Change> {
+    let place = |c: Option<&stapel_core::steps::StepCommit>| {
+        c.and_then(|c| walk.iter().position(|s| *s == c.sha))
+    };
+    let (red, green) = (place(a.red.as_ref()), place(a.green.as_ref()));
+    inputs.walk_changes.iter().find_map(|(change, fixed)| {
+        let at = walk.iter().position(|s| *s == change.sha)?;
+        let after_green = green.is_some_and(|g| g < at);
+        let after_red = red.is_some_and(|r| r < at);
+        let blocks = if !*fixed {
+            !after_green
+        } else if change.path == ".stapel/stapel.toml" {
+            after_red
+        } else {
+            after_red && !after_green
+        };
+        blocks.then_some(change)
+    })
+}
+
+/// The mode that judges steps for the globs of `junit_globs_at`.
+pub(crate) fn mode_of(globs: &Option<Vec<String>>) -> Mode<'_> {
+    match globs {
+        Some(g) => Mode::Junit(g),
+        None => Mode::Cargo,
+    }
+}
 
 /// A refusal: nothing was run, exit 2.
 fn refuse(message: impl std::fmt::Display) -> ExitCode {
@@ -35,7 +111,7 @@ fn refuse(message: impl std::fmt::Display) -> ExitCode {
 // The refusals both modes share (STP-14); each mode calls them in its own order.
 
 /// A legacy or unreadable ticket cannot be checked.
-fn status_refusal(ticket: &Ticket) -> Result<(), String> {
+pub(crate) fn status_refusal(ticket: &Ticket) -> Result<(), String> {
     match &ticket.status {
         Status::Open(_) | Status::Closed(_) => Ok(()),
         Status::Legacy(_) => Err(format!(
@@ -77,9 +153,22 @@ pub(crate) fn base_of(root: &Path, ticket: &Ticket, head: &str) -> Result<Option
     Ok(base)
 }
 
+/// The `base_branch` of the ticket's `state.json`.
+pub(crate) fn base_branch_of(ticket: &Ticket) -> Option<String> {
+    match &ticket.status {
+        Status::Open(s) | Status::Closed(s) => s.base_branch.clone(),
+        _ => None,
+    }
+}
+
 /// The steps of the ticket on the first-parent history of `head`.
-fn read_steps(root: &Path, key: &str, head: &str) -> Result<Vec<Step>, String> {
-    step_commits(root, key, head).map(steps)
+fn read_steps(
+    root: &Path,
+    key: &str,
+    head: &str,
+    base: Option<&str>,
+) -> Result<Vec<Step>, String> {
+    step_commits(root, key, head, base).map(steps)
 }
 
 fn no_steps(key: &str) -> String {
@@ -129,21 +218,24 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         Ok(b) => b,
         Err(e) => return refuse(e),
     };
-    let steps = match read_steps(&root, &ticket.key, &head) {
+    let steps = match read_steps(&root, &ticket.key, &head, base.as_deref()) {
         Ok(s) => s,
         Err(e) => return refuse(e),
     };
+    let globs = config.check.as_ref().and_then(junit_globs_of);
     if list {
         if steps.is_empty() {
             return refuse(no_steps(&ticket.key));
         }
-        return match print_list(&root, &ticket.key, &steps) {
+        return match print_list(&root, &ticket.key, &steps, mode_of(&globs)) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => refuse(e),
         };
     }
+    let base_branch = base_branch_of(&ticket);
     let bounds = Bounds {
         base: base.as_deref(),
+        base_branch: base_branch.as_deref(),
         closed: matches!(ticket.status, Status::Closed(_)),
     };
     let end = match range_end(&root, &ticket.key, &head, bounds) {
@@ -196,13 +288,28 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         Err(LockError::Io(e)) => return refuse(e),
     };
     let at = end.clone().unwrap_or_else(|| head.clone());
-    let analyses = match analyse(&root, &ticket.key, &at, &steps) {
+    let junit = globs.is_some();
+    let analyses = match analyse_in(&root, &ticket.key, &at, &steps, bounds.base, mode_of(&globs)) {
         Ok(a) => a,
         Err(e) => return refuse(e),
     };
-    let inputs = match build_inputs::analyse(&root, &ticket.key, &at, &steps, bounds) {
+    let inputs = if junit {
+        junit_inputs(&root, &ticket.key, &at, bounds, &check)
+    } else {
+        build_inputs::analyse(&root, &ticket.key, &at, &steps, bounds)
+    };
+    let inputs = match inputs {
         Ok(i) => i,
         Err(e) => return refuse(e),
+    };
+    // Under junit a change blocks the steps whose GREEN is at or after it (AC-24).
+    let walk = if junit {
+        match build_inputs::range(&root, &ticket.key, &at, bounds) {
+            Ok(w) => w,
+            Err(e) => return refuse(e),
+        }
+    } else {
+        Vec::new()
     };
     let tmp = match resolve_tmpdir(&root) {
         Ok(t) => t,
@@ -212,11 +319,17 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         Ok(w) => w,
         Err(e) => return refuse(e),
     };
-    let cargo = match resolve_cargo(check.cargo.as_deref()) {
-        Ok(c) => c,
-        Err(e) => return refuse(e),
+    // Under junit no cargo is found or checked; the lock is taken as under cargo (AC-40).
+    let cargo = if junit {
+        PathBuf::new()
+    } else {
+        match resolve_cargo(check.cargo.as_deref()) {
+            Ok(c) => c,
+            Err(e) => return refuse(e),
+        }
     };
     match check.cargo.as_deref() {
+        _ if junit => {}
         Some(key) => {
             if let Err(e) = validate_cargo(key, &root) {
                 return refuse(e);
@@ -240,14 +353,21 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
     let target = dir.join("check-target");
     let timeout = Duration::from_secs(check.timeout_secs);
     // A configuration above the worktree is found before any cargo run (AC-7).
-    let outside = build_input_outside(&wt.path);
+    let outside = if junit {
+        None
+    } else {
+        build_input_outside(&wt.path)
+    };
     // A build input changed by a commit of the ticket comes first (STP-6 AC-1, AC-2); no cargo runs.
     let mut blocked = inputs
         .changed
         .as_ref()
+        .filter(|_| !junit)
         .map(changed_reason)
         .or(outside.map(|p| format!("build-input-outside: {}", p.display())));
-    let cargo_text = if blocked.is_some() {
+    let cargo_text = if junit {
+        String::new()
+    } else if blocked.is_some() {
         cargo.display().to_string()
     } else {
         match cargo_version(&cargo, &wt.path, &target, timeout) {
@@ -256,10 +376,14 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         }
     };
     // The search is repeated after every cargo run, `cargo --version` included (AC-7).
-    if blocked.is_none() {
+    if blocked.is_none() && !junit {
         blocked =
             build_input_outside(&wt.path).map(|p| format!("build-input-outside: {}", p.display()));
     }
+    let junit_run = match (junit, &check.command, &check.report) {
+        (true, Some(command), Some(report)) => Some(JunitRun { command, report }),
+        _ => None,
+    };
     let runner = Runner {
         root: &root,
         wt: &wt,
@@ -268,13 +392,16 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         timeout,
         head: &at,
         outside: std::cell::RefCell::new(blocked),
+        junit: junit_run,
     };
     if end.is_some() {
         say!("ticket: {} at {} (closed)", ticket.key, short(&at));
     } else {
         say!("ticket: {} at {}", ticket.key, short(&head));
     }
-    say!("cargo: {cargo_text}");
+    if !junit {
+        say!("cargo: {cargo_text}");
+    }
     if !inputs.unchanged.is_empty() {
         say!("build inputs: {}", named(&inputs.unchanged));
     }
@@ -282,7 +409,11 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
     let mut steps_json = Vec::new();
     for a in &analyses {
         // A build input found above the worktree after a cargo run blocks every later step (AC-7).
-        let blocked = runner.outside.borrow().clone();
+        let blocked = if junit {
+            junit_block(a, &inputs, &walk).map(changed_reason)
+        } else {
+            runner.outside.borrow().clone()
+        };
         let (outcome, reason) = match history_outcome(a, blocked.as_deref()) {
             Some(o) => o,
             None => runner.step(a),
@@ -313,15 +444,19 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         "ticket": ticket.key,
         "head": head,
         "tool": format!("stapel {}", env!("CARGO_PKG_VERSION")),
-        "cargo": cargo_text,
-        "result": if ok { "pass" } else { "fail" },
-        "steps": steps_json,
-        "suite": {
-            "outcome": suite.outcome,
-            "passed": suite.counts.0,
-            "failed": suite.counts.1,
-            "ignored": suite.counts.2,
-        },
+    });
+    if junit {
+        record["runner"] = serde_json::json!("junit");
+    } else {
+        record["cargo"] = serde_json::json!(cargo_text);
+    }
+    record["result"] = serde_json::json!(if ok { "pass" } else { "fail" });
+    record["steps"] = serde_json::json!(steps_json);
+    record["suite"] = serde_json::json!({
+        "outcome": suite.outcome,
+        "passed": suite.counts.0,
+        "failed": suite.counts.1,
+        "ignored": suite.counts.2,
     });
     if let Some(end) = &end {
         record["end"] = serde_json::json!(end);
@@ -403,6 +538,14 @@ struct Runner<'a> {
     /// Set when a build input lies above the worktree: no cargo runs, and every step and the suite
     /// read `unverified: build-input-outside: <path>`.
     outside: std::cell::RefCell<Option<String>>,
+    /// Set under the junit runner: the command and the report path of `[check]`.
+    junit: Option<JunitRun<'a>>,
+}
+
+/// The `[check]` keys of a junit Per-file run.
+struct JunitRun<'a> {
+    command: &'a str,
+    report: &'a str,
 }
 
 /// The state of each test at one commit, or why the run does not count.
@@ -429,6 +572,9 @@ impl Runner<'_> {
             return Err(why);
         }
         self.wt.checkout(commit)?;
+        if let Some(junit) = &self.junit {
+            return self.at_junit(junit, commit, tests);
+        }
         let mut groups: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
         for t in tests {
             groups
@@ -475,6 +621,218 @@ impl Runner<'_> {
         Ok(out)
     }
 
+    /// Links the working tree's `node_modules` into the check copy (STP-28 AC-23).
+    fn link_modules(&self) -> Result<(), String> {
+        let modules = self.root.join("node_modules");
+        if !modules.exists() {
+            return Err("node_modules is missing in the working tree".into());
+        }
+        let modules = std::path::absolute(&modules).map_err(|e| format!("node_modules: {e}"))?;
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&modules, self.wt.path.join("node_modules"))
+            .map_err(|e| format!("node_modules: {e}"))?;
+        Ok(())
+    }
+
+    /// The whole suite at HEAD under junit (STP-28 AC-26, AC-34): the old report removed, `command`
+    /// run once with only the word `{file}` left out, every test suite of the report summed.
+    fn suite_junit(&self, junit: &JunitRun) -> Suite {
+        let unverified = |reason: String| Suite {
+            outcome: "unverified".into(),
+            detail: reason,
+            counts: (0, 0, 0),
+        };
+        if let Err(e) = self.wt.checkout(self.head) {
+            return unverified(e);
+        }
+        if let Err(e) = self.link_modules() {
+            return unverified(e);
+        }
+        let report = self.wt.path.join(junit.report);
+        match std::fs::remove_file(&report) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return unverified(format!("{}: {e}", junit.report)),
+        }
+        let words: Vec<&str> = junit
+            .command
+            .split(' ')
+            .filter(|w| !w.is_empty() && *w != "{file}")
+            .collect();
+        let Some((program, rest)) = words.split_first() else {
+            return unverified("check.command is empty".into());
+        };
+        let args: Vec<String> = rest.iter().map(|w| w.to_string()).collect();
+        let run = match run_program(
+            Path::new(program),
+            &self.wt.path,
+            &args,
+            &[("JEST_JUNIT_REPORT_TEST_SUITE_ERRORS", "true")],
+            self.timeout,
+        ) {
+            Ok(r) => r,
+            Err(e) => return unverified(e),
+        };
+        if run.timed_out {
+            return unverified(format!(
+                "the time limit of {} s ran out",
+                self.timeout.as_secs()
+            ));
+        }
+        let Some(code) = run.exit else {
+            return unverified("the suite run ended by a signal".into());
+        };
+        let bytes = match read_report_file(&report, junit.report, "the suite") {
+            Ok(b) => b,
+            Err(e) => return unverified(e),
+        };
+        let suites = match read_report(&bytes) {
+            Ok(s) => s,
+            Err(e) => return unverified(format!("report of the suite: {e}")),
+        };
+        let (mut p, mut f, mut i) = (0u64, 0u64, 0u64);
+        for case in suites.iter().flat_map(|s| s.cases.iter()) {
+            match case.outcome {
+                CaseOutcome::Passed => p += 1,
+                CaseOutcome::Failed => f += 1,
+                CaseOutcome::Skipped => i += 1,
+            }
+        }
+        let detail = format!("{p} passed, {f} failed, {i} ignored");
+        let outcome = if code == 0 && f == 0 && p + i > 0 {
+            "pass"
+        } else {
+            "fail"
+        };
+        Suite {
+            outcome: outcome.into(),
+            detail,
+            counts: (p, f, i),
+        }
+    }
+
+    /// Runs `tests` at `commit` under junit (STP-28 AC-10, AC-11): one Per-file run per test file in
+    /// the checked-out copy, with the working tree's `node_modules` linked in and the old report
+    /// removed; each test takes the state of its one test case.
+    fn at_junit(&self, junit: &JunitRun, commit: &str, tests: &[TestId]) -> At {
+        self.link_modules()?;
+        let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for t in tests {
+            groups
+                .entry(t.file.clone())
+                .or_default()
+                .push(t.name.clone());
+        }
+        let words: Vec<&str> = junit.command.split(' ').filter(|w| !w.is_empty()).collect();
+        let Some((program, rest)) = words.split_first() else {
+            return Err("check.command is empty".into());
+        };
+        let at = short(commit);
+        let mut out = BTreeMap::new();
+        for (file, names) in groups {
+            let report = self.wt.path.join(junit.report);
+            match std::fs::remove_file(&report) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{}: {e}", junit.report)),
+            }
+            let args: Vec<String> = rest
+                .iter()
+                .map(|w| {
+                    if *w == "{file}" {
+                        file.clone()
+                    } else {
+                        w.to_string()
+                    }
+                })
+                .collect();
+            let run = run_program(
+                Path::new(program),
+                &self.wt.path,
+                &args,
+                &[("JEST_JUNIT_REPORT_TEST_SUITE_ERRORS", "true")],
+                self.timeout,
+            )?;
+            if run.timed_out {
+                return Err(format!(
+                    "the time limit of {} s ran out",
+                    self.timeout.as_secs()
+                ));
+            }
+            let Some(code) = run.exit else {
+                return Err(format!("the run of {file} ended by a signal (at {at})"));
+            };
+            let bytes = read_report_file(&report, junit.report, &file)
+                .map_err(|e| format!("{e} (at {at})"))?;
+            let suites =
+                read_report(&bytes).map_err(|e| format!("report of {file}: {e} (at {at})"))?;
+            if suites.len() != 1 {
+                return Err(if suites.is_empty() {
+                    format!("the report of {file} holds no test suite (at {at})")
+                } else {
+                    format!(
+                        "the report of {file} holds {} test suites (at {at})",
+                        suites.len()
+                    )
+                });
+            }
+            let failed = suites[0]
+                .cases
+                .iter()
+                .filter(|c| c.outcome == CaseOutcome::Failed)
+                .count();
+            if (code == 0) != (failed == 0) {
+                return Err(format!(
+                    "exit code {code} with {failed} failed test case{} in the report of {file} (at {at})",
+                    if failed == 1 { "" } else { "s" }
+                ));
+            }
+            // A file that does not load: every case has the classname jest gives a failed suite.
+            let cases = &suites[0].cases;
+            if !cases.is_empty() && cases.iter().all(|c| c.classname == "Test suite failed to run")
+            {
+                for name in names {
+                    out.insert(
+                        TestId {
+                            dir: String::new(),
+                            file: file.clone(),
+                            name,
+                        },
+                        TestState::Compile,
+                    );
+                }
+                continue;
+            }
+            for name in names {
+                let cases: Vec<_> = suites
+                    .iter()
+                    .flat_map(|s| s.cases.iter())
+                    .filter(|c| c.name.trim() == name.trim())
+                    .collect();
+                let [case] = cases.as_slice() else {
+                    return Err(format!(
+                        "{} test cases named {name} in the report of {file} (at {at})",
+                        cases.len()
+                    ));
+                };
+                let state = match case.outcome {
+                    CaseOutcome::Failed => TestState::Failed,
+                    CaseOutcome::Skipped => TestState::Ignored,
+                    CaseOutcome::Passed => TestState::Passed,
+                };
+                out.insert(
+                    TestId {
+                        dir: String::new(),
+                        file: file.clone(),
+                        name,
+                    },
+                    state,
+                );
+            }
+        }
+        Ok(out)
+    }
+
     /// The outcome of a step without a history outcome (`history_outcome` comes first).
     fn step(&self, a: &Analysis) -> (String, String) {
         let (Some(red), Some(green)) = (&a.red, &a.green) else {
@@ -488,6 +846,24 @@ impl Runner<'_> {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
+        // Under junit a `.only` in a test file at RED or GREEN makes its tests unverified before any run.
+        if self.junit.is_some() {
+            for (commit, when) in [(&red.sha, "RED"), (&green.sha, "GREEN")] {
+                let mut files: Vec<String> = tests.iter().map(|t| t.path()).collect();
+                files.dedup();
+                for path in files {
+                    if show(self.root, commit, &path).is_some_and(|s| has_only_call(&s)) {
+                        return (
+                            "unverified".into(),
+                            format!(
+                                "{path} holds a .only call at {when} ({}); no command ran for it",
+                                short(commit)
+                            ),
+                        );
+                    }
+                }
+            }
+        }
         // RED: every test fails; one that passes is no RED.
         let at_red = self.at(&red.sha, tests, true);
         let at_green = self.at(&green.sha, tests, false);
@@ -496,7 +872,13 @@ impl Runner<'_> {
             .iter()
             .filter(|t| {
                 show(self.root, self.head, &t.path())
-                    .map(|src| test_functions(&src).iter().any(|(n, _)| *n == t.name))
+                    .map(|src| {
+                        if self.junit.is_some() {
+                            test_calls(&src).iter().any(|(n, _)| *n == t.name)
+                        } else {
+                            test_functions(&src).iter().any(|(n, _)| *n == t.name)
+                        }
+                    })
                     .unwrap_or(false)
             })
             .cloned()
@@ -575,6 +957,9 @@ impl Runner<'_> {
     /// The whole suite at HEAD.
     /// The whole suite at HEAD: outcome, detail and the summed counts.
     fn suite(&self) -> Suite {
+        if let Some(junit) = &self.junit {
+            return self.suite_junit(junit);
+        }
         let unverified = |reason: String| Suite {
             outcome: "unverified".into(),
             detail: reason,
@@ -636,6 +1021,33 @@ fn short(sha: &str) -> &str {
     &sha[..sha.len().min(7)]
 }
 
+/// Reads the report of a Per-file run (`what` is the test file) or of the suite (`what` is
+/// `the suite`). The kind and the size are checked before the read, so a FIFO does not block it.
+fn read_report_file(path: &Path, name: &str, what: &str) -> Result<Vec<u8>, String> {
+    use std::os::unix::fs::FileTypeExt;
+    let meta = std::fs::symlink_metadata(path)
+        .map_err(|e| format!("no report {name} for {what}: {e}"))?;
+    let kind = meta.file_type();
+    let not_regular = if kind.is_symlink() {
+        Some("a symbolic link")
+    } else if kind.is_dir() {
+        Some("a folder")
+    } else if kind.is_fifo() {
+        Some("a FIFO")
+    } else if !kind.is_file() {
+        Some("not a regular file")
+    } else {
+        None
+    };
+    if let Some(what_it_is) = not_regular {
+        return Err(format!("the report {name} of {what} is {what_it_is}, not a regular file"));
+    }
+    if meta.len() > MAX_REPORT as u64 {
+        return Err(format!("the report of {what} is over {} MiB", MAX_REPORT / 1024 / 1024));
+    }
+    std::fs::read(path).map_err(|e| format!("no report {name} for {what}: {e}"))
+}
+
 /// The reason of `unverified` when a commit of the ticket changed a build input.
 fn changed_reason(c: &Change) -> String {
     format!("build-input-changed: {} at {}", c.path, short(&c.sha))
@@ -664,6 +1076,9 @@ fn say_step(a: &Analysis, outcome: &str, reason: &str) {
 pub(crate) struct HistoryStep {
     pub analysis: Analysis,
     pub outcome: Option<(String, String)>,
+    /// The commit of the build input or configuration change that blocks the step (AC-41): under
+    /// junit the step's own blocking change, under cargo the first change of the range.
+    pub changed: Option<String>,
 }
 
 /// What the history alone says about a ticket at `at` (STP-14): no cargo, no worktree.
@@ -679,14 +1094,36 @@ pub(crate) fn history_report(
     steps: &[Step],
     bounds: Bounds,
 ) -> Result<HistoryReport, String> {
-    let analyses = analyse(root, key, at, steps)?;
-    let inputs = build_inputs::analyse(root, key, at, steps, bounds)?;
-    let blocked = inputs.changed.as_ref().map(changed_reason);
+    let globs = junit_globs_at(root);
+    let analyses = analyse_in(root, key, at, steps, bounds.base, mode_of(&globs))?;
+    let junit_check = repo::load(root)
+        .ok()
+        .and_then(|c| c.check)
+        .filter(|c| c.runner == "junit");
+    let (inputs, walk) = match &junit_check {
+        Some(check) => (
+            junit_inputs(root, key, at, bounds, check)?,
+            build_inputs::range(root, key, at, bounds)?,
+        ),
+        None => (
+            build_inputs::analyse(root, key, at, steps, bounds)?,
+            Vec::new(),
+        ),
+    };
     let steps = analyses
         .into_iter()
-        .map(|analysis| HistoryStep {
-            outcome: history_outcome(&analysis, blocked.as_deref()),
-            analysis,
+        .map(|analysis| {
+            let changed = if junit_check.is_some() {
+                junit_block(&analysis, &inputs, &walk)
+            } else {
+                inputs.changed.as_ref()
+            };
+            let blocked = changed.map(changed_reason);
+            HistoryStep {
+                outcome: history_outcome(&analysis, blocked.as_deref()),
+                changed: changed.map(|c| c.sha.clone()),
+                analysis,
+            }
         })
         .collect();
     Ok(HistoryReport { inputs, steps })
@@ -770,11 +1207,13 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
     let key = ticket.key.clone();
     shallow_refusal(root).ok()?;
     let base = base_of(root, &ticket, &head).ok()?;
-    let commits = step_commits(root, &key, &head).ok()?;
+    let commits = step_commits(root, &key, &head, base.as_deref()).ok()?;
     let last = commits.last().map(|c| c.sha.clone())?;
     let steps = steps(commits);
+    let base_branch = base_branch_of(&ticket);
     let bounds = Bounds {
         base: base.as_deref(),
+        base_branch: base_branch.as_deref(),
         closed: false,
     };
     let report = history_report(root, &key, &head, &steps, bounds).ok()?;
@@ -791,14 +1230,14 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
             _ => None,
         };
         let (outcome, reason, fault, amend) = if let Some(red) = open {
-            match open_red(root, &red, &head).ok()? {
+            match open_red(root, &red, &head, mode_of(&junit_globs_at(root))).ok()? {
                 Some((o, r)) => (o, r, Some(red), true),
                 None => continue,
             }
         } else {
             match &s.outcome {
                 Some((o, r)) if !passing(o) => {
-                    let (fault, amend) = match (&a.fixed, &report.inputs.changed) {
+                    let (fault, amend) = match (&a.fixed, &s.changed) {
                         (Some((fixed, _)), _) => (
                             a.fault.clone(),
                             matches!(
@@ -806,7 +1245,7 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
                                 "no-tests" | "red-changes-code" | "tests-changed"
                             ),
                         ),
-                        (None, Some(changed)) => (Some(changed.sha.clone()), true),
+                        (None, Some(changed)) => (Some(changed.clone()), true),
                         (None, None) => (a.fault.clone(), false),
                     };
                     (o.clone(), r.clone(), fault, amend)
@@ -829,7 +1268,8 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
     if lines.is_empty() || !(seen || faults.iter().any(|f| f.0 == head)) {
         return None;
     }
-    let order = git_text(root, &["rev-list", "--first-parent", "--reverse", &head]).ok()?;
+    let walk = stapel_core::steps::walk_range(base.as_deref(), &head);
+    let order = git_text(root, &["rev-list", "--first-parent", "--reverse", &walk]).ok()?;
     let position: BTreeMap<&str, usize> = order.lines().enumerate().map(|(i, s)| (s, i)).collect();
     faults.sort_by_key(|f| position.get(f.0.as_str()).copied().unwrap_or(usize::MAX));
     for (sha, labels, amend) in faults {
@@ -851,7 +1291,7 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
     Some(lines)
 }
 
-fn print_list(root: &std::path::Path, key: &str, steps: &[Step]) -> Result<(), String> {
+fn print_list(root: &std::path::Path, key: &str, steps: &[Step], mode: Mode) -> Result<(), String> {
     say!("ticket: {key}");
     for step in steps {
         say!("{}", step.label);
@@ -866,7 +1306,10 @@ fn print_list(root: &std::path::Path, key: &str, steps: &[Step]) -> Result<(), S
             }
         }
         let tests = match reds.first() {
-            Some(red) => step_tests(root, &red.sha)?,
+            Some(red) => match mode {
+                Mode::Cargo => step_tests(root, &red.sha)?,
+                Mode::Junit(globs) => junit_step_tests(root, &red.sha, globs)?,
+            },
             None => Vec::new(),
         };
         say!("  tests: {}", tests.len());

@@ -1263,3 +1263,44 @@ fn empty_sources_count_as_absent() {
         "cwd and CLAUDE_PROJECT_DIR empty, the working directory failing",
     );
 }
+
+// ---- STP-28 AC-2 ----
+
+#[test]
+fn hook_walks_from_the_base() {
+    fn set_base(dir: &Path, base: Option<&str>) {
+        let mut state = common::state_json(dir, "ABC-1");
+        match base {
+            Some(b) => state["base"] = serde_json::json!(b),
+            None => {
+                state.as_object_mut().unwrap().remove("base");
+            }
+        }
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base");
+    }
+    // A step 1 RED without a test before the base.
+    fn old_fault_then_base(dir: &Path, with_base: bool) {
+        commit(dir, "ABC-1 step 1 RED: no test");
+        let head = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        set_base(dir, with_base.then_some(head.as_str()));
+    }
+
+    let repo = fixture();
+    let dir = repo.path();
+    old_fault_then_base(dir, true);
+    clean_pair(dir, "step 1", "one");
+    assert_silent(hook(dir), "the fault lies before the base");
+
+    // The same history without a base: the old fault counts.
+    let repo = fixture();
+    let dir = repo.path();
+    old_fault_then_base(dir, false);
+    clean_pair(dir, "step 1", "one");
+    let text = assert_fault(hook(dir), "no base");
+    assert!(text.contains("step 1: duplicate"), "{text}");
+}

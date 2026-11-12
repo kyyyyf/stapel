@@ -934,3 +934,310 @@ fn twenty_steps_within_five_seconds() {
     );
     assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
 }
+
+// ---- STP-28 AC-1 ----
+
+#[test]
+fn walk_starts_at_the_base() {
+    /// Sets or removes the `base` of ABC-1 and commits the state.
+    fn set_base(dir: &Path, base: Option<&str>) {
+        let mut state = common::state_json(dir, "ABC-1");
+        match base {
+            Some(b) => state["base"] = serde_json::json!(b),
+            None => {
+                state.as_object_mut().unwrap().remove("base");
+            }
+        }
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base");
+    }
+    /// A step 1 RED before the base, then the base, then the real step 1.
+    fn old_red_then_real_step(dir: &Path, with_base: bool) {
+        add_test(dir, "old", "old_one", "assert!(true);");
+        commit(dir, "ABC-1 step 1 RED: an old red");
+        let head = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        set_base(dir, with_base.then_some(head.as_str()));
+        clean_pair(dir, "step 1", "real");
+    }
+
+    // With a base: one pass in the full check and no `duplicate` in either mode.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    old_red_then_real_step(dir, true);
+    let (code, hist, err) = history(dir);
+    assert_eq!(code, 0, "{hist}{err}");
+    assert_eq!(outcome(&hist, "step 1"), "needs-run", "{hist}");
+    assert!(!hist.contains("duplicate"), "{hist}");
+    let (code, full) = check(dir);
+    assert_eq!(code, 0, "{full}");
+    assert_eq!(outcome(&full, "step 1"), "pass", "{full}");
+    assert!(!full.contains("duplicate"), "{full}");
+
+    // A merge of a side branch after the base: its first-parent diff counts, the result stays.
+    let branch = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .trim()
+        .to_string();
+    git(dir, &["checkout", "-q", "-b", "side", "HEAD~2"]);
+    write(dir, "docs/side.md", "side\n");
+    commit(dir, "a side commit");
+    git(dir, &["checkout", "-q", &branch]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.name=test-user",
+            "-c",
+            "user.email=test-user.invalid",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "merge main",
+            "side",
+        ],
+    );
+    let (code, hist, err) = history(dir);
+    assert_eq!(code, 0, "{hist}{err}");
+    assert_eq!(outcome(&hist, "step 1"), "needs-run", "{hist}");
+    assert!(!hist.contains("duplicate"), "{hist}");
+
+    // Without a base the old commit counts.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    old_red_then_real_step(dir, false);
+    let (_, hist, err) = history(dir);
+    assert_eq!(outcome(&hist, "step 1"), "duplicate", "{hist}{err}");
+}
+
+// ---- STP-28 AC-37 ----
+
+#[test]
+fn walk_reads_only_the_range() {
+    /// The `git log` and `git rev-list` calls in a `GIT_TRACE` file that read a history without a
+    /// `..` range; a call limited to one commit (`-1`, `-n 1`) does not count.
+    fn wide_walks(trace: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        for line in trace.lines() {
+            let Some((_, call)) = line.split_once(" git ") else {
+                continue;
+            };
+            let mut words = call.split_whitespace();
+            let mut sub = None;
+            while let Some(w) = words.next() {
+                if w == "-c" || w == "-C" {
+                    words.next();
+                } else if !w.starts_with('-') {
+                    sub = Some(w.trim_matches('\''));
+                    break;
+                }
+            }
+            if !matches!(sub, Some("log" | "rev-list")) {
+                continue;
+            }
+            let args: Vec<&str> = call.split_whitespace().collect();
+            let one = args.contains(&"-1") || args.windows(2).any(|w| w == ["-n", "1"]);
+            if !call.contains("..") && !one {
+                found.push(line.to_string());
+            }
+        }
+        found
+    }
+
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let base = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let mut state = common::state_json(dir, "ABC-1");
+    state["base"] = serde_json::json!(base);
+    write(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+    );
+    commit(dir, "ABC-1: base");
+    clean_pair(dir, "step 1", "alpha");
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git commit -m x"},
+        "cwd": dir,
+    })
+    .to_string();
+
+    let trace_file = dir.join("..").join(format!(
+        "{}-trace.txt",
+        dir.file_name().unwrap().to_string_lossy()
+    ));
+    let runs: Vec<(&str, Vec<&str>, Option<&str>)> = vec![
+        ("check", vec!["check", "ABC-1"], None),
+        ("check --history", vec!["check", "ABC-1", "--history"], None),
+        ("hook", vec!["hook", "post-tool-use"], Some(payload.as_str())),
+        ("next", vec!["next", "ABC-1"], None),
+        ("lint", vec!["lint", "ABC-1"], None),
+    ];
+    for (label, args, stdin) in runs {
+        let _ = std::fs::remove_file(&trace_file);
+        let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cmd = stapel(dir);
+        cmd.args(&args)
+            .env("GIT_TRACE", &trace_file)
+            .env("CARGO_BUILD_JOBS", "2");
+        if let Some(stdin) = stdin {
+            cmd.write_stdin(stdin.to_string());
+        }
+        cmd.output().unwrap();
+        let trace = std::fs::read_to_string(&trace_file).unwrap_or_default();
+        assert!(trace.contains("git "), "{label}: no git calls traced");
+        let wide = wide_walks(&trace);
+        assert!(
+            wide.is_empty(),
+            "{label} reads the whole history:\n{}",
+            wide.join("\n")
+        );
+    }
+    let _ = std::fs::remove_file(&trace_file);
+}
+
+// ---- STP-28 AC-43 ----
+
+#[test]
+fn merge_of_the_base_branch_blocks_nothing() {
+    /// A ticket with `base_branch` main: step 1, a merge of main that brings the test file
+    /// `new.rs` (resolved to other content when `resolved`), step 2. Returns the check output and
+    /// the merge commit.
+    fn scenario(resolved: bool) -> (String, String) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        let main = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        let mut state = common::state_json(dir, "ABC-1");
+        state["base_branch"] = serde_json::json!(main);
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base branch");
+        git(dir, &["checkout", "-q", "-b", "ticket"]);
+        clean_pair(dir, "step 1", "one");
+        git(dir, &["checkout", "-q", &main]);
+        write(
+            dir,
+            "crates/tiny/tests/new.rs",
+            "#[test]\nfn from_main() {\n    assert_eq!(tiny::add(1, 1), 2);\n}\n",
+        );
+        commit(dir, "main: a test file");
+        git(dir, &["checkout", "-q", "ticket"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=test-user",
+                "-c",
+                "user.email=test-user.invalid",
+                "merge",
+                "-q",
+                "--no-ff",
+                "--no-commit",
+                &main,
+            ],
+        );
+        if resolved {
+            write(
+                dir,
+                "crates/tiny/tests/new.rs",
+                "#[test]\nfn from_main() {\n    assert_eq!(tiny::add(2, 2), 4);\n}\n",
+            );
+        }
+        commit(dir, "ABC-1: merge main");
+        let merge = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        clean_pair(dir, "step 2", "two");
+        let (_, text) = check(dir);
+        (text, merge)
+    }
+
+    let (text, _) = scenario(false);
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
+    assert!(!text.contains("build-input-changed"), "{text}");
+
+    let (text, merge) = scenario(true);
+    assert_eq!(
+        outcome(&text, "step 2"),
+        "unverified",
+        "a merge that resolves the file to other content blocks: {text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "build-input-changed: crates/tiny/tests/new.rs at {}",
+            &merge[..7]
+        )),
+        "{text}"
+    );
+}
+
+// ---- STP-28 step 23 (AC-37) ----
+
+#[test]
+fn base_edges() {
+    /// Sets the `base` of ABC-1 and commits the state.
+    fn set_base(dir: &Path, base: &str) {
+        let mut state = common::state_json(dir, "ABC-1");
+        state["base"] = serde_json::json!(base);
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base");
+    }
+
+    // A base after HEAD is no ancestor of HEAD: both checks refuse.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    clean_pair(dir, "step 1", "alpha");
+    let before = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    commit(dir, "a later commit");
+    let later = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    git(dir, &["checkout", "-q", "--detach", &before]);
+    set_base(dir, &later);
+    let out = {
+        let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
+        stapel(dir).args(["check", "ABC-1"]).output().unwrap()
+    };
+    let full = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(2), "{full}");
+    assert!(full.contains("state.json has base"), "{full}");
+    let (code, hist, err) = history(dir);
+    assert_eq!(code, 2, "{hist}{err}");
+    assert!(err.contains("state.json has base"), "{err}");
+
+    // HEAD equal to the base: an empty Walk is no refusal of the base.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    clean_pair(dir, "step 1", "alpha");
+    let head = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let mut state = common::state_json(dir, "ABC-1");
+    state["base"] = serde_json::json!(head);
+    write(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+    );
+    let (code, hist, err) = history(dir);
+    assert!(
+        !format!("{hist}{err}").contains("state.json has base"),
+        "{hist}{err}"
+    );
+    // The empty Walk holds no step commits; that is the only complaint.
+    assert_eq!(code, 2, "{hist}{err}");
+    assert!(err.contains("no step commits"), "{err}");
+}

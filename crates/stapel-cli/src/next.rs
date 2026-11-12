@@ -1,6 +1,6 @@
 //! `stapel next [KEY]`: the next action of a ticket, from the facts on disk (STP-20). It changes only the stops of the trial merge (STP-27).
 
-use crate::check::{base_of, history_report, read_head, shallow_refusal};
+use crate::check::{base_of, history_report, junit_globs_at, mode_of, read_head, shallow_refusal};
 use crate::fail::Fail;
 use crate::repo;
 use stapel_core::brief::assemble;
@@ -11,7 +11,7 @@ use stapel_core::journal::{self, Entry};
 use stapel_core::next::{Action, Facts, Fault, History, Target, decide};
 use stapel_core::outcomes::{open_red, passing};
 use stapel_core::review::{finding_round, patch_findings};
-use stapel_core::steps::{Marker, git_text, step_commits, steps};
+use stapel_core::steps::{Marker, git_text, step_commits, steps, walk_range};
 use stapel_core::ticket::{parse, read};
 use stapel_core::tickets::{Status, Ticket, list, resolve};
 use stapel_core::triage::blocking_findings;
@@ -77,11 +77,13 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
     };
     shallow_refusal(root).map_err(Fail::failed)?;
     let base = base_of(root, ticket, &head).map_err(Fail::failed)?;
-    let commits = step_commits(root, key, &head).map_err(Fail::failed)?;
+    let commits = step_commits(root, key, &head, base.as_deref()).map_err(Fail::failed)?;
     let last = commits.last().map(|c| c.sha.clone());
     let steps = steps(commits);
+    let base_branch = crate::check::base_branch_of(ticket);
     let bounds = Bounds {
         base: base.as_deref(),
+        base_branch: base_branch.as_deref(),
         closed: false,
     };
     let report = history_report(root, key, &head, &steps, bounds).map_err(Fail::failed)?;
@@ -100,7 +102,8 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         };
         let found = match open {
             Some(red) => {
-                let judged = open_red(root, &red, &head).map_err(Fail::failed)?;
+                let globs = junit_globs_at(root);
+                let judged = open_red(root, &red, &head, mode_of(&globs)).map_err(Fail::failed)?;
                 if judged.is_none() {
                     open_red_label = Some(a.label.clone());
                 }
@@ -112,7 +115,7 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
                     if !passing(outcome)
                         && !(outcome == "unverified" && reason.starts_with("interleaved: ")) =>
                 {
-                    let changed = report.inputs.changed.as_ref().map(|c| c.sha.clone());
+                    let changed = s.changed.clone();
                     let sha = a
                         .fault
                         .clone()
@@ -135,7 +138,8 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         }
     }
 
-    let subjects = git_text(root, &["log", "--first-parent", "--format=%s", &head])
+    let walk = walk_range(base.as_deref(), &head);
+    let subjects = git_text(root, &["log", "--first-parent", "--format=%s", &walk])
         .map_err(Fail::failed)?
         .lines()
         .map(String::from)

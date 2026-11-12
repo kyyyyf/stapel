@@ -17,6 +17,10 @@ pub struct BuildInputs {
     pub changed: Option<Change>,
     /// Build inputs at HEAD that no non-RED commit of the range changes, sorted.
     pub unchanged: Vec<String>,
+    /// Under junit: every commit of the Walk that changes an input (`false`) or a configuration
+    /// file or the command's script (`true`), oldest first; a commit has one entry for the first
+    /// input path and one for each fixed file it changes.
+    pub walk_changes: Vec<(Change, bool)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +36,8 @@ pub struct Bounds<'a> {
     /// The `base` of `state.json`: the range starts after it. Without it the range starts at the
     /// oldest commit whose subject carries the key.
     pub base: Option<&'a str>,
+    /// The `base_branch` of `state.json`: a merge of it brings build inputs that block nothing.
+    pub base_branch: Option<&'a str>,
     /// A closed ticket: the range ends at the last commit whose subject carries the key.
     pub closed: bool,
 }
@@ -40,10 +46,33 @@ pub struct Bounds<'a> {
 pub fn check_base(root: &Path, base: &str, head: &str) -> Result<(), String> {
     let full = matches!(base.len(), 40 | 64)
         && base.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    // The base is on the line when it is the first parent of the oldest commit of `base..head`
+    // (or `head` itself): only that range is read.
     let on_line = full
-        && git(root, &["rev-list", "--first-parent", head])
-            .map(|o| o.split(|b| *b == b'\n').any(|l| l == base.as_bytes()))
-            .unwrap_or(false);
+        && git(root, &["rev-parse", "--verify", "-q", &format!("{head}^{{commit}}")])
+            .ok()
+            .zip(
+                git(
+                    root,
+                    &["rev-list", "--first-parent", &format!("{base}..{head}")],
+                )
+                .ok(),
+            )
+            .is_some_and(|(head_sha, range)| {
+                match range.split(|b| *b == b'\n').rfind(|l| !l.is_empty()) {
+                    None => head_sha.trim_ascii() == base.as_bytes(),
+                    Some(oldest) => git(
+                        root,
+                        &[
+                            "rev-parse",
+                            "--verify",
+                            "-q",
+                            &format!("{}^1", String::from_utf8_lossy(oldest)),
+                        ],
+                    )
+                    .is_ok_and(|p| p.trim_ascii() == base.as_bytes()),
+                }
+            });
     if on_line {
         Ok(())
     } else {
@@ -65,7 +94,7 @@ pub fn range(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Vec<S
             "--first-parent",
             "--reverse",
             "--format=%H%x00%s",
-            head,
+            &crate::steps::walk_range(bounds.base, head),
         ],
     )?;
     let fields: Vec<String> = raw
@@ -80,10 +109,8 @@ pub fn range(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Vec<S
         .collect();
     let keyed = |s: &str| s.starts_with(&format!("{key} ")) || s.starts_with(&format!("{key}:"));
     let start = match bounds.base {
-        Some(base) => commits
-            .iter()
-            .position(|(sha, _)| sha == base)
-            .map(|i| i + 1),
+        // The log is `base..head`: every commit of it is after the base.
+        Some(_) => Some(0),
         None => commits.iter().position(|(_, s)| keyed(s)),
     };
     let end = if bounds.closed {
@@ -98,6 +125,35 @@ pub fn range(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Vec<S
         Some(i) if i < end => commits[i..end].iter().map(|(sha, _)| sha.clone()).collect(),
         _ => Vec::new(),
     })
+}
+
+/// The second parent of a merge commit of the Walk that merged the base branch: a second parent
+/// that is an ancestor of `refs/heads/<base_branch>` (STP-28 AC-43).
+fn base_merge_parent(root: &Path, sha: &str, base_branch: Option<&str>) -> Option<String> {
+    let branch = base_branch?;
+    let second = git(
+        root,
+        &["rev-parse", "--verify", "-q", &format!("{sha}^2")],
+    )
+    .ok()?;
+    let second = String::from_utf8_lossy(&second).trim().to_string();
+    let reference = format!("refs/heads/{branch}");
+    git(
+        root,
+        &["merge-base", "--is-ancestor", &second, &reference],
+    )
+    .ok()?;
+    Some(second)
+}
+
+/// Whether `path` has the same content at the merge as at its second parent (both absent counts).
+fn same_as_parent(root: &Path, sha: &str, second: &str, path: &str) -> bool {
+    let id = |commit: &str| {
+        git(root, &["rev-parse", "-q", "--verify", &format!("{commit}:{path}")])
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).trim().to_string())
+    };
+    id(sha) == id(second)
 }
 
 /// A path that is a build input by its name: a `.cargo` component, a toolchain file or `build.rs`.
@@ -431,11 +487,18 @@ pub fn analyse(
             .iter()
             .flat_map(|c| reader.broken[*c].iter().cloned())
             .collect();
+        let merged = base_merge_parent(root, sha, bounds.base_branch);
         for e in &list {
             let paths: Vec<&String> = [e.old.as_ref(), e.new.as_ref()]
                 .into_iter()
                 .flatten()
                 .collect();
+            // A Base merge input blocks nothing (AC-43).
+            if let Some(second) = &merged
+                && paths.iter().all(|p| same_as_parent(root, sha, second, p))
+            {
+                continue;
+            }
             let link = e.old_mode == "120000" || e.new_mode == "120000";
             let mut hit: Option<String> = None;
             for p in &paths {
@@ -499,7 +562,69 @@ pub fn analyse(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    Ok(BuildInputs { changed, unchanged })
+    Ok(BuildInputs {
+        changed,
+        unchanged,
+        walk_changes: Vec::new(),
+    })
+}
+
+/// Reads the Walk under the junit runner (STP-28 AC-24, AC-25): the commits that change a file
+/// matching an input glob, or one of `fixed` (the configuration and the command's script). A merge
+/// counts by its diff to its first parent.
+pub fn analyse_junit(
+    root: &Path,
+    key: &str,
+    head: &str,
+    bounds: Bounds,
+    inputs: &[String],
+    fixed: &[String],
+) -> Result<BuildInputs, String> {
+    let mut out = BuildInputs::default();
+    for sha in range(root, key, head, bounds)? {
+        let raw = git(
+            root,
+            &[
+                "diff",
+                "--name-only",
+                "--no-renames",
+                "-z",
+                &parent(root, &sha),
+                &sha,
+            ],
+        )?;
+        let paths: Vec<String> = raw
+            .split(|b| *b == 0)
+            .filter(|p| !p.is_empty())
+            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .collect();
+        // A Base merge input blocks nothing (AC-43); a fixed file stays a change.
+        let merged = base_merge_parent(root, &sha, bounds.base_branch);
+        let input = paths.iter().find(|p| {
+            inputs.iter().any(|g| crate::config::glob_matches(g, p))
+                && !merged
+                    .as_deref()
+                    .is_some_and(|second| same_as_parent(root, &sha, second, p))
+        });
+        let mut found: Vec<(&String, bool)> = input.into_iter().map(|p| (p, false)).collect();
+        // Every fixed file the commit changes, in the order of `fixed`.
+        for f in fixed {
+            if let Some(p) = paths.iter().find(|p| *p == f) {
+                found.push((p, true));
+            }
+        }
+        for (path, is_config) in found {
+            out.walk_changes.push((
+                Change {
+                    path: path.clone(),
+                    sha: sha.clone(),
+                },
+                is_config,
+            ));
+        }
+    }
+    out.changed = out.walk_changes.first().map(|(c, _)| c.clone());
+    Ok(out)
 }
 
 /// The crate folder of a path under `crates/*/tests/`.
