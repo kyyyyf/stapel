@@ -314,3 +314,127 @@ fn drops_empty_commits() {
         [by("GREEN"), by("side work")]
     );
 }
+
+/// A repository with `stapel init --prefix ABC` committed on `main`.
+fn ticket_repo() -> TempDir {
+    let repo = common::stapel_repo();
+    let dir = repo.path();
+    git_n(dir, 1, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    commit(dir, 1, &[("src/a.txt", "a1\n")], "base");
+    repo
+}
+
+/// A branch `name` from `main` with a Branch state that names `base_branch` (when given) and one
+/// commit `subject`; the checkout returns to `main`.
+fn ticket_branch(dir: &Path, name: &str, base_branch: Option<&str>, subject: &str) {
+    git_n(dir, 2, &["checkout", "-q", "-b", name, "main"]);
+    let state = match base_branch {
+        Some(b) => format!("{{\"key\":\"{name}\",\"base_branch\":\"{b}\"}}\n"),
+        None => format!("{{\"key\":\"{name}\"}}\n"),
+    };
+    commit(
+        dir,
+        2,
+        &[
+            (&format!(".stapel/tickets/{name}/state.json"), &state),
+            (&format!("src/{name}.txt"), "code\n"),
+        ],
+        subject,
+    );
+    git_n(dir, 2, &["checkout", "-q", "main"]);
+}
+
+fn export_refs(dir: &Path) -> String {
+    git_n(dir, 1, &["for-each-ref", "refs/heads/export"])
+}
+
+// STP-31 AC-12: the key comes from the argument or the current branch, the ticket is read from its
+// branch, and each refusal exits 1 without an `export/` ref.
+#[test]
+fn export_key_and_refusals() {
+    let repo = ticket_repo();
+    let dir = repo.path();
+    ticket_branch(dir, "ABC-1", Some("main"), "red");
+
+    // The worktree on branch ABC-1, no KEY.
+    git_n(dir, 1, &["checkout", "-q", "ABC-1"]);
+    stapel(dir).args(["export", "--onto", "main"]).assert().success();
+    assert_eq!(commits(dir, "main..export/ABC-1").len(), 1);
+    git_n(dir, 1, &["update-ref", "-d", "refs/heads/export/ABC-1"]);
+
+    // The main checkout, before the merge of ABC-1: the ticket is read from its branch.
+    git_n(dir, 1, &["checkout", "-q", "main"]);
+    stapel(dir)
+        .args(["export", "ABC-1", "--onto", "main"])
+        .assert()
+        .success();
+    assert_eq!(commits(dir, "main..export/ABC-1").len(), 1);
+
+    // On branch export/ABC-1 without KEY, and an option in place of a key.
+    git_n(dir, 1, &["checkout", "-q", "export/ABC-1"]);
+    let before = export_refs(dir);
+    stapel(dir)
+        .args(["export", "--onto", "main"])
+        .assert()
+        .code(1);
+    stapel(dir).args(["export", "-x"]).assert().code(1);
+    assert_eq!(export_refs(dir), before);
+    git_n(dir, 1, &["checkout", "-q", "main"]);
+    git_n(dir, 1, &["update-ref", "-d", "refs/heads/export/ABC-1"]);
+
+    // Detached HEAD without KEY.
+    git_n(dir, 1, &["checkout", "-q", "--detach"]);
+    stapel(dir)
+        .args(["export", "--onto", "main"])
+        .assert()
+        .code(1);
+    git_n(dir, 1, &["checkout", "-q", "main"]);
+
+    // No branch, a branch without a Branch state, a key outside the pattern.
+    git_n(dir, 1, &["branch", "ABC-2", "main"]);
+    ticket_branch(dir, "XYZ-1", Some("main"), "red");
+    for key in ["ABC-9", "ABC-2", "XYZ-1"] {
+        stapel(dir)
+            .args(["export", key, "--onto", "main"])
+            .assert()
+            .code(1);
+    }
+    assert_eq!(export_refs(dir), "");
+}
+
+// STP-31 AC-13: without `--onto` the Onto ref is the upstream of the base branch; no upstream or no
+// `base_branch` exits 1 and names `--onto`.
+#[test]
+fn onto_defaults_to_the_upstream() {
+    let repo = ticket_repo();
+    let dir = repo.path();
+    let remote = bare_dir();
+    git_n(remote.path(), 1, &["init", "-q", "--bare"]);
+    let url = remote.path().display().to_string();
+    git_n(dir, 1, &["remote", "add", "origin", &url]);
+    // The state after `push -u origin main`, made without the push.
+    git_n(dir, 1, &["config", "branch.main.remote", "origin"]);
+    git_n(dir, 1, &["config", "branch.main.merge", "refs/heads/main"]);
+    git_n(dir, 1, &["update-ref", "refs/remotes/origin/main", "main"]);
+    // A commit on main that is not on the remote: it stays in the range of an upstream Onto ref.
+    commit(dir, 3, &[("src/local.txt", "local\n")], "local only");
+    ticket_branch(dir, "ABC-1", Some("main"), "red");
+    git_n(dir, 1, &["branch", "side", "main"]);
+    ticket_branch(dir, "ABC-2", Some("side"), "red");
+    ticket_branch(dir, "ABC-3", None, "red");
+
+    stapel(dir).args(["export", "ABC-1"]).assert().success();
+    let subjects: Vec<_> = commits(dir, "origin/main..export/ABC-1")
+        .into_iter()
+        .map(|(s, _)| s)
+        .collect();
+    assert_eq!(subjects, ["local only", "red"]);
+
+    for key in ["ABC-2", "ABC-3"] {
+        let out = stapel(dir).args(["export", key]).assert().code(1);
+        let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+        assert!(err.contains("--onto"), "{key}: {err}");
+    }
+    assert!(!export_refs(dir).contains("export/ABC-2"));
+    assert!(!export_refs(dir).contains("export/ABC-3"));
+}
