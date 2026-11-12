@@ -379,6 +379,26 @@ fn export(dir: &Path, key: &str, onto: &str) -> Result<Done, String> {
         let drop_for = if had_parents >= 1 && parents.len() == 1 {
             let parent_tree = clean_tree(dir, &parents[0], &process_entries, &index_env)?;
             (parent_tree == tree).then(|| parents[0].clone())
+        } else if parents.len() == 2 {
+            // A merge made by `git pull`: one parent is an ancestor of the other, and the merge adds
+            // nothing to the later one.
+            let is_ancestor = |old: &str, new: &str| {
+                git(dir, &["merge-base", "--is-ancestor", old, new], &[], b"").is_ok()
+            };
+            let later = if is_ancestor(&parents[0], &parents[1]) {
+                Some(&parents[1])
+            } else if is_ancestor(&parents[1], &parents[0]) {
+                Some(&parents[0])
+            } else {
+                None
+            };
+            match later {
+                Some(later) => {
+                    let later_tree = clean_tree(dir, later, &process_entries, &index_env)?;
+                    (later_tree == tree).then(|| later.clone())
+                }
+                None => None,
+            }
         } else {
             None
         };
