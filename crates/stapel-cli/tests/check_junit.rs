@@ -1080,6 +1080,75 @@ fn step_name_with_edge_space() {
     assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
 }
 
+// AC-19: exit 1 with only skipped cases, and exit 1 with one suite of zero cases, are unverified.
+#[test]
+fn exit_code_edge_cases() {
+    const SKIPPED: &str = "<testsuites><testsuite name=\"s\"><testcase classname=\"\" name=\" one\"><skipped/></testcase></testsuite></testsuites>\n";
+    const EMPTY: &str = "<testsuites><testsuite name=\"s\"></testsuite></testsuites>\n";
+    for (label, report) in [("skipped", SKIPPED), ("empty suite", EMPTY)] {
+        let (code, text) = run_case(report, 1, PASSED, 0);
+        assert_eq!(code, 1, "{label}: {text}");
+        assert_eq!(outcome(&text, "step 1"), "unverified", "{label}: {text}");
+        let line = text.lines().find(|l| l.starts_with("step 1: ")).unwrap();
+        assert!(line.contains("exit code 1"), "{label}: {line}");
+    }
+}
+
+// AC-15: a load failure with exit 0 is unverified (AC-19 first); one beside normal cases is read as
+// normal cases.
+#[test]
+fn load_failure_edge_cases() {
+    let (code, text) = run_case(NOT_LOADED, 0, PASSED, 0);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+    let line = text.lines().find(|l| l.starts_with("step 1: ")).unwrap();
+    assert!(line.contains("exit code 0"), "{line}");
+    // A failed load case beside a normal failed case: not a load failure, the test case fails.
+    const MIXED: &str = "<testsuites><testsuite name=\"s\"><testcase classname=\"Test suite failed to run\" name=\"Test suite failed to run\"><failure message=\"x\"/></testcase><testcase classname=\"\" name=\" one\"><failure message=\"y\"/></testcase></testsuite></testsuites>\n";
+    let (code, text) = run_case(MIXED, 1, PASSED, 0);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    assert!(text.contains("RED 1 assert, 0 compile"), "{text}");
+}
+
+// AC-22: `.only` in the second test file of a step at GREEN makes the whole step unverified.
+#[test]
+fn only_call_in_another_file() {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+    );
+    write(
+        dir,
+        "__tests__/y.test.ts",
+        "it(\"two\", () => { /* needs src/ok.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: one and two");
+    write(dir, "src/ok.ts", "export const ok = 1;\n");
+    write(
+        dir,
+        "__tests__/y.test.ts",
+        "it(\"two\", () => { /* needs src/ok.ts */ });\nit.only(\"three\", () => {});\n",
+    );
+    commit(dir, "ABC-1 step 1 GREEN: one and two");
+    let (code, text) = check(&repo);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+    let line = text.lines().find(|l| l.starts_with("step 1: ")).unwrap();
+    assert!(
+        line.contains("__tests__/y.test.ts") && line.contains(".only") && line.contains("GREEN"),
+        "{line}"
+    );
+    assert!(
+        repo.runs().iter().all(|l| !l.contains("__tests__/")),
+        "no command runs for the step: {:?}",
+        repo.runs()
+    );
+}
+
 // AC-21: the size of a report is read from its metadata before the file is read.
 #[test]
 fn report_size_checked_before_read() {
