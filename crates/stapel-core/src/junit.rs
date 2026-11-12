@@ -212,7 +212,7 @@ fn skip_to<'a>(text: &'a str, end: &str, what: &str) -> Result<&'a str, String> 
         .ok_or_else(|| format!("{what} is not closed"))
 }
 
-/// Reads `name attr="v" ... (/)>` after a `<`; returns the name, the decoded attributes, whether the
+/// Reads `name attr="v" ... (/)>` after a `<`; returns the name, the raw attributes, whether the
 /// tag is empty (`/>`), and the text after the tag. The values stay raw: the caller decodes them only
 /// for an element it knows.
 #[allow(clippy::type_complexity)]
