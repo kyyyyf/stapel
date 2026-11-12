@@ -1,0 +1,16 @@
+{"v":1,"id":"d-c31be0bd0943","at":"2026-11-11T11:15:59Z","by":"kyyyyf","action":"ok","section":"description","hash":"sha256:fce9793caf5e5689328681d67f2349921945fef0a446b92fc5db0cb9d92fa177","via":"grant"}
+{"v":1,"id":"d-7d799be58580","at":"2026-11-11T11:15:59Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:33ef595ff9ecaa2e67842626b3cbc295c8d3b603c302a1a717fed19a91b5e661","via":"grant"}
+{"v":1,"id":"d-43899daf86b7","at":"2026-11-11T11:15:59Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:6448695168af3bb684bed2051879657ee4ccb9c662e614fd575c6a62c31415ea","via":"grant"}
+{"v":1,"id":"d-0562da5a46f2","at":"2026-11-11T11:15:59Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:5fce94d2a643d2a95bebd137c3f8e31b3558087d560b8d1e26dc7a38483563fa","via":"grant"}
+{"v":1,"id":"d-b6da4af76604","at":"2026-11-11T11:15:59Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:4820849069a74784aa102739258efd40e7360d8ce5acb5abed35efbc20ae5ee3","via":"grant"}
+{"v":1,"id":"d-30316c929542","at":"2026-11-11T15:59:27Z","by":"kyyyyf","action":"ok","section":"description","hash":"sha256:60982f4efac10ff968487748d6a5254dd6d30db236a1d3e12b71376e17d16d7c","via":"grant"}
+{"v":1,"id":"d-261467c569ca","at":"2026-11-11T15:59:27Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:d83f89ed5b0c4e1997d9b47038334deee9016735ad2ead11a9724904434c2559","via":"grant"}
+{"v":1,"id":"d-5bfd385c36b3","at":"2026-11-11T15:59:27Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:af48270e2ff17bc8ad10386ce4c4c5a80b063364c26e5aa913b37bfdfeb02ccb","via":"grant"}
+{"v":1,"id":"d-89f012db9009","at":"2026-11-11T15:59:27Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:0f3efcca90ece179295b9fcc0a44579b563ed3f2e8ac656b4b5267a0c24c4695","via":"grant"}
+{"v":1,"id":"d-26cf96a72e33","at":"2026-11-11T15:59:27Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:6acb28304fa64c866787b496b709f316ebb974502b44ce09adcc1021237976e2","via":"grant"}
+{"v":1,"id":"d-9d030976b891","at":"2026-11-12T06:35:36Z","by":"kyyyyf","action":"ok","section":"description","hash":"sha256:feae4fee89af65aad50ccd4f13cf09031f5f690edfd7378514208e4583834162","via":"grant"}
+{"v":1,"id":"d-f97dd366a1ae","at":"2026-11-12T06:35:36Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:c58169a735a2782b6bb57a2d67817e7a37ea2c3ea52b33ac1db5606a65884c8f","via":"grant"}
+{"v":1,"id":"d-13024dcf4f11","at":"2026-11-12T06:35:36Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:956ade34853f90477b550a5e26d1ba6b9dd1d0feb48249c07e761b10e2c9c67a","via":"grant"}
+{"v":1,"id":"d-1a19fc17d638","at":"2026-11-12T06:35:36Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:e0a27b2457007c534eab188b1ee7b8b6bf250f7ef064264d041b5187555e200d","via":"grant"}
+{"v":1,"id":"d-5b775fafe147","at":"2026-11-12T06:35:36Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:5ec5c840f077a2c934416ddd2ad0b88b005f5b496c916937bd2009695cc1f023","via":"grant"}
+{"v":1,"id":"d-5e9ffe2aedf5","at":"2026-11-12T07:03:27Z","by":"kyyyyf","action":"close","reason":"All 15 criteria are built and tested in 14 steps, the check passes at the head with 845 tests, and two code review rounds left no HIGH finding and no MEDIUM finding without a fate."}

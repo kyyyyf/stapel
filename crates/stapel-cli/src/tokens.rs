@@ -472,6 +472,43 @@ struct Row {
     legacy_kind: Option<String>,
 }
 
+/// The sums of a ticket's attention records (STP-29 AC-9): dialogs, questions, typed, attention,
+/// waited and long waits, and the earliest `from` and latest `to`.
+#[derive(Default)]
+struct AttentionSum {
+    counts: [u64; 6],
+    from: Option<u64>,
+    to: Option<u64>,
+}
+
+/// Milliseconds as whole minutes: `35 min`, `1 h 5 min`, `2 h 0 min`.
+fn duration(ms: u64) -> String {
+    let minutes = ms / 60_000;
+    match (minutes / 60, minutes % 60) {
+        (0, m) => format!("{m} min"),
+        (h, m) => format!("{h} h {m} min"),
+    }
+}
+
+/// The count of distinct step labels of the ticket among the subjects of every commit reachable
+/// from HEAD, merges followed; `—` when git cannot be read.
+fn step_count(root: &Path, key: &str) -> String {
+    let out = std::process::Command::new("git")
+        .args(["log", "--format=%s", "HEAD"])
+        .current_dir(root)
+        .output();
+    let Ok(out) = out else { return "—".into() };
+    if !out.status.success() {
+        return "—".into();
+    }
+    let labels: std::collections::BTreeSet<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|s| stapel_core::steps::parse_subject(key, s))
+        .map(|(label, _)| label)
+        .collect();
+    labels.len().to_string()
+}
+
 /// The sessions table (STP-5 AC-4): per session (its line with the greatest start plus duration)
 /// and model, the session's output and thinking, the output of all tickets' measured records of
 /// that session (overlapping windows of one transcript and model counted once), and the gap.
@@ -665,7 +702,7 @@ fn cell(v: Option<u64>) -> String {
 /// The smallest width of each column; columns grow with their longest cell, two spaces apart.
 const MIN_WIDTHS: [usize; 8] = [14, 28, 9, 9, 12, 13, 10, 17];
 
-fn render(rows: &[[String; 8]]) -> Vec<String> {
+fn render<const N: usize>(rows: &[[String; N]]) -> Vec<String> {
     let mut widths = MIN_WIDTHS;
     for row in rows {
         for (i, c) in row.iter().enumerate() {
@@ -682,6 +719,139 @@ fn render(rows: &[[String; 8]]) -> Vec<String> {
             out
         })
         .collect()
+}
+
+/// The first and last timed line of a transcript file, in milliseconds.
+fn timed_span(path: &Path) -> Option<(u64, u64)> {
+    use stapel_core::tokens::{MAX_TRANSCRIPT_LINE, read_bounded_line};
+    let mut reader = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+    let mut buf = Vec::new();
+    let mut span: Option<(u64, u64)> = None;
+    while read_bounded_line(&mut reader, &mut buf, MAX_TRANSCRIPT_LINE).ok()? {
+        if buf.len() > MAX_TRANSCRIPT_LINE {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(&buf) else {
+            continue;
+        };
+        let Ok(Value::Object(v)) = serde_json::from_str::<Value>(text.trim_end()) else {
+            continue;
+        };
+        let Some(t) = v
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_transcript_time)
+        else {
+            continue;
+        };
+        span = Some(span.map_or((t, t), |(a, b)| (a.min(t), b.max(t))));
+    }
+    span
+}
+
+/// The rows of one source of the measure table: a row per model.
+fn measure_rows<'a>(
+    source: &str,
+    messages: impl Iterator<Item = &'a stapel_core::tokens::Message> + Clone,
+) -> Vec<[String; 6]> {
+    sum_window(messages.clone())
+        .into_iter()
+        .map(|s| {
+            let of_model = |m: &&stapel_core::tokens::Message| m.model == s.model;
+            let partial = messages.clone().filter(of_model).any(|m| !m.complete);
+            let mut cells = s.fields.map(|(_, v)| cell(v));
+            if partial {
+                // The streamed output of a message without a final line is a lower bound.
+                let total = messages
+                    .clone()
+                    .filter(of_model)
+                    .filter_map(|m| m.usage.output)
+                    .fold(0u64, u64::saturating_add);
+                cells[1] = format!("≥{total}");
+            }
+            [
+                source.to_string(),
+                s.model.clone(),
+                cells[0].clone(),
+                cells[1].clone(),
+                cells[2].clone(),
+                cells[3].clone(),
+            ]
+        })
+        .collect()
+}
+
+/// `stapel tokens measure FILE` (STP-29 AC-10, AC-11, AC-14): tokens and attention numbers of a main
+/// transcript and its subagent files; no repository is opened and nothing is written.
+pub fn measure(file: &Path) -> Result<(), crate::fail::Fail> {
+    use crate::fail::Fail;
+    let refuse = |reason: &str| Fail::refused(format!("{}: {reason}", file.display()));
+    let meta = std::fs::metadata(file).map_err(|e| {
+        refuse(if e.kind() == std::io::ErrorKind::NotFound {
+            "missing"
+        } else {
+            "not readable"
+        })
+    })?;
+    // The file type is checked before the file is opened: opening a FIFO would wait.
+    if !meta.is_file() {
+        return Err(refuse("not a file"));
+    }
+    if std::fs::File::open(file).is_err() {
+        return Err(refuse("not readable"));
+    }
+    let main = stapel_core::tokens::read_transcript(file).map_err(|_| refuse("not readable"))?;
+    let Some(session) = main.session.clone() else {
+        return Err(refuse("no sessionId"));
+    };
+    if main.agent.is_some() {
+        return Err(refuse("subagent transcript"));
+    }
+    let events = stapel_core::attention::read_events(file).map_err(|_| refuse("not readable"))?;
+    let sums = stapel_core::attention::sum_events(&events);
+
+    let mut subagent_messages = Vec::new();
+    let folder = match file.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
+    };
+    let mut names: Vec<_> = std::fs::read_dir(folder.join(&session).join("subagents"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+        .collect();
+    names.sort();
+    for path in names {
+        if let Ok(t) = stapel_core::tokens::read_transcript(&path)
+            && t.session.as_deref() == Some(session.as_str())
+        {
+            subagent_messages.extend(t.messages);
+        }
+    }
+
+    let mut table: Vec<[String; 6]> = vec![
+        ["source", "model", "input", "output", "cache read", "cache write"].map(String::from),
+    ];
+    table.extend(measure_rows("main", main.messages.iter()));
+    table.extend(measure_rows("subagents", subagent_messages.iter()));
+    let mut out = vec![format!("transcript: {session}")];
+    out.extend(render(&table));
+    out.push(format!(
+        "attention: {} dialogs, {} questions, {} messages; {} attention, {} waited ({} over 10 min)",
+        sums.dialogs,
+        sums.questions,
+        sums.typed,
+        duration(sums.attention_ms),
+        duration(sums.waited_ms),
+        sums.long_waits
+    ));
+    let wall = timed_span(file).map_or(0, |(a, b)| b.saturating_sub(a));
+    out.push(format!("wall time: {}", duration(wall)));
+    say!("{}", out.join("\n"));
+    Ok(())
 }
 
 /// Ticket folders in key order, read without their `state.json`.
@@ -719,6 +889,7 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
         // 2 for records with `imported_from`), legacy kind.
         let mut rows: std::collections::BTreeMap<(String, String, u8, String), Row> =
             Default::default();
+        let mut attention: Option<AttentionSum> = None;
         for (n, entry) in read(&path)? {
             let text = |m: &Map<String, Value>, k: &str| {
                 m.get(k).and_then(Value::as_str).unwrap_or("—").to_string()
@@ -726,6 +897,27 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
             let problem = format!("problem: .stapel/tickets/{ticket_key}/tokens.jsonl:{n}");
             match entry {
                 Entry::Problem(_) => problems.push(problem),
+                Entry::V1(m) if m.get("kind").and_then(Value::as_str) == Some("attention") => {
+                    let num = |k: &str| m.get(k).and_then(Value::as_u64).unwrap_or(0);
+                    let sum = attention.get_or_insert_with(Default::default);
+                    for (slot, k) in sum.counts.iter_mut().zip([
+                        "dialogs",
+                        "questions",
+                        "typed",
+                        "attention_ms",
+                        "waited_ms",
+                        "long_waits",
+                    ]) {
+                        *slot = slot.saturating_add(num(k));
+                    }
+                    let time = |k: &str| m.get(k).and_then(Value::as_str).and_then(parse_cli_time);
+                    if let Some(f) = time("from") {
+                        sum.from = Some(sum.from.map_or(f, |c| c.min(f)));
+                    }
+                    if let Some(t) = time("to") {
+                        sum.to = Some(sum.to.map_or(t, |c| c.max(t)));
+                    }
+                }
                 Entry::V1(m) => {
                     let num = |k: &str| m.get(k).and_then(Value::as_u64);
                     let imported = m.contains_key("imported_from");
@@ -808,6 +1000,21 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
         }
         let mut block = vec![format!("ticket: {ticket_key}")];
         block.extend(render(&table));
+        if let Some(a) = attention {
+            let [dialogs, questions, typed, attention_ms, waited_ms, long] = a.counts;
+            block.push(format!(
+                "attention: {dialogs} dialogs, {questions} questions, {typed} messages; \
+                 {} attention, {} waited ({long} over 10 min)",
+                duration(attention_ms),
+                duration(waited_ms)
+            ));
+            let wall = a.from.zip(a.to).map_or(0, |(f, t)| t.saturating_sub(f));
+            block.push(format!(
+                "steps: {}; wall time: {}",
+                step_count(&root, &ticket_key),
+                duration(wall)
+            ));
+        }
         blocks.push(block.join("\n"));
     }
     if key.is_none() {
@@ -865,6 +1072,34 @@ fn cursors(
         }
     }
     (cursors, newest)
+}
+
+/// The attention cursor: the latest `to` of the attention records of `identity` in every ticket's
+/// `tokens.jsonl`. Other lines are skipped (STP-29).
+fn attention_cursor(root: &Path, identity: &str) -> Option<u64> {
+    let mut cursor: Option<u64> = None;
+    for ticket in stapel_core::tickets::list(root) {
+        let Ok(entries) = read(&ticket.dir.join("tokens.jsonl")) else {
+            continue;
+        };
+        for (_, entry) in entries {
+            let (Entry::V1(map) | Entry::Legacy(map)) = entry else {
+                continue;
+            };
+            let text = |key: &str| map.get(key).and_then(Value::as_str);
+            if text("kind") != Some("attention") || text("transcript") != Some(identity) {
+                continue;
+            }
+            if let Some(ms) = text("to").and_then(parse_cli_time) {
+                cursor = Some(cursor.map_or(ms, |c| c.max(ms)));
+            }
+        }
+    }
+    // The shared value also covers the events a call in another checkout recorded.
+    match (cursor, read_shared_cursor(root, identity)) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 /// How far a hook call reads a transcript (STP-26).
@@ -1007,11 +1242,14 @@ pub fn hook_records(
 ) -> Option<()> {
     let (t, identity) = match read_for_hook(transcript) {
         Ok(read) => read,
+        // A subagent transcript that is not there yet is no gap (STP-29).
+        Err("missing") if hook == "subagent-stop" => return Some(()),
         Err(reason) => return gap_record(root, transcript, role, hook, reason),
     };
     // One hook at a time: cursors are read and records appended under `tokens.lock` (AC-15).
     let _lock = take_tokens_lock(root)?;
     let (cursors, newest) = cursors(root, &identity);
+    // `Some(None)`: `stop` with no complete message, so no token window.
     let end = match reach {
         Reach::Stop => {
             let now = std::time::SystemTime::now()
@@ -1021,7 +1259,7 @@ pub fn hook_records(
             if newest.is_some_and(|at| now.saturating_sub(at) < STOP_WAIT_MS) {
                 return Some(());
             }
-            Some(stop_end(&t.messages)?)
+            Some(stop_end(&t.messages))
         }
         Reach::All => None,
     };
@@ -1030,12 +1268,27 @@ pub fn hook_records(
         .iter()
         .filter(|m| cursors.get(&m.model).is_none_or(|&c| m.time_ms > c))
         .filter(|m| match end {
-            Some((at, true)) => m.time_ms < at,
-            Some((at, false)) => m.time_ms <= at,
+            Some(None) => false,
+            Some(Some((at, true))) => m.time_ms < at,
+            Some(Some((at, false))) => m.time_ms <= at,
             None => true,
         })
         .collect();
-    let first = window.iter().map(|m| m.time_ms).min()?;
+    // Attention events of a main transcript, from `stop` and `session-end` only (STP-29).
+    let events = if (hook == "stop" || hook == "session-end") && !identity.contains('/') {
+        let after = attention_cursor(root, &identity);
+        let mut events =
+            stapel_core::attention::read_events_with_cwd(transcript).unwrap_or_default();
+        events.retain(|(e, _)| after.is_none_or(|c| e.time_ms > c));
+        events
+    } else {
+        Vec::new()
+    };
+    let first = window
+        .iter()
+        .map(|m| m.time_ms)
+        .min()
+        .or_else(|| events.iter().map(|(e, _)| e.time_ms).min())?;
     let tickets = stapel_core::tickets::list(root);
     let mut open = tickets
         .iter()
@@ -1068,9 +1321,112 @@ pub fn hook_records(
         }
         lines.push(serde_json::to_string(&Value::Object(record)).ok()?);
     }
-    if lines.is_empty() {
-        return Some(());
+    // Group the events by worktree ticket, else the target ticket (AC-15).
+    let mut groups: Vec<(&stapel_core::tickets::Ticket, Vec<stapel_core::attention::Event>)> =
+        Vec::new();
+    for (event, cwd) in events {
+        let owner = cwd
+            .as_deref()
+            .and_then(worktree_key)
+            .and_then(|key| tickets.iter().find(|t| t.key == key))
+            .unwrap_or(ticket);
+        match groups.iter_mut().find(|(t, _)| t.key == owner.key) {
+            Some((_, list)) => list.push(event),
+            None => groups.push((owner, vec![event])),
+        }
     }
-    stapel_core::journal::append_all(&ticket.dir.join("tokens.jsonl"), &lines).ok()?;
+    let mut extra: Vec<(&Path, String)> = Vec::new();
+    let mut newest_event: Option<u64> = None;
+    for (owner, events) in &groups {
+        let sums = stapel_core::attention::sum_events(events);
+        let from = events.iter().map(|e| e.time_ms).min()?;
+        let to = events.iter().map(|e| e.time_ms).max()?;
+        newest_event = Some(newest_event.map_or(to, |n| n.max(to)));
+        let mut digest = sha2::Sha256::new();
+        for part in [owner.key.as_str(), identity.as_str(), &rfc3339_millis(to)] {
+            digest.update(part.as_bytes());
+            digest.update([0u8]);
+        }
+        let hex: String = digest
+            .finalize()
+            .iter()
+            .take(6)
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let record = json!({
+            "v": 1,
+            "id": format!("a-{hex}"),
+            "at": now_rfc3339(),
+            "ticket": owner.key,
+            "kind": "attention",
+            "hook": hook,
+            "transcript": identity,
+            "from": rfc3339_millis(from),
+            "to": rfc3339_millis(to),
+            "questions": sums.questions,
+            "dialogs": sums.dialogs,
+            "typed": sums.typed,
+            "waited_ms": sums.waited_ms,
+            "attention_ms": sums.attention_ms,
+            "long_waits": sums.long_waits,
+        });
+        let line = serde_json::to_string(&record).ok()?;
+        if owner.key == ticket.key {
+            lines.push(line);
+        } else {
+            extra.push((owner.dir.as_path(), line));
+        }
+    }
+    for (dir, line) in extra {
+        stapel_core::journal::append_all(&dir.join("tokens.jsonl"), &[line]).ok()?;
+    }
+    if !lines.is_empty() {
+        stapel_core::journal::append_all(&ticket.dir.join("tokens.jsonl"), &lines).ok()?;
+    }
+    if let Some(to) = newest_event {
+        write_shared_cursor(root, &identity, to);
+    }
     Some(())
+}
+
+const SHARED_CURSORS: &str = "attention-cursors.json";
+
+/// The shared attention cursor of `identity` from the git common folder; `None` when missing or
+/// unreadable (STP-29).
+fn read_shared_cursor(root: &Path, identity: &str) -> Option<u64> {
+    let dir = stapel_core::worktree::stapel_dir(root).ok()?;
+    let text = std::fs::read_to_string(dir.join(SHARED_CURSORS)).ok()?;
+    let map: Map<String, Value> = serde_json::from_str(&text).ok()?;
+    map.get(identity)?.as_u64()
+}
+
+/// Keeps the latest `to` of `identity` in the git common folder, through a temporary file and a
+/// rename. Failures are ignored: the records are already written.
+fn write_shared_cursor(root: &Path, identity: &str, to: u64) {
+    let Ok(dir) = stapel_core::worktree::stapel_dir(root) else {
+        return;
+    };
+    let path = dir.join(SHARED_CURSORS);
+    let mut map: Map<String, Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    let old = map.get(identity).and_then(Value::as_u64).unwrap_or(0);
+    map.insert(identity.to_string(), json!(to.max(old)));
+    let Ok(text) = serde_json::to_string(&Value::Object(map)) else {
+        return;
+    };
+    let tmp = dir.join(format!("{SHARED_CURSORS}.{}.tmp", std::process::id()));
+    if std::fs::write(&tmp, text).is_err() || std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// The key after `.claude` and `worktrees` in a path, if the path has them in a row.
+fn worktree_key(cwd: &str) -> Option<&str> {
+    let parts: Vec<&str> = cwd.split('/').collect();
+    parts
+        .windows(3)
+        .find(|w| w[0] == ".claude" && w[1] == "worktrees" && !w[2].is_empty())
+        .map(|w| w[2])
 }

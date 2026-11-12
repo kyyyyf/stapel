@@ -686,10 +686,14 @@ fn unreadable_transcript_gives_a_gap_record() {
     std::fs::write(&locked, "{\"sessionId\":\"s\"}\n").unwrap();
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
     let mut cases = vec![
-        (missing, "missing"),
         (folder, "not a file"),
         (no_session, "no sessionId"),
     ];
+    // A missing subagent transcript gives no record (STP-29 AC-12).
+    subagent_stop(repo.path(), dir, "stapel-builder", &missing)
+        .success()
+        .stdout("");
+    assert!(records(repo.path(), "ABC-1").is_empty());
     // A process that may read any file cannot make a file unreadable.
     if std::fs::File::open(&locked).is_err() {
         cases.push((locked, "not readable"));
@@ -737,6 +741,11 @@ fn unreadable_transcript_gives_a_gap_record() {
     let r = rs.last().unwrap();
     assert_eq!(r["role"], "orchestrator", "{r}");
     assert_eq!(r["hook"], "session-end", "{r}");
+    assert_eq!(r["note"], "transcript not read: missing", "{r}");
+    main_hook(repo.path(), dir, "stop", "s-hook", &dir.join("gone-too.jsonl"));
+    let rs = records(repo.path(), "ABC-1");
+    let r = rs.last().unwrap();
+    assert_eq!(r["hook"], "stop", "{r}");
     assert_eq!(r["note"], "transcript not read: missing", "{r}");
 
     // No open ticket: nothing is written, not even to a closed ticket.
@@ -820,6 +829,11 @@ fn bad_input_writes_nothing() {
         "cwd": dir, "agent_type": "stapel-builder", "agent_transcript_path": dir.join("gone.jsonl"),
     });
     run(sound.path(), true, &missing.to_string());
+    assert!(records(sound.path(), "ABC-1").is_empty());
+    let gap = serde_json::json!({
+        "cwd": dir, "agent_type": "stapel-builder", "agent_transcript_path": dir,
+    });
+    run(sound.path(), true, &gap.to_string());
     assert_eq!(records(sound.path(), "ABC-1").len(), 1);
 }
 
@@ -904,8 +918,14 @@ fn token_hooks_on_a_branch() {
     assert_eq!(rs[0]["ticket"], "ABC-2");
     assert!(records(&pair.b, "ABC-1").is_empty());
 
-    // A gap record goes to the branch ticket too.
+    // A missing path writes nothing.
     subagent_stop(&pair.b, elsewhere.path(), "stapel-builder", &elsewhere.path().join("gone.jsonl"))
+        .success()
+        .stdout("");
+    assert_eq!(records(&pair.b, "ABC-2").len(), 1);
+
+    // A gap record goes to the branch ticket too.
+    subagent_stop(&pair.b, elsewhere.path(), "stapel-builder", elsewhere.path())
         .success()
         .stdout("");
     let rs = records(&pair.b, "ABC-2");
