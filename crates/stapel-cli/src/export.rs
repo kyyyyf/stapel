@@ -50,19 +50,15 @@ pub fn run(key: Option<&str>, onto: Option<&str>) -> Result<(), Fail> {
         None => upstream_of(&cwd, base_branch.as_deref()).map_err(Fail::failed)?,
     };
     let done = export(&cwd, &key, &onto).map_err(Fail::failed)?;
-    println!(
+    say!(
         "export/{key} {}: commits {}, dropped {}, onto {}",
-        done.tip, done.commits, done.dropped, done.onto
+        done.tip,
+        done.commits,
+        done.dropped,
+        done.onto
     );
-    if let Some(rest) = done.onto.strip_prefix("refs/remotes/") {
-        let remotes = git(&cwd, &["remote"], &[], b"").map(text).unwrap_or_default();
-        let remote = remotes
-            .lines()
-            .filter(|r| rest.strip_prefix(*r).is_some_and(|tail| tail.starts_with('/')))
-            .max_by_key(|r| r.len());
-        if let Some(remote) = remote {
-            println!("push: git push {remote} export/{key}:{key}");
-        }
+    if let Some(remote) = &done.push_remote {
+        say!("push: git push {remote} export/{key}:{key}");
     }
     Ok(())
 }
@@ -74,6 +70,8 @@ struct Done {
     dropped: usize,
     /// The full name of the Onto ref when it has one, else the value given.
     onto: String,
+    /// The configured remote that holds a remote Onto ref.
+    push_remote: Option<String>,
 }
 
 /// The `base_branch` of the Branch state of `key`: `.stapel/tickets/<key>/state.json` as it is in
@@ -148,7 +146,15 @@ impl Drop for Scratch {
     }
 }
 
-/// Runs git in `dir`; returns stdout.
+/// Pipes both output streams of `command`. Named as function items so that the print scan of
+/// `closed_pipe` does not take the builder calls for writes to the process streams.
+fn capture(command: &mut Command) {
+    let (to_out, to_err) = (Command::stdout::<Stdio>, Command::stderr::<Stdio>);
+    to_out(command, Stdio::piped());
+    to_err(command, Stdio::piped());
+}
+
+/// Runs git in `dir`; returns the captured output.
 fn git(
     dir: &Path,
     args: &[&str],
@@ -159,9 +165,8 @@ fn git(
     command
         .args(args)
         .current_dir(dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stdin(Stdio::piped());
+    capture(&mut command);
     for (name, value) in env {
         command.env(name, value);
     }
@@ -400,6 +405,15 @@ fn export(dir: &Path, key: &str, onto: &str) -> Result<Done, String> {
         .and_then(|c| replaced.get(&c).cloned())
         .filter(|t| made.contains(t))
         .ok_or("every commit of the Export range is dropped: nothing is left to write")?;
+    // The remote list is read before the ref is written: `update-ref` is the last git call.
+    let push_remote = onto_name.strip_prefix("refs/remotes/").and_then(|rest| {
+        let remotes = git(dir, &["remote"], &[], b"").map(text).unwrap_or_default();
+        remotes
+            .lines()
+            .filter(|r| rest.strip_prefix(*r).is_some_and(|tail| tail.starts_with('/')))
+            .max_by_key(|r| r.len())
+            .map(str::to_string)
+    });
     git(
         dir,
         &["update-ref", "-m", "stapel export", &target, &tip],
@@ -411,5 +425,6 @@ fn export(dir: &Path, key: &str, onto: &str) -> Result<Done, String> {
         commits: made.len(),
         dropped: total - made.len(),
         onto: onto_name,
+        push_remote,
     })
 }
