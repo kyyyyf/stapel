@@ -22,7 +22,9 @@ pub fn starter_toml(prefix: &str, cargo: bool) -> String {
     if cargo {
         text.push_str("[check]\nrunner = \"cargo\"\ntimeout_secs = 900\n");
     } else {
-        text.push_str("# [check]\n# runner = \"cargo\"\n# timeout_secs = 900\n");
+        text.push_str(
+            "# [check]\n# runner = \"junit\"\n# command = \"npx jest {file} --ci --reporters=jest-junit\"\n# report = \"junit.xml\"\n# tests = [\"**/*.test.*\"]\n",
+        );
     }
     text
 }
