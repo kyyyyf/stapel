@@ -320,6 +320,13 @@ fn ticket_repo() -> TempDir {
     let repo = common::stapel_repo();
     let dir = repo.path();
     git_n(dir, 1, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    // The files that `init` wrote stay in the work tree but out of `main`, as in the pilot where
+    // the Onto ref never holds `.stapel/`; ticket data is committed on the ticket branches only.
+    let untracked = git_n(dir, 1, &["ls-files", "--others", "--exclude-standard"]);
+    let exclude = dir.join(".git/info/exclude");
+    std::fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    let lines: String = untracked.lines().map(|l| format!("/{l}\n")).collect();
+    std::fs::write(&exclude, lines).unwrap();
     commit(dir, 1, &[("src/a.txt", "a1\n")], "base");
     repo
 }
@@ -437,4 +444,161 @@ fn onto_defaults_to_the_upstream() {
     }
     assert!(!export_refs(dir).contains("export/ABC-2"));
     assert!(!export_refs(dir).contains("export/ABC-3"));
+}
+
+/// Runs `stapel export ABC-1 <args>` expecting exit 1; returns stderr.
+fn refused(dir: &Path, args: &[&str]) -> String {
+    let out = stapel(dir)
+        .args(["export", "ABC-1"])
+        .args(args)
+        .assert()
+        .code(1);
+    String::from_utf8_lossy(&out.get_output().stderr).into_owned()
+}
+
+/// A root commit with the empty tree, on no branch yet: returns its id.
+fn root_commit(dir: &Path) -> String {
+    git_n(
+        dir,
+        7,
+        &["commit-tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "-m", "root"],
+    )
+    .trim()
+    .to_string()
+}
+
+// STP-31 AC-14: each refusal exits 1, names its cause and changes no ref.
+#[test]
+fn export_refusals() {
+    let repo = ticket_repo();
+    let dir = repo.path();
+    ticket_branch(dir, "ABC-1", Some("main"), "red");
+    let refs = |dir: &Path| git_n(dir, 1, &["for-each-ref"]);
+    let before = refs(dir);
+
+    for onto in ["nosuch", "-x"] {
+        let err = refused(dir, &["--onto", onto]);
+        assert!(err.contains("no commit"), "{onto}: {err}");
+    }
+
+    // An unrelated root commit.
+    let root = root_commit(dir);
+    git_n(dir, 1, &["branch", "other", &root]);
+    let err = refused(dir, &["--onto", "other"]);
+    assert!(err.contains("no common commit"), "{err}");
+
+    // An Onto ref whose tree has `.stapel/`.
+    git_n(dir, 1, &["checkout", "-q", "-b", "tracked", "main"]);
+    commit(dir, 3, &[(".stapel/x", "x\n")], "tracks the process");
+    git_n(dir, 1, &["checkout", "-q", "main"]);
+    let err = refused(dir, &["--onto", "tracked"]);
+    assert!(err.contains(".stapel"), "{err}");
+
+    // An empty range: the Onto ref holds every commit of the branch and has no `.stapel/`.
+    git_n(dir, 1, &["checkout", "-q", "-b", "after", "ABC-1"]);
+    git_n(dir, 1, &["rm", "-rq", ".stapel"]);
+    git_n(dir, 6, &["commit", "-q", "-m", "drops the process files"]);
+    git_n(dir, 1, &["checkout", "-q", "main"]);
+    let err = refused(dir, &["--onto", "after"]);
+    assert!(err.contains("empty"), "{err}");
+
+    // A branch whose only commits touch `.stapel/`.
+    git_n(dir, 1, &["checkout", "-q", "-b", "ABC-3", "main"]);
+    commit(
+        dir,
+        4,
+        &[(".stapel/tickets/ABC-3/state.json", "{\"base_branch\":\"main\"}\n")],
+        "process only",
+    );
+    git_n(dir, 1, &["checkout", "-q", "main"]);
+    let out = stapel(dir)
+        .args(["export", "ABC-3", "--onto", "main"])
+        .assert()
+        .code(1);
+    let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(err.contains("dropped"), "{err}");
+
+    // An orphan branch merged into the ticket branch.
+    ticket_branch(dir, "ABC-2", Some("main"), "red");
+    git_n(dir, 1, &["branch", "orphan", &root]);
+    git_n(dir, 1, &["checkout", "-q", "ABC-2"]);
+    git_n(
+        dir,
+        5,
+        &["merge", "-q", "--no-ff", "--allow-unrelated-histories", "-m", "merge orphan", "orphan"],
+    );
+    git_n(dir, 1, &["checkout", "-q", "main"]);
+    let out = stapel(dir)
+        .args(["export", "ABC-2", "--onto", "main"])
+        .assert()
+        .code(1);
+    let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(err.contains("no parents"), "{err}");
+
+    // None of the refusals above changed a ref.
+    let after = refs(dir);
+    let new: Vec<_> = after.lines().filter(|l| !before.contains(l)).collect();
+    assert!(
+        new.iter().all(|l| !l.contains("export/")),
+        "{new:?}"
+    );
+
+    // `export/ABC-1` checked out in a worktree.
+    let trees = TempDir::new().unwrap();
+    let path = trees.path().join("wt");
+    git_n(
+        dir,
+        1,
+        &["worktree", "add", "-q", "-b", "export/ABC-1", path.to_str().unwrap(), "main"],
+    );
+    let tip = rev(dir, "export/ABC-1");
+    let err = refused(dir, &["--onto", "main"]);
+    assert!(err.contains("checked out"), "{err}");
+    assert_eq!(rev(dir, "export/ABC-1"), tip);
+}
+
+// STP-31 AC-17: the output is the golden file; the remote of the push line is the longest remote
+// name that starts the rest of the Onto ref; an Onto commit id gives one line.
+#[test]
+fn export_output() {
+    let repo = ticket_repo();
+    let dir = repo.path();
+    ticket_branch(dir, "ABC-1", Some("main"), "red");
+    git_n(dir, 1, &["checkout", "-q", "ABC-1"]);
+    commit(dir, 3, &[(".stapel/close.txt", "closed\n")], "close");
+    git_n(dir, 1, &["checkout", "-q", "main"]);
+    git_n(dir, 1, &["remote", "add", "origin", "/nonexistent/origin"]);
+    git_n(dir, 1, &["update-ref", "refs/remotes/origin/main", "main"]);
+
+    let run = |onto: &str| {
+        let out = stapel(dir)
+            .args(["export", "ABC-1", "--onto", onto])
+            .assert()
+            .success();
+        String::from_utf8_lossy(&out.get_output().stdout).into_owned()
+    };
+
+    let golden = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/export_output.txt"),
+    )
+    .unwrap();
+    let out = run("origin/main");
+    let tip = rev(dir, "export/ABC-1");
+    assert_eq!(out, golden.replace("<tip>", &tip));
+
+    // Remotes `my` and `my/fork`: the longest name wins.
+    git_n(dir, 1, &["remote", "add", "my", "/nonexistent/my"]);
+    git_n(dir, 1, &["remote", "add", "my/fork", "/nonexistent/fork"]);
+    git_n(dir, 1, &["update-ref", "refs/remotes/my/fork/release/1", "main"]);
+    let out = run("my/fork/release/1");
+    let lines: Vec<_> = out.lines().collect();
+    assert_eq!(lines.len(), 2, "{out}");
+    assert!(lines[0].ends_with("onto refs/remotes/my/fork/release/1"), "{out}");
+    assert_eq!(lines[1], "push: git push my/fork export/ABC-1:ABC-1");
+
+    // A commit id has no full name: one line.
+    let main = rev(dir, "main");
+    let out = run(&main);
+    assert_eq!(out.lines().count(), 1, "{out}");
+    assert!(out.ends_with(&format!("onto {main}\n")), "{out}");
 }
