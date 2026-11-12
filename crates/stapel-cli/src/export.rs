@@ -28,6 +28,13 @@ pub fn run(key: Option<&str>, onto: Option<&str>) -> Result<(), Fail> {
         None => stapel_core::parallel::current_branch(&cwd)
             .ok_or_else(|| Fail::failed("no ticket key and no current branch; name the ticket: stapel export KEY"))?,
     };
+    // `--branch` expands `@{-1}`; the name must come back as it went in.
+    let valid = git(&cwd, &["check-ref-format", "--branch", &key], &[], b"")
+        .map(|out| text(out) == key)
+        .unwrap_or(false);
+    if !valid {
+        return Err(Fail::failed(format!("{key} is not a valid branch name")));
+    }
     if let Some(root) = stapel_core::guard::stapel_root(&cwd) {
         let config = crate::repo::load(&root).map_err(Fail::failed)?;
         if stapel_core::tickets::key_number(&config, &key).is_none() {
@@ -92,18 +99,23 @@ fn branch_state(dir: &Path, key: &str) -> Result<Option<String>, String> {
 /// The full name of the upstream of `base_branch`, the Onto ref when `--onto` is absent.
 fn upstream_of(dir: &Path, base_branch: Option<&str>) -> Result<String, String> {
     let base = base_branch.ok_or("the Branch state has no base_branch; name the Onto ref with --onto <ref>")?;
-    let name = git(
-        dir,
-        &["for-each-ref", "--format=%(upstream)", &format!("refs/heads/{base}")],
-        &[],
-        b"",
-    )
-    .map(text)
-    .unwrap_or_default()
-    .lines()
-    .next()
-    .unwrap_or("")
-    .to_string();
+    // An empty name would read as the current branch.
+    let name = if base.is_empty() {
+        String::new()
+    } else {
+        git(
+            dir,
+            &["rev-parse", "--symbolic-full-name", &format!("{base}@{{upstream}}")],
+            &[],
+            b"",
+        )
+        .map(text)
+        .unwrap_or_default()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string()
+    };
     if name.is_empty() {
         return Err(format!(
             "branch {base} has no upstream; name the Onto ref with --onto <ref>"
