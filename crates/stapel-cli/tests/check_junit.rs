@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{JunitRepo, git_in, junit_repo, stapel};
+use common::{JunitRepo, git_in, junit_repo, set_section, stapel};
 use std::path::Path;
 
 fn write(dir: &Path, rel: &str, text: &str) {
@@ -1158,4 +1158,169 @@ fn report_size_checked_before_read() {
     assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
     let line = text.lines().find(|l| l.starts_with("step 1: ")).unwrap();
     assert!(line.contains("16 MiB"), "{line}");
+}
+
+/// A change of the configuration: the `timeout_secs` line gets the value `n`.
+fn bump_config(dir: &Path, n: u32) {
+    let path = dir.join(".stapel/stapel.toml");
+    let text: String = std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .map(|l| {
+            if l.starts_with("timeout_secs = ") {
+                format!("timeout_secs = {n}\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    std::fs::write(path, text).unwrap();
+}
+
+/// A passing step `number` in the junit repository: `__tests__/<file>.test.ts` and `src/<name>.ts`.
+fn add_step(dir: &Path, number: u32, file: &str, name: &str) {
+    write(
+        dir,
+        &format!("__tests__/{file}.test.ts"),
+        &format!("it(\"{name}\", () => {{ /* needs src/{name}.ts */ }});\n"),
+    );
+    commit(dir, &format!("ABC-1 step {number} RED: {name}"));
+    write(dir, &format!("src/{name}.ts"), "export const v = 1;\n");
+    commit(dir, &format!("ABC-1 step {number} GREEN: {name}"));
+}
+
+// AC-25: a change of `.stapel/stapel.toml` after the first RED blocks every step whose RED lies before
+// it, wherever the change falls; a change at or before the first RED blocks no step.
+#[test]
+fn config_change_after_first_red() {
+    // Before the first RED, in its own commit: no block.
+    let repo = junit_repo();
+    bump_config(repo.dir(), 61);
+    commit(repo.dir(), "ABC-1: a configuration change");
+    add_step(repo.dir(), 1, "x", "one");
+    let (code, text) = check(&repo);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+
+    // In the first RED commit itself: no block.
+    let repo = junit_repo();
+    bump_config(repo.dir(), 62);
+    add_step(repo.dir(), 1, "x", "one");
+    let (code, text) = check(&repo);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+
+    // After the last GREEN: the step reads `build-input-changed`, no command runs.
+    let repo = junit_repo();
+    add_step(repo.dir(), 1, "x", "one");
+    bump_config(repo.dir(), 63);
+    commit(repo.dir(), "ABC-1: a configuration change");
+    let sha = git_in(repo.dir(), &["rev-parse", "HEAD"]);
+    let (code, text) = check(&repo);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(
+        step_one(&text),
+        format!(
+            "step 1: unverified: build-input-changed: .stapel/stapel.toml at {}",
+            &sha.trim()[..7]
+        ),
+        "{text}"
+    );
+    assert!(repo.runs().is_empty(), "{:?}", repo.runs());
+
+    // Between two steps: the first reads `build-input-changed`, the second, whose RED lies after the
+    // change, passes.
+    let repo = junit_repo();
+    add_step(repo.dir(), 1, "x", "one");
+    bump_config(repo.dir(), 64);
+    commit(repo.dir(), "ABC-1: a configuration change");
+    let sha = git_in(repo.dir(), &["rev-parse", "HEAD"]);
+    add_step(repo.dir(), 2, "y", "two");
+    let (code, text) = check(&repo);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(
+        step_one(&text),
+        format!(
+            "step 1: unverified: build-input-changed: .stapel/stapel.toml at {}",
+            &sha.trim()[..7]
+        ),
+        "{text}"
+    );
+    assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
+    let runs = repo.runs();
+    assert!(runs.iter().all(|l| !l.ends_with("x.test.ts")), "{runs:?}");
+    assert!(runs.iter().any(|l| l.ends_with("y.test.ts")), "{runs:?}");
+}
+
+// AC-41: a block of a junit step names the blocking change as the fault commit, in the commit hook
+// and in `stapel next`, not an earlier change that blocks no step.
+#[test]
+fn fault_commit_is_the_blocking_change() {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    // A configuration change before the first RED blocks no step.
+    bump_config(dir, 61);
+    commit(dir, "ABC-1: a configuration change");
+    set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem.");
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | WHEN a thing happens THE command does it. | `x::one` |",
+    );
+    set_section(dir, "ABC-1", "Design", "The design.");
+    set_section(dir, "ABC-1", "Proof", "The proof.");
+    set_section(dir, "ABC-1", "Plan", "Route: full, auto.\n\n1. One (AC-1).\n2. Two (AC-1).");
+    for stage in ["description", "spec", "design", "proof", "plan"] {
+        stapel(dir).args(["ok", stage]).assert().success();
+    }
+    commit(dir, "ABC-1: the ticket is confirmed");
+    add_step(dir, 1, "x", "one");
+    write(
+        dir,
+        "__tests__/y.test.ts",
+        "it(\"two\", () => { /* needs src/two.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 2 RED: two");
+    write(dir, "src/two.ts", "export const two = 2;\n");
+    write(dir, "package.json", "{\"name\": \"x\"}\n");
+    commit(dir, "ABC-1 step 2 GREEN: two");
+    let head = git_in(dir, &["rev-parse", "HEAD"]).trim()[..7].to_string();
+
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "git commit -m x", "description": "test" },
+        "tool_response": { "stdout": "", "stderr": "" },
+        "cwd": dir,
+    });
+    let out = stapel(dir)
+        .args(["hook", "post-tool-use"])
+        .write_stdin(payload.to_string())
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let answer: serde_json::Value = serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("stdout is not one JSON object ({e}):\n{text}"));
+    let context = answer["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no additionalContext:\n{text}"));
+    assert!(
+        context.lines().any(|l| l
+            == format!(
+                "step 2: unverified: build-input-changed: package.json at {head}"
+            )),
+        "{context}"
+    );
+    assert!(
+        context.lines().any(|l| l
+            == format!("stapel: {head} is HEAD; fix it with git commit --amend (step 2)")),
+        "{context}"
+    );
+
+    let out = stapel(dir).arg("next").output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let want = format!("blocked: step 2: unverified at {head} — build-input-changed: package.json");
+    assert!(text.lines().any(|l| l.starts_with(&want)), "{want}\n{text}");
 }
