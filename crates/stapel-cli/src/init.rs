@@ -921,6 +921,13 @@ fn main_worktree(root: &Path) -> Option<PathBuf> {
 /// Returns the hook path relative to `root` when a stapel hook is there.
 fn plan_pre_push(root: &Path, local: bool, plan: &mut Vec<Step>) -> Result<Option<String>, String> {
     let wanted = if local { LOCAL_PRE_PUSH } else { PRE_PUSH };
+    // In Local mode the path is settled in the main worktree, as `stale_local_pre_push` does.
+    let base = if local {
+        main_worktree(root).unwrap_or_else(|| root.to_path_buf())
+    } else {
+        root.to_path_buf()
+    };
+    let root = base.as_path();
     let path = pre_push_path(root)?;
     let Ok(rel) = path.strip_prefix(root).map(|p| p.display().to_string()) else {
         // A shared hooks directory would put the hook into every repository that uses it.
