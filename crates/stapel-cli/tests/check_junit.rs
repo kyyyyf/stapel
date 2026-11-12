@@ -1557,3 +1557,34 @@ fn merge_of_the_base_branch_blocks_nothing() {
         );
     }
 }
+
+// AC-21, AC-34: a report that is a FIFO, a folder or a symbolic link is unverified with its kind in
+// the reason, for a Per-file run and for the suite; no read blocks.
+#[test]
+fn report_must_be_a_regular_file() {
+    // The writer of the FIFO case ends by itself, so a reader that does open the FIFO is not stuck.
+    let kinds = [
+        (
+            "a FIFO",
+            "mkfifo junit.xml\n(timeout 10 sh -c ': > junit.xml' >/dev/null 2>&1 &)\nexit 0\n",
+        ),
+        ("a folder", "mkdir junit.xml\nexit 0\n"),
+        (
+            "a symbolic link",
+            "echo '<testsuites/>' > real.xml\nln -s real.xml junit.xml\nexit 0\n",
+        ),
+    ];
+    for (kind, body) in kinds {
+        let (code, text) = fault_case("sh {script} {file}", body, None, 60);
+        assert_eq!(code, 1, "{kind}: {text}");
+        assert_eq!(outcome(&text, "step 1"), "unverified", "{kind}: {text}");
+        let line = text.lines().find(|l| l.starts_with("step 1: ")).unwrap();
+        assert!(line.contains(kind), "per-file {kind}: {line}");
+
+        let repo = suite_repo(body, None, 60);
+        let (code, text) = check(&repo);
+        assert_eq!(code, 1, "{kind}: {text}");
+        assert_eq!(outcome(&text, "suite"), "unverified", "{kind}: {text}");
+        assert!(suite_line(&text).contains(kind), "suite {kind}: {text}");
+    }
+}

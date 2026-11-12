@@ -309,3 +309,28 @@ fn reads_unusual_valid_reports() {
 
     assert_eq!(read("<testsuites/>").unwrap().len(), 0);
 }
+
+// AC-38: each cause of a refused character reference has its own reason.
+#[test]
+fn character_reference_causes() {
+    let reason = |reference: &str| {
+        read(&format!("<testsuites><testsuite name=\"a{reference}b\"/></testsuites>"))
+            .expect_err(reference)
+    };
+    let groups: [(&[&str], &str); 4] = [
+        (&["&#0;", "&#xFFFE;"], "is not an XML 1.0 character"),
+        (&["&#+65;", "&#x+41;"], "has a sign"),
+        (&["&#;", "&#x;"], "has no digits"),
+        (&["&#x110000;"], "is above 10FFFF"),
+    ];
+    for (references, cause) in groups {
+        for reference in references {
+            let err = reason(reference);
+            assert!(err.contains(cause), "{reference}: `{err}` lacks `{cause}`");
+            assert!(err.contains(reference), "{reference}: `{err}` does not name it");
+            for (_, other) in groups.iter().filter(|(_, o)| *o != cause) {
+                assert!(!err.contains(other), "{reference}: `{err}` holds `{other}`");
+            }
+        }
+    }
+}
