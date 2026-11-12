@@ -6,7 +6,7 @@ use stapel_core::build_inputs;
 use stapel_core::build_inputs::{Bounds, BuildInputs, Change};
 use stapel_core::config::{Check, validate_cargo, validate_path_cargo};
 use stapel_core::journal::{append, new_id};
-use stapel_core::junit::{MAX_REPORT, Outcome as CaseOutcome, read_report};
+use stapel_core::junit::{MAX_REPORT, Outcome as CaseOutcome, read_open_report, read_report};
 use stapel_core::outcomes::{
     Analysis, MAX_NAMED, Mode, analyse_in, history_outcome, named, open_red, passing,
 };
@@ -1070,7 +1070,27 @@ fn read_report_file(path: &Path, name: &str, what: &str) -> Result<Vec<u8>, Stri
     if meta.len() > MAX_REPORT as u64 {
         return Err(format!("the report of {what} is over {} MiB", MAX_REPORT / 1024 / 1024));
     }
-    std::fs::read(path).map_err(|e| format!("no report {name} for {what}: {e}"))
+    // One open decides: no link is followed and a FIFO swapped in after the check does not block;
+    // the open file must be regular and its read is bounded.
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|e| format!("no report {name} for {what}: {e}"))?;
+    let open_meta = file
+        .metadata()
+        .map_err(|e| format!("no report {name} for {what}: {e}"))?;
+    if !open_meta.file_type().is_file() {
+        return Err(format!("the report {name} of {what} is not a regular file"));
+    }
+    read_open_report(&mut file).map_err(|e| {
+        if e.contains("MiB") {
+            format!("the report of {what} is over {} MiB", MAX_REPORT / 1024 / 1024)
+        } else {
+            format!("no report {name} for {what}: {e}")
+        }
+    })
 }
 
 /// The reason of `unverified` when a commit of the ticket changed a build input.
