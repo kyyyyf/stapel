@@ -39,7 +39,31 @@ pub fn run(key: Option<&str>, onto: Option<&str>) -> Result<(), Fail> {
         Some(onto) => onto.to_string(),
         None => upstream_of(&cwd, base_branch.as_deref()).map_err(Fail::failed)?,
     };
-    export(&cwd, &key, &onto).map_err(Fail::failed)
+    let done = export(&cwd, &key, &onto).map_err(Fail::failed)?;
+    println!(
+        "export/{key} {}: commits {}, dropped {}, onto {}",
+        done.tip, done.commits, done.dropped, done.onto
+    );
+    if let Some(rest) = done.onto.strip_prefix("refs/remotes/") {
+        let remotes = git(&cwd, &["remote"], &[], b"").map(text).unwrap_or_default();
+        let remote = remotes
+            .lines()
+            .filter(|r| rest.strip_prefix(*r).is_some_and(|tail| tail.starts_with('/')))
+            .max_by_key(|r| r.len());
+        if let Some(remote) = remote {
+            println!("push: git push {remote} export/{key}:{key}");
+        }
+    }
+    Ok(())
+}
+
+/// What an export wrote.
+struct Done {
+    tip: String,
+    commits: usize,
+    dropped: usize,
+    /// The full name of the Onto ref when it has one, else the value given.
+    onto: String,
 }
 
 /// The `base_branch` of the Branch state of `key`: `.stapel/tickets/<key>/state.json` as it is in
@@ -201,13 +225,30 @@ fn ident(header: &[u8]) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
     Some((name.to_vec(), header[open + 1..close].to_vec(), date.to_vec()))
 }
 
-fn export(dir: &Path, key: &str, onto: &str) -> Result<(), String> {
-    let onto_commit = text(git(
+fn export(dir: &Path, key: &str, onto: &str) -> Result<Done, String> {
+    let onto_commit = git(
         dir,
         &["rev-parse", "--verify", "--end-of-options", &format!("{onto}^{{commit}}")],
         &[],
         b"",
-    )?);
+    )
+    .map(text)
+    .map_err(|_| format!("the Onto ref {onto} names no commit"))?;
+    let onto_name = git(
+        dir,
+        &["rev-parse", "--symbolic-full-name", "--end-of-options", onto],
+        &[],
+        b"",
+    )
+    .map(text)
+    .ok()
+    .and_then(|t| {
+        t.lines()
+            .find(|l| *l != "--end-of-options")
+            .map(String::from)
+    })
+    .filter(|n| !n.is_empty())
+    .unwrap_or_else(|| onto.to_string());
     let source = format!("refs/heads/{key}");
     git(
         dir,
@@ -215,6 +256,20 @@ fn export(dir: &Path, key: &str, onto: &str) -> Result<(), String> {
         &[],
         b"",
     )?;
+    let in_onto_tree = git(dir, &["ls-tree", &onto_commit, "--", ".stapel"], &[], b"")?;
+    if !in_onto_tree.is_empty() {
+        return Err(format!("the tree of the Onto ref {onto} has .stapel"));
+    }
+    git(dir, &["merge-base", &onto_commit, &source], &[], b"")
+        .map_err(|_| format!("the Onto ref {onto} shares no common commit with {key}"))?;
+    let target = format!("refs/heads/export/{key}");
+    let worktrees = text(git(dir, &["worktree", "list", "--porcelain"], &[], b"")?);
+    if worktrees
+        .lines()
+        .any(|l| l.strip_prefix("branch ").is_some_and(|b| b == target))
+    {
+        return Err(format!("export/{key} is checked out in a worktree"));
+    }
     let range = format!("{onto_commit}..{source}");
     let listing = text(git(
         dir,
@@ -222,6 +277,16 @@ fn export(dir: &Path, key: &str, onto: &str) -> Result<(), String> {
         &[],
         b"",
     )?);
+    if listing.is_empty() {
+        return Err(format!("the Export range {onto}..{key} is empty"));
+    }
+    if let Some(root) = listing.lines().find(|l| l.split_whitespace().count() == 1) {
+        return Err(format!(
+            "commit {} of the Export range has no parents",
+            root.trim()
+        ));
+    }
+    let total = listing.lines().count();
     let process_entries = onto_entries(dir, &onto_commit)?;
 
     let scratch = Scratch::new()?;
@@ -323,18 +388,17 @@ fn export(dir: &Path, key: &str, onto: &str) -> Result<(), String> {
     let tip = last
         .and_then(|c| replaced.get(&c).cloned())
         .filter(|t| made.contains(t))
-        .ok_or("the Export range holds no commit to write")?;
+        .ok_or("every commit of the Export range is dropped: nothing is left to write")?;
     git(
         dir,
-        &[
-            "update-ref",
-            "-m",
-            "stapel export",
-            &format!("refs/heads/export/{key}"),
-            &tip,
-        ],
+        &["update-ref", "-m", "stapel export", &target, &tip],
         &[],
         b"",
     )?;
-    Ok(())
+    Ok(Done {
+        tip,
+        commits: made.len(),
+        dropped: total - made.len(),
+        onto: onto_name,
+    })
 }
