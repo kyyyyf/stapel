@@ -244,6 +244,35 @@ fn rewrite_raw(raw: &[u8], tree: &str, parents: &[String]) -> Vec<u8> {
     out
 }
 
+/// The Clean tree of a commit: its tree without the process paths, those paths as they are in the
+/// Onto commit. The Clean tree of a commit that is already clean is its own tree.
+fn clean_tree(
+    dir: &Path,
+    commit: &str,
+    process_entries: &[u8],
+    index_env: &[(&str, OsString)],
+) -> Result<String, String> {
+    git(dir, &["read-tree", commit], index_env, b"")?;
+    git(
+        dir,
+        &["rm", "--cached", "-r", "-f", "-q", "--ignore-unmatch", "--"]
+            .into_iter()
+            .chain(REMOVE)
+            .collect::<Vec<_>>(),
+        index_env,
+        b"",
+    )?;
+    if !process_entries.is_empty() {
+        git(
+            dir,
+            &["update-index", "-z", "--index-info"],
+            index_env,
+            process_entries,
+        )?;
+    }
+    Ok(text(git(dir, &["write-tree"], index_env, b"")?))
+}
+
 fn export(dir: &Path, key: &str, onto: &str) -> Result<Done, String> {
     let onto_commit = git(
         dir,
@@ -328,35 +357,10 @@ fn export(dir: &Path, key: &str, onto: &str) -> Result<Done, String> {
         }
         let had_parents = line.split_whitespace().count() - 1;
 
-        git(dir, &["read-tree", commit], &index_env, b"")?;
-        git(
-            dir,
-            &["rm", "--cached", "-r", "-f", "-q", "--ignore-unmatch", "--"]
-                .into_iter()
-                .chain(REMOVE)
-                .collect::<Vec<_>>(),
-            &index_env,
-            b"",
-        )?;
-        if !process_entries.is_empty() {
-            git(
-                dir,
-                &["update-index", "-z", "--index-info"],
-                &index_env,
-                &process_entries,
-            )?;
-        }
-        let tree = text(git(dir, &["write-tree"], &index_env, b"")?);
+        let tree = clean_tree(dir, commit, &process_entries, &index_env)?;
 
-        let drop_for = if had_parents >= 2 && parents.len() == 1 {
-            Some(parents[0].clone())
-        } else if had_parents == 1 {
-            let parent_tree = text(git(
-                dir,
-                &["rev-parse", "--verify", "--end-of-options", &format!("{}^{{tree}}", parents[0])],
-                &[],
-                b"",
-            )?);
+        let drop_for = if had_parents >= 1 && parents.len() == 1 {
+            let parent_tree = clean_tree(dir, &parents[0], &process_entries, &index_env)?;
             (parent_tree == tree).then(|| parents[0].clone())
         } else {
             None
