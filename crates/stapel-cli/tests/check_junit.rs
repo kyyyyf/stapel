@@ -1794,3 +1794,106 @@ fn config_fault_commit() {
     );
     assert!(text.lines().any(|l| l.starts_with(&want)), "{want}\n{text}");
 }
+
+/// A junit repository whose `command` starts `word(root)` and whose committed `run.sh` runs the
+/// stand-in and logs its version (`v1`) to `script.log` of the tools folder; `a/keep` makes `a/..`
+/// resolve. With `later` a commit after the step changes the log word to `v2`, so the text of HEAD
+/// (the working tree) differs from the text at the step's commits.
+fn absolute_script_repo(word: impl Fn(&Path) -> String, later: bool) -> JunitRepo {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = junit_repo();
+    let dir = repo.dir();
+    let stand_in = repo_stand_in(dir);
+    let log = repo.tools.path().join("script.log");
+    let script = |v: &str| {
+        format!(
+            "#!/bin/sh\necho {v} >> '{}'\nexec sh '{stand_in}' \"$@\"\n",
+            log.display()
+        )
+    };
+    write(dir, "a/keep", "x\n");
+    write(dir, ".gitignore", "node_modules/\nlate.sh\n");
+    write(dir, "run.sh", &script("v1"));
+    std::fs::set_permissions(dir.join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let config = dir.join(".stapel/stapel.toml");
+    let text: String = std::fs::read_to_string(&config)
+        .unwrap()
+        .lines()
+        .map(|l| {
+            if l.starts_with("command = ") {
+                format!("command = \"{} {{file}}\"\n", word(dir))
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    std::fs::write(&config, text).unwrap();
+    commit(dir, "setup: an absolute script");
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/ok.ts", "export const ok = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: one");
+    if later {
+        write(dir, "run.sh", &script("v2"));
+        commit(dir, "ABC-1: a later script text");
+    }
+    repo
+}
+
+/// The versions the script logged, in order.
+fn script_log(repo: &JunitRepo) -> Vec<String> {
+    std::fs::read_to_string(repo.tools.path().join("script.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
+// AC-6: an absolute script under the root runs as committed; other absolute paths run as given.
+#[test]
+fn absolute_script_runs_at_step_commit() {
+    // Mapped: the text at each commit runs, `v1` at RED and GREEN, `v2` at HEAD (once per run).
+    let repo = absolute_script_repo(|d| format!("{}/run.sh", d.display()), true);
+    let (_, text) = check(&repo);
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+    let mut log = script_log(&repo);
+    log.sort();
+    assert_eq!(log, ["v1", "v1", "v2", "v2"], "{text}");
+    // Not mapped: a `..` part and an empty part run the working-tree text, `v2`, at every commit.
+    let words: [fn(&Path) -> String; 2] = [
+        |d| format!("{}/a/../run.sh", d.display()),
+        |d| format!("{}//run.sh", d.display()),
+    ];
+    for word in words {
+        let repo = absolute_script_repo(word, true);
+        let (_, text) = check(&repo);
+        assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+        let log = script_log(&repo);
+        assert!(!log.is_empty() && log.iter().all(|v| v == "v2"), "{log:?}");
+    }
+    // A path outside the root runs as given.
+    let repo = absolute_script_repo(|d| format!("/bin/sh {}", repo_stand_in(d)), true);
+    let (_, text) = check(&repo);
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+}
+
+// AC-18: an absolute script under the root that is untracked cannot start: unverified.
+#[test]
+fn absolute_script_missing_at_commit() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = absolute_script_repo(|d| format!("{}/late.sh", d.display()), false);
+    let dir = repo.dir();
+    let stand_in = repo.tools.path().join("stand-in.sh").display().to_string();
+    // Untracked and ignored, so absent at every commit, present in the working tree.
+    write(dir, "late.sh", &format!("#!/bin/sh\nexec sh '{stand_in}' \"$@\"\n"));
+    std::fs::set_permissions(dir.join("late.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, text) = check(&repo);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+    assert!(step_one(&text).contains("did not start"), "{text}");
+    assert!(repo.runs().is_empty(), "{:?}", repo.runs());
+}
