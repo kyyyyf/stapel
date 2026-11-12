@@ -174,14 +174,9 @@ fn token_root(payload: &serde_json::Value) -> Option<PathBuf> {
     config_root(&source)
 }
 
-/// `stapel_root`, but a `stapel.toml` that exists and is no regular file (a folder, a dangling
-/// link) still marks the root: its load fault is for the hook to report (STP-30 AC-11).
+/// The root above `start`: the nearest folder with a regular `.stapel/stapel.toml`.
 fn config_root(start: &std::path::Path) -> Option<PathBuf> {
-    start
-        .ancestors()
-        .find(|dir| dir.join(".stapel/stapel.toml").symlink_metadata().is_ok())
-        .map(std::path::Path::to_path_buf)
-        .or_else(|| stapel_root(start))
+    stapel_root(start)
 }
 
 /// The agent type as shown in a note: each control character as one space, cut to 64 characters.
