@@ -1324,3 +1324,97 @@ fn fault_commit_is_the_blocking_change() {
     let want = format!("blocked: step 2: unverified at {head} — build-input-changed: package.json");
     assert!(text.lines().any(|l| l.starts_with(&want)), "{want}\n{text}");
 }
+
+// AC-39, AC-24: the window of an input change. A plain input blocks the step unless it changes after
+// the step's GREEN; the script that `command` starts blocks it only between its RED and GREEN.
+#[test]
+fn input_window_edges() {
+    use std::os::unix::fs::PermissionsExt;
+    // One step; `touch` changes the file under test at `when`: before the RED, between the RED and
+    // the GREEN, in the GREEN or after the GREEN (a change inside the RED is `red-changes-code`, not
+    // a window case). The exit code and the line of step 1.
+    let case = |script: bool, when: &str| -> (i32, String) {
+        let repo = junit_repo();
+        let dir = repo.dir();
+        if script {
+            let stand_in = repo_stand_in(dir);
+            write(
+                dir,
+                "run.sh",
+                &format!("#!/bin/sh\nexec sh '{stand_in}' \"$@\"\n"),
+            );
+            let mode = std::fs::Permissions::from_mode(0o755);
+            std::fs::set_permissions(dir.join("run.sh"), mode).unwrap();
+            let path = dir.join(".stapel/stapel.toml");
+            let text: String = std::fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .map(|l| {
+                    if l.starts_with("command = ") {
+                        "command = \"./run.sh {file}\"\n".to_string()
+                    } else {
+                        format!("{l}\n")
+                    }
+                })
+                .collect();
+            std::fs::write(&path, text).unwrap();
+            commit(dir, "ABC-1: a repository script");
+        }
+        let touch = |dir: &Path| {
+            if script {
+                let path = dir.join("run.sh");
+                let text = std::fs::read_to_string(&path).unwrap();
+                std::fs::write(&path, format!("{text}# touched\n")).unwrap();
+            } else {
+                write(dir, "package.json", "{\"name\": \"x\"}\n");
+            }
+        };
+        if when == "before" {
+            touch(dir);
+            commit(dir, "ABC-1: a change");
+        }
+        write(
+            dir,
+            "__tests__/x.test.ts",
+            "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 1 RED: one");
+        if when == "between" {
+            touch(dir);
+            commit(dir, "ABC-1: a change");
+        }
+        write(dir, "src/ok.ts", "export const ok = 1;\n");
+        if when == "green" {
+            touch(dir);
+        }
+        commit(dir, "ABC-1 step 1 GREEN: one");
+        if when == "after" {
+            touch(dir);
+            commit(dir, "ABC-1: a change");
+        }
+        let (code, text) = check(&repo);
+        (code, step_one(&text).to_string())
+    };
+    let name = |script: bool| if script { "run.sh" } else { "package.json" };
+    for (script, when, blocked) in [
+        (false, "before", true),
+        (false, "between", true),
+        (false, "green", true),
+        (false, "after", false),
+        (true, "before", false),
+        (true, "between", true),
+        (true, "green", true),
+        (true, "after", false),
+    ] {
+        let (code, line) = case(script, when);
+        let what = format!("{} {when}: {line}", name(script));
+        if blocked {
+            assert_eq!(code, 1, "{what}");
+            let want = format!("step 1: unverified: build-input-changed: {} at ", name(script));
+            assert!(line.starts_with(&want), "{what}");
+        } else {
+            assert_eq!(code, 0, "{what}");
+            assert!(line.starts_with("step 1: pass"), "{what}");
+        }
+    }
+}
