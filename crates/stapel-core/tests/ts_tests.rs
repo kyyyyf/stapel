@@ -63,3 +63,48 @@ fn titles_not_promised_are_skipped() {
                test('seen', () => {});\n";
     assert_eq!(names(src), vec!["seen"]);
 }
+
+// STP-28 step 14 (AC-7): a describe with a modifier other than `.only` or `.skip` hides its calls.
+#[test]
+fn describe_modifiers_hide_calls() {
+    for head in [
+        "describe.each([1, 2])('t', () => {",
+        "describe.todo('t', () => {",
+        "describe.concurrent('t', () => {",
+        "describe.skip.each([1])('t', () => {",
+    ] {
+        let src = format!("{head} it('hidden', () => {{}}); }});\ntest('seen', () => {{}});");
+        assert_eq!(names(&src), vec!["seen"], "{head}");
+    }
+    for (head, want) in [
+        ("describe.skip('t', () => {", "t hidden"),
+        ("describe.only('t', () => {", "t hidden"),
+    ] {
+        let src = format!("{head} it('hidden', () => {{}}); }});");
+        assert_eq!(names(&src), vec![want], "{head}");
+    }
+}
+
+// STP-28 step 14 (AC-22): the `.only` forms.
+#[test]
+fn has_only_call_cases() {
+    use stapel_core::ts_tests::has_only_call;
+    for src in [
+        "test.only('a', () => {});",
+        "it.only ('a', () => {});",
+        "describe.only('a', () => {});",
+        "test.only.each([1])('a', () => {});",
+        "test.only`a ${1}`('a', () => {});",
+    ] {
+        assert!(has_only_call(src), "{src}");
+    }
+    for src in [
+        "describe.skip('a', () => {});",
+        "// test.only('a', () => {});",
+        "const s = \"test.only('a')\";",
+        "const r = /test.only(/;",
+        "foo.test.only('a', () => {});",
+    ] {
+        assert!(!has_only_call(src), "{src}");
+    }
+}
