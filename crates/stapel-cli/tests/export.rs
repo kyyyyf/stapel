@@ -494,6 +494,50 @@ fn onto_defaults_to_the_upstream() {
     assert!(!export_refs(dir).contains("export/ABC-3"));
 }
 
+// STP-31 AC-12 (R1-3): without `stapel.toml` the key must still be a valid branch name.
+#[test]
+fn key_must_be_a_branch_name() {
+    let repo = git_repo();
+    let dir = repo.path();
+    commit(dir, 1, &[("src/a.txt", "a1\n")], "base");
+    let before = git_n(dir, 1, &["for-each-ref"]);
+    for key in ["a..b", "a b", "x.lock"] {
+        let out = stapel(dir).args(["export", key]).assert().code(1);
+        let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+        assert!(err.contains(key), "{key}: {err}");
+        assert!(err.contains("valid branch name"), "{key}: {err}");
+    }
+    assert_eq!(git_n(dir, 1, &["for-each-ref"]), before);
+}
+
+// STP-31 AC-13 (drift-2): the upstream is that of exactly `base_branch`, not of a branch that
+// starts with its name, and an empty `base_branch` is no branch.
+#[test]
+fn default_upstream_is_exact() {
+    let repo = ticket_repo();
+    let dir = repo.path();
+    let remote = bare_dir();
+    git_n(remote.path(), 1, &["init", "-q", "--bare"]);
+    let url = remote.path().display().to_string();
+    git_n(dir, 1, &["remote", "add", "origin", &url]);
+    git_n(dir, 1, &["config", "branch.main.remote", "origin"]);
+    git_n(dir, 1, &["config", "branch.main.merge", "refs/heads/main"]);
+    git_n(dir, 1, &["update-ref", "refs/remotes/origin/main", "main"]);
+    git_n(dir, 1, &["branch", "feature/x", "main"]);
+    git_n(dir, 1, &["config", "branch.feature/x.remote", "origin"]);
+    git_n(dir, 1, &["config", "branch.feature/x.merge", "refs/heads/feature/x"]);
+    git_n(dir, 1, &["update-ref", "refs/remotes/origin/feature/x", "main"]);
+    ticket_branch(dir, "ABC-1", Some("feature"), "red");
+    ticket_branch(dir, "ABC-2", Some(""), "red");
+
+    for key in ["ABC-1", "ABC-2"] {
+        let out = stapel(dir).args(["export", key]).assert().code(1);
+        let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+        assert!(err.contains("--onto"), "{key}: {err}");
+    }
+    assert_eq!(export_refs(dir), "");
+}
+
 /// Runs `stapel export ABC-1 <args>` expecting exit 1; returns stderr.
 fn refused(dir: &Path, args: &[&str]) -> String {
     let out = stapel(dir)
