@@ -65,8 +65,6 @@ fi
 exit 0
 "#;
 
-/// Marks the pre-push hook of the local mode.
-const LOCAL_MARKER: &str = "# stapel: local history check";
 /// The pre-push hook of the local mode: the agent check of `PRE_PUSH`, then a refusal of new
 /// commits that carry `.stapel/`.
 const LOCAL_PRE_PUSH: &str = r#"#!/bin/sh
@@ -81,7 +79,7 @@ fi
 while read -r lref lsha rref rsha extra; do
   [ -n "$lref" ] && [ -n "$lsha" ] && [ -n "$rref" ] && [ -n "$rsha" ] && [ -z "$extra" ] || continue
   case "$lsha" in *[!0]*) ;; *) continue ;; esac
-  if [ -n "$(git rev-list -n 1 "$lsha" --not --remotes -- .stapel 2>/dev/null)" ]; then
+  if [ -n "$(git rev-list -n 1 --full-history "$lsha" --not --remotes -- .stapel 2>/dev/null)" ]; then
     echo "stapel: $lref carries .stapel/; push the branch that stapel export writes" >&2
     exit 1
   fi
@@ -212,7 +210,9 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
 
 /// The person's manual steps after `init` in the local mode.
 const LOCAL_CHECKLIST: &str = "checklist:
-1. Commit the installed files on the base branch: git add -f .stapel .claude/skills/stapel .claude/agents/stapel-*.md .claude/settings.json
+1. Commit the installed files on the base branch with these two lines:
+   git add .stapel
+   git add -f .claude/skills/stapel .claude/agents/stapel-*.md .claude/settings.json
 2. Fill in [check] command in .stapel/stapel.toml.
 3. Restart Claude Code and see \"stapel next\" at session start.
 4. Run stapel init again after anything changes core.hooksPath (husky does on npm install).
