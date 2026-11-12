@@ -448,6 +448,25 @@ fn writes_commented_check_otherwise() {
     assert!(Config::parse(&text).unwrap().check.is_none());
     assert!(text.lines().any(|l| l.starts_with("# [check]")), "{text}");
     assert!(!text.lines().any(|l| l.trim() == "[check]"), "{text}");
+    // STP-31 AC-10: the template is a junit one.
+    assert!(text.contains("runner = \"junit\""), "{text}");
+    assert!(text.contains("{file}"), "{text}");
+    assert!(text.contains("# report"), "{text}");
+    assert!(text.contains("# tests"), "{text}");
+    let at = text.find("# [check]").unwrap();
+    let uncommented: String = format!(
+        "{}{}",
+        &text[..at],
+        text[at..]
+            .lines()
+            .map(|l| format!("{}\n", l.strip_prefix("# ").unwrap_or(l)))
+            .collect::<String>()
+    );
+    let check = Config::parse(&uncommented)
+        .unwrap_or_else(|e| panic!("{e}: {uncommented}"))
+        .check
+        .expect("the uncommented template has a [check]");
+    assert_eq!(check.runner, "junit");
 }
 
 // STP-26 AC-12: a new `stapel.toml` holds the `[roles]` table with the four default rows.
