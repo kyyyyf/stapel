@@ -88,7 +88,13 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`, limited by the Test file names.
 - 2026-11-11: Decision (plan size, the orchestrator under the human's leave in the chat): fix steps 13 to
   19 after code review round 1; the ticket is not split because the fixes touch the code and tests of
-  steps 3 to 12.
+  steps 3 to 12. Updated 2026-11-12: steps 20 to 23 follow the merge of main (M-1) and take the findings
+  deferred to after code review round 2, so the Plan has 23 steps and the person confirms once.
+- 2026-11-12: Decision (base merge, the human, recommended, M-1): under both runners a build input that only
+  a merge of the base branch brings (its content at the merge equals that at the merge's second parent,
+  and that parent is on the base branch) blocks no step and not the suite; a merge that resolves the file
+  to other content still blocks. Rejected: the STP-13 rule unchanged, so every ticket that merges main
+  with a new test file cannot close.
 
 ## Spec
 
@@ -105,6 +111,9 @@ Terms:
   its own by a space (a `describe` without such a title hides its calls); its **text** runs to its `)`.
 - **Step test**: under junit, `<test file>::<name>` of a test call that the RED commit adds or whose text
   it changes; under cargo, as STP-4.
+- **Base merge input**: a build input that a merge commit of the Walk changes, whose content at the merge
+  equals its content at the merge's second parent, where that parent is an ancestor of the `base_branch`
+  of `state.json`.
 - **Per-file run**: `command` with `{file}` replaced by one test file's path, run in the check copy
   after its old `report` file is removed.
 - **Named test**: backtick text holding `::` in a table column headed `Test` or `Tests`, or in a Plan
@@ -120,7 +129,7 @@ Terms:
 | AC-4 | WHEN `[check]` has `runner = "junit"` THE config reads `command` and `report` (both needed), `timeout_secs` as for cargo, `tests` (default `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`) and `inputs` (default `**/package.json`, the three lock files, `**/jest.config.*`, `**/tsconfig*.json`, `**/babel.config.*`, `**/.babelrc`, `**/.swcrc`, `**/jest.setup.*`); a cargo `[check]` reads as before. | `core::config::junit_check_keys` |
 | AC-5 | IF `command` has no program before `{file}`, lacks the word `{file}`, holds it twice, holds it inside a longer word or right after a word that starts with `-`, `report` or a glob is empty, absolute or holds `..`, a glob holds `{`, `}`, `[`, `]`, `!` or a backslash, `tests` is empty, a junit key stands with cargo, `cargo` stands with junit, or the runner is another word THEN loading `stapel.toml` fails with a message that names the key; after a `-` word the message says to put `{file}` right after the program. | `core::config::rejects_bad_junit_keys`, `core::config::rejects_command_without_program` |
 | AC-6 | WHEN a glob is matched THE leading `**/` also matches no folder (`**/package.json` matches `package.json`), `*` and `?` never match `/`, a trailing `/**` matches every path below at any depth but not the folder itself, and a middle `/**/` also matches no folder. | `core::config::globs_match_paths` |
-| AC-7 | WHEN a test file is read THE test calls and their names come from a lexer that skips comments, string, template and regular-expression literals; `re.test(s)`, `test(` inside a string, comment or regular expression, a call whose first argument is not one literal (`test('a ' + x, …)`, `${…}`, a variable), `test.todo`, an `each` form, and a call under a `describe` without a literal title or with a modifier other than `.only` or `.skip` (`describe.each`, `.todo`, `.concurrent`, `.skip.each`) are no test calls. | `ts_tests::finds_test_calls_with_describe_titles`, `ts_tests::skips_comments_strings_and_regexes`, `ts_tests::titles_not_promised_are_skipped`, `ts_tests::describe_modifiers_hide_calls` |
+| AC-7 | WHEN a test file is read THE test calls and their names come from a lexer that skips comments, string, template and regular-expression literals; `re.test(s)`, `test(` inside a string, comment or regular expression, a call whose first argument is not one literal (`test('a ' + x, …)`, `${…}`, a variable), `test.todo`, an `each` form, and a call under a `describe` without a literal title or with a modifier other than `.only` or `.skip` (`describe.each`, `.todo`, `.concurrent`, `.skip.each`) are no test calls. | `ts_tests::finds_test_calls_with_describe_titles`, `ts_tests::skips_comments_strings_and_regexes`, `ts_tests::titles_not_promised_are_skipped`, `ts_tests::describe_modifiers_hide_calls`, `ts_tests::describe_each_template_hides_calls`, `ts_tests::describe_scope_cases` |
 | AC-8 | WHEN a report is read THE reader takes the elements `testsuites`, `testsuite`, `testcase`, `failure`, `error` and `skipped`, skips other elements with their content, and decodes the five XML entities, character references and CDATA. | `junit_report::reads_test_cases`, `junit_report::reads_unusual_valid_reports` |
 | AC-9 | WHEN the runner is junit THE step tests of a RED commit are its added or changed test calls of test files; a test call whose text is unchanged is none, also when other lines of its file change. | `check_junit::step_tests_from_the_red_commit` |
 | AC-10 | WHEN the runner is junit THE check makes one Per-file run per test file of the step at RED, GREEN and HEAD, with the `[check]` of the working tree's `stapel.toml`, its `node_modules` linked, and the cargo run's environment plus `JEST_JUNIT_REPORT_TEST_SUITE_ERRORS=true`. | `check_junit::red_to_green_passes` |
@@ -134,32 +143,33 @@ Terms:
 | AC-18 | IF a step test has no test case or two in its Per-file run's report THEN the step is `unverified` with the name and the count in the reason. | `check_junit::report_shape_is_unverified` |
 | AC-19 | IF a Per-file run exits 0 with a failed test case, or exits other than 0 with test cases none of which failed THEN the step is `unverified` with the exit code and the count of failures in the reason. | `check_junit::exit_code_must_agree`, `check_junit::exit_code_edge_cases` |
 | AC-20 | IF the command of a Per-file run cannot start, runs out of time or dies by a signal THEN the step is `unverified` with the reason. | `check_junit::run_faults_are_unverified` |
-| AC-21 | IF a Per-file run leaves no report, a report over 16 MiB by its size on disk (checked before it is read) or one the reader refuses THEN the step is `unverified` with the reason. | `check_junit::run_faults_are_unverified`, `check_junit::report_size_checked_before_read` |
+| AC-21 | IF a Per-file run leaves no report, or one that is not a regular file, is over 16 MiB on disk or is refused by the reader THEN the step is `unverified` with the reason; kind and size are checked before the read. | `check_junit::run_faults_are_unverified`, `check_junit::report_size_checked_before_read`, `check_junit::report_must_be_a_regular_file` |
 | AC-22 | IF any test file of the step holds a `test`, `it` or `describe` call with `.only` (also `.only.each` and a tagged template after `.only`) at the RED or the GREEN commit THEN the whole step is `unverified` with a reason that names the file, `.only` and the commit, and no command runs for it. | `check_junit::only_call_is_unverified`, `ts_tests::has_only_call_cases`, `check_junit::only_call_in_another_file` |
 | AC-23 | IF the working tree has no `node_modules` folder THEN under junit the steps that run and the suite are `unverified` with the reason `node_modules is missing in the working tree`. | `check_junit::node_modules_missing_is_unverified` |
 | AC-36 | IF the runner is junit and a path under `docs/` after a check's HEAD matches a test or input glob THEN that path makes the check stale. | `check_junit::docs_path_matching_a_glob_is_stale` |
-| AC-24 | WHEN a commit of the Walk, a merge commit by its first-parent diff, changes a file that matches an input glob THE later steps read `unverified` with the reason `build-input-changed: <path> at <sha>` as under cargo, and no command runs for them. | `check_junit::build_input_change_is_unverified`, `check_junit::merge_brings_a_build_input` |
+| AC-24 | WHEN a commit of the Walk, a merge commit by its first-parent diff, changes a file that matches an input glob, and it is no Base merge input, THE later steps read `unverified` with the reason `build-input-changed: <path> at <sha>` as under cargo, and no command runs for them. | `check_junit::build_input_change_is_unverified`, `check_junit::merge_brings_a_build_input` |
 | AC-25 | WHEN the runner is junit and a commit of the Walk after the ticket's first RED changes `.stapel/stapel.toml` THE steps whose RED lies before that commit read `build-input-changed` for it; a change at or before the first RED blocks no step. | `check_junit::config_change_is_unverified`, `check_junit::config_change_after_first_red` |
 | AC-26 | WHEN the runner is junit THE suite at HEAD removes the old report, runs `command` once with only the word `{file}` left out, reads every test suite of the report and sums them; it passes when the exit code is 0 and the sums hold a test case and no failure or error, and its detail counts passed, failed and ignored. | `check_junit::suite_runs_the_whole_command`, `check_junit::suite_sums_every_suite` |
 | AC-27 | WHEN the runner is junit THE outcome `tests-changed` also protects the rest of a test file whose rest the RED changed, ignoring changes of whitespace and `;` only, and the other files the RED changed that match a test glob, in `check`, `check --history` and the commit hook; a RED that changes only test calls of a file leaves its rest unprotected, as the cargo helper rule does. | `check_junit::tests_changed_under_junit`, `check_junit::hook_faults_under_junit`, `check_junit::same_file_helper_is_not_protected` |
 | AC-28 | WHEN `stapel lint [KEY]` runs THE ticket is KEY; without KEY it is the branch ticket, else the one open ticket. | `lint::lint_exit_codes_and_order` |
-| AC-29 | IF a Checked test does not exist at HEAD, its file missing included THEN lint prints `<KEY> names <test>, which does not exist`. | `lint::names_a_missing_test`, `lint::named_tests_from_test_columns` |
+| AC-29 | IF a Checked test does not exist at HEAD, its file missing included THEN lint prints `<KEY> names <test>, which does not exist`. | `lint::names_a_missing_test`, `lint::named_tests_from_test_columns`, `lint::rows_without_header_name_no_test` |
 | AC-30 | IF a step test of the ticket's RED commits on the Walk exists at HEAD and no ticket of the checkout names it in a table row THEN lint prints `<test> is a step test of <KEY> and no ticket names it`. | `lint::step_test_named_by_no_ticket` |
 | AC-31 | WHEN lint compares names THE cargo forms are `<file stem>::<name>`, `<crate suffix>::<file stem>::<name>` and `<dir>/<file stem>::<name>`, where the name may hold `::` (`x::m::t` is test `m::t` of file `x`), and the junit form is `<test file>::<name>`. | `lint::step_test_named_by_no_ticket`, `lint::lint_under_junit`, `lint::module_path_names` |
 | AC-32 | WHEN lint ends THE missing tests come first, then the unnamed step tests, each group sorted by name, and the exit code is 1; with none it prints `lint: <KEY> clean` and exits 0; IF KEY is unknown, or without KEY there is no branch ticket and not exactly one open ticket THEN it refuses with a message and exit 2. | `lint::lint_exit_codes_and_order` |
 | AC-33 | WHEN the runner is junit THE step test is `removed` when its file is missing at HEAD or the lexer finds no test call of its name there, before any HEAD run. | `check_junit::not_green_and_removed` |
-| AC-34 | IF the suite run's command cannot start, runs out of time or dies by a signal, or leaves no report, one over 16 MiB or one the reader refuses THEN the suite is `unverified` with the reason. | `check_junit::suite_runs_the_whole_command` |
+| AC-34 | IF the suite run's command cannot start, runs out of time or dies by a signal, or leaves no report, or one that is not a regular file, is over 16 MiB on disk or is refused by the reader THEN the suite is `unverified` with the reason; kind and size are checked before the read. | `check_junit::suite_runs_the_whole_command`, `check_junit::report_must_be_a_regular_file` |
 | AC-35 | WHEN a junit check ends THE record in `runs.jsonl` has `"runner": "junit"` and no cargo version, and a passing record is current in `status` and `next` as a cargo one is. | `check_junit::junit_record_is_current` |
-| AC-37 | WHEN the ticket has a `base` THE `check`, `check --history`, the commit hook, `next` and `lint` run no `git log` or `rev-list` over the first-parent history beyond `base..HEAD`, the check of `base` included. | `check_history::walk_reads_only_the_range` |
-| AC-38 | IF a report is empty, not valid UTF-8, holds a DOCTYPE, an unknown entity, unbalanced tags, a second root, text outside the root, an unknown root, a known element outside its parent (a nested `testsuite`, a `testcase` under `testsuites`) or a character reference outside the XML 1.0 characters or with a sign THEN the reader refuses it with a reason that names the cause. | `junit_report::refuses_malformed_reports`, `junit_report::refuses_misplaced_elements`, `junit_report::refusals_name_their_cause`, `junit_report::refuses_bad_character_references` |
+| AC-37 | WHEN the ticket has a `base` THE `check`, `check --history`, the commit hook, `next` and `lint` run no `git log` or `rev-list` over the first-parent history beyond `base..HEAD`, the check of `base` included. | `check_history::walk_reads_only_the_range`, `check_history::base_edges` |
+| AC-38 | IF a report is empty, not valid UTF-8, holds a DOCTYPE, an unknown entity, unbalanced tags, a second root, text outside the root, an unknown root, a known element outside its parent (a nested `testsuite`, a `testcase` under `testsuites`), or a character reference outside the XML 1.0 characters, with a sign, without digits or above `10FFFF` THEN the reader refuses it with a reason that names that cause, one reason per cause. | `junit_report::refuses_malformed_reports`, `junit_report::refuses_misplaced_elements`, `junit_report::refusals_name_their_cause`, `junit_report::refuses_bad_character_references`, `junit_report::character_reference_causes` |
 | AC-39 | WHEN the first word of `command` is a repository path THE script runs as it is at the step's commit, and a change of it blocks a step only between that step's RED and GREEN. | `check_junit::config_change_is_unverified`, `check_junit::input_window_edges` |
-| AC-40 | WHEN a junit check runs THE check and its suite take the machine-wide cargo lock as a cargo check does. | `cargo_lock::junit_check_takes_the_lock` |
-| AC-41 | WHEN a build input or configuration change blocks a junit step THE commit hook and `next` name that change's commit as the step's fault commit. | `check_junit::fault_commit_is_the_blocking_change` |
-| AC-42 | WHEN the runner is junit and a GREEN or later commit changes a file that matches a test glob, is no test file and lies in the folder of a step test's file THE step reads `tests-changed`. | `check_junit::fixture_beside_a_test_is_protected` |
+| AC-40 | WHEN a junit check runs THE check and its suite take the machine-wide cargo lock as a cargo check does. | `cargo_lock::junit_check_takes_the_lock`, `cargo_lock::junit_lock_edges` |
+| AC-41 | WHEN a build input or configuration change blocks a junit step THE commit hook and `next` name that change's commit as the step's fault commit. | `check_junit::fault_commit_is_the_blocking_change`, `check_junit::config_fault_commit` |
+| AC-42 | WHEN the runner is junit and a GREEN or later commit changes, adds or deletes a file that matches a test glob, is no test file and lies in the folder of a step test's file THE step reads `tests-changed`. | `check_junit::fixture_beside_a_test_is_protected`, `check_junit::fixture_added_or_deleted_is_protected` |
+| AC-43 | WHEN a build input changed on the Walk is a Base merge input THE input blocks no step and not the suite, under cargo and junit; a merge that resolves it to other content, or a ticket without `base_branch`, blocks as before. | `check_history::merge_of_the_base_branch_blocks_nothing`, `check_junit::merge_of_the_base_branch_blocks_nothing` |
 
 ### Guarantees
 
-- **Promised:** the Frame's promise, by AC-1 to AC-42; the cargo runner, its outcomes and its record are
+- **Promised:** the Frame's promise, by AC-1 to AC-43; the cargo runner, its outcomes and its record are
   unchanged apart from the Walk; tickets STP-1 to STP-12 without `base` are checked as before.
 - **Not promised:** the Frame's list; test calls under `test.each`, `describe.each`, `xit`, `fit` and
   aliases; JSX text that holds a quote or a backtick; a `node_modules` other than the root one (workspaces);
@@ -238,6 +248,17 @@ stapel-cli --test <file> -- --test-threads=3`, `-p stapel-core --test <file>`; b
 | Fixture beside | `__tests__/data.json` beside the step test file, untouched by the RED, edited by the GREEN: `tests-changed`; a fixture in another folder: no fault | `check_junit::fixture_beside_a_test_is_protected` |
 | Test columns | a closed ticket naming `x::t` in a `Tests` column after `tests/x.rs` was deleted: reported; a code name such as check::run_check in a `Design` cell: ignored; a Plan step's test list counts | `lint::named_tests_from_test_columns` |
 | Module paths | a cargo test `m::t` in `mod m` of `tests/x.rs` named `x::m::t`: found; as a step test: named, no fault; a name of the core config test file still resolves to that file | `lint::module_path_names` |
+| Base merge | cargo: a ticket with `base_branch` main merges main, which added a test file new.rs under the tests folder of a crate: every step and the suite run, no `build-input-changed`; the same merge resolving the file to other content: blocked at the merge | `check_history::merge_of_the_base_branch_blocks_nothing` |
+| Base merge junit | a merge of main that brings `jest.config.js` unchanged: no block; resolved to other content: blocked; the same merge in a ticket without `base_branch`: blocked | `check_junit::merge_of_the_base_branch_blocks_nothing` |
+| Reference causes | `&#0;` and `&#xFFFE;` (not an XML character), `&#+65;` (a sign), `&#;` and `&#x;` (no digits), `&#x110000;` (too large): four different reasons, each asserted | `junit_report::character_reference_causes` |
+| Report kind | a FIFO, a folder and a symbolic link at the report path, for a Per-file run and for the suite: `unverified` with the kind in the reason, no read blocks | `check_junit::report_must_be_a_regular_file` |
+| Fixture added or deleted | a GREEN that adds `__tests__/data.json` beside the step test file; a later commit that deletes one the RED left alone: `tests-changed` | `check_junit::fixture_added_or_deleted_is_protected` |
+| Header-less rows | a ticket whose only table has no separator line and names a missing test: no fault; the old lint fixtures get header rows and such a row each | `lint::rows_without_header_name_no_test` |
+| Base edges | a `base` after HEAD: refused; HEAD equal to `base` (an empty Walk): accepted | `check_history::base_edges` |
+| Each template | an `it` under `describe.each` written with a tagged template table: no test call | `ts_tests::describe_each_template_hides_calls` |
+| Scope | a hidden `describe` inside a titled one and the reverse; a titled `describe` after a hidden one: names as the scopes say | `ts_tests::describe_scope_cases` |
+| Lock edges | the holder line names the junit check; the held mark reaches the Per-file and suite commands; a junit check with the mark set takes no lock; the lock is free after a refused check | `cargo_lock::junit_lock_edges` |
+| Config fault | a `stapel.toml` change after step 2's RED: the hook and `next` name that commit | `check_junit::config_fault_commit` |
 
 ### Inputs
 
@@ -294,6 +315,8 @@ stapel-cli --test <file> -- --test-threads=3`, `-p stapel-core --test <file>`; b
 | GREEN edits a helper or `describe` title of a test file whose rest the RED changed | `tests-changed` | `check_junit::tests_changed_under_junit` |
 | GREEN edits a helper of a file where the RED only added a test call | not protected, `needs-run` (AC-27 limit) | `check_junit::same_file_helper_is_not_protected` |
 | GREEN edits a fixture beside the step test file | `tests-changed` | `check_junit::fixture_beside_a_test_is_protected` |
+| GREEN adds the fixture its RED test reads | `tests-changed` | `check_junit::fixture_added_or_deleted_is_protected` |
+| merges main and resolves a merged build input to other content | `build-input-changed` at the merge | `check_junit::merge_of_the_base_branch_blocks_nothing` |
 | GREEN adds `test.only.each` in another test file of the step | `unverified` (AC-22) | `check_junit::only_call_in_another_file` |
 | changes `command` in `stapel.toml` after the steps are built | `build-input-changed` for the earlier steps | `check_junit::config_change_after_first_red` |
 | GREEN adds `passWithNoTests` to `jest.config.js` | `build-input-changed` | `check_junit::build_input_change_is_unverified` |
@@ -310,9 +333,9 @@ division; the trimmed comparison of names that differ only in inner spaces; a fi
 glob and an input glob (the input rule comes first); a `stapel.toml` edited in the working tree between two
 checks (the second check runs the new command for old commits).
 
-**Author self-check:** 2026-11-11, before spec review, again after rounds 1 and 2 and code review round 1: promise item 1 maps to
+**Author self-check:** 2026-11-11, before spec review, again after rounds 1 and 2, code review round 1 and, on 2026-11-12, the merge of main: promise item 1 maps to
 AC-4 to AC-6, AC-10, AC-23 to AC-26, AC-34, AC-35; item 2 to AC-7 and AC-9; item 3 to AC-8, AC-11 to
-AC-22, AC-27, AC-33, AC-38 to AC-42; item 4 to
+AC-22, AC-27, AC-33, AC-38 to AC-43; item 4 to
 AC-1, AC-2 and AC-37; item 5 to AC-3; item 6 to AC-28 to AC-32; each Inputs and External states row has a test or
 "not promised"; readers of the changed configuration (`[check]` with junit keys) are `config.rs`,
 `check.rs`, `checkstate.rs`, `next.rs`, `init` (the starter text stays cargo) and the commit hook.
@@ -414,7 +437,7 @@ AC-1, AC-2 and AC-37; item 5 to AC-3; item 6 to AC-28 to AC-32; each Inputs and 
 | AC-4 | `core::config::junit_check_keys` |
 | AC-5 | `core::config::rejects_bad_junit_keys`, `core::config::rejects_command_without_program` |
 | AC-6 | `core::config::globs_match_paths` |
-| AC-7 | `ts_tests::finds_test_calls_with_describe_titles`, `ts_tests::skips_comments_strings_and_regexes`, `ts_tests::titles_not_promised_are_skipped`, `ts_tests::describe_modifiers_hide_calls` |
+| AC-7 | `ts_tests::finds_test_calls_with_describe_titles`, `ts_tests::skips_comments_strings_and_regexes`, `ts_tests::titles_not_promised_are_skipped`, `ts_tests::describe_modifiers_hide_calls`, `ts_tests::describe_each_template_hides_calls`, `ts_tests::describe_scope_cases` |
 | AC-8 | `junit_report::reads_test_cases`, `junit_report::reads_unusual_valid_reports` |
 | AC-9 | `check_junit::step_tests_from_the_red_commit` |
 | AC-10 | `check_junit::red_to_green_passes` |
@@ -428,7 +451,7 @@ AC-1, AC-2 and AC-37; item 5 to AC-3; item 6 to AC-28 to AC-32; each Inputs and 
 | AC-18 | `check_junit::report_shape_is_unverified` |
 | AC-19 | `check_junit::exit_code_must_agree`, `check_junit::exit_code_edge_cases` |
 | AC-20 | `check_junit::run_faults_are_unverified` |
-| AC-21 | `check_junit::run_faults_are_unverified`, `check_junit::report_size_checked_before_read` |
+| AC-21 | `check_junit::run_faults_are_unverified`, `check_junit::report_size_checked_before_read`, `check_junit::report_must_be_a_regular_file` |
 | AC-22 | `check_junit::only_call_is_unverified`, `ts_tests::has_only_call_cases`, `check_junit::only_call_in_another_file` |
 | AC-23 | `check_junit::node_modules_missing_is_unverified` |
 | AC-24 | `check_junit::build_input_change_is_unverified`, `check_junit::merge_brings_a_build_input` |
@@ -437,19 +460,20 @@ AC-1, AC-2 and AC-37; item 5 to AC-3; item 6 to AC-28 to AC-32; each Inputs and 
 | AC-26 | `check_junit::suite_runs_the_whole_command`, `check_junit::suite_sums_every_suite` |
 | AC-27 | `check_junit::tests_changed_under_junit`, `check_junit::hook_faults_under_junit`, `check_junit::same_file_helper_is_not_protected` |
 | AC-28 | `lint::lint_exit_codes_and_order` |
-| AC-29 | `lint::names_a_missing_test`, `lint::named_tests_from_test_columns` |
+| AC-29 | `lint::names_a_missing_test`, `lint::named_tests_from_test_columns`, `lint::rows_without_header_name_no_test` |
 | AC-30 | `lint::step_test_named_by_no_ticket` |
 | AC-31 | `lint::step_test_named_by_no_ticket`, `lint::lint_under_junit`, `lint::module_path_names` |
 | AC-32 | `lint::lint_exit_codes_and_order` |
 | AC-33 | `check_junit::not_green_and_removed` |
-| AC-34 | `check_junit::suite_runs_the_whole_command` |
+| AC-34 | `check_junit::suite_runs_the_whole_command`, `check_junit::report_must_be_a_regular_file` |
 | AC-35 | `check_junit::junit_record_is_current` |
-| AC-37 | `check_history::walk_reads_only_the_range` |
-| AC-38 | `junit_report::refuses_malformed_reports`, `junit_report::refuses_misplaced_elements`, `junit_report::refusals_name_their_cause`, `junit_report::refuses_bad_character_references` |
+| AC-37 | `check_history::walk_reads_only_the_range`, `check_history::base_edges` |
+| AC-38 | `junit_report::refuses_malformed_reports`, `junit_report::refuses_misplaced_elements`, `junit_report::refusals_name_their_cause`, `junit_report::refuses_bad_character_references`, `junit_report::character_reference_causes` |
 | AC-39 | `check_junit::config_change_is_unverified`, `check_junit::input_window_edges` |
-| AC-40 | `cargo_lock::junit_check_takes_the_lock` |
-| AC-41 | `check_junit::fault_commit_is_the_blocking_change` |
-| AC-42 | `check_junit::fixture_beside_a_test_is_protected` |
+| AC-40 | `cargo_lock::junit_check_takes_the_lock`, `cargo_lock::junit_lock_edges` |
+| AC-41 | `check_junit::fault_commit_is_the_blocking_change`, `check_junit::config_fault_commit` |
+| AC-42 | `check_junit::fixture_beside_a_test_is_protected`, `check_junit::fixture_added_or_deleted_is_protected` |
+| AC-43 | `check_history::merge_of_the_base_branch_blocks_nothing`, `check_junit::merge_of_the_base_branch_blocks_nothing` |
 
 Manual smoke check before the close: `stapel check` of one step on the pilot repository with jest 29 and
 jest-junit 16 (SR2-5).
@@ -510,7 +534,7 @@ Route: full (tags `guard`, `interface`), auto.
     `check_junit::report_size_checked_before_read`, `cargo_lock::junit_check_takes_the_lock`): both names
     trimmed, the size read from metadata (the dead signal branch goes), the lock taken under junit. A
     coverage commit adds `check_junit::exit_code_edge_cases`, `check_junit::load_failure_edge_cases` and
-    `check_junit::only_call_in_another_file` (AC-15, AC-19, AC-22). Must not change: the reason texts of
+    `check_junit::only_call_in_another_file`, whose criteria steps 7 and 8 built. Must not change: the reason texts of
     steps 7 and 8.
 17. Config window and fault commit (AC-25, AC-41; tests `check_junit::config_change_after_first_red`,
     `check_junit::fault_commit_is_the_blocking_change`): `junit_block` and the hook and `next` fault commit.
@@ -522,6 +546,22 @@ Route: full (tags `guard`, `interface`), auto.
 19. Lint names (AC-29, AC-31; tests `lint::named_tests_from_test_columns`, `lint::module_path_names`):
     Test columns and Plan test lists only, the file part as the Named test term says, a missing file
     reported. Must not change: the exit codes and order of AC-32.
+20. Base merge input (AC-43, AC-24; tests `check_history::merge_of_the_base_branch_blocks_nothing`,
+    `check_junit::merge_of_the_base_branch_blocks_nothing`): `build_inputs.rs` for both runners, with the
+    `base_branch` of `state.json`. Must not change: `check_junit::merge_brings_a_build_input`, which merges
+    a side branch in a ticket without `base_branch` and still blocks.
+21. Reader and report file (AC-21, AC-34, AC-38; tests `junit_report::character_reference_causes`,
+    `check_junit::report_must_be_a_regular_file`): one reason per reference cause; one read helper for
+    the Per-file and suite reports that checks the file kind and size before the read. Must not change:
+    the other reader reasons.
+22. Protected fixtures and lint headers (AC-42, AC-29; tests `check_junit::fixture_added_or_deleted_is_protected`,
+    `lint::rows_without_header_name_no_test`): added and deleted fixtures; the header-less fallback goes.
+    The RED gives the old lint fixtures header rows and a header-less row naming a missing test each, so
+    each changed old test fails at the RED. Must not change: the Named test term.
+23. Coverage, its own commit, no GREEN (AC-7, AC-37, AC-40, AC-41; tests
+    `check_history::base_edges`, `ts_tests::describe_each_template_hides_calls`,
+    `ts_tests::describe_scope_cases`, `cargo_lock::junit_lock_edges`, `check_junit::config_fault_commit`):
+    the behaviour holds. Must not change: any source file.
 
 ## Review
 
