@@ -1268,6 +1268,30 @@ fn report_size_checked_before_read() {
     assert!(line.contains("16 MiB"), "{line}");
 }
 
+// STP-30 AC-13: the size bound of a regular report holds: exactly 16 MiB is read, one byte more is
+// unverified as over 16 MiB.
+#[test]
+fn report_size_bound() {
+    let body = |total: u64| {
+        format!(
+            "printf '%s' '{}' > junit.xml\nn=$(wc -c < junit.xml)\nhead -c $(({total} - n)) /dev/zero | tr '\\0' ' ' >> junit.xml\nexit 0\n",
+            PASSED_ONE.trim()
+        )
+    };
+    let limit: u64 = 16 * 1024 * 1024;
+
+    let (_, text) = fault_case("sh {script} {file}", &body(limit), None, 60);
+    let line = text.lines().find(|l| l.starts_with("step 1: ")).unwrap();
+    assert!(!line.contains("16 MiB"), "exactly 16 MiB is read: {line}");
+    assert!(!line.contains("unverified"), "exactly 16 MiB is read: {line}");
+
+    let (code, text) = fault_case("sh {script} {file}", &body(limit + 1), None, 60);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+    let line = text.lines().find(|l| l.starts_with("step 1: ")).unwrap();
+    assert!(line.contains("16 MiB"), "{line}");
+}
+
 /// A change of the configuration: the `timeout_secs` line gets the value `n`.
 fn bump_config(dir: &Path, n: u32) {
     let path = dir.join(".stapel/stapel.toml");
