@@ -730,3 +730,118 @@ fn export_from_a_subfolder() {
     assert!(err.contains(".stapel"), "{err}");
     assert_eq!(export_refs(dir), before);
 }
+
+// STP-31 AC-15 (R1-2, ER1-4): the author and committer lines, the `encoding` header and the message
+// bytes are kept exactly; only `gpgsig` is dropped.
+#[test]
+fn keeps_identity_and_encoding() {
+    use std::io::Write;
+
+    fn raw_commit(dir: &Path, commit: &str) -> Vec<u8> {
+        let out = std::process::Command::new("git")
+            .args(["cat-file", "commit", commit])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        out.stdout
+    }
+
+    fn write_commit(dir: &Path, raw: &[u8]) -> String {
+        let mut child = std::process::Command::new("git")
+            .args(["hash-object", "-t", "commit", "-w", "--stdin"])
+            .current_dir(dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(raw).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    }
+
+    /// The lines of a raw commit without `tree`, `parent` and the `gpgsig` block.
+    fn kept_lines(raw: &[u8]) -> Vec<u8> {
+        let split = raw.windows(2).position(|w| w == b"\n\n").unwrap();
+        let mut out = Vec::new();
+        let mut in_sig = false;
+        for line in raw[..split].split(|b| *b == b'\n') {
+            if in_sig && line.starts_with(b" ") {
+                continue;
+            }
+            in_sig = line.starts_with(b"gpgsig ");
+            if in_sig || line.starts_with(b"tree ") || line.starts_with(b"parent ") {
+                continue;
+            }
+            out.extend_from_slice(line);
+            out.push(b'\n');
+        }
+        out.extend_from_slice(&raw[split..]);
+        out
+    }
+
+    let repo = base_repo();
+    let dir = repo.path();
+    let tmp = bare_dir();
+    commit(
+        dir,
+        2,
+        &[
+            ("src/one.txt", "1\n"),
+            (".stapel/tickets/ABC-1/state.json", "{\"key\":\"ABC-1\"}\n"),
+        ],
+        "one",
+    );
+    commit(dir, 3, &[("src/two.txt", "2\n")], "two");
+    commit(dir, 4, &[("src/three.txt", "3\n")], "three");
+    commit(dir, 5, &[("src/four.txt", "4\n")], "four");
+
+    // Rewrite the four commits by hand, with identities and bytes `commit-tree` would change.
+    let originals: Vec<String> = commits(dir, "main..ABC-1").into_iter().map(|(_, h)| h).collect();
+    let mut parent = rev(dir, "main");
+    let mut sources: Vec<String> = Vec::new();
+    for (i, original) in originals.iter().enumerate() {
+        let tree = git_n(dir, 1, &["rev-parse", &format!("{original}^{{tree}}")]);
+        let mut raw: Vec<u8> = format!("tree {}\nparent {parent}\n", tree.trim()).into_bytes();
+        match i {
+            0 => raw.extend_from_slice(
+                b"author John Smith Jr. <js@example.invalid> 1767261600 +0300\n\
+                  committer \"Q\" <q@x> 1767265200 -0500\n\nJr. line\n",
+            ),
+            1 => raw.extend_from_slice(
+                b"author \"Q\" <q@x> 1767261600 +0000\n\
+                  committer John Smith Jr. <js@example.invalid> 1767265200 +0000\n\nquoted\n",
+            ),
+            2 => {
+                raw.extend_from_slice(
+                    b"author Andr\xe9 <a@example.invalid> 1767261600 +0100\n\
+                      committer Andr\xe9 <a@example.invalid> 1767261600 +0100\n\
+                      encoding ISO-8859-1\n\ncaf\xe9 \xff\n",
+                );
+            }
+            _ => raw.extend_from_slice(
+                b"author signer <s@example.invalid> 1767261600 +0000\n\
+                  committer signer <s@example.invalid> 1767261600 +0000\n\
+                  gpgsig -----BEGIN PGP SIGNATURE-----\n \n abc\n -----END PGP SIGNATURE-----\n\
+                  \nsigned\n",
+            ),
+        }
+        parent = write_commit(dir, &raw);
+        sources.push(parent.clone());
+    }
+    git_n(dir, 1, &["update-ref", "refs/heads/ABC-1", &parent]);
+
+    export(dir, "main", tmp.path());
+    let exported: Vec<String> = commits(dir, "main..export/ABC-1").into_iter().map(|(_, h)| h).collect();
+    assert_eq!(exported.len(), sources.len());
+    for (new, old) in exported.iter().zip(&sources) {
+        let new_raw = raw_commit(dir, new);
+        assert_eq!(
+            String::from_utf8_lossy(&kept_lines(&new_raw)),
+            String::from_utf8_lossy(&kept_lines(&raw_commit(dir, old))),
+        );
+        assert_eq!(kept_lines(&new_raw), kept_lines(&raw_commit(dir, old)));
+        assert!(!new_raw.windows(7).any(|w| w == b"gpgsig "));
+    }
+}
