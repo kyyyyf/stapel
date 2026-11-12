@@ -103,14 +103,21 @@ fn upstream_of(dir: &Path, base_branch: Option<&str>) -> Result<String, String> 
     } else {
         git(
             dir,
-            &["rev-parse", "--symbolic-full-name", &format!("{base}@{{upstream}}")],
+            &[
+                "rev-parse",
+                "--symbolic-full-name",
+                "--end-of-options",
+                &format!("{base}@{{upstream}}"),
+            ],
             &[],
             b"",
         )
         .map(text)
         .unwrap_or_default()
         .lines()
-        .next()
+        // rev-parse echoes `--end-of-options`; the name is the last line.
+        .filter(|l| *l != "--end-of-options")
+        .next_back()
         .unwrap_or("")
         .to_string()
     };
@@ -385,7 +392,7 @@ fn export(dir: &Path, key: &str, onto: &str) -> Result<Done, String> {
         let rewritten = rewrite_raw(&raw, &tree, &parents);
         let new = text(git(
             dir,
-            &["hash-object", "-t", "commit", "-w", "--stdin"],
+            &["hash-object", "-t", "commit", "-w", "--literally", "--stdin"],
             &[],
             &rewritten,
         )?);
