@@ -1,7 +1,7 @@
 //! `stapel init`: the `.stapel/` layout in the repository root.
 
-use serde_json::{json, Value};
-use stapel_core::config::{starter_toml, validate_prefix, Config, History};
+use serde_json::{Value, json};
+use stapel_core::config::{Config, History, starter_toml, validate_prefix};
 use std::io::{BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -62,6 +62,30 @@ if [ -n "${CLAUDECODE:-}" ] || [ -n "${CLAUDE_CODE_ENTRYPOINT:-}" ]; then
   echo "stapel: push from an agent session is not allowed; the human pushes from their own terminal" >&2
   exit 1
 fi
+exit 0
+"#;
+
+/// Marks the pre-push hook of the local mode.
+const LOCAL_MARKER: &str = "# stapel: local history check";
+/// The pre-push hook of the local mode: the agent check of `PRE_PUSH`, then a refusal of new
+/// commits that carry `.stapel/`.
+const LOCAL_PRE_PUSH: &str = r#"#!/bin/sh
+# stapel: pre-push guard, installed by `stapel init`.
+# Claude Code sets CLAUDECODE (and CLAUDE_CODE_ENTRYPOINT) in the shell it gives the agent;
+# pushes from there are refused.
+if [ -n "${CLAUDECODE:-}" ] || [ -n "${CLAUDE_CODE_ENTRYPOINT:-}" ]; then
+  echo "stapel: push from an agent session is not allowed; the human pushes from their own terminal" >&2
+  exit 1
+fi
+# stapel: local history check
+while read -r lref lsha rref rsha extra; do
+  [ -n "$lref" ] && [ -n "$lsha" ] && [ -n "$rref" ] && [ -n "$rsha" ] && [ -z "$extra" ] || continue
+  case "$lsha" in *[!0]*) ;; *) continue ;; esac
+  if [ -n "$(git rev-list -n 1 "$lsha" --not --remotes -- .stapel 2>/dev/null)" ]; then
+    echo "stapel: $lref carries .stapel/; push the branch that stapel export writes" >&2
+    exit 1
+  fi
+done
 exit 0
 "#;
 
@@ -141,9 +165,16 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
         .repository
         .as_ref()
         .is_some_and(|r| r.history == History::Local);
-    plan_ignore_index(&root, is_local, &mut plan)?;
+    let hook_rel = plan_pre_push(&root, is_local, &mut plan)?;
+    let mut ignore: Vec<String> = IGNORE_LINES.iter().map(|l| l.to_string()).collect();
+    if let (true, Some(rel)) = (is_local, hook_rel) {
+        // A pre-push in a tracked hooks folder (`.husky/`) must not reach a merge request.
+        if !Path::new(&rel).starts_with(".git") {
+            ignore.push(format!("/{rel}"));
+        }
+    }
+    plan_ignore_index(&root, is_local, &ignore, &mut plan)?;
     plan_hooks(&root, &mut plan)?;
-    plan_pre_push(&root, &mut plan)?;
     let mut kept = false;
     plan_process_files(&root, &config, &mut plan, &mut kept)?;
 
@@ -562,14 +593,20 @@ fn plan_create(root: &Path, rel: &'static str, content: String, plan: &mut Vec<S
     }
 }
 
-fn plan_ignore_index(root: &Path, local: bool, plan: &mut Vec<Step>) -> Result<(), String> {
+fn plan_ignore_index(
+    root: &Path,
+    local: bool,
+    ignore: &[String],
+    plan: &mut Vec<Step>,
+) -> Result<(), String> {
+    let ignore: Vec<&str> = ignore.iter().map(String::as_str).collect();
     if local {
         let exclude = git_path(root, "info/exclude")?;
         let attributes = git_path(root, "info/attributes")?;
-        plan_append_lines(root, &exclude, &IGNORE_LINES, plan)?;
+        plan_append_lines(root, &exclude, &ignore, plan)?;
         return plan_append_lines(root, &attributes, &UNION_LINES, plan);
     }
-    plan_append_lines(root, ".gitignore", &IGNORE_LINES, plan)?;
+    plan_append_lines(root, ".gitignore", &ignore, plan)?;
     plan_append_lines(root, ".gitattributes", &UNION_LINES, plan)
 }
 
@@ -815,7 +852,9 @@ fn plan_pre_hook(pre: &mut Vec<Value>) -> (bool, bool) {
 
 /// Plans the git pre-push hook in the hooks directory git uses (`core.hooksPath` included).
 /// A pre-push hook that is not ours is kept, with a warning.
-fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
+/// Returns the hook path relative to `root` when a stapel hook is there.
+fn plan_pre_push(root: &Path, local: bool, plan: &mut Vec<Step>) -> Result<Option<String>, String> {
+    let wanted = if local { LOCAL_PRE_PUSH } else { PRE_PUSH };
     let out = Command::new("git")
         .args(["rev-parse", "--git-path", "hooks/pre-push"])
         .current_dir(root)
@@ -837,36 +876,44 @@ fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
              pre-push was not installed, so the second layer against agent pushes is off",
             path.parent().unwrap_or(&path).display()
         );
-        return Ok(());
+        return Ok(None);
     };
 
     match std::fs::read(&path) {
         Ok(bytes) if String::from_utf8_lossy(&bytes).contains(PRE_PUSH_MARKER) => {
-            if !is_executable(&path) {
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            if local && !text.contains(LOCAL_MARKER) {
                 plan.push(Step {
                     rel: path.display().to_string(),
-                    content: String::from_utf8_lossy(&bytes).into_owned(),
+                    content: wanted.into(),
+                    label: format!("updated: {rel} (pre-push: refuses .stapel/ in new commits)"),
+                    executable: true,
+                });
+            } else if !is_executable(&path) {
+                plan.push(Step {
+                    rel: path.display().to_string(),
+                    content: text,
                     label: format!("fixed: {rel} (pre-push is executable again)"),
                     executable: true,
                 });
             }
-            Ok(())
+            Ok(Some(rel))
         }
         Ok(_) => {
             warn!(
                 "warning: {rel} exists and is not from stapel; the second layer against agent \
                  pushes was not installed. Add a check of the CLAUDECODE variable to it by hand"
             );
-            Ok(())
+            Ok(None)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             plan.push(Step {
                 rel: path.display().to_string(),
-                content: PRE_PUSH.into(),
+                content: wanted.into(),
                 label: format!("created: {rel} (pre-push: second layer against agent pushes)"),
                 executable: true,
             });
-            Ok(())
+            Ok(Some(rel))
         }
         Err(e) => Err(format!("{rel}: {e}")),
     }
