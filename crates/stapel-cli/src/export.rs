@@ -6,7 +6,6 @@ use crate::fail::Fail;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::Write;
-use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -218,15 +217,31 @@ fn onto_entries(dir: &Path, onto: &str) -> Result<Vec<u8>, String> {
     Ok(kept)
 }
 
-/// The value of a header line (`author`, `committer`) split into name, email and date.
-fn ident(header: &[u8]) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
-    let open = header.iter().position(|b| *b == b'<')?;
-    let close = open + header[open..].iter().position(|b| *b == b'>')?;
-    let name = header[..open].strip_suffix(b" ").unwrap_or(&header[..open]);
-    let date = header[close + 1..]
-        .strip_prefix(b" ")
-        .unwrap_or(&header[close + 1..]);
-    Some((name.to_vec(), header[open + 1..close].to_vec(), date.to_vec()))
+/// The raw commit object with its `tree` and `parent` lines replaced and the `gpgsig` and `mergetag`
+/// headers (with their continuation lines) removed; every other byte stays.
+fn rewrite_raw(raw: &[u8], tree: &str, parents: &[String]) -> Vec<u8> {
+    let split = raw.windows(2).position(|w| w == b"\n\n").unwrap_or(raw.len());
+    let (header, rest) = raw.split_at(split);
+    let mut lines: Vec<Vec<u8>> = vec![format!("tree {tree}").into_bytes()];
+    for parent in parents {
+        lines.push(format!("parent {parent}").into_bytes());
+    }
+    let mut skipping = false;
+    for line in header.split(|b| *b == b'\n') {
+        if skipping && line.starts_with(b" ") {
+            continue;
+        }
+        skipping = line.starts_with(b"gpgsig ")
+            || line.starts_with(b"gpgsig-sha256 ")
+            || line.starts_with(b"mergetag ");
+        if skipping || line.starts_with(b"tree ") || line.starts_with(b"parent ") {
+            continue;
+        }
+        lines.push(line.to_vec());
+    }
+    let mut out = lines.join(&b'\n');
+    out.extend_from_slice(rest);
+    out
 }
 
 fn export(dir: &Path, key: &str, onto: &str) -> Result<Done, String> {
@@ -353,37 +368,13 @@ fn export(dir: &Path, key: &str, onto: &str) -> Result<Done, String> {
         }
 
         let raw = git(dir, &["cat-file", "commit", commit], &[], b"")?;
-        let split = raw
-            .windows(2)
-            .position(|w| w == b"\n\n")
-            .map(|i| (&raw[..i], &raw[i + 2..]))
-            .unwrap_or((&raw[..], &raw[raw.len()..]));
-        let (header, message) = split;
-        let mut env: Vec<(&str, OsString)> = Vec::new();
-        for line in header.split(|b| *b == b'\n') {
-            for (prefix, vars) in [
-                (&b"author "[..], ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE"]),
-                (&b"committer "[..], [
-                    "GIT_COMMITTER_NAME",
-                    "GIT_COMMITTER_EMAIL",
-                    "GIT_COMMITTER_DATE",
-                ]),
-            ] {
-                if let Some(rest) = line.strip_prefix(prefix) {
-                    let (name, email, date) =
-                        ident(rest).ok_or_else(|| format!("commit {commit}: bad {} line", String::from_utf8_lossy(prefix).trim()))?;
-                    env.push((vars[0], OsString::from_vec(name)));
-                    env.push((vars[1], OsString::from_vec(email)));
-                    env.push((vars[2], OsString::from_vec(date)));
-                }
-            }
-        }
-        let mut args: Vec<&str> = vec!["commit-tree", &tree];
-        for parent in &parents {
-            args.push("-p");
-            args.push(parent);
-        }
-        let new = text(git(dir, &args, &env, message)?);
+        let rewritten = rewrite_raw(&raw, &tree, &parents);
+        let new = text(git(
+            dir,
+            &["hash-object", "-t", "commit", "-w", "--stdin"],
+            &[],
+            &rewritten,
+        )?);
         made.push(new.clone());
         replaced.insert(commit.to_string(), new);
         last = Some(commit.to_string());
