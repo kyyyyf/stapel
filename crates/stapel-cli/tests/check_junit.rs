@@ -1061,3 +1061,32 @@ fn hook_faults_under_junit() {
         "{context}"
     );
 }
+
+// AC-11: a title with an edge space matches the report's name once both are trimmed.
+#[test]
+fn step_name_with_edge_space() {
+    let repo = junit_repo();
+    let dir = repo.dir();
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "it(\"a \", () => { /* needs src/ok.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: a");
+    write(dir, "src/ok.ts", "export const ok = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: a");
+    let (code, text) = check(&repo);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
+}
+
+// AC-21: the size of a report is read from its metadata before the file is read.
+#[test]
+fn report_size_checked_before_read() {
+    let big = "truncate -s 17825792 junit.xml\nchmod 000 junit.xml\nexit 0\n";
+    let (code, text) = fault_case("sh {script} {file}", big, None, 60);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
+    let line = text.lines().find(|l| l.starts_with("step 1: ")).unwrap();
+    assert!(line.contains("16 MiB"), "{line}");
+}

@@ -590,3 +590,55 @@ fn lock_edges() {
         "{line}"
     );
 }
+
+// STP-28 AC-40: a junit `stapel check` takes the machine-wide lock as a cargo check does: it waits
+// with the wait line while the lock is held and runs after the release.
+#[test]
+fn junit_check_takes_the_lock() {
+    let root = tempfile::tempdir().unwrap();
+    let standin = Standin::new(root.path());
+    let home = root.path().join("home");
+    let lock_dir = home.join(".cache/stapel");
+    std::fs::create_dir_all(&lock_dir).unwrap();
+    let repo = common::junit_repo();
+    let dir = repo.dir();
+    std::fs::write(
+        dir.join("__tests__/x.test.ts"),
+        "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+    )
+    .unwrap();
+    commit_all(dir, "ABC-1 step 1 RED: one");
+    std::fs::write(dir.join("src/ok.ts"), "export const ok = 1;\n").unwrap();
+    commit_all(dir, "ABC-1 step 1 GREEN: one");
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(lock_dir.join("cargo.lock"))
+        .unwrap();
+    file.lock().unwrap();
+    let err = root.path().join("junit.err");
+    let out = root.path().join("junit.out");
+    let mut cmd = standin.command(dir, &home, &["check", "ABC-1"]);
+    cmd.stdout(std::fs::File::create(&out).unwrap())
+        .stderr(std::fs::File::create(&err).unwrap());
+    let mut check = cmd.spawn().unwrap();
+    wait_until("the wait line", || {
+        std::fs::read_to_string(&err)
+            .unwrap_or_default()
+            .contains(WAIT_LINE)
+    });
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(check.try_wait().unwrap().is_none(), "the check did not wait");
+    assert!(
+        !std::fs::read_to_string(&out)
+            .unwrap_or_default()
+            .contains("step 1:"),
+        "the check ran while the lock was held"
+    );
+    drop(file);
+    wait_exit(&mut check, "the check");
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert!(text.contains("step 1: pass"), "{text}");
+}
