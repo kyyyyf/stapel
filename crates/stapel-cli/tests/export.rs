@@ -765,6 +765,16 @@ fn export_leaves_the_checkout() {
     assert!(!export_refs(dir).is_empty());
     assert!(state(dir) == before);
     assert_eq!(leftovers(tmp.path()), Vec::<String>::new());
+
+    // A remote Onto ref: the remote list is read before the ref is written.
+    git_n(dir, 1, &["remote", "add", "origin", "/nonexistent/origin"]);
+    git_n(dir, 1, &["update-ref", "refs/remotes/origin/main", "main"]);
+    let calls = trace_of(&["export", "ABC-1", "--onto", "origin/main"], "remote", 0);
+    let last = calls.last().expect("no git call traced");
+    assert!(last.contains("update-ref"), "{last}\n{calls:?}");
+    assert!(calls.iter().any(|c| c.contains("remote")), "{calls:?}");
+    assert!(state(dir) == before);
+    assert_eq!(leftovers(tmp.path()), Vec::<String>::new());
 }
 
 // STP-31 AC-21: from a subfolder or a linked worktree the process paths and the `.stapel` check are
