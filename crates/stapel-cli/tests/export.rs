@@ -315,6 +315,54 @@ fn drops_empty_commits() {
     );
 }
 
+// STP-31 AC-16: a commit is compared with the Clean tree of its parent, also outside the range; a
+// merge whose parents collapse is dropped only when its Clean tree equals that parent's.
+#[test]
+fn drops_against_clean_parent_trees() {
+    let repo = git_repo();
+    let dir = repo.path();
+    let tmp = bare_dir();
+    git_n(dir, 1, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    commit(
+        dir,
+        1,
+        &[("src/a.txt", "a1\n"), (".claude/settings.json", "s0\n")],
+        "base",
+    );
+    git_n(dir, 1, &["branch", "onto"]);
+    // The Onto ref changed settings.json since the merge base.
+    git_n(dir, 2, &["checkout", "-q", "onto"]);
+    commit(dir, 2, &[(".claude/settings.json", "s1\n")], "onto settings");
+    // Local main is ahead of the base by a commit that changes only `.stapel/`.
+    git_n(dir, 3, &["checkout", "-q", "-b", "side", "main"]);
+    commit(dir, 3, &[(".stapel/process-ledger.jsonl", "{}\n")], "ledger");
+    git_n(dir, 3, &["checkout", "-q", "-b", "ABC-1", "main"]);
+    commit(
+        dir,
+        4,
+        &[
+            (".claude/settings.json", "s2\n"),
+            (".stapel/tickets/ABC-1/state.json", "{}\n"),
+        ],
+        "settings only",
+    );
+    // The merge brings only `.stapel/` from side, and its own change of a code file.
+    git_n(
+        dir,
+        5,
+        &["merge", "-q", "--no-ff", "--no-commit", "side"],
+    );
+    commit(dir, 5, &[("src/evil.txt", "evil\n")], "merge side");
+
+    export(dir, "onto", tmp.path());
+
+    let new = commits(dir, "onto..export/ABC-1");
+    let subjects: Vec<_> = new.iter().map(|(s, _)| s.as_str()).collect();
+    assert_eq!(subjects, ["merge side"]);
+    assert_eq!(parents(dir, &new[0].1), [rev(dir, "main")]);
+    assert!(entries(dir, &new[0].1).contains_key("src/evil.txt"));
+}
+
 /// A repository with `stapel init --prefix ABC` committed on `main`.
 fn ticket_repo() -> TempDir {
     let repo = common::stapel_repo();
