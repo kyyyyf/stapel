@@ -385,8 +385,24 @@ fn pre_push_refuses_process_files() {
     let out = run_hook(dir, &line(&plain), true);
     assert_eq!(code(&out), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("agent session"));
+    // A merge that discards a side line with `.stapel/` still hides nothing.
+    let id = ["-c", "user.email=a@b.c", "-c", "user.name=t"];
+    git_in(dir, &["checkout", "-q", "--detach", &plain]);
+    std::fs::create_dir_all(dir.join(".stapel/side")).unwrap();
+    std::fs::write(dir.join(".stapel/side/x.txt"), "x\n").unwrap();
+    git_in(dir, &["add", "-f", ".stapel/side/x.txt"]);
+    let mut side_commit = id.to_vec();
+    side_commit.extend(["commit", "-q", "-m", "side"]);
+    git_in(dir, &side_commit);
+    let side = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    git_in(dir, &["checkout", "-q", "--detach", &plain]);
+    let mut merge = id.to_vec();
+    merge.extend(["merge", "-q", "-s", "ours", "--no-ff", "-m", "discard side", &side]);
+    git_in(dir, &merge);
+    let merged = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    assert_eq!(code(&run_hook(dir, &line(&merged), false)), Some(1));
     // The same history already on the remote's ref.
-    git_in(dir, &["update-ref", "refs/remotes/origin/feat", &without]);
+    git_in(dir, &["update-ref","refs/remotes/origin/feat", &without]);
     assert_eq!(code(&run_hook(dir, &line(&without), false)), Some(0));
 }
 
