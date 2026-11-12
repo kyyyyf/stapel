@@ -862,11 +862,8 @@ fn plan_pre_hook(pre: &mut Vec<Value>) -> (bool, bool) {
     (upgraded, !installed)
 }
 
-/// Plans the git pre-push hook in the hooks directory git uses (`core.hooksPath` included).
-/// A pre-push hook that is not ours is kept, with a warning.
-/// Returns the hook path relative to `root` when a stapel hook is there.
-fn plan_pre_push(root: &Path, local: bool, plan: &mut Vec<Step>) -> Result<Option<String>, String> {
-    let wanted = if local { LOCAL_PRE_PUSH } else { PRE_PUSH };
+/// The Pre-push path: what `git rev-parse --git-path hooks/pre-push` prints, made absolute.
+fn pre_push_path(root: &Path) -> Result<PathBuf, String> {
     let out = Command::new("git")
         .args(["rev-parse", "--git-path", "hooks/pre-push"])
         .current_dir(root)
@@ -876,11 +873,29 @@ fn plan_pre_push(root: &Path, local: bool, plan: &mut Vec<Step>) -> Result<Optio
         return Err("git did not report the repository hooks path".into());
     }
     let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim_end());
-    let path = if path.is_absolute() {
+    Ok(if path.is_absolute() {
         path
     } else {
         root.join(path)
-    };
+    })
+}
+
+/// In Local mode: the Pre-push path, relative to `root`, when the file there is missing, not
+/// executable or not the Local-mode text, and `init` could write it (inside the work tree).
+pub(crate) fn stale_local_pre_push(root: &Path) -> Option<String> {
+    let path = pre_push_path(root).ok()?;
+    let rel = path.strip_prefix(root).ok()?.display().to_string();
+    let fresh =
+        std::fs::read_to_string(&path).is_ok_and(|t| t == LOCAL_PRE_PUSH) && is_executable(&path);
+    (!fresh).then_some(rel)
+}
+
+/// Plans the git pre-push hook in the hooks directory git uses (`core.hooksPath` included).
+/// A pre-push hook that is not ours is kept, with a warning.
+/// Returns the hook path relative to `root` when a stapel hook is there.
+fn plan_pre_push(root: &Path, local: bool, plan: &mut Vec<Step>) -> Result<Option<String>, String> {
+    let wanted = if local { LOCAL_PRE_PUSH } else { PRE_PUSH };
+    let path = pre_push_path(root)?;
     let Ok(rel) = path.strip_prefix(root).map(|p| p.display().to_string()) else {
         // A shared hooks directory would put the hook into every repository that uses it.
         warn!(
