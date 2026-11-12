@@ -1263,6 +1263,97 @@ fn base_merge_mode_change_blocks() {
     );
 }
 
+// ---- STP-30 AC-1, AC-6 (d1-1, d1-2) ----
+
+#[test]
+fn base_merge_mode_outcomes() {
+    /// A ticket with `base_branch` main: step 1, a merge of main whose `path` comes from `make`
+    /// (on main) and is changed by `resolve` in the merge, step 2. Returns the check output and
+    /// the merge commit.
+    fn scenario(path: &str, make: &dyn Fn(&Path), resolve: &dyn Fn(&Path)) -> (String, String) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        let main = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        let mut state = common::state_json(dir, "ABC-1");
+        state["base_branch"] = serde_json::json!(main);
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base branch");
+        git(dir, &["checkout", "-q", "-b", "ticket"]);
+        clean_pair(dir, "step 1", "one");
+        git(dir, &["checkout", "-q", &main]);
+        let file = dir.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        make(&file);
+        commit(dir, "main: a file");
+        git(dir, &["checkout", "-q", "ticket"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=test-user",
+                "-c",
+                "user.email=test-user.invalid",
+                "merge",
+                "-q",
+                "--no-ff",
+                "--no-commit",
+                &main,
+            ],
+        );
+        resolve(&file);
+        commit(dir, "ABC-1: merge main");
+        let merge = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        clean_pair(dir, "step 2", "two");
+        let (_, text) = check(dir);
+        (text, merge)
+    }
+    fn regular(file: &Path) {
+        std::fs::write(file, "fn main() {}\n").unwrap();
+    }
+    fn executable(file: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fn link(file: &Path) {
+        let _ = std::fs::remove_file(file);
+        std::os::unix::fs::symlink("target.txt", file).unwrap();
+    }
+
+    let build = "crates/tiny/build.rs";
+    let fixture = "crates/tiny/tests/data/fixture.txt";
+    let blocked = |text: &str, merge: &str, path: &str| {
+        assert_eq!(
+            text.lines().find(|l| l.starts_with("step 2: ")).unwrap(),
+            format!(
+                "step 2: unverified: build-input-changed: {path} at {}",
+                &merge[..7]
+            ),
+            "{path}: {text}"
+        );
+    };
+
+    // `chmod +x` with an equal blob: a build input and a cargo fixture both give the outcome.
+    for path in [build, fixture] {
+        let (text, merge) = scenario(path, &regular, &executable);
+        blocked(&text, &merge, path);
+    }
+
+    // A build input turned into a link at the merge.
+    let (text, merge) = scenario(build, &regular, &link);
+    blocked(&text, &merge, build);
+
+    // Control: an equal link at both parents passes.
+    let (text, _) = scenario(build, &link, &|_| {});
+    assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
+    assert!(!text.contains("build-input-changed"), "{text}");
+}
+
 // ---- STP-30 AC-1, AC-2 ----
 
 #[test]

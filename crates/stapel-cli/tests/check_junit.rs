@@ -1670,6 +1670,76 @@ fn base_merge_fixture_is_no_tests_change() {
     assert!(text.contains(&merge[..7]), "the fault is the merge: {text}");
 }
 
+// STP-30 AC-1, AC-6 (d1-1, d1-3): a mode change with an equal blob at a merge of the base branch
+// blocks for a junit input and passes for a fixture beside a test.
+#[test]
+fn base_merge_mode_change_blocks() {
+    fn scenario(path: &str, chmod: bool) -> (String, String) {
+        let repo = junit_repo();
+        let dir = repo.dir();
+        let main = git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        let state_path = dir.join(".stapel/tickets/ABC-1/state.json");
+        let mut state: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+        state["base_branch"] = serde_json::json!(main);
+        std::fs::write(&state_path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+        commit(dir, "ABC-1: base branch");
+        git_in(dir, &["checkout", "-q", "-b", "ticket"]);
+        write(
+            dir,
+            "__tests__/x.test.ts",
+            "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 1 RED: one");
+        write(dir, "src/ok.ts", "export const ok = 1;\n");
+        commit(dir, "ABC-1 step 1 GREEN: one");
+        git_in(dir, &["checkout", "-q", &main]);
+        write(dir, path, "{\"a\": 1}\n");
+        commit(dir, "main: a file");
+        git_in(dir, &["checkout", "-q", "ticket"]);
+        git_in(dir, &["merge", "-q", "--no-ff", "--no-commit", &main]);
+        if chmod {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir.join(path), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        commit(dir, "ABC-1: merge main");
+        let merge = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        write(
+            dir,
+            "__tests__/y.test.ts",
+            "it(\"two\", () => { /* needs src/two.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 2 RED: two");
+        write(dir, "src/two.ts", "export const two = 2;\n");
+        commit(dir, "ABC-1 step 2 GREEN: two");
+        let (_, text) = check(&repo);
+        (text, merge)
+    }
+
+    // Control: an equal mode passes for the input.
+    let (text, _) = scenario("package.json", false);
+    assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
+
+    // A junit input with `chmod +x` and an equal blob.
+    let (text, merge) = scenario("package.json", true);
+    assert_eq!(
+        text.lines().find(|l| l.starts_with("step 2: ")).unwrap(),
+        format!(
+            "step 2: unverified: build-input-changed: package.json at {}",
+            &merge[..7]
+        ),
+        "{text}"
+    );
+
+    // A fixture beside a test with only `chmod +x` passes.
+    let (text, _) = scenario("__tests__/a b.json", true);
+    assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
+    assert!(!text.contains("build-input-changed"), "{text}");
+}
+
 // STP-30 AC-16: after an equal merge, an edit of the fixture is compared with its value at the merge
 // and reads `tests-changed`.
 #[test]
