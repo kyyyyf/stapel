@@ -113,7 +113,7 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
                     if !passing(outcome)
                         && !(outcome == "unverified" && reason.starts_with("interleaved: ")) =>
                 {
-                    let changed = report.inputs.changed.as_ref().map(|c| c.sha.clone());
+                    let changed = s.changed.clone();
                     let sha = a
                         .fault
                         .clone()

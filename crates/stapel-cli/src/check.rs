@@ -69,20 +69,28 @@ fn junit_inputs(
     build_inputs::analyse_junit(root, key, at, bounds, &inputs, &fixed)
 }
 
-/// The reason that blocks a step under junit: the first change of an input at or before the step's
-/// GREEN commit in the Walk, or of the configuration between the step's RED and GREEN (a
-/// configuration in place before the RED is the one the tests were written against). A change
-/// after the GREEN does not touch the step.
-fn junit_block(a: &Analysis, inputs: &BuildInputs, walk: &[String]) -> Option<String> {
+/// The change that blocks a step under junit (AC-24, AC-25, AC-39), the first one in the Walk:
+/// an input change at or before the step's GREEN commit; a change of `.stapel/stapel.toml` after
+/// the step's RED commit, wherever it falls (a configuration in place at or before the ticket's
+/// first RED blocks no step, as that RED is not after it); a change of the command's script after
+/// the step's RED up to its GREEN commit.
+fn junit_block<'a>(a: &Analysis, inputs: &'a BuildInputs, walk: &[String]) -> Option<&'a Change> {
     let place = |c: Option<&stapel_core::steps::StepCommit>| {
         c.and_then(|c| walk.iter().position(|s| *s == c.sha))
     };
     let (red, green) = (place(a.red.as_ref()), place(a.green.as_ref()));
-    inputs.walk_changes.iter().find_map(|(change, config)| {
+    inputs.walk_changes.iter().find_map(|(change, fixed)| {
         let at = walk.iter().position(|s| *s == change.sha)?;
         let after_green = green.is_some_and(|g| g < at);
-        let before_red = *config && red.is_some_and(|r| at <= r);
-        (!after_green && !before_red).then(|| changed_reason(change))
+        let after_red = red.is_some_and(|r| r < at);
+        let blocks = if !*fixed {
+            !after_green
+        } else if change.path == ".stapel/stapel.toml" {
+            after_red
+        } else {
+            after_red && !after_green
+        };
+        blocks.then_some(change)
     })
 }
 
@@ -392,7 +400,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
     for a in &analyses {
         // A build input found above the worktree after a cargo run blocks every later step (AC-7).
         let blocked = if junit {
-            junit_block(a, &inputs, &walk)
+            junit_block(a, &inputs, &walk).map(changed_reason)
         } else {
             runner.outside.borrow().clone()
         };
@@ -1040,6 +1048,9 @@ fn say_step(a: &Analysis, outcome: &str, reason: &str) {
 pub(crate) struct HistoryStep {
     pub analysis: Analysis,
     pub outcome: Option<(String, String)>,
+    /// The commit of the build input or configuration change that blocks the step (AC-41): under
+    /// junit the step's own blocking change, under cargo the first change of the range.
+    pub changed: Option<String>,
 }
 
 /// What the history alone says about a ticket at `at` (STP-14): no cargo, no worktree.
@@ -1074,13 +1085,15 @@ pub(crate) fn history_report(
     let steps = analyses
         .into_iter()
         .map(|analysis| {
-            let blocked = if junit_check.is_some() {
+            let changed = if junit_check.is_some() {
                 junit_block(&analysis, &inputs, &walk)
             } else {
-                inputs.changed.as_ref().map(changed_reason)
+                inputs.changed.as_ref()
             };
+            let blocked = changed.map(changed_reason);
             HistoryStep {
                 outcome: history_outcome(&analysis, blocked.as_deref()),
+                changed: changed.map(|c| c.sha.clone()),
                 analysis,
             }
         })
@@ -1194,7 +1207,7 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
         } else {
             match &s.outcome {
                 Some((o, r)) if !passing(o) => {
-                    let (fault, amend) = match (&a.fixed, &report.inputs.changed) {
+                    let (fault, amend) = match (&a.fixed, &s.changed) {
                         (Some((fixed, _)), _) => (
                             a.fault.clone(),
                             matches!(
@@ -1202,7 +1215,7 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
                                 "no-tests" | "red-changes-code" | "tests-changed"
                             ),
                         ),
-                        (None, Some(changed)) => (Some(changed.sha.clone()), true),
+                        (None, Some(changed)) => (Some(changed.clone()), true),
                         (None, None) => (a.fault.clone(), false),
                     };
                     (o.clone(), r.clone(), fault, amend)

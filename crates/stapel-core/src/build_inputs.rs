@@ -18,7 +18,8 @@ pub struct BuildInputs {
     /// Build inputs at HEAD that no non-RED commit of the range changes, sorted.
     pub unchanged: Vec<String>,
     /// Under junit: every commit of the Walk that changes an input (`false`) or a configuration
-    /// file (`true`), oldest first, with the first path of that kind.
+    /// file or the command's script (`true`), oldest first; a commit has one entry for the first
+    /// input path and one for each fixed file it changes.
     pub walk_changes: Vec<(Change, bool)>,
 }
 
@@ -562,17 +563,21 @@ pub fn analyse_junit(
         let input = paths
             .iter()
             .find(|p| inputs.iter().any(|g| crate::config::glob_matches(g, p)));
-        let config = paths.iter().find(|p| fixed.contains(p));
-        for (path, is_config) in [(input, false), (config, true)] {
-            if let Some(path) = path {
-                out.walk_changes.push((
-                    Change {
-                        path: path.clone(),
-                        sha: sha.clone(),
-                    },
-                    is_config,
-                ));
+        let mut found: Vec<(&String, bool)> = input.into_iter().map(|p| (p, false)).collect();
+        // Every fixed file the commit changes, in the order of `fixed`.
+        for f in fixed {
+            if let Some(p) = paths.iter().find(|p| *p == f) {
+                found.push((p, true));
             }
+        }
+        for (path, is_config) in found {
+            out.walk_changes.push((
+                Change {
+                    path: path.clone(),
+                    sha: sha.clone(),
+                },
+                is_config,
+            ));
         }
     }
     out.changed = out.walk_changes.first().map(|(c, _)| c.clone());
