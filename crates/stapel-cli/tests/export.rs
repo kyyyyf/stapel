@@ -602,3 +602,75 @@ fn export_output() {
     assert_eq!(out.lines().count(), 1, "{out}");
     assert!(out.ends_with(&format!("onto {main}\n")), "{out}");
 }
+
+// STP-31 AC-19: an export and a refusal leave the work tree, the index and `HEAD` as they were, no
+// temporary folder stays, and `update-ref` is the last git call.
+#[test]
+fn export_leaves_the_checkout() {
+    let repo = ticket_repo();
+    let dir = repo.path();
+    commit(dir, 1, &[("src/b.txt", "b1\n")], "second file");
+    ticket_branch(dir, "ABC-1", Some("main"), "red");
+    // A staged change and an unstaged change.
+    put(dir, "src/a.txt", "staged\n");
+    git_n(dir, 1, &["add", "src/a.txt"]);
+    put(dir, "src/b.txt", "unstaged\n");
+    let tmp = bare_dir();
+    let trace_dir = bare_dir();
+
+    let state = |dir: &Path| {
+        (
+            git_n(dir, 1, &["status", "--porcelain"]),
+            std::fs::read(dir.join(".git/index")).unwrap(),
+            rev(dir, "HEAD"),
+            std::fs::read_to_string(dir.join("src/a.txt")).unwrap(),
+            std::fs::read_to_string(dir.join("src/b.txt")).unwrap(),
+        )
+    };
+    let leftovers = |tmp: &Path| {
+        std::fs::read_dir(tmp)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("stapel-export-"))
+            .collect::<Vec<_>>()
+    };
+    // The git calls of one run, in order.
+    let trace_of = |args: &[&str], name: &str, code: i32| {
+        let trace = trace_dir.path().join(name);
+        stapel(dir)
+            .env("TMPDIR", tmp.path())
+            .env("GIT_TRACE", &trace)
+            .args(args)
+            .assert()
+            .code(code);
+        std::fs::read_to_string(&trace)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.split_once(" git ").map(|(_, call)| call.to_string()))
+            .collect::<Vec<_>>()
+    };
+
+    let before = state(dir);
+    assert!(before.0.contains("M  src/a.txt"), "{}", before.0);
+    assert!(before.0.contains(" M src/b.txt"), "{}", before.0);
+
+    // A refusal: no ref, no change, no folder, no `update-ref`.
+    let calls = trace_of(&["export", "ABC-1", "--onto", "nosuch"], "refusal", 1);
+    assert!(!calls.iter().any(|c| c.contains("update-ref")), "{calls:?}");
+    assert_eq!(export_refs(dir), "");
+    assert!(state(dir) == before);
+    assert_eq!(leftovers(tmp.path()), Vec::<String>::new());
+
+    // An export: the ref is written by the last git call.
+    let calls = trace_of(&["export", "ABC-1", "--onto", "main"], "export", 0);
+    let last = calls.last().expect("no git call traced");
+    assert!(last.contains("update-ref"), "{last}\n{calls:?}");
+    assert_eq!(
+        calls.iter().filter(|c| c.contains("update-ref")).count(),
+        1,
+        "{calls:?}"
+    );
+    assert!(!export_refs(dir).is_empty());
+    assert!(state(dir) == before);
+    assert_eq!(leftovers(tmp.path()), Vec::<String>::new());
+}

@@ -478,3 +478,212 @@ fn prints_the_checklist() {
     let out = String::from_utf8(shared.stdout).unwrap();
     assert!(!out.contains("checklist:"), "{out}");
 }
+
+// STP-31 AC-18: the person's whole path on a foreign repository (the pilot's shape): no
+// `Cargo.toml`, hooks in a tracked `.husky/` folder, a script that writes a JUnit report.
+#[test]
+fn foreign_repository_end_to_end() {
+    fn put(dir: &std::path::Path, rel: &str, text: &str) {
+        let path = dir.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    // The pre-push hook run as git runs it: in the repository, without the agent variables, with
+    // the input lines on stdin. Returns (exit code, stderr).
+    fn pre_push(dir: &std::path::Path, input: &str) -> (Option<i32>, String) {
+        use std::io::Write;
+        let mut child = std::process::Command::new(dir.join(".husky/pre-push"))
+            .current_dir(dir)
+            .env_remove("CLAUDECODE")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    }
+
+    // The awk program of the stand-in: one passing test case per `it("title"` line.
+    const AWK: &str = r#"
+BEGIN { out = "junit.xml"; print "<?xml version=\"1.0\"?>\n<testsuites>\n<testsuite name=\"s\">" > out }
+/(^|[^.A-Za-z_])it\("/ {
+  line = $0
+  match(line, /\("[^"]*"/)
+  title = substr(line, RSTART + 2, RLENGTH - 3)
+  failed = 0
+  if (match(line, /needs [^ ]+/)) {
+    path = substr(line, RSTART + 6, RLENGTH - 6)
+    if (system("test -e " path) != 0) failed = 1
+  }
+  body = ""
+  if (failed) { body = "<failure message=\"missing\"/>"; bad = 1 }
+  printf "<testcase classname=\"\" name=\" %s\">%s</testcase>\n", title, body > out
+}
+END { print "</testsuite>\n</testsuites>" > out; exit bad }
+"#;
+
+    let repo = git_repo();
+    let tools = common::bare_dir();
+    let remote = common::bare_dir();
+    let dir = repo.path();
+    git_in(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git_config(dir, "user.email", "test-user.invalid");
+    git_in(remote.path(), &["init", "-q", "--bare"]);
+    git_config(dir, "remote.origin.url", &remote.path().display().to_string());
+    git_config(dir, "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
+
+    // The foreign repository: no `Cargo.toml`, a tracked `.husky/`, an ignored `node_modules`.
+    git_config(dir, "core.hooksPath", ".husky");
+    put(dir, ".husky/pre-commit", "#!/bin/sh\nexit 0\n");
+    put(dir, ".gitignore", "node_modules/\n");
+    put(dir, "src/index.ts", "export const one = 1;\n");
+    put(dir, "__tests__/base.test.ts", "it(\"base\", () => {});\n");
+    put(dir, "node_modules/marker", "x\n");
+    let base = commit_all(dir, "initial");
+    // The person pushed `main` once: the remote-tracking ref and the upstream.
+    git_in(dir, &["update-ref", "refs/remotes/origin/main", &base]);
+    git_config(dir, "branch.main.remote", "origin");
+    git_config(dir, "branch.main.merge", "refs/heads/main");
+
+    // The stand-in for the test runner, outside the repository.
+    let script = tools.path().join("stand-in.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "[ -L node_modules ] && [ -e node_modules/marker ] || exit 4\n\
+             if [ \"$#\" = 0 ]; then set -- __tests__/*.test.ts; exec awk '{AWK}' \"$@\"; fi\n\
+             exec awk '{AWK}' \"$1\"\n"
+        ),
+    )
+    .unwrap();
+
+    // init --local: the starter has the junit template, the lines go to the git folder.
+    let out = stapel(dir)
+        .args(["init", "--local", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let out = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(out.contains("pre-push"), "{out}");
+    let toml = common::read(dir, ".stapel/stapel.toml");
+    assert!(toml.contains("history = \"local\""), "{toml}");
+    assert!(toml.contains("junit"), "{toml}");
+    assert!(!dir.join(".gitattributes").exists());
+    assert_eq!(common::read(dir, ".gitignore"), "node_modules/\n");
+    let exclude = common::read(dir, ".git/info/exclude");
+    assert!(exclude.contains("/.husky/pre-push\n"), "{exclude}");
+    assert!(dir.join(".husky/pre-push").exists());
+
+    // The `[check]` command is filled; the installed files are committed.
+    let mut toml = toml;
+    toml.push_str(&format!(
+        "\n[check]\nrunner = \"junit\"\ncommand = \"sh {} {{file}}\"\nreport = \"junit.xml\"\ntimeout_secs = 60\n",
+        script.display()
+    ));
+    put(dir, ".stapel/stapel.toml", &toml);
+    let installed = commit_all(dir, "install stapel");
+    let tracked = git_in(dir, &["ls-files"]);
+    assert!(!tracked.contains(".husky/pre-push"), "{tracked}");
+    assert!(tracked.contains(".stapel/stapel.toml"), "{tracked}");
+    assert!(
+        git_in(dir, &["status", "--porcelain"]).is_empty(),
+        "{}",
+        git_in(dir, &["status", "--porcelain"])
+    );
+
+    // The session start prints `stapel next`; the guard denies a push.
+    let out = stapel(dir)
+        .args(["hook", "session-start"])
+        .write_stdin("{\"hook_event_name\": \"SessionStart\"}")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(out.contains("stapel next:"), "{out}");
+    let payload = serde_json::json!({
+        "session_id": "test",
+        "hook_event_name": "PreToolUse",
+        "cwd": dir,
+        "tool_name": "Bash",
+        "tool_input": { "command": "git push origin main" },
+    });
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(payload.to_string())
+        .assert()
+        .code(2);
+
+    // The ticket, RED and GREEN in its worktree.
+    stapel(dir).args(["new", "First"]).assert().success();
+    let wt = dir.join(".claude/worktrees/ABC-1");
+    assert!(wt.is_dir());
+    git_in(&wt, &["add", "-A"]);
+    git_in(&wt, &["commit", "-q", "--allow-empty", "-m", "ABC-1: ticket"]);
+    // The person's install in the worktree (the folder is ignored).
+    put(&wt, "node_modules/marker", "x\n");
+    put(
+        &wt,
+        "__tests__/smoke.test.ts",
+        "it(\"works\", () => { /* needs src/smoke.ts */ });\n",
+    );
+    commit_all(&wt, "ABC-1 step 1 RED: smoke");
+    put(&wt, "src/smoke.ts", "export const smoke = 1;\n");
+    commit_all(&wt, "ABC-1 step 1 GREEN: smoke");
+    let out = stapel(&wt).args(["check", "ABC-1"]).output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("step 1: pass"), "{text}");
+
+    // The pre-push refuses `main`, which carries `.stapel/`, and the ticket branch.
+    let zero = "0".repeat(40);
+    let main = git_in(dir, &["rev-parse", "main"]).trim().to_string();
+    assert_eq!(main, installed);
+    let (code, err) = pre_push(dir, &format!("refs/heads/main {main} refs/heads/main {base}\n"));
+    assert_eq!(code, Some(1), "{err}");
+    assert!(err.contains("stapel export"), "{err}");
+
+    // export: the upstream of the base branch is the default Onto ref.
+    let out = stapel(dir)
+        .args(["export", "ABC-1"])
+        .assert()
+        .success();
+    let out = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(out.contains("onto refs/remotes/origin/main"), "{out}");
+    assert!(out.contains("push: git push origin export/ABC-1:ABC-1"), "{out}");
+    let tree = git_in(dir, &["ls-tree", "-r", "--name-only", "export/ABC-1"]);
+    for path in tree.lines() {
+        assert!(
+            !path.starts_with(".stapel/") && !path.starts_with(".claude/"),
+            "{path}"
+        );
+    }
+    assert!(tree.contains("src/smoke.ts"), "{tree}");
+    assert!(tree.contains("__tests__/smoke.test.ts"), "{tree}");
+
+    // The export branch passes the pre-push.
+    let tip = git_in(dir, &["rev-parse", "export/ABC-1"]).trim().to_string();
+    let (code, err) = pre_push(
+        dir,
+        &format!("refs/heads/export/ABC-1 {tip} refs/heads/ABC-1 {zero}\n"),
+    );
+    assert_eq!(code, Some(0), "{err}");
+
+    // No tracked file of the main checkout changed.
+    assert_eq!(git_in(dir, &["rev-parse", "HEAD"]).trim(), installed);
+    let status = git_in(dir, &["status", "--porcelain", "--untracked-files=no"]);
+    assert_eq!(status, "", "{status}");
+}

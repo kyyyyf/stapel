@@ -114,7 +114,7 @@ Terms:
 | AC-15 | WHEN export runs THE each commit of the Export range gets a new commit with its Clean tree, its parents mapped (a parent inside the range to that parent's new commit, any other parent as it is), and its author, committer (names, emails, dates) and message kept, so a second run on the same commits gives the same tip. | `export::rewrites_the_range`, `export::export_is_repeatable` |
 | AC-16 | WHEN a new commit with one parent has the tree of that parent, or the mapped parents of a merge are one commit THE commit is dropped and its children take that parent in its place; a merge of two different parents is kept. | `export::drops_empty_commits` |
 | AC-17 | WHEN export ends THE ref `refs/heads/export/<KEY>` points at the new tip and the output is that of the golden file `export_output.txt`: one line with the tip, the commit count, the dropped count and the Onto ref, and, when the Onto ref lies under `refs/remotes/`, a line `push: git push <remote> export/<KEY>:<KEY>`, where `<remote>` is the configured remote with the longest name that, followed by `/`, starts the rest of the ref. | `export::export_output` |
-| AC-18 | WHEN the person's path runs on a fixture repository without `Cargo.toml`, with hooks in a tracked folder and a script that writes a JUnit report THE `init --local`, `new`, `check`, the session and tool hooks, the pre-push and `export` succeed or refuse as AC-1 to AC-17 say, `export/<KEY>` holds no Process path, and no tracked file of the main checkout changes. | `smoke::foreign_repository_end_to_end` |
+| AC-18 | WHEN the person's path runs on a fixture repository without `Cargo.toml`, with hooks in a tracked folder and a script that writes a JUnit report THE `init --local`, `new`, `check`, the session and tool hooks, the pre-push and `export` succeed or refuse as AC-1 to AC-17 say, `export/<KEY>` holds no Process path, and no tracked file of the main checkout changes. | `init_local::foreign_repository_end_to_end` |
 | AC-19 | WHEN export ends or refuses THE ref `export/<KEY>` is written only as the last git call, the export's temporary folder is gone, and the working tree, the index and `HEAD` are unchanged. | `export::export_leaves_the_checkout` |
 | AC-20 | WHEN `stapel next` runs in Local mode and the file at the Pre-push path is missing, not executable, or not the Local-mode text THE fact `the stapel pre-push hook is missing or stale at <path>; run stapel init` comes before every other fact (`blocked: …` in text, a fact item in `--json`) and the action is `init — stapel init`, in every case of `next`, no open ticket included. | `next::local_mode_names_a_missing_pre_push` |
 
@@ -140,7 +140,8 @@ Terms:
 
 ## Test plan
 
-CLI tests in the new files `crates/stapel-cli/tests/init_local.rs`, `export.rs` and `smoke.rs`; the starter
+CLI tests in the new files `crates/stapel-cli/tests/init_local.rs` (the smoke test too: a coverage test in
+a new file reads as a build input) and `export.rs`; the starter
 template test in `init.rs`; the key test in `crates/stapel-core/tests/config.rs`. Each test makes a temporary
 repository with `common::git_repo`; a test with a remote makes a bare repository with `git init --bare` and
 pushes `main` to it, so `main@{upstream}` exists. The pre-push hook runs as `hooks_install.rs` runs it, with
@@ -171,7 +172,7 @@ stapel-cli --test <file> -- --test-threads=3`, `-p stapel-core --test config`; b
 | Empty | the close commit that changes only `.stapel/`: dropped, its child's parent is the GREEN; a merge of local `main` that brings only `.stapel/` changes: dropped; a merge of two code lines: kept | `export::drops_empty_commits` |
 | Output | the golden two lines with a remote Onto ref; remotes `my` and `my/fork` and `--onto my/fork/release/1`: the remote `my/fork`; with `--onto <sha>`: one line | `export::export_output` |
 | Checkout | a dirty tree with a staged and an unstaged change: after export and after a refusal, `git status --porcelain`, the index file and `HEAD` the same; the test's own `TMPDIR` holds no `stapel-export-*` folder; `GIT_TRACE` shows `update-ref` as the last git call | `export::export_leaves_the_checkout` |
-| Smoke | the fixture of promise item 7: `init --local`, the `[check]` command filled, the commit of the installed files, `new`, RED and GREEN in the worktree, `check` passes, `stapel hook session-start` prints `stapel next`, `stapel hook pre-tool-use` denies a `git push`, the pre-push refuses `main` and lets `export/ABC-1` go to the bare remote, `git status` of the main checkout shows no change of a tracked file | `smoke::foreign_repository_end_to_end` |
+| Smoke | the fixture of promise item 7: `init --local`, the `[check]` command filled, the commit of the installed files, `new`, RED and GREEN in the worktree, `check` passes, `stapel hook session-start` prints `stapel next`, `stapel hook pre-tool-use` denies a `git push`, the pre-push refuses `main` and lets `export/ABC-1` go to the bare remote, `git status` of the main checkout shows no change of a tracked file | `init_local::foreign_repository_end_to_end` |
 
 ### Inputs
 
@@ -196,7 +197,7 @@ stapel-cli --test <file> -- --test-threads=3`, `-p stapel-core --test config`; b
 | git | configuration: a hooks path changed after init | `stapel next` names the missing hook | `next::local_mode_names_a_missing_pre_push` |
 | git | history shape: merge commits | parents mapped, empty merges dropped | `export::rewrites_the_range`, `export::drops_empty_commits` |
 | git | history shape: rebased or amended branch | export runs on what the branch holds; the old `export/<KEY>` is replaced | `export::export_is_repeatable` |
-| git | dirty tree | export reads commits only and leaves the tree; init's local writes are untracked or in the git folder | `export::export_output`, `smoke::foreign_repository_end_to_end` |
+| git | dirty tree | export reads commits only and leaves the tree; init's local writes are untracked or in the git folder | `export::export_output`, `init_local::foreign_repository_end_to_end` |
 | git | detached HEAD | export without KEY refuses (no branch ticket) | `export::export_key_and_refusals` |
 | git | paths with spaces or non-UTF-8 bytes | export copies tree entries by object id, never by text; a test file with a space in its path | `export::rewrites_the_range` |
 | git | object format SHA-256; submodules; shallow clone | not promised | — |
@@ -204,7 +205,7 @@ stapel-cli --test <file> -- --test-threads=3`, `-p stapel-core --test config`; b
 | git | `GIT_*` environment, global config | export clears no variable; signing config (`commit.gpgsign`) is ignored, signatures are dropped | — |
 | claude-code | settings at project and local level | init writes `.claude/settings.json` as before; export puts back the Onto ref's version | `export::rewrites_the_range` |
 | claude-code | whether the hooks really run | not promised; the checklist asks the person to see `stapel next` at session start | — |
-| claude-code | environment of hook processes versus the agent's Bash shell | the pre-push agent check is unchanged; the smoke test runs the pre-push without the variables | `smoke::foreign_repository_end_to_end` |
+| claude-code | environment of hook processes versus the agent's Bash shell | the pre-push agent check is unchanged; the smoke test runs the pre-push without the variables | `init_local::foreign_repository_end_to_end` |
 | os | file permissions | the pre-push made or updated executable | `init_local::pre_push_text_follows_the_mode` |
 | os | symlinks; case-insensitive file systems | not promised | — |
 | cargo | every dimension | not run by this ticket's code | — |
@@ -277,7 +278,22 @@ has a test or "not promised"; the readers of `stapel.toml` that see the new tabl
 
 ### As built
 
-TODO after the build.
+- The starter junit template's command is `npx jest {file} --ci --reporters=jest-junit`; `{file}` stands
+  right after `jest` because the config refuses `{file}` after a word that starts with `-`.
+- `init.rs` keeps the Local-mode pre-push text and `stale_local_pre_push(root)`, which `next` calls; the hook
+  is stale when missing, not executable, or not equal to that text. `next::lines` is wrapped so the fact
+  and the action `init` come first in every case and in `--json`. The constant `LOCAL_MARKER` is unused.
+- `export.rs` reads the Branch state as any JSON object and takes only `base_branch` from it; the key
+  pattern is checked only when a `stapel.toml` is found above the working folder. `git rm --cached` runs
+  with `-f`. `rev-parse --symbolic-full-name --end-of-options` prints the `--end-of-options` word back, so
+  that line is dropped. The output line is `export/<KEY> <tip>: commits <n>, dropped <m>, onto <ref>`.
+- A merge whose mapped parents are two different commits is kept even when its second parent is an
+  ancestor of the first and its tree equals the first (a merge of local `main` that brought only process
+  files); AC-16 says so, and the merge stays in the export.
+- The export test fixture keeps `main` free of `.stapel/` (the files of `init` are excluded), as the
+  pilot's `origin/main` is; ticket data lives on the ticket branches.
+- The smoke test lives in `init_local.rs`: a coverage test in a new file under `tests/` holds no step test,
+  so the check reads it as a helper, a build input, and marks every step `unverified`.
 
 ## Proof
 
@@ -300,7 +316,7 @@ TODO after the build.
 | AC-15 | `export::rewrites_the_range`, `export::export_is_repeatable` |
 | AC-16 | `export::drops_empty_commits` |
 | AC-17 | `export::export_output` |
-| AC-18 | `smoke::foreign_repository_end_to_end` |
+| AC-18 | `init_local::foreign_repository_end_to_end` |
 | AC-19 | `export::export_leaves_the_checkout` |
 | AC-20 | `next::local_mode_names_a_missing_pre_push` |
 
@@ -335,7 +351,7 @@ commit of a test that passes at once.
    `export::onto_defaults_to_the_upstream`). Must not change: the rewrite of step 8.
 10. `export` refusals and output (AC-14, AC-17; tests `export::export_refusals`, `export::export_output`).
     Must not change: steps 8 and 9.
-11. Coverage, no GREEN (AC-18, AC-19; tests `smoke::foreign_repository_end_to_end`,
+11. Coverage, no GREEN (AC-18, AC-19; tests `init_local::foreign_repository_end_to_end`,
     `export::export_leaves_the_checkout`): the whole path on the fixture repository and the untouched
     checkout pass after step 10.
 
