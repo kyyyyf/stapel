@@ -36,6 +36,8 @@ pub struct Bounds<'a> {
     /// The `base` of `state.json`: the range starts after it. Without it the range starts at the
     /// oldest commit whose subject carries the key.
     pub base: Option<&'a str>,
+    /// The `base_branch` of `state.json`: a merge of it brings build inputs that block nothing.
+    pub base_branch: Option<&'a str>,
     /// A closed ticket: the range ends at the last commit whose subject carries the key.
     pub closed: bool,
 }
@@ -123,6 +125,35 @@ pub fn range(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Vec<S
         Some(i) if i < end => commits[i..end].iter().map(|(sha, _)| sha.clone()).collect(),
         _ => Vec::new(),
     })
+}
+
+/// The second parent of a merge commit of the Walk that merged the base branch: a second parent
+/// that is an ancestor of `refs/heads/<base_branch>` (STP-28 AC-43).
+fn base_merge_parent(root: &Path, sha: &str, base_branch: Option<&str>) -> Option<String> {
+    let branch = base_branch?;
+    let second = git(
+        root,
+        &["rev-parse", "--verify", "-q", &format!("{sha}^2")],
+    )
+    .ok()?;
+    let second = String::from_utf8_lossy(&second).trim().to_string();
+    let reference = format!("refs/heads/{branch}");
+    git(
+        root,
+        &["merge-base", "--is-ancestor", &second, &reference],
+    )
+    .ok()?;
+    Some(second)
+}
+
+/// Whether `path` has the same content at the merge as at its second parent (both absent counts).
+fn same_as_parent(root: &Path, sha: &str, second: &str, path: &str) -> bool {
+    let id = |commit: &str| {
+        git(root, &["rev-parse", "-q", "--verify", &format!("{commit}:{path}")])
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).trim().to_string())
+    };
+    id(sha) == id(second)
 }
 
 /// A path that is a build input by its name: a `.cargo` component, a toolchain file or `build.rs`.
@@ -456,11 +487,18 @@ pub fn analyse(
             .iter()
             .flat_map(|c| reader.broken[*c].iter().cloned())
             .collect();
+        let merged = base_merge_parent(root, sha, bounds.base_branch);
         for e in &list {
             let paths: Vec<&String> = [e.old.as_ref(), e.new.as_ref()]
                 .into_iter()
                 .flatten()
                 .collect();
+            // A Base merge input blocks nothing (AC-43).
+            if let Some(second) = &merged
+                && paths.iter().all(|p| same_as_parent(root, sha, second, p))
+            {
+                continue;
+            }
             let link = e.old_mode == "120000" || e.new_mode == "120000";
             let mut hit: Option<String> = None;
             for p in &paths {
@@ -560,9 +598,14 @@ pub fn analyse_junit(
             .filter(|p| !p.is_empty())
             .map(|p| String::from_utf8_lossy(p).into_owned())
             .collect();
-        let input = paths
-            .iter()
-            .find(|p| inputs.iter().any(|g| crate::config::glob_matches(g, p)));
+        // A Base merge input blocks nothing (AC-43); a fixed file stays a change.
+        let merged = base_merge_parent(root, &sha, bounds.base_branch);
+        let input = paths.iter().find(|p| {
+            inputs.iter().any(|g| crate::config::glob_matches(g, p))
+                && !merged
+                    .as_deref()
+                    .is_some_and(|second| same_as_parent(root, &sha, second, p))
+        });
         let mut found: Vec<(&String, bool)> = input.into_iter().map(|p| (p, false)).collect();
         // Every fixed file the commit changes, in the order of `fixed`.
         for f in fixed {

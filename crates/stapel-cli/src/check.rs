@@ -153,6 +153,14 @@ pub(crate) fn base_of(root: &Path, ticket: &Ticket, head: &str) -> Result<Option
     Ok(base)
 }
 
+/// The `base_branch` of the ticket's `state.json`.
+pub(crate) fn base_branch_of(ticket: &Ticket) -> Option<String> {
+    match &ticket.status {
+        Status::Open(s) | Status::Closed(s) => s.base_branch.clone(),
+        _ => None,
+    }
+}
+
 /// The steps of the ticket on the first-parent history of `head`.
 fn read_steps(
     root: &Path,
@@ -224,8 +232,10 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
             Err(e) => refuse(e),
         };
     }
+    let base_branch = base_branch_of(&ticket);
     let bounds = Bounds {
         base: base.as_deref(),
+        base_branch: base_branch.as_deref(),
         closed: matches!(ticket.status, Status::Closed(_)),
     };
     let end = match range_end(&root, &ticket.key, &head, bounds) {
@@ -1182,8 +1192,10 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
     let commits = step_commits(root, &key, &head, base.as_deref()).ok()?;
     let last = commits.last().map(|c| c.sha.clone())?;
     let steps = steps(commits);
+    let base_branch = base_branch_of(&ticket);
     let bounds = Bounds {
         base: base.as_deref(),
+        base_branch: base_branch.as_deref(),
         closed: false,
     };
     let report = history_report(root, &key, &head, &steps, bounds).ok()?;

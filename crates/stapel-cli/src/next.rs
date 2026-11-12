@@ -80,8 +80,10 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
     let commits = step_commits(root, key, &head, base.as_deref()).map_err(Fail::failed)?;
     let last = commits.last().map(|c| c.sha.clone());
     let steps = steps(commits);
+    let base_branch = crate::check::base_branch_of(ticket);
     let bounds = Bounds {
         base: base.as_deref(),
+        base_branch: base_branch.as_deref(),
         closed: false,
     };
     let report = history_report(root, key, &head, &steps, bounds).map_err(Fail::failed)?;
