@@ -366,3 +366,15 @@ fn refuses_cdata_outside_root() {
         assert!(err.contains("text outside"), "{text}: `{err}` lacks `text outside`");
     }
 }
+
+#[test]
+fn skips_content_of_unknown_elements() {
+    let ok = r#"<testsuites><testsuite name="s"><properties a="&bogus;&#0;"><property name="a" value="&nbsp;&#0;"/></properties><testcase name="t" classname="c"><system-out>x &nbsp; &#0; &bogus; y</system-out></testcase></testsuite></testsuites>"#;
+    let suites = read(ok).expect("unknown content is skipped");
+    assert_eq!(cases(&suites[0]), vec![("t", Outcome::Passed)]);
+    let err = read(
+        r#"<testsuites><testsuite name="s"><testcase name="t"><system-out>&nbsp;<b></system-out></testcase></testsuite></testsuites>"#,
+    )
+    .expect_err("unbalanced tag inside system-out");
+    assert!(!err.is_empty());
+}
