@@ -412,7 +412,7 @@ pub fn analyse(
     head: &str,
     steps: &[Step],
 ) -> Result<Vec<Analysis>, String> {
-    analyse_in(root, key, head, steps, Mode::Cargo)
+    analyse_in(root, key, head, steps, None, Mode::Cargo)
 }
 
 /// `analyse` under a runner. Under junit the protected content is each step test call, the rest of
@@ -422,6 +422,7 @@ pub fn analyse_in(
     key: &str,
     head: &str,
     steps: &[Step],
+    base: Option<&str>,
     mode: Mode,
 ) -> Result<Vec<Analysis>, String> {
     let mut files = Files {
@@ -438,7 +439,15 @@ pub fn analyse_in(
     for c in &all {
         by_sha.insert(c.sha.clone(), (c.label.clone(), c.marker));
     }
-    let order = git_text(root, &["rev-list", "--first-parent", "--reverse", head])?;
+    let order = git_text(
+        root,
+        &[
+            "rev-list",
+            "--first-parent",
+            "--reverse",
+            &crate::steps::walk_range(base, head),
+        ],
+    )?;
     for (i, sha) in order.lines().enumerate() {
         position.insert(sha.to_string(), i);
     }

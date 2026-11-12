@@ -271,7 +271,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
     };
     let at = end.clone().unwrap_or_else(|| head.clone());
     let junit = globs.is_some();
-    let analyses = match analyse_in(&root, &ticket.key, &at, &steps, mode_of(&globs)) {
+    let analyses = match analyse_in(&root, &ticket.key, &at, &steps, bounds.base, mode_of(&globs)) {
         Ok(a) => a,
         Err(e) => return refuse(e),
     };
@@ -1054,7 +1054,7 @@ pub(crate) fn history_report(
     bounds: Bounds,
 ) -> Result<HistoryReport, String> {
     let globs = junit_globs_at(root);
-    let analyses = analyse_in(root, key, at, steps, mode_of(&globs))?;
+    let analyses = analyse_in(root, key, at, steps, bounds.base, mode_of(&globs))?;
     let junit_check = repo::load(root)
         .ok()
         .and_then(|c| c.check)
@@ -1223,7 +1223,8 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
     if lines.is_empty() || !(seen || faults.iter().any(|f| f.0 == head)) {
         return None;
     }
-    let order = git_text(root, &["rev-list", "--first-parent", "--reverse", &head]).ok()?;
+    let walk = stapel_core::steps::walk_range(base.as_deref(), &head);
+    let order = git_text(root, &["rev-list", "--first-parent", "--reverse", &walk]).ok()?;
     let position: BTreeMap<&str, usize> = order.lines().enumerate().map(|(i, s)| (s, i)).collect();
     faults.sort_by_key(|f| position.get(f.0.as_str()).copied().unwrap_or(usize::MAX));
     for (sha, labels, amend) in faults {

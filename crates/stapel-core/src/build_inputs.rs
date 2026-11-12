@@ -43,10 +43,33 @@ pub struct Bounds<'a> {
 pub fn check_base(root: &Path, base: &str, head: &str) -> Result<(), String> {
     let full = matches!(base.len(), 40 | 64)
         && base.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    // The base is on the line when it is the first parent of the oldest commit of `base..head`
+    // (or `head` itself): only that range is read.
     let on_line = full
-        && git(root, &["rev-list", "--first-parent", head])
-            .map(|o| o.split(|b| *b == b'\n').any(|l| l == base.as_bytes()))
-            .unwrap_or(false);
+        && git(root, &["rev-parse", "--verify", "-q", &format!("{head}^{{commit}}")])
+            .ok()
+            .zip(
+                git(
+                    root,
+                    &["rev-list", "--first-parent", &format!("{base}..{head}")],
+                )
+                .ok(),
+            )
+            .is_some_and(|(head_sha, range)| {
+                match range.split(|b| *b == b'\n').rfind(|l| !l.is_empty()) {
+                    None => head_sha.trim_ascii() == base.as_bytes(),
+                    Some(oldest) => git(
+                        root,
+                        &[
+                            "rev-parse",
+                            "--verify",
+                            "-q",
+                            &format!("{}^1", String::from_utf8_lossy(oldest)),
+                        ],
+                    )
+                    .is_ok_and(|p| p.trim_ascii() == base.as_bytes()),
+                }
+            });
     if on_line {
         Ok(())
     } else {
@@ -68,7 +91,7 @@ pub fn range(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Vec<S
             "--first-parent",
             "--reverse",
             "--format=%H%x00%s",
-            head,
+            &crate::steps::walk_range(bounds.base, head),
         ],
     )?;
     let fields: Vec<String> = raw
@@ -83,10 +106,8 @@ pub fn range(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Vec<S
         .collect();
     let keyed = |s: &str| s.starts_with(&format!("{key} ")) || s.starts_with(&format!("{key}:"));
     let start = match bounds.base {
-        Some(base) => commits
-            .iter()
-            .position(|(sha, _)| sha == base)
-            .map(|i| i + 1),
+        // The log is `base..head`: every commit of it is after the base.
+        Some(_) => Some(0),
         None => commits.iter().position(|(_, s)| keyed(s)),
     };
     let end = if bounds.closed {
