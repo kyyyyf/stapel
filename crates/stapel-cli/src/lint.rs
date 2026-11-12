@@ -22,14 +22,85 @@ fn spans(text: &str) -> Vec<&str> {
     text.split('`').skip(1).step_by(2).collect()
 }
 
-/// Named tests in table rows: backtick text holding `::`, trimmed.
+/// The cells of a table line.
+fn cells(line: &str) -> Vec<&str> {
+    let inner = line.trim().trim_start_matches('|');
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    inner.split('|').collect()
+}
+
+/// Whether a table line is the separator under a header (`|---|:--:|`).
+fn is_separator(line: &str) -> bool {
+    let cells = cells(line);
+    !cells.is_empty()
+        && cells.iter().all(|c| {
+            let c = c.trim();
+            c.contains('-') && c.bytes().all(|b| matches!(b, b'-' | b':'))
+        })
+}
+
+/// Named tests in table rows: backtick text holding `::`, trimmed, in a column headed `Test` or
+/// `Tests`. A block of rows without a separator line has no header and counts in every column.
 fn table_names(text: &str) -> BTreeSet<String> {
-    text.lines()
-        .filter(|l| l.starts_with('|'))
-        .flat_map(spans)
-        .filter(|s| s.contains("::"))
-        .map(|s| s.trim().to_string())
-        .collect()
+    let mut out = BTreeSet::new();
+    let mut block: Vec<&str> = Vec::new();
+    let lines: Vec<&str> = text.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        if line.starts_with('|') {
+            block.push(line);
+        }
+        if line.starts_with('|') && lines.get(i + 1).is_some_and(|l| l.starts_with('|')) {
+            continue;
+        }
+        if block.is_empty() {
+            continue;
+        }
+        let headed = block.get(1).is_some_and(|l| is_separator(l));
+        let (columns, rows): (Option<Vec<usize>>, &[&str]) = if headed {
+            let at = cells(block[0])
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| matches!(c.trim(), "Test" | "Tests"))
+                .map(|(i, _)| i)
+                .collect();
+            (Some(at), &block[2..])
+        } else {
+            (None, &block[..])
+        };
+        for row in rows {
+            for (at, cell) in cells(row).into_iter().enumerate() {
+                if columns.as_ref().is_some_and(|c| !c.contains(&at)) {
+                    continue;
+                }
+                out.extend(
+                    spans(cell)
+                        .into_iter()
+                        .filter(|s| s.contains("::"))
+                        .map(|s| s.trim().to_string()),
+                );
+            }
+        }
+        block.clear();
+    }
+    out
+}
+
+/// The test lists of a Plan item: the text from `test ` or `tests ` to the next `)`.
+fn test_lists(item: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    for word in ["tests", "test"] {
+        for (i, _) in item.match_indices(word) {
+            let before_ok = item[..i]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+            let after = &item[i + word.len()..];
+            if before_ok && after.starts_with([' ', '\n']) {
+                out.push(&after[..after.find(')').unwrap_or(after.len())]);
+            }
+        }
+    }
+    out
 }
 
 /// The items of the Plan section as (step label, text): an item starts with `<n>. ` at the start of
@@ -70,8 +141,9 @@ fn plan_names(text: &str, keep: impl Fn(&str) -> bool) -> BTreeSet<String> {
         .into_iter()
         .filter(|(label, _)| keep(label))
         .flat_map(|(_, item)| {
-            spans(&item)
+            test_lists(&item)
                 .into_iter()
+                .flat_map(spans)
                 .filter(|s| s.contains("::"))
                 .map(|s| s.trim().to_string())
                 .collect::<Vec<_>>()
@@ -108,7 +180,7 @@ fn cargo_file(path: &str) -> Option<(&str, &str)> {
 }
 
 /// Whether the test a ticket names exists at `head`; `None` when the text names no test, as a
-/// `module::name` whose module is no test file.
+/// name whose segments are no identifiers. A missing file is a missing test.
 fn exists(root: &Path, head: &str, files: &BTreeSet<String>, name: &str) -> Option<bool> {
     if let Some((path, test)) = name.split_once("::")
         && is_script(path)
@@ -121,26 +193,101 @@ fn exists(root: &Path, head: &str, files: &BTreeSet<String>, name: &str) -> Opti
                     .is_some_and(|src| test_calls(&src).iter().any(|(n, _)| n.trim() == test)),
         );
     }
-    let (module, test) = name.rsplit_once("::")?;
-    if test.is_empty() || !test.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+    // The file part is a known cargo form with `::` (`core::config`), else the first segment.
+    let cargo: Vec<(&str, Vec<String>)> = files
+        .iter()
+        .filter_map(|p| cargo_file(p).map(|(d, s)| (p.as_str(), cargo_forms(d, s))))
+        .collect();
+    let known = cargo
+        .iter()
+        .flat_map(|(_, forms)| forms)
+        .filter(|f| f.contains("::"))
+        .find(|f| {
+            name.strip_prefix(f.as_str())
+                .is_some_and(|r| r.starts_with("::"))
+        });
+    let (module, rest) = match known {
+        Some(form) => (form.as_str(), &name[form.len() + 2..]),
+        None => name.split_once("::")?,
+    };
+    let segments: Vec<&str> = rest.split("::").collect();
+    if segments
+        .iter()
+        .any(|s| s.is_empty() || !s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+    {
         return None;
     }
-    let mut found = None;
-    for path in files {
-        let Some((dir, stem)) = cargo_file(path) else {
-            continue;
-        };
-        if !cargo_forms(dir, stem).iter().any(|f| f == module) {
+    let (test, mods) = segments.split_last()?;
+    for (path, forms) in &cargo {
+        if !forms.iter().any(|f| f == module) {
             continue;
         }
-        let defined = show(root, head, path)
-            .is_some_and(|src| test_functions(&src).iter().any(|(n, _)| n == test));
+        let defined = show(root, head, path).is_some_and(|src| {
+            if mods.is_empty() {
+                test_functions(&src).iter().any(|(n, _)| n == test)
+            } else {
+                nested_test(&src, mods, test)
+            }
+        });
         if defined {
             return Some(true);
         }
-        found = Some(false);
     }
-    found
+    // No test file of that name defines it, or there is no such file: the test does not exist.
+    Some(false)
+}
+
+/// The end of the first whole-word `word` after `from` that `next` accepts.
+fn word_after(
+    src: &str,
+    from: usize,
+    word: &str,
+    next: impl Fn(&str) -> Option<usize>,
+) -> Option<usize> {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    for (i, _) in src[from..].match_indices(word) {
+        let at = from + i;
+        let end = at + word.len();
+        if src[..at].chars().next_back().is_some_and(ident) || src[end..].starts_with(ident) {
+            continue;
+        }
+        if let Some(n) = next(&src[end..]) {
+            return Some(end + n);
+        }
+    }
+    None
+}
+
+/// The text after whitespace and the identifier `name`, as an offset into `rest`.
+fn named_next(rest: &str, name: &str) -> Option<usize> {
+    let trimmed = rest.trim_start();
+    let after = trimmed.strip_prefix(name)?;
+    if after.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(rest.len() - after.len())
+}
+
+/// Whether a `#[test]` function `test` stands in the nested `mod`s `mods` of a source, found by
+/// text: each `mod <name>` after the one before, then `fn <test>` under a `#[test]` attribute.
+fn nested_test(src: &str, mods: &[&str], test: &str) -> bool {
+    let mut from = 0;
+    for m in mods {
+        let Some(end) = word_after(src, from, "mod", |r| named_next(r, m)) else {
+            return false;
+        };
+        from = end;
+    }
+    let mut at = from;
+    while let Some(end) = word_after(src, at, "fn", |r| named_next(r, test)) {
+        let head = src[..end - test.len()].trim_end().len() - "fn".len();
+        let item_start = src[..head].rfind(['}', '{', ';']).map_or(0, |i| i + 1);
+        if src[item_start..head].contains("#[test]") {
+            return true;
+        }
+        at = end;
+    }
+    false
 }
 
 /// Every path of the tree at `head`.
