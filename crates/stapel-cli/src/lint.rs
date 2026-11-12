@@ -369,7 +369,10 @@ pub fn run(key: Option<&str>) -> ExitCode {
         .collect();
 
     // The step tests of the RED commits that exist at HEAD and that no ticket names in a table row.
-    let globs = junit_globs_at(&root);
+    let globs = match junit_globs_at(&root) {
+        Ok(g) => g,
+        Err(e) => return refuse(e),
+    };
     let mut step_tests_of = BTreeSet::new();
     for red in commits.iter().flat_map(|s| s.reds()) {
         let found = match &globs {

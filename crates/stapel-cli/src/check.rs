@@ -35,10 +35,11 @@ fn junit_globs_of(check: &Check) -> Option<Vec<String>> {
     (check.runner == "junit").then(|| check.tests.clone().unwrap_or_default())
 }
 
-/// The test globs of the repository's `[check]` when its runner is junit.
-pub(crate) fn junit_globs_at(root: &Path) -> Option<Vec<String>> {
-    let config = repo::load(root).ok()?;
-    junit_globs_of(&config.check?)
+/// The test globs of the repository's `[check]` when its runner is junit; a `stapel.toml` that
+/// fails to load is its fault, never a cargo check.
+pub(crate) fn junit_globs_at(root: &Path) -> Result<Option<Vec<String>>, String> {
+    let config = repo::load(root)?;
+    Ok(config.check.and_then(|c| junit_globs_of(&c)))
 }
 
 /// The Walk of a junit check read for build inputs (STP-28 AC-24, AC-25): input globs, the
@@ -1118,11 +1119,10 @@ pub(crate) fn history_report(
     steps: &[Step],
     bounds: Bounds,
 ) -> Result<HistoryReport, String> {
-    let globs = junit_globs_at(root);
+    let globs = junit_globs_at(root)?;
     let analyses = analyse_in(root, key, at, steps, bounds.base, bounds.base_branch, mode_of(&globs))?;
-    let junit_check = repo::load(root)
-        .ok()
-        .and_then(|c| c.check)
+    let junit_check = repo::load(root)?
+        .check
         .filter(|c| c.runner == "junit");
     let (inputs, walk) = match &junit_check {
         Some(check) => (
@@ -1261,7 +1261,7 @@ pub(crate) fn hook_faults(root: &Path) -> Option<Vec<String>> {
             _ => None,
         };
         let (outcome, reason, fault, amend) = if let Some(red) = open {
-            match open_red(root, &red, &head, mode_of(&junit_globs_at(root))).ok()? {
+            match open_red(root, &red, &head, mode_of(&junit_globs_at(root).ok()?)).ok()? {
                 Some((o, r)) => (o, r, Some(red), true),
                 None => continue,
             }

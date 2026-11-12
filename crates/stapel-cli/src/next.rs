@@ -102,7 +102,7 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         };
         let found = match open {
             Some(red) => {
-                let globs = junit_globs_at(root);
+                let globs = junit_globs_at(root).map_err(Fail::failed)?;
                 let judged = open_red(root, &red, &head, mode_of(&globs)).map_err(Fail::failed)?;
                 if judged.is_none() {
                     open_red_label = Some(a.label.clone());
