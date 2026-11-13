@@ -112,8 +112,8 @@ Terms:
 | AC-13 | WHEN `--onto` is absent THE Onto ref is the full name that `git rev-parse --symbolic-full-name <base_branch>@{upstream}` prints for the Branch state's `base_branch`; IF the Branch state has no `base_branch`, that exact branch has no upstream, or the git call fails THEN export exits 1 with a message that names `--onto`. | `export::onto_defaults_to_the_upstream`, `export::default_upstream_is_exact` |
 | AC-14 | IF the Onto ref names no commit, shares no commit with the branch, has `.stapel` in its tree, the Export range is empty, holds a commit without parents, or every commit of it is dropped, or `export/<KEY>` is the checked-out branch of a worktree THEN export exits 1 with a message that names the cause and changes no ref. | `export::export_refusals` |
 | AC-15 | WHEN export runs THE each commit of the Export range gets a new commit with its Clean tree, its parents mapped (a parent inside the range to that parent's new commit, any other parent as it is), and the rest of its raw commit object kept byte for byte (author and committer lines, an `encoding` header, the message), only `gpgsig`, `gpgsig-sha256` and `mergetag` headers dropped, written with `git hash-object -t commit --literally`, so a commit git stores with a malformed ident is copied too and a second run on the same commits gives the same tip. | `export::rewrites_the_range`, `export::export_is_repeatable`, `export::keeps_identity_and_encoding`, `export::copies_odd_commits_and_base_names` |
-| AC-16 | WHEN the Clean tree of a commit with one parent equals the Clean tree of that parent (inside the range its new commit's tree, outside it the parent's own Clean tree) THE commit is dropped and its children take that parent in its place; WHEN the mapped parents of a merge are one commit THE merge is dropped if its Clean tree equals that commit's, else written with that one parent; WHEN a merge has two different mapped parents, one of them is an ancestor of the other, and the merge's Clean tree equals the Clean tree of the later one (a `git pull` into local `main`) THE merge is dropped and its children take that later parent; any other merge of two different parents is kept. | `export::drops_empty_commits`, `export::drops_against_clean_parent_trees`, `export::drops_pull_merges` |
-| AC-17 | WHEN export ends THE ref `refs/heads/export/<KEY>` points at the new tip and the output is that of the golden file `export_output.txt`: one line with the tip, the commit count, the dropped count and the Onto ref, and, when the Onto ref lies under `refs/remotes/`, a line `push: git push <remote> export/<KEY>:<KEY>`, where `<remote>` is the configured remote with the longest name that, followed by `/`, starts the rest of the ref; the output goes through the `out` module, and child processes are piped with plain `.stdout(…)` and `.stderr(…)` calls. | `export::export_output`, `closed_pipe::no_print_macros_outside_out`, `closed_pipe::no_stream_aliases` |
+| AC-16 | WHEN the Clean tree of a commit with one parent equals the Clean tree of that parent (inside the range its new commit's tree, outside it the parent's own Clean tree) THE commit is dropped and its children take that parent in its place; WHEN the mapped parents of a merge are one commit THE merge is dropped if its Clean tree equals that commit's, else written with that one parent; WHEN a merge has two different mapped parents, one of them is an ancestor of the other, and the merge's Clean tree equals the Clean tree of the later one (a `git pull` into local `main`) THE merge is dropped and its children take that later parent; any other merge of two different parents is kept. | `export::drops_empty_commits`, `export::drops_against_clean_parent_trees`, `export::drops_pull_merges`, `export::keeps_pull_merges_with_own_changes` |
+| AC-17 | WHEN export ends THE ref `refs/heads/export/<KEY>` points at the new tip and the output is that of the golden file `export_output.txt`: one line with the tip, the commit count, the dropped count and the Onto ref, and, when the Onto ref lies under `refs/remotes/`, a line `push: git push <remote> export/<KEY>:<KEY>`, where `<remote>` is the configured remote with the longest name that, followed by `/`, starts the rest of the ref; the output goes through the `out` module, and child processes are piped with plain `.stdout(…)` and `.stderr(…)` calls. | `export::export_output`, `closed_pipe::no_print_macros_outside_out`, `closed_pipe::no_stream_aliases`, `closed_pipe::no_direct_stream_calls` |
 | AC-18 | WHEN the person's path runs on a fixture repository without `Cargo.toml`, with hooks in a tracked folder and a script that writes a JUnit report THE `init --local`, `new`, `check`, the session and tool hooks, the pre-push and `export` succeed or refuse as AC-1 to AC-17 say, `export/<KEY>` holds no Process path, and no tracked file of the main checkout changes. | `init_local::foreign_repository_end_to_end`, `init_local::foreign_repository_real_pushes` |
 | AC-19 | WHEN export ends or refuses THE ref `export/<KEY>` is written only as the last git call (the remote list is read before it), the export's temporary folder is gone, and the working tree, the index and `HEAD` are unchanged. | `export::export_leaves_the_checkout` |
 | AC-20 | WHEN `stapel next` runs in Local mode, in the main checkout or a linked worktree, and the Pre-push path as the main worktree resolves it is missing, not executable, or a hook with stapel's marker whose text is not the Local-mode text THE fact `the stapel pre-push hook is missing or stale at <path>; run stapel init` is the first fact (the first `blocked:` line before any other in text, the first item of `facts` in `--json`) and the action is `init — stapel init`, in every case of `next`, no open ticket and a refusal of `next` included, and the session-start hook prints that fact and action also when `next` refuses; a hook without stapel's marker, and a Pre-push path outside the main worktree (init only warns there), give no fact. | `next::local_mode_names_a_missing_pre_push`, `next::hook_fact_in_worktrees_and_foreign_hooks`, `hook_session::session_start_keeps_the_hook_fact` |
@@ -138,7 +138,7 @@ Terms:
   Process paths (the pre-push checks `.stapel/` only); an export killed between its git calls (no ref is written, a temporary index may stay in the temporary
   folder of the system); `GIT_DIR` or `GIT_INDEX_FILE` set by a caller; a later ticket's export that holds the commits of
   an earlier ticket not yet merged upstream (the commits come out the same, so the later branch stacks on the
-  earlier one); a push from a linked worktree (git resolves a relative hooks path in each worktree, where the hook file is absent, so it runs no stapel hook; the person pushes from the main checkout); a bare main repository with linked worktrees only (the hook fact cannot clear there); a sparse checkout; a Windows file system.
+  earlier one); a push from a linked worktree (git resolves a relative hooks path in each worktree, where the hook file is absent, so it runs no stapel hook; the person pushes from the main checkout); a bare main repository with linked worktrees only (the hook fact cannot clear there); a sparse checkout; a `git merge --no-ff` inside the range of a line the later parent already holds (AC-16 drops it: no code is lost, the merge message goes); a Windows file system.
 
 ## Test plan
 
@@ -176,6 +176,8 @@ stapel-cli --test <file> -- --test-threads=3`, `-p stapel-core --test config`; b
 | Stream aliases | a source line with `::stdout::<` or `::stderr::<` in `crates/*/src`: flagged; the scan of `stdout(` and `stderr(` matches only `io::stdout(` and `io::stderr(`, so `.stdout(Stdio::piped())` passes | `closed_pipe::no_stream_aliases` |
 | Odd commits | a range commit stored with `hash-object --literally` whose author has an empty name and no space before `<`; a commit with `mergetag` and one with `gpgsig-sha256`; a Branch state whose `base_branch` is `-x`: the odd commits copied byte for byte minus the dropped headers; the `-x` base refused naming `--onto` | `export::copies_odd_commits_and_base_names` |
 | Pull merges | local `main` = the install commit, then `git pull` brings a new origin commit as a merge; the ticket branch starts after it: the merge is dropped, the export's first commit sits on the new origin commit; a merge of two code lines is still kept | `export::drops_pull_merges` |
+| Own changes | a pull merge whose merge commit also changes `src/x.txt` (a conflict resolution), once with the later parent second and once with it first: kept with both parents and the change | `export::keeps_pull_merges_with_own_changes` |
+| Direct streams | a source line outside `out.rs` with a zero-argument `stdout()` or `stderr()` call, or `io::stdout` or `io::stderr` without a paren (an import or an alias): flagged; `.stdout(Stdio::piped())` passes | `closed_pipe::no_direct_stream_calls` |
 | Session start | Local mode, the hook deleted, two open tickets on `main` (`next` refuses): `stapel hook session-start` prints the AC-20 fact and `next: init — stapel init` | `hook_session::session_start_keeps_the_hook_fact` |
 | Init from worktree | `core.hooksPath = .husky`, the main checkout's hook deleted, `stapel init` run in the ticket's linked worktree: the hook is written in the main checkout, no `.husky/pre-push` in the worktree, `next` in the worktree gives no fact; the default hooks folder: the same | `init_local::init_from_a_worktree_fixes_the_main_hook` |
 | Key | in the worktree on branch `ABC-1` without KEY: `ABC-1`; `export ABC-1` from the main checkout before the merge of `ABC-1`: the ticket read from its branch; `export ABC-9` with no branch: exit 1; on branch `export/ABC-1` without KEY, and `export -x`: exit 1 (no key); detached `HEAD` without KEY: exit 1; a branch `ABC-2` without `.stapel/tickets/ABC-2/state.json`: exit 1; no `export/` ref made in each refusal | `export::export_key_and_refusals` |
@@ -300,18 +302,23 @@ has a test or "not promised"; the readers of `stapel.toml` that see the new tabl
 - `init.rs` keeps the Local-mode pre-push text and `stale_local_pre_push`, which `next` calls; it resolves
   the Pre-push path in the main worktree (`main_worktree`, the first entry of `git worktree list
   --porcelain`) and returns a path relative to that worktree; a hook is stale when missing, not executable,
-  or stapel-marked with other text. `next::lines_parts` returns the lines and a refusal, so the fact and
-  the action `init` come first also before a refusal.
+  or stapel-marked with other text. In Local mode `plan_pre_push` resolves the path in the main worktree
+  too, so `init` from a ticket worktree writes the main checkout's hook (AC-22). `next::lines_parts`
+  returns the lines and a refusal, so the fact and the action `init` come first also before a refusal;
+  `next::text_at`, which the session-start hook prints, keeps those lines when `next` refuses.
 - `export.rs` runs every git call at `rev-parse --show-toplevel`; reads the Branch state as any JSON object
   and takes only `base_branch`; checks KEY with `check-ref-format --branch` (the printed name must equal
   KEY) and against the key pattern when a `stapel.toml` is found. A new commit is the old raw object from
   `cat-file commit` with `tree` and `parent` lines replaced and `gpgsig`, `gpgsig-sha256` and `mergetag`
-  dropped, written with `hash-object -t commit -w --stdin`. The drop test compares Clean trees
-  (`clean_tree`) of a commit and its mapped parent. `git rm --cached` runs with `-f`. `rev-parse
-  --symbolic-full-name --end-of-options` prints the `--end-of-options` word back, so that line is dropped.
-  The remote list is read before `update-ref`. The output line, printed with `say!`, is
-  `export/<KEY> <tip>: commits <n>, dropped <m>, onto <ref>`. `capture()` pipes a child's streams through
-  `Command::stdout::<Stdio>` so the `closed_pipe` scan does not match (step 21 replaces it).
+  dropped, written with `hash-object -t commit -w --stdin --literally`. The drop test compares Clean trees
+  (`clean_tree`) of a commit and its mapped parent; a merge of two mapped parents where one is an ancestor
+  of the other (`merge-base --is-ancestor`) is dropped when its Clean tree equals the later parent's.
+  `git rm --cached` runs with `-f`. `rev-parse --symbolic-full-name --end-of-options` prints the
+  `--end-of-options` word back, so that line is dropped (in the Onto ref and in `upstream_of`). The remote
+  list is read before `update-ref`. The output line, printed with `say!`, is
+  `export/<KEY> <tip>: commits <n>, dropped <m>, onto <ref>`. Child processes are piped with plain
+  `.stdout(Stdio::piped())` calls; the `closed_pipe` scan matches `io::stdout(` and `io::stderr(`, bans the
+  `::stdout::<` alias form, and (step 24) catches zero-argument `stdout()` and `stderr()` calls.
 - The export test fixture keeps `main` free of `.stapel/` (the files of `init` are excluded), as the
   pilot's `origin/main` is; ticket data lives on the ticket branches.
 - The smoke test lives in `init_local.rs`: a coverage test in a new file under `tests/` holds no step test,
@@ -336,8 +343,8 @@ has a test or "not promised"; the readers of `stapel.toml` that see the new tabl
 | AC-13 | `export::onto_defaults_to_the_upstream`, `export::default_upstream_is_exact` |
 | AC-14 | `export::export_refusals` |
 | AC-15 | `export::rewrites_the_range`, `export::export_is_repeatable`, `export::keeps_identity_and_encoding`, `export::copies_odd_commits_and_base_names` |
-| AC-16 | `export::drops_empty_commits`, `export::drops_against_clean_parent_trees`, `export::drops_pull_merges` |
-| AC-17 | `export::export_output`, `closed_pipe::no_print_macros_outside_out`, `closed_pipe::no_stream_aliases` |
+| AC-16 | `export::drops_empty_commits`, `export::drops_against_clean_parent_trees`, `export::drops_pull_merges`, `export::keeps_pull_merges_with_own_changes` |
+| AC-17 | `export::export_output`, `closed_pipe::no_print_macros_outside_out`, `closed_pipe::no_stream_aliases`, `closed_pipe::no_direct_stream_calls` |
 | AC-18 | `init_local::foreign_repository_end_to_end`, `init_local::foreign_repository_real_pushes` |
 | AC-19 | `export::export_leaves_the_checkout` |
 | AC-20 | `next::local_mode_names_a_missing_pre_push`, `next::hook_fact_in_worktrees_and_foreign_hooks`, `hook_session::session_start_keeps_the_hook_fact` |
@@ -420,6 +427,14 @@ Fix steps after code review round 2 (ledger decision of 2026-11-12: round 3 inst
 23. Pull merges (AC-16; test `export::drops_pull_merges`; ER2-4). Must not change: `export::drops_empty_commits`
     and `export::drops_against_clean_parent_trees`.
 
+Coverage after the verification review (round 3):
+
+24. Coverage, no GREEN (AC-17; test `closed_pipe::no_direct_stream_calls`; R3-1): a new test function,
+    with its patterns inside it, scans `crates/*/src` outside `out.rs` for zero-argument `stdout()` and
+    `stderr()` calls and for `io::stdout` or `io::stderr` without a paren.
+25. Coverage, no GREEN (AC-16; test `export::keeps_pull_merges_with_own_changes`; R3-2): a new test
+    function with its fixture inside it.
+
 ## Review
 
 - Spec review, round 1 (2026-11-12): `stapel-spec-reviewer`; 11 findings, 1 HIGH, 6 MEDIUM, 4 LOW (one LOW
@@ -437,6 +452,12 @@ Fix steps after code review round 2 (ledger decision of 2026-11-12: round 3 inst
   halves; 14 findings, 0 HIGH, 2 MEDIUM (ER2-1, ER2-2, both on the hook fact), 12 LOW (two outside: ER2-4
   taken into AC-16 by the human, ER2-7 not promised); 12 patched by fix steps 19 to 23, 2 no-change (CR2-5,
   ER2-7).
+- Check after step 23: pass (944 tests).
+- Verification review, round 3 (2026-11-12, ledger decision; `stapel review start` allows only rounds 1
+  and 2, so one `stapel-reviewer` (role external) read the diff of steps 19 to 23 in the worktree, read
+  only, with no builder running): all round-2 patches confirmed; 5 findings, 0 HIGH, 2 MEDIUM (R3-1 the
+  narrowed scan, R3-2 a drop-rule condition without a false case; both test gaps, no wrong behaviour),
+  3 LOW; coverage steps 24 and 25, the text fixed, R3-5 no-change.
 
 ## Summary
 
