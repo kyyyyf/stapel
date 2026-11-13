@@ -1115,3 +1115,59 @@ fn copies_odd_commits_and_base_names() {
     assert!(err.contains("--onto"), "{err}");
     assert_eq!(export_refs(dir), "");
 }
+
+// STP-31 AC-16 (R3-2): a pull merge that also changes code (an own change or a conflict resolution) is
+// kept with both parents and the change, whether the later parent is the second or the first parent.
+#[test]
+fn keeps_pull_merges_with_own_changes() {
+    // `later_first`: the pull merge has the origin commit as its first parent.
+    let run = |later_first: bool| {
+        let repo = git_repo();
+        let dir = repo.path();
+        let tmp = bare_dir();
+        git_n(dir, 1, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        commit(dir, 1, &[("src/a.txt", "a1\n")], "base");
+        git_n(dir, 1, &["branch", "root"]);
+        git_n(dir, 1, &["branch", "up"]);
+        // Local main holds the install commit, which changes only `.stapel/`.
+        commit(dir, 2, &[(".stapel/process-ledger.jsonl", "{}\n")], "install");
+        git_n(dir, 3, &["checkout", "-q", "up"]);
+        commit(dir, 3, &[("src/origin.txt", "origin\n")], "origin work");
+        git_n(dir, 3, &["branch", "onto"]);
+        // The pull merge, with its own change in `src/x.txt`.
+        let (into, from) = if later_first { ("up", "main") } else { ("main", "up") };
+        git_n(dir, 4, &["checkout", "-q", into]);
+        git_n(dir, 4, &["merge", "-q", "--no-ff", "--no-commit", from]);
+        put(dir, "src/x.txt", "resolved\n");
+        git_n(dir, 4, &["add", "-A"]);
+        git_n(dir, 4, &["commit", "-q", "-m", "pull"]);
+        git_n(dir, 5, &["checkout", "-q", "-b", "ABC-1"]);
+        commit(
+            dir,
+            5,
+            &[("src/red.txt", "red\n"), (".stapel/tickets/ABC-1/state.json", "{}\n")],
+            "RED",
+        );
+
+        export(dir, "onto", tmp.path());
+
+        let new = commits(dir, "onto..export/ABC-1");
+        let subjects: Vec<_> = new.iter().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(subjects, ["pull", "RED"], "later_first={later_first}");
+        let by = |s: &str| new.iter().find(|(x, _)| x == s).unwrap().1.clone();
+        // The install commit is empty after the clean, so it maps to the base commit.
+        let want = if later_first {
+            [rev(dir, "onto"), rev(dir, "root")]
+        } else {
+            [rev(dir, "root"), rev(dir, "onto")]
+        };
+        assert_eq!(parents(dir, &by("pull")), want, "later_first={later_first}");
+        assert_eq!(parents(dir, &by("RED")), [by("pull")]);
+        let merge = entries(dir, &by("pull"));
+        assert!(merge.contains_key("src/x.txt"), "later_first={later_first}");
+        assert!(!entries(dir, &rev(dir, "onto")).contains_key("src/x.txt"));
+        assert!(!merge.keys().any(|p| p.starts_with(".stapel/")));
+    };
+    run(false);
+    run(true);
+}
