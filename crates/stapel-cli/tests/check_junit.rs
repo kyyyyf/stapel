@@ -2551,3 +2551,179 @@ fn broken_config_kinds() {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).ok();
     }
 }
+
+// STP-30 AC-3 (CR2-E2): a fixture that a Base merge brings with the second parent's content and a
+// mode that differs from the second parent's gives no `tests-changed`; a third text gives it with
+// any mode.
+#[test]
+fn base_merge_fixture_content_and_mode() {
+    fn scenario(content: &str, mode: u32) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        const PATH: &str = "__tests__/a b.json";
+        let repo = junit_repo();
+        let dir = repo.dir();
+        let main = git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        let state_path = dir.join(".stapel/tickets/ABC-1/state.json");
+        let mut state: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+        state["base_branch"] = serde_json::json!(main);
+        std::fs::write(&state_path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+        commit(dir, "ABC-1: base branch");
+        git_in(dir, &["checkout", "-q", "-b", "ticket"]);
+        write(
+            dir,
+            "__tests__/f.test.ts",
+            "it(\"fixed\", () => { /* needs src/f.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 1 RED: fixed");
+        write(dir, "src/f.ts", "export const f = 1;\n");
+        commit(dir, "ABC-1 step 1 GREEN: fixed");
+        git_in(dir, &["checkout", "-q", &main]);
+        write(dir, PATH, "{\"a\": 1}\n");
+        std::fs::set_permissions(dir.join(PATH), std::fs::Permissions::from_mode(0o755)).unwrap();
+        commit(dir, "main: an executable fixture");
+        git_in(dir, &["checkout", "-q", "ticket"]);
+        git_in(dir, &["merge", "-q", "--no-ff", "--no-commit", &main]);
+        write(dir, PATH, content);
+        std::fs::set_permissions(dir.join(PATH), std::fs::Permissions::from_mode(mode)).unwrap();
+        commit(dir, "ABC-1: merge main");
+        let (_, text) = stdout(dir, &["check", "ABC-1", "--history"]);
+        text.lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("no step 1:\n{text}"))
+            .to_string()
+    }
+    // Equal content, a mode that differs from the second parent's.
+    let line = scenario("{\"a\": 1}\n", 0o644);
+    assert_eq!(line, "step 1: needs-run");
+    // A third text, with either mode.
+    for mode in [0o644, 0o755] {
+        let line = scenario("{\"a\": 3}\n", mode);
+        assert_eq!(
+            line, "step 1: tests-changed: __tests__/a b.json",
+            "mode {mode:o}"
+        );
+    }
+}
+
+// STP-30 AC-5 (CR2-E3): an input that an input glob matches and a Base merge brings equal passes; a
+// merge that resolves one of two brought inputs to a third text gives `build-input-changed`.
+#[test]
+fn base_merge_glob_input() {
+    fn scenario(resolve_first: bool, resolve_second: bool) -> (String, String) {
+        let repo = junit_repo();
+        let dir = repo.dir();
+        let main = git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        let state_path = dir.join(".stapel/tickets/ABC-1/state.json");
+        let mut state: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+        state["base_branch"] = serde_json::json!(main);
+        std::fs::write(&state_path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+        let config = dir.join(".stapel/stapel.toml");
+        let mut text = std::fs::read_to_string(&config).unwrap();
+        text.push_str("inputs = [\"config*.json\"]\n");
+        std::fs::write(&config, text).unwrap();
+        commit(dir, "ABC-1: base branch");
+        git_in(dir, &["checkout", "-q", "-b", "ticket"]);
+        write(
+            dir,
+            "__tests__/x.test.ts",
+            "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 1 RED: one");
+        write(dir, "src/ok.ts", "export const ok = 1;\n");
+        commit(dir, "ABC-1 step 1 GREEN: one");
+        git_in(dir, &["checkout", "-q", &main]);
+        write(dir, "config[1].json", "{\"a\": 1}\n");
+        write(dir, "config2.json", "{\"b\": 1}\n");
+        commit(dir, "main: two inputs");
+        git_in(dir, &["checkout", "-q", "ticket"]);
+        git_in(dir, &["merge", "-q", "--no-ff", "--no-commit", &main]);
+        if resolve_first {
+            write(dir, "config[1].json", "{\"a\": 3}\n");
+        }
+        if resolve_second {
+            write(dir, "config2.json", "{\"b\": 3}\n");
+        }
+        commit(dir, "ABC-1: merge main");
+        let merge = git_in(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        write(
+            dir,
+            "__tests__/y.test.ts",
+            "it(\"two\", () => { /* needs src/two.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 2 RED: two");
+        write(dir, "src/two.ts", "export const two = 2;\n");
+        commit(dir, "ABC-1 step 2 GREEN: two");
+        let (_, text) = check(&repo);
+        (text, merge)
+    }
+    let (text, _) = scenario(false, false);
+    assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
+    let (text, merge) = scenario(true, false);
+    assert_eq!(
+        text.lines().find(|l| l.starts_with("step 2: ")).unwrap(),
+        format!(
+            "step 2: unverified: build-input-changed: config[1].json at {}",
+            &merge[..7]
+        ),
+        "{text}"
+    );
+    let (text, merge) = scenario(false, true);
+    assert_eq!(
+        text.lines().find(|l| l.starts_with("step 2: ")).unwrap(),
+        format!(
+            "step 2: unverified: build-input-changed: config2.json at {}",
+            &merge[..7]
+        ),
+        "{text}"
+    );
+}
+
+// STP-30 AC-6 (CR2-E5): an absolute script path with a `..` part is a build input: a change between
+// the RED and the GREEN gives `build-input-changed` (STP-28 matched no path).
+#[test]
+fn absolute_script_dotdot_is_input() {
+    let repo = step_repo(
+        |dir| {
+            let stand_in = repo_stand_in(dir);
+            write(dir, "a/keep", "x\n");
+            write(dir, "run.sh", &format!("#!/bin/sh\nexec sh '{stand_in}' \"$1\"\n"));
+            std::fs::set_permissions(
+                dir.join("run.sh"),
+                std::os::unix::fs::PermissionsExt::from_mode(0o755),
+            )
+            .unwrap();
+            let path = dir.join(".stapel/stapel.toml");
+            let text: String = std::fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .map(|l| {
+                    if l.starts_with("command = ") {
+                        format!("command = \"{}/a/../run.sh {{file}}\"\n", dir.display())
+                    } else {
+                        format!("{l}\n")
+                    }
+                })
+                .collect();
+            std::fs::write(&path, text).unwrap();
+            commit(dir, "setup: an absolute script with a dotdot part");
+        },
+        |dir| write(dir, "run.sh", "#!/bin/sh\nexit 0\n"),
+    );
+    let sha = git_in(repo.dir(), &["rev-parse", "HEAD"]);
+    let (code, text) = check(&repo);
+    assert_eq!(code, 1, "{text}");
+    assert_eq!(
+        step_one(&text),
+        format!(
+            "step 1: unverified: build-input-changed: run.sh at {}",
+            &sha.trim()[..7]
+        ),
+        "{text}"
+    );
+}
