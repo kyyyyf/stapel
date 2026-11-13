@@ -318,6 +318,9 @@ to AC-12, AC-13; item 6 to AC-3 to AC-5, AC-14, AC-15.
   file unit absent at the merge and at the second parent is Equal only when it answers yes; a failed git
   call answers no, so the deletion blocks. It applies under both runners.
 - Step 25: coverage; the three tests passed at once.
+- Step 26: its RED failed under cargo, so it got a GREEN: `merge_base_had` moved to `build_inputs.rs`
+  and `same_as_parent` answers it for a path absent at the merge and at the second parent, so the cargo
+  build-input walk and the junit input walk follow the term as well.
 - `read_report_file` names the kind from `symlink_metadata` and opens only a regular file, through a
   stapel-core function that reads an open file with the bound, with
   `O_NOFOLLOW | O_NONBLOCK`; it checks the open file is regular and reads through `take(MAX_REPORT + 1)`
@@ -457,4 +460,27 @@ in for a third review round):
 
 ## Summary
 
-TODO
+- Built: the six promise items by AC-1 to AC-18 in 26 Plan steps (11 planned, 15 fix and coverage steps
+  after drift and code review): the Base merge frees an Equal Protected unit (content and mode, merge
+  base for a deletion) under both runners; an absolute script under the root runs as committed; the
+  reader refuses unknown and second roots and CDATA outside the root and skips unknown content; a broken
+  `stapel.toml` fails `check --history`, `lint` and `next` and is printed by the hook; the report is
+  named by kind and read once with a bound. The final check at `3b2c0a6` passes with 951 tests.
+- Measures against STP-28: `ticket.md` 45 KB (69 KB); 11 dialogs (10); 8 questions (15); 1 h 18 min of
+  the person's attention (2 h 15 min); wall time 23 h 38 min (25 h 33 min). Code review found 1 HIGH and
+  3 MEDIUM inside the promise in round 1 (the HIGH did not reproduce) and 1 MEDIUM in round 2; drift
+  reviews found 1 HIGH (the one-open read not built) and 9 MEDIUM during the build.
+- Improved: `stapel check` ran three times instead of once per step (ledger 2026-11-12), with no RED
+  fault found late; drift reviews after each GREEN caught the defects that reached code review in STP-28.
+- Not improved: the spec named behaviour the code did not have (Cargo.lock as a build input, the mode
+  rule for fixtures, `:(literal)`), found only during the build; 15 fix steps; STP-31 changed nine times
+  during the build, and each change stopped the build for a dependency review.
+- Process problems seen:
+  - The orchestrator ran two builders at once in one worktree; the commits interleaved and were replayed
+    with the person's leave (memory: one builder per worktree).
+  - Builders wrote files with scripts four times despite the rule; one builder tried `stapel check`.
+  - After merging main, a test of this ticket failed on the STP-31 starter file, and no commit can fix an
+    existing test after a Base merge without blocking every step (STP-13 rule); the person chose to close
+    without the merge and to fix the test on main after the merge (tag `stp30-merge-attempt`). Plan
+    candidate: a post-merge test-fix commit that `stapel check` accepts.
+  - Deferred: d26-1, a build input deleted on main and brought by a Base merge, is untested.
