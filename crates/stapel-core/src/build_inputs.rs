@@ -149,8 +149,20 @@ pub(crate) fn base_merge_parent(root: &Path, sha: &str, base_branch: Option<&str
     Some(second)
 }
 
-/// Whether `path` has the same content and mode at the merge as at its second parent (both absent
-/// counts).
+/// Whether the merge base of the two parents of the merge `sha` had `path`. A failed git call
+/// counts as no, so the deletion is not taken as equal.
+pub(crate) fn merge_base_had(root: &Path, sha: &str, second: &str, path: &str) -> bool {
+    let first = format!("{sha}^1");
+    let Ok(base) = git(root, &["merge-base", &first, second]) else {
+        return false;
+    };
+    let base = String::from_utf8_lossy(&base).trim().to_string();
+    git(root, &["ls-tree", "-z", &base, "--", path])
+        .is_ok_and(|b| b.iter().any(|c| *c != 0))
+}
+
+/// Whether `path` has the same content and mode at the merge as at its second parent. Absent at
+/// both counts only when the merge base had it (the base branch deleted it).
 pub(crate) fn same_as_parent(root: &Path, sha: &str, second: &str, path: &str) -> bool {
     let id = |commit: &str| {
         git(root, &["ls-tree", "-z", commit, "--", path])
@@ -158,7 +170,11 @@ pub(crate) fn same_as_parent(root: &Path, sha: &str, second: &str, path: &str) -
             .map(|b| String::from_utf8_lossy(&b).trim_end_matches('\0').to_string())
             .filter(|s| !s.is_empty())
     };
-    id(sha) == id(second)
+    let (at_merge, at_second) = (id(sha), id(second));
+    if at_merge.is_none() && at_second.is_none() {
+        return merge_base_had(root, sha, second, path);
+    }
+    at_merge == at_second
 }
 
 /// A path that is a build input by its name: a `.cargo` component, a toolchain file or `build.rs`.

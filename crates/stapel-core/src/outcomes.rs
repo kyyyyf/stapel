@@ -2,7 +2,9 @@
 //! `unpaired`, `duplicate`, `no-tests`, `red-changes-code`, `tests-changed`; and the notes
 //! `superseded by <label>` and `retired by <label>`.
 
-use crate::build_inputs::{base_merge_parent, dev_redirect, same_as_parent, target_files};
+use crate::build_inputs::{
+    base_merge_parent, dev_redirect, merge_base_had, same_as_parent, target_files,
+};
 use crate::config::glob_matches;
 use crate::includes::Includes;
 use crate::rust_tests::{helper_text, test_functions};
@@ -372,18 +374,6 @@ impl Unit {
             Unit::File(_) => Some(src),
         }
     }
-}
-
-/// Whether the merge base of the two parents of the merge `sha` had `path`. A failed git call
-/// counts as no, so the deletion is not taken as equal.
-fn merge_base_had(root: &Path, sha: &str, second: &str, path: &str) -> bool {
-    let first = format!("{sha}^1");
-    let Ok(base) = git(root, &["merge-base", &first, second]) else {
-        return false;
-    };
-    let base = String::from_utf8_lossy(&base).trim().to_string();
-    git(root, &["ls-tree", "-z", &base, "--", path])
-        .is_ok_and(|b| b.iter().any(|c| *c != 0))
 }
 
 /// Commits after `from` up to `head` on the first-parent history that touch `path`, oldest first.
