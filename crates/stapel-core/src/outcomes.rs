@@ -374,6 +374,18 @@ impl Unit {
     }
 }
 
+/// Whether the merge base of the two parents of the merge `sha` had `path`. A failed git call
+/// counts as no, so the deletion is not taken as equal.
+fn merge_base_had(root: &Path, sha: &str, second: &str, path: &str) -> bool {
+    let first = format!("{sha}^1");
+    let Ok(base) = git(root, &["merge-base", &first, second]) else {
+        return false;
+    };
+    let base = String::from_utf8_lossy(&base).trim().to_string();
+    git(root, &["ls-tree", "-z", &base, "--", path])
+        .is_ok_and(|b| b.iter().any(|c| *c != 0))
+}
+
 /// Commits after `from` up to `head` on the first-parent history that touch `path`, oldest first.
 /// Fields are split on NUL, which a commit message cannot hold; the path is given literally.
 fn touching(
@@ -671,12 +683,14 @@ pub fn analyse_in(
                 // change; later commits are compared with the value at the merge (AC-16).
                 // A unit absent at the merge takes the deletion path below. Under cargo a file
                 // unit is Equal by content and mode; under junit, as any other unit, by its value.
-                // A file unit absent at the merge and at the second parent is Equal as well.
+                // A file unit absent at the merge and at the second parent is Equal as well, when
+                // the merge base of the two parents had it (the base branch deleted it).
                 if (value.is_some() || matches!(unit, Unit::File(_)))
                     && let Some(second) = base_merge_parent(root, &sha, base_branch)
                     && match unit {
                         Unit::File(_) if value.is_none() => {
                             unit.value(&mut files, &second, junit).is_none()
+                                && merge_base_had(root, &sha, &second, &unit.path())
                         }
                         Unit::File(p) if !junit => same_as_parent(root, &sha, &second, p),
                         _ => value == unit.value(&mut files, &second, junit),
