@@ -86,12 +86,13 @@ Terms (the others as in STP-28):
 - **Protected unit**: what STP-4, STP-13 and STP-28 AC-27 and AC-42 guard with `tests-changed`: a step
   test, the rest of a test file, a data file or fixture beside a step test.
 - **Equal at the merge**: a path (a build input, a data file, a fixture) has the same blob and the same
-  mode at the Base merge as at its second parent, or is absent at both; a step test or the rest of a test
+  mode at the Base merge as at its second parent, or is absent at both while the merge base of the two
+  parents had it (the base branch deleted it); a step test or the rest of a test
   file has the same text at both (its file's mode is not part of that text, as before).
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN a Base merge changes a Protected unit that is Equal at the merge THE change gives no `tests-changed`, under cargo and junit. | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit`, `check_history::base_merge_glob_names`, `check_junit::base_merge_glob_names`, `check_junit::base_merge_deletes_fixture`, `check_junit::base_merge_deletion_in_merge` |
+| AC-1 | WHEN a Base merge changes a Protected unit that is Equal at the merge THE change gives no `tests-changed`, under cargo and junit. | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit`, `check_history::base_merge_glob_names`, `check_junit::base_merge_glob_names`, `check_junit::base_merge_deletes_fixture`, `check_junit::base_merge_deletion_in_merge`, `check_history::base_merge_deletion_in_merge` |
 | AC-2 | IF a Base merge resolves a Protected unit that exists at both its parents to a value other than at its second parent THEN the merge gives `tests-changed` with the merge as fault commit, as before. | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit`, `check_history::base_merge_glob_names`, `check_junit::base_merge_glob_names` |
 | AC-16 | WHEN a commit after an Equal Base merge changes the Protected unit THE commit is compared with the unit's value at the merge and gives `tests-changed`. | `check_junit::base_merge_then_edit_is_tests_change` |
 | AC-3 | IF a Base merge brings a path whose blob equals that at the second parent but whose mode differs (an executable bit, a link) THEN the path is not Equal at the merge and gives `build-input-changed` at the merge when it is a build input or, under cargo, a data file or fixture beside a step test (STP-13); under junit the mode of a fixture is not part of its value, as before. | `check_history::base_merge_mode_change_blocks`, `check_history::base_merge_mode_outcomes`, `check_junit::base_merge_mode_change_blocks`, `check_junit::base_merge_fixture_mode_only`, `check_junit::base_merge_fixture_content_and_mode` |
@@ -127,7 +128,9 @@ Terms (the others as in STP-28):
   `build-input-changed` a data file gives that main changed in content and mode and the merge resolved to
   the second parent's blob with another mode (it blocks either way, CR2-E8); an absolute script path whose
   `..` climbs above the root, which is no input and runs as given (CR2-R1); the root and an absolute script
-  path are compared as written, links are not resolved (CR1-R4, CR2-R3).
+  path are compared as written, links are not resolved (CR1-R4, CR2-R3); after a criss-cross merge `git
+  merge-base` names one of the bases, and the deletion test uses that one (d24-3); a fixture main deleted
+  that the ticket changed after its RED (d24-3).
 
 ## Test plan
 
@@ -159,7 +162,7 @@ junit_report`; before each GREEN also `--test ticket_drift`.
 | Reader CDATA | `<![CDATA[x]]>` before and after the root | `junit_report::refuses_cdata_outside_root` |
 | Reader skips | `&nbsp;` and `&#0;` inside `<system-out>` and in an attribute of `<properties>`; an unbalanced tag inside `<system-out>` still refused | `junit_report::skips_content_of_unknown_elements` |
 | Broken config | `stapel.toml` with a syntax error and with an unknown `runner`: `check --history` and `lint` exit 2 and `next` fails with the fault; a folder in its place or no `stapel.toml`: today's refusal | `check_junit::broken_config_is_refused` |
-| Broken config, hook | the hook after a commit of an open ticket with a failing step and during a merge: the fault, no step line; a folder in place of `stapel.toml`: silent; a commit of no ticket: nothing |
+| Broken config, hook | the hook after a commit of an open ticket with a failing step and during a merge: the fault, no step line; a folder in place of `stapel.toml`: silent; a commit of no ticket: nothing | `hook_post::broken_config_is_reported` |
 | Broken config kinds | an unreadable `stapel.toml` (mode 000) and a validation error: the fault for `check --history`, `lint` and `next`; a dangling link: today's refusal; no file: `next` as before; no step line at all | `check_junit::broken_config_kinds` |
 | Broken config kinds, hook | the hook on an unreadable file and a validation error: the fault; a dangling link: silent; a closed ticket: silent | `hook_post::broken_config_kinds` |
 | Config fault beside a parallel ticket | a config fault and a conflict with a parallel ticket: the fault line, then the conflict line | `hook_post::config_fault_with_parallel_conflict` |
@@ -174,7 +177,8 @@ junit_report`; before each GREEN also `--test ticket_drift`.
 | Script with `..` | `/<root>/a/../run.sh` changed between RED and GREEN: `build-input-changed` (wider than STP-28, which matched no path) | `check_junit::absolute_script_dotdot_is_input` |
 | Deletion inside a merge | a fixture added at RED, which main never had, deleted inside the merge commit: `tests-changed` at the merge; a fixture main deleted: no `tests-changed` | `check_junit::base_merge_deletion_in_merge` |
 | Junit fixture content and mode | a fixture whose content equals the second parent's and whose mode differs from both: no `tests-changed`; content resolved to a third text with any mode: `tests-changed` | `check_junit::base_merge_fixture_content_and_mode` |
-| Junit input with glob characters | an input `config[1].json` matched by an input glob, resolved by a Base merge to a third text: `build-input-changed`; brought equal: pass | `check_junit::base_merge_glob_input` | `hook_post::broken_config_is_reported` |
+| Junit input with glob characters | an input `config[1].json` matched by an input glob, resolved by a Base merge to a third text: `build-input-changed`; brought equal: pass | `check_junit::base_merge_glob_input` |
+| Deletion inside a merge, cargo | a data file beside a cargo step test added at RED and deleted inside the merge commit: blocks at the merge; a data file main deleted: no `tests-changed` | `check_history::base_merge_deletion_in_merge` |
 | Report kinds | a link, a folder, a FIFO, a socket left as the report | `check_junit::report_kinds_are_named` |
 | Report size | a report of exactly 16 MiB and of 16 MiB plus one byte | `check_junit::report_size_bound` |
 
@@ -310,6 +314,10 @@ to AC-12, AC-13; item 6 to AC-3 to AC-5, AC-14, AC-15.
   which matched no path there (CR2-E5). `script_under` keeps the strict rule for the mapping into the
   check copy.
 - Cleanup `632d3eb`: `config_root` removed; `junit::OVER_SIZE` compared exactly in `read_report_file`.
+- Step 24: `merge_base_had` runs `git merge-base <merge>^1 <second>` and `ls-tree` for the path there; a
+  file unit absent at the merge and at the second parent is Equal only when it answers yes; a failed git
+  call answers no, so the deletion blocks. It applies under both runners.
+- Step 25: coverage; the three tests passed at once.
 - `read_report_file` names the kind from `symlink_metadata` and opens only a regular file, through a
   stapel-core function that reads an open file with the bound, with
   `O_NOFOLLOW | O_NONBLOCK`; it checks the open file is regular and reads through `take(MAX_REPORT + 1)`
@@ -319,7 +327,7 @@ to AC-12, AC-13; item 6 to AC-3 to AC-5, AC-14, AC-15.
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit`, `check_history::base_merge_glob_names`, `check_junit::base_merge_glob_names`, `check_junit::base_merge_deletes_fixture`, `check_junit::base_merge_deletion_in_merge` |
+| AC-1 | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit`, `check_history::base_merge_glob_names`, `check_junit::base_merge_glob_names`, `check_junit::base_merge_deletes_fixture`, `check_junit::base_merge_deletion_in_merge`, `check_history::base_merge_deletion_in_merge` |
 | AC-2 | `check_junit::base_merge_fixture_is_no_tests_change`, `check_history::base_merge_data_file_is_no_tests_change`, `check_history::base_merge_step_test_unit`, `check_junit::base_merge_step_test_unit`, `check_history::base_merge_glob_names`, `check_junit::base_merge_glob_names` |
 | AC-3 | `check_history::base_merge_mode_change_blocks`, `check_history::base_merge_mode_outcomes`, `check_junit::base_merge_mode_change_blocks`, `check_junit::base_merge_fixture_mode_only`, `check_junit::base_merge_fixture_content_and_mode` |
 | AC-4 | `check_history::base_merge_other_parents` |
@@ -425,6 +433,8 @@ in for a third review round):
     `check_junit::base_merge_fixture_content_and_mode`, `check_junit::base_merge_glob_input`,
     `check_junit::absolute_script_dotdot_is_input`): a coverage step; a test that fails becomes a RED with
     its GREEN in this step.
+26. Deletion inside a merge under cargo (AC-1, d24-2; test `check_history::base_merge_deletion_in_merge`):
+    a coverage step; a test that fails becomes a RED with its GREEN in this step.
 
 ## Review
 
