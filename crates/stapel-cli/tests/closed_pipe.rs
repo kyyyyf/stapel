@@ -869,3 +869,36 @@ fn no_print_macros_in_stapel_core() {
         hits.join("\n")
     );
 }
+
+// STP-31 AC-17: `use std::io::stdout; stdout()` and an alias of `io::stdout` must not pass the scan.
+#[test]
+fn no_direct_stream_calls() {
+    let patterns = ["stdout()", "stderr()", "io::stdout", "io::stderr"];
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&crates).unwrap() {
+        let src = entry.unwrap().path().join("src");
+        if src.is_dir() {
+            rust_files(&src, &mut files);
+        }
+    }
+    files.sort();
+    assert!(!files.is_empty());
+    let mut hits = Vec::new();
+    for file in files {
+        if file.file_name().is_some_and(|n| n == "out.rs") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).unwrap();
+        for (n, line) in without_comments(&text).lines().enumerate() {
+            if let Some(p) = patterns.iter().find(|p| line.contains(**p)) {
+                hits.push(format!("{}:{}: {p}", file.display(), n + 1));
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "direct stream calls:\n{}",
+        hits.join("\n")
+    );
+}
