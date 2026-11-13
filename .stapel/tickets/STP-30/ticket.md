@@ -465,7 +465,9 @@ in for a third review round):
   base for a deletion) under both runners; an absolute script under the root runs as committed; the
   reader refuses unknown and second roots and CDATA outside the root and skips unknown content; a broken
   `stapel.toml` fails `check --history`, `lint` and `next` and is printed by the hook; the report is
-  named by kind and read once with a bound. The final check at `3b2c0a6` passes with 951 tests.
+  named by kind and read once with a bound. The check before the merge of main passed with 951 tests;
+  the check at the merge commit `956698e` passed with 985 tests, followed by a combined review (no HIGH,
+  two MEDIUM on this Summary, fixed).
 - Measures against STP-28: `ticket.md` 45 KB (69 KB); 11 dialogs (10); 8 questions (15); 1 h 18 min of
   the person's attention (2 h 15 min); wall time 23 h 38 min (25 h 33 min). Code review found 1 HIGH and
   3 MEDIUM inside the promise in round 1 (the HIGH did not reproduce) and 1 MEDIUM in round 2; drift
@@ -480,7 +482,14 @@ in for a third review round):
     with the person's leave (memory: one builder per worktree).
   - Builders wrote files with scripts four times despite the rule; one builder tried `stapel check`.
   - After merging main, a test of this ticket failed on the STP-31 starter file, and no commit can fix an
-    existing test after a Base merge without blocking every step (STP-13 rule); the person chose to close
-    without the merge and to fix the test on main after the merge (tag `stp30-merge-attempt`). Plan
-    candidate: a post-merge test-fix commit that `stapel check` accepts.
-  - Deferred: d26-1, a build input deleted on main and brought by a Base merge, is untested.
+    existing test after a Base merge without blocking every step (STP-13 rule), and `stapel close` needs
+    main merged. With the person's leave the one-line fix (edit the line that starts with `command = `)
+    went into the step 17 coverage commit by a `--fixup` and a non-interactive autosquash rebase; the
+    commits after it got new hashes (tags `stp30-merge-attempt`, `stp30-before-fixup`), then main was
+    merged without a test change. Plan candidate: a post-merge test-fix commit that `stapel check` accepts.
+  - The eight dependency reviews read specs and designs only and missed that STP-31's starter text breaks
+    a test that edits the config text (CRM-E6). Process candidate: the review also reads the other
+    ticket's fixtures and starter assets.
+  - Deferred: d26-1, a build input deleted on main and brought by a Base merge, is untested; CRM-R1, in
+    the Local mode of STP-31 `stapel.toml` is ignored by git, so its change after RED never blocks a junit
+    step; CRM-E5, the session-start hook is silent on a broken `stapel.toml`.
