@@ -455,3 +455,29 @@ fn globs_match_paths() {
     assert!(m("tsconfig*.json", "tsconfig.json"));
     assert!(m("tsconfig*.json", "tsconfig.build.json"));
 }
+
+/// STP-31 AC-4: `[repository] history` is `local` or `shared`; anything else names the key.
+#[test]
+fn repository_history_key() {
+    use stapel_core::config::History;
+
+    let base = default_toml("ABC");
+    let with = |table: &str| format!("{base}\n{table}\n");
+
+    let absent = Config::parse(&base).expect("no [repository] parses");
+    assert_eq!(absent.repository, None);
+
+    let local = Config::parse(&with("[repository]\nhistory = \"local\"")).unwrap();
+    assert_eq!(local.repository.unwrap().history, History::Local);
+    let shared = Config::parse(&with("[repository]\nhistory = \"shared\"")).unwrap();
+    assert_eq!(shared.repository.unwrap().history, History::Shared);
+
+    for bad in ["\"Local\"", "\"\"", "1"] {
+        let err = Config::parse(&with(&format!("[repository]\nhistory = {bad}")))
+            .expect_err("a bad history value is refused");
+        assert!(err.contains("history"), "{bad}: {err}");
+    }
+    let err = Config::parse(&with("[repository]\nhistory = \"local\"\nmode = \"x\""))
+        .expect_err("an extra key is refused");
+    assert!(err.contains("mode"), "{err}");
+}

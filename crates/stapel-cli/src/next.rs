@@ -6,7 +6,7 @@ use crate::repo;
 use stapel_core::brief::assemble;
 use stapel_core::build_inputs::Bounds;
 use stapel_core::checkstate::{self, CheckLine};
-use stapel_core::config::Config;
+use stapel_core::config::{Config, History as Mode};
 use stapel_core::journal::{self, Entry};
 use stapel_core::next::{Action, Facts, Fault, History, Target, decide};
 use stapel_core::outcomes::{open_red, passing};
@@ -179,19 +179,99 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
 
 pub fn run(key: Option<&str>, json: bool) -> Result<(), Fail> {
     let (root, config) = repo::open().map_err(Fail::failed)?;
-    for line in lines(&root, &config, key, json)? {
+    let (out, refusal) = lines_parts(&root, &config, key, json);
+    for line in out {
         say!("{line}");
     }
-    Ok(())
+    refusal.map_or(Ok(()), Err)
 }
 
 /// The text of `stapel next` for the repository at `root`, one string per output line.
 pub fn text_at(root: &Path) -> Result<Vec<String>, Fail> {
     let config = repo::load(root).map_err(Fail::failed)?;
-    lines(root, &config, None, false)
+    // A refusal that still carries the AC-20 fact and action prints them (STP-31 ER2-2).
+    match lines_parts(root, &config, None, false) {
+        (out, None) => Ok(out),
+        (out, Some(_)) if !out.is_empty() => Ok(out),
+        (_, Some(fail)) => Err(fail),
+    }
 }
 
-fn lines(root: &Path, config: &Config, key: Option<&str>, json: bool) -> Result<Vec<String>, Fail> {
+/// In Local mode a missing or stale pre-push hook is the first fact and `init` the action, in every
+/// case of `next` (STP-31 AC-20).
+
+/// The output lines and, when `next` refuses, the refusal; a refusal still prints the AC-20 fact.
+fn lines_parts(
+    root: &Path,
+    config: &Config,
+    key: Option<&str>,
+    json: bool,
+) -> (Vec<String>, Option<Fail>) {
+    let (mut out, refusal) = match lines_inner(root, config, key, json) {
+        Ok(out) => (out, None),
+        Err(fail) => (Vec::new(), Some(fail)),
+    };
+    let local = config
+        .repository
+        .as_ref()
+        .is_some_and(|r| r.history == Mode::Local);
+    let Some(path) = local
+        .then(|| crate::init::stale_local_pre_push(root))
+        .flatten()
+    else {
+        return (out, refusal);
+    };
+    let fact = format!("the stapel pre-push hook is missing or stale at {path}; run stapel init");
+    let action = Action {
+        name: "init",
+        subject: None,
+        target: Some(Target::Command("stapel init".to_string())),
+    };
+    if refusal.is_some() {
+        // Nothing was computed: the fact and the action stand alone.
+        let line = if json {
+            json_line(None, &action, &[fact])
+        } else {
+            format!("blocked: {fact}\n{}", action.line())
+        };
+        return (line.lines().map(String::from).collect(), refusal);
+    }
+    if json {
+        let Some(mut v) = out
+            .last()
+            .and_then(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        else {
+            let fail = Fail::failed("stapel next produced no JSON line".to_string());
+            return (out, Some(fail));
+        };
+        if let Some(facts) = v["facts"].as_array_mut() {
+            facts.insert(0, serde_json::json!(fact));
+        }
+        v["action"] = serde_json::json!(action.name);
+        v["subject"] = serde_json::Value::Null;
+        v["command"] = serde_json::json!("stapel init");
+        v["path"] = serde_json::Value::Null;
+        *out.last_mut().expect("checked above") = v.to_string();
+    } else {
+        // After the ticket line; else before the first fact; else before the action line.
+        let at = out
+            .iter()
+            .position(|l| l.starts_with("ticket: "))
+            .map(|i| i + 1)
+            .or_else(|| out.iter().position(|l| l.starts_with("blocked: ")))
+            .unwrap_or(out.len().saturating_sub(1));
+        out.insert(at, format!("blocked: {fact}"));
+        *out.last_mut().expect("an action line") = action.line();
+    }
+    (out, None)
+}
+
+fn lines_inner(
+    root: &Path,
+    config: &Config,
+    key: Option<&str>,
+    json: bool,
+) -> Result<Vec<String>, Fail> {
     let (root, config) = (root.to_path_buf(), config.clone());
     let mut out = Vec::new();
     // A checkout without a branch ticket names the tickets that can go on (STP-27 AC-24).
