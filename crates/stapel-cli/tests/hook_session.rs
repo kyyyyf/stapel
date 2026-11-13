@@ -81,6 +81,37 @@ fn next_fails() {
     assert_eq!(String::from_utf8(out).unwrap(), LINE);
 }
 
+// STP-31 AC-20 (ER2-2, CR2-1): when `next` refuses, the hook still prints the hook fact and action.
+#[test]
+fn session_start_keeps_the_hook_fact() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let path = dir.join(".stapel/stapel.toml");
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.push_str("\n[repository]\nhistory = \"local\"\n");
+    std::fs::write(path, text).unwrap();
+    stapel(dir).arg("init").assert().success();
+    stapel(dir).args(["new", "Second"]).assert().success();
+    stapel(dir).arg("next").assert().code(2);
+    std::fs::remove_file(dir.join(".git/hooks/pre-push")).unwrap();
+
+    let out = stapel(dir)
+        .args(["hook", "session-start"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(out).unwrap();
+    assert!(out.starts_with(LINE), "{out}");
+    assert!(
+        out.contains("blocked: the stapel pre-push hook is missing or stale at "),
+        "{out}"
+    );
+    assert!(out.contains("; run stapel init"), "{out}");
+    assert!(out.ends_with("next: init — stapel init\n"), "{out}");
+}
+
 // AC-13 (D4B-3): a stapel.toml that cannot be read gives only the first line.
 #[test]
 fn unreadable_config() {

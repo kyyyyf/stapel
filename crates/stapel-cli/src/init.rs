@@ -1,7 +1,7 @@
 //! `stapel init`: the `.stapel/` layout in the repository root.
 
-use serde_json::{json, Value};
-use stapel_core::config::{starter_toml, validate_prefix, Config};
+use serde_json::{Value, json};
+use stapel_core::config::{Config, History, starter_toml, validate_prefix};
 use std::io::{BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -65,10 +65,32 @@ fi
 exit 0
 "#;
 
+/// The pre-push hook of the local mode: the agent check of `PRE_PUSH`, then a refusal of new
+/// commits that carry `.stapel/`.
+const LOCAL_PRE_PUSH: &str = r#"#!/bin/sh
+# stapel: pre-push guard, installed by `stapel init`.
+# Claude Code sets CLAUDECODE (and CLAUDE_CODE_ENTRYPOINT) in the shell it gives the agent;
+# pushes from there are refused.
+if [ -n "${CLAUDECODE:-}" ] || [ -n "${CLAUDE_CODE_ENTRYPOINT:-}" ]; then
+  echo "stapel: push from an agent session is not allowed; the human pushes from their own terminal" >&2
+  exit 1
+fi
+# stapel: local history check
+while read -r lref lsha rref rsha extra; do
+  [ -n "$lref" ] && [ -n "$lsha" ] && [ -n "$rref" ] && [ -n "$rsha" ] && [ -z "$extra" ] || continue
+  case "$lsha" in *[!0]*) ;; *) continue ;; esac
+  if [ -n "$(git rev-list -n 1 --full-history "$lsha" --not --remotes -- .stapel 2>/dev/null)" ]; then
+    echo "stapel: $lref carries .stapel/; push the branch that stapel export writes" >&2
+    exit 1
+  fi
+done
+exit 0
+"#;
+
 /// Test-only switch: treat stdin as a terminal so the prefix prompt can be driven from a pipe.
 const ASSUME_TTY: &str = "STAPEL_ASSUME_TTY";
 
-pub fn run(prefix: Option<String>) -> Result<(), String> {
+pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
     let root = repo_root()?;
 
     // Read and check everything first, so a refusal leaves the repository untouched.
@@ -81,6 +103,17 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
         let text = std::fs::read_to_string(&config_path).map_err(|e| format!("{CONFIG}: {e}"))?;
         let config =
             Config::parse_at(&text, &root).map_err(|e| format!("{CONFIG} cannot be read: {e}"))?;
+        let is_local = config
+            .repository
+            .as_ref()
+            .is_some_and(|r| r.history == History::Local);
+        if local && !is_local {
+            return Err(format!(
+                "{CONFIG} is in shared mode; --local applies only to the first stapel init. To \
+                 switch, add [repository] with history = \"local\" to it, remove stapel's lines \
+                 from .gitignore and .gitattributes, and run stapel init"
+            ));
+        }
         if prefix.is_some() {
             say!(
                 "{CONFIG} already exists, the ticket key stays {}; edit the file to change it",
@@ -103,7 +136,10 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
         };
         validate_prefix(&prefix)?;
         let cargo = root.join("Cargo.toml").is_file();
-        let text = starter_toml(&prefix, cargo);
+        let mut text = starter_toml(&prefix, cargo);
+        if local {
+            text.push_str("\n[repository]\nhistory = \"local\"\n");
+        }
         let config = Config::parse_at(&text, &root)
             .map_err(|e| format!("the starter configuration cannot be read: {e}"))?;
         plan_create(&root, CONFIG, text, &mut plan);
@@ -123,9 +159,20 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
         include_str!("../assets/config/external-states.yml").into(),
         &mut plan,
     );
-    plan_ignore_index(&root, &mut plan)?;
+    let is_local = config
+        .repository
+        .as_ref()
+        .is_some_and(|r| r.history == History::Local);
+    let hook_rel = plan_pre_push(&root, is_local, &mut plan)?;
+    let mut ignore: Vec<String> = IGNORE_LINES.iter().map(|l| l.to_string()).collect();
+    if let (true, Some(rel)) = (is_local, hook_rel) {
+        // A pre-push in a tracked hooks folder (`.husky/`) must not reach a merge request.
+        if !Path::new(&rel).starts_with(".git") {
+            ignore.push(format!("/{rel}"));
+        }
+    }
+    plan_ignore_index(&root, is_local, &ignore, &mut plan)?;
     plan_hooks(&root, &mut plan)?;
-    plan_pre_push(&root, &mut plan)?;
     let mut kept = false;
     plan_process_files(&root, &config, &mut plan, &mut kept)?;
 
@@ -155,8 +202,22 @@ pub fn run(prefix: Option<String>) -> Result<(), String> {
     if new_folders {
         say!("note: restart Claude Code so that it loads the new agents and skill");
     }
+    if is_local {
+        say!("{}", LOCAL_CHECKLIST.trim_end());
+    }
     Ok(())
 }
+
+/// The person's manual steps after `init` in the local mode.
+const LOCAL_CHECKLIST: &str = "checklist:
+1. Commit the installed files on the base branch with these two lines:
+   git add .stapel
+   git add -f .claude/skills/stapel .claude/agents/stapel-*.md .claude/settings.json
+2. Fill in [check] command in .stapel/stapel.toml.
+3. Restart Claude Code and see \"stapel next\" at session start.
+4. Run stapel init again after anything changes core.hooksPath (husky does on npm install).
+5. Push only the export/<KEY> branches that stapel export writes.
+";
 
 /// The text of an existing `stapel.toml` with the `[roles]` row of each installed agent that the
 /// table lacks, every other line kept; `None` when there is no `[roles]` table or no row is missing.
@@ -544,15 +605,46 @@ fn plan_create(root: &Path, rel: &'static str, content: String, plan: &mut Vec<S
     }
 }
 
-fn plan_ignore_index(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
-    plan_append_lines(root, ".gitignore", &IGNORE_LINES, plan)?;
+fn plan_ignore_index(
+    root: &Path,
+    local: bool,
+    ignore: &[String],
+    plan: &mut Vec<Step>,
+) -> Result<(), String> {
+    let ignore: Vec<&str> = ignore.iter().map(String::as_str).collect();
+    if local {
+        let exclude = git_path(root, "info/exclude")?;
+        let attributes = git_path(root, "info/attributes")?;
+        plan_append_lines(root, &exclude, &ignore, plan)?;
+        return plan_append_lines(root, &attributes, &UNION_LINES, plan);
+    }
+    plan_append_lines(root, ".gitignore", &ignore, plan)?;
     plan_append_lines(root, ".gitattributes", &UNION_LINES, plan)
+}
+
+/// The path git prints for `--git-path name`, as written relative to `root` or absolute when it
+/// lies outside `root`.
+fn git_path(root: &Path, name: &str) -> Result<String, String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--git-path", name])
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("could not run git: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("git could not name the path {name}"));
+    }
+    let printed = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+    let abs = root.join(&printed);
+    Ok(match abs.strip_prefix(root) {
+        Ok(rel) => rel.display().to_string(),
+        Err(_) => abs.display().to_string(),
+    })
 }
 
 /// Plans appending the lines of `lines` that `rel` lacks; a file that is not UTF-8 stays untouched.
 fn plan_append_lines(
     root: &Path,
-    rel: &'static str,
+    rel: &str,
     lines: &[&str],
     plan: &mut Vec<Step>,
 ) -> Result<(), String> {
@@ -770,9 +862,8 @@ fn plan_pre_hook(pre: &mut Vec<Value>) -> (bool, bool) {
     (upgraded, !installed)
 }
 
-/// Plans the git pre-push hook in the hooks directory git uses (`core.hooksPath` included).
-/// A pre-push hook that is not ours is kept, with a warning.
-fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
+/// The Pre-push path: what `git rev-parse --git-path hooks/pre-push` prints, made absolute.
+fn pre_push_path(root: &Path) -> Result<PathBuf, String> {
     let out = Command::new("git")
         .args(["rev-parse", "--git-path", "hooks/pre-push"])
         .current_dir(root)
@@ -782,11 +873,62 @@ fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
         return Err("git did not report the repository hooks path".into());
     }
     let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim_end());
-    let path = if path.is_absolute() {
+    Ok(if path.is_absolute() {
         path
     } else {
         root.join(path)
+    })
+}
+
+/// In Local mode: the Pre-push path, relative to `root`, when the file there is missing, not
+/// executable or not the Local-mode text, and `init` could write it (inside the work tree).
+/// A hook without stapel's marker is not ours and gives no fact. `git` runs in the main worktree
+/// (the first entry of `git worktree list --porcelain`), where a relative hooks path is settled.
+pub(crate) fn stale_local_pre_push(root: &Path) -> Option<String> {
+    let main = main_worktree(root).unwrap_or_else(|| root.to_path_buf());
+    let path = pre_push_path(&main).ok()?;
+    let rel = path.strip_prefix(&main).ok()?.display().to_string();
+    let fresh = match std::fs::read(&path) {
+        Ok(bytes) => {
+            let text = String::from_utf8_lossy(&bytes);
+            if !text.contains(PRE_PUSH_MARKER) {
+                return None;
+            }
+            text == LOCAL_PRE_PUSH && is_executable(&path)
+        }
+        Err(_) => false,
     };
+    (!fresh).then_some(rel)
+}
+
+/// The first worktree that `git worktree list --porcelain` names.
+fn main_worktree(root: &Path) -> Option<PathBuf> {
+    let out = Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let first = text.lines().next()?.strip_prefix("worktree ")?;
+    Some(PathBuf::from(first))
+}
+
+/// Plans the git pre-push hook in the hooks directory git uses (`core.hooksPath` included).
+/// A pre-push hook that is not ours is kept, with a warning.
+/// Returns the hook path relative to `root` when a stapel hook is there.
+fn plan_pre_push(root: &Path, local: bool, plan: &mut Vec<Step>) -> Result<Option<String>, String> {
+    let wanted = if local { LOCAL_PRE_PUSH } else { PRE_PUSH };
+    // In Local mode the path is settled in the main worktree, as `stale_local_pre_push` does.
+    let base = if local {
+        main_worktree(root).unwrap_or_else(|| root.to_path_buf())
+    } else {
+        root.to_path_buf()
+    };
+    let root = base.as_path();
+    let path = pre_push_path(root)?;
     let Ok(rel) = path.strip_prefix(root).map(|p| p.display().to_string()) else {
         // A shared hooks directory would put the hook into every repository that uses it.
         warn!(
@@ -794,36 +936,44 @@ fn plan_pre_push(root: &Path, plan: &mut Vec<Step>) -> Result<(), String> {
              pre-push was not installed, so the second layer against agent pushes is off",
             path.parent().unwrap_or(&path).display()
         );
-        return Ok(());
+        return Ok(None);
     };
 
     match std::fs::read(&path) {
         Ok(bytes) if String::from_utf8_lossy(&bytes).contains(PRE_PUSH_MARKER) => {
-            if !is_executable(&path) {
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            if text != wanted {
                 plan.push(Step {
                     rel: path.display().to_string(),
-                    content: String::from_utf8_lossy(&bytes).into_owned(),
+                    content: wanted.into(),
+                    label: format!("updated: {rel} (pre-push)"),
+                    executable: true,
+                });
+            } else if !is_executable(&path) {
+                plan.push(Step {
+                    rel: path.display().to_string(),
+                    content: text,
                     label: format!("fixed: {rel} (pre-push is executable again)"),
                     executable: true,
                 });
             }
-            Ok(())
+            Ok(Some(rel))
         }
         Ok(_) => {
             warn!(
                 "warning: {rel} exists and is not from stapel; the second layer against agent \
                  pushes was not installed. Add a check of the CLAUDECODE variable to it by hand"
             );
-            Ok(())
+            Ok(None)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             plan.push(Step {
                 rel: path.display().to_string(),
-                content: PRE_PUSH.into(),
+                content: wanted.into(),
                 label: format!("created: {rel} (pre-push: second layer against agent pushes)"),
                 executable: true,
             });
-            Ok(())
+            Ok(Some(rel))
         }
         Err(e) => Err(format!("{rel}: {e}")),
     }

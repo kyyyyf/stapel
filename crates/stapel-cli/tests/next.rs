@@ -2586,3 +2586,193 @@ fn next_walks_from_the_base() {
     let dir = repo.path();
     assert_eq!(facts(dir).len(), 1, "{:?}", facts(dir));
 }
+
+// STP-31 AC-20: in Local mode a missing, stale or foreign pre-push hook is the first fact.
+#[test]
+fn local_mode_names_a_missing_pre_push() {
+    use std::os::unix::fs::PermissionsExt;
+
+    const HOOK: &str = ".git/hooks/pre-push";
+    const FACT: &str = "blocked: the stapel pre-push hook is missing or stale at ";
+
+    fn make_local(dir: &Path) {
+        let path = dir.join(".stapel/stapel.toml");
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("\n[repository]\nhistory = \"local\"\n");
+        std::fs::write(path, text).unwrap();
+    }
+
+    // The text and the JSON line must both name the fact first, then the action `init`.
+    fn assert_missing(dir: &Path, at: &str, ticket: bool) {
+        let text = output(dir, &[], 0);
+        let lines: Vec<&str> = text.lines().collect();
+        let first = lines
+            .iter()
+            .position(|l| l.starts_with("blocked: "))
+            .unwrap_or_else(|| panic!("no fact in: {text}"));
+        assert!(
+            lines[first].starts_with(FACT) && lines[first].ends_with("; run stapel init"),
+            "{text}"
+        );
+        assert!(lines[first].contains(at), "{text}");
+        assert_eq!(*lines.last().unwrap(), "next: init — stapel init", "{text}");
+        if ticket {
+            assert!(lines[0].starts_with("ticket: ABC-1"), "{text}");
+        }
+        let json = output(dir, &["--json"], 0);
+        let v: serde_json::Value = serde_json::from_str(json.trim()).unwrap();
+        let fact = v["facts"][0].as_str().unwrap();
+        assert!(
+            fact.starts_with(&FACT["blocked: ".len()..]) && fact.contains(at),
+            "{json}"
+        );
+        assert_eq!(v["action"], "init", "{json}");
+        assert_eq!(v["command"], "stapel init", "{json}");
+    }
+
+    fn no_fact(dir: &Path) {
+        let text = output(dir, &[], 0);
+        assert!(!text.contains("pre-push hook is missing"), "{text}");
+        assert!(!text.contains("next: init"), "{text}");
+    }
+
+    // The hook in place: no fact.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    make_local(dir);
+    stapel(dir).arg("init").assert().success();
+    no_fact(dir);
+
+    // The hook with the shared text is stale.
+    std::fs::write(
+        dir.join(HOOK),
+        "#!/bin/sh\n# stapel: pre-push guard, installed by `stapel init`.\nexit 0\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(dir.join(HOOK), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_missing(dir, HOOK, true);
+    stapel(dir).arg("init").assert().success();
+    no_fact(dir);
+
+    // Not executable.
+    std::fs::set_permissions(dir.join(HOOK), std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_missing(dir, HOOK, true);
+    stapel(dir).arg("init").assert().success();
+    no_fact(dir);
+
+    // Deleted.
+    std::fs::remove_file(dir.join(HOOK)).unwrap();
+    assert_missing(dir, HOOK, true);
+    stapel(dir).arg("init").assert().success();
+    no_fact(dir);
+
+    // A foreign hook (no stapel marker): no fact, `init` keeps it (R1-5).
+    std::fs::write(dir.join(HOOK), "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(dir.join(HOOK), std::fs::Permissions::from_mode(0o755)).unwrap();
+    no_fact(dir);
+
+    // `core.hooksPath` set to a folder without a hook.
+    std::fs::write(
+        dir.join(HOOK),
+        "#!/bin/sh\n# stapel: pre-push guard, installed by `stapel init`.\nexit 0\n",
+    )
+    .unwrap();
+    common::git_config(dir, "core.hooksPath", ".husky");
+    std::fs::create_dir_all(dir.join(".husky")).unwrap();
+    assert_missing(dir, ".husky/pre-push", true);
+
+    // No open ticket: the fact still comes first, and the action is `init`.
+    let repo = common::stapel_repo();
+    let dir = repo.path();
+    make_local(dir);
+    std::fs::remove_file(dir.join(HOOK)).unwrap();
+    assert_missing(dir, HOOK, false);
+    stapel(dir).arg("init").assert().success();
+    no_fact(dir);
+
+    // Shared mode without a hook: no fact.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    std::fs::remove_file(dir.join(HOOK)).unwrap();
+    no_fact(dir);
+}
+
+// STP-31 AC-20 (R1-5, R1-6, ER1-7): the hook is read as the main worktree resolves it, and the fact
+// stays first in a linked worktree, with unreadable state and in a refusal of `next`.
+#[test]
+fn hook_fact_in_worktrees_and_foreign_hooks() {
+    const FACT: &str = "blocked: the stapel pre-push hook is missing or stale at ";
+
+    fn make_local(dir: &Path) {
+        let path = dir.join(".stapel/stapel.toml");
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("\n[repository]\nhistory = \"local\"\n");
+        std::fs::write(path, text).unwrap();
+    }
+
+    fn first_fact_is(text: &str, at: &str) {
+        let first = text
+            .lines()
+            .find(|l| l.starts_with("blocked: "))
+            .unwrap_or_else(|| panic!("no fact in: {text}"));
+        assert!(
+            first.starts_with(FACT) && first.ends_with(&format!("{at}; run stapel init")),
+            "{text}"
+        );
+        assert_eq!(text.lines().last().unwrap(), "next: init — stapel init", "{text}");
+    }
+
+    fn no_fact(dir: &Path) {
+        let text = output(dir, &[], 0);
+        assert!(!text.contains("pre-push hook is missing"), "{text}");
+        assert!(!text.contains("next: init"), "{text}");
+    }
+
+    let pair = common::two_ticket_worktrees();
+    let main = pair.repo.path();
+    let a = &pair.a;
+    make_local(main);
+    make_local(a);
+
+    // `core.hooksPath = .husky`, the hook in the main checkout: no fact in the linked worktree.
+    common::git_config(main, "core.hooksPath", ".husky");
+    std::fs::create_dir_all(main.join(".husky")).unwrap();
+    stapel(main).arg("init").assert().success();
+    assert!(main.join(".husky/pre-push").exists());
+    no_fact(a);
+    no_fact(main);
+
+    // The main checkout's hook deleted: the fact names `.husky/pre-push`.
+    std::fs::remove_file(main.join(".husky/pre-push")).unwrap();
+    first_fact_is(&output(a, &[], 0), ".husky/pre-push");
+    first_fact_is(&output(main, &[], 0), ".husky/pre-push");
+
+    // The default hooks folder: its hook deleted, seen from the worktree.
+    common::git_in(main, &["config", "--unset", "core.hooksPath"]);
+    stapel(main).arg("init").assert().success();
+    no_fact(a);
+    std::fs::remove_file(main.join(".git/hooks/pre-push")).unwrap();
+    first_fact_is(&output(a, &[], 0), ".git/hooks/pre-push");
+
+    // A branch ticket with unreadable state: the fact is still first.
+    std::fs::write(a.join(".stapel/tickets/ABC-1/state.json"), "{ broken").unwrap();
+    let out = stapel(a).arg("next").assert().get_output().stdout.clone();
+    first_fact_is(&String::from_utf8(out).unwrap(), ".git/hooks/pre-push");
+
+    // A refusal of `next` (two open tickets on `main`): the fact and the action `init` on stdout,
+    // the reason on stderr, exit 2.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    make_local(dir);
+    stapel(dir).args(["new", "Second"]).assert().success();
+    std::fs::remove_file(dir.join(".git/hooks/pre-push")).unwrap();
+    let out = stapel(dir)
+        .arg("next")
+        .assert()
+        .code(2)
+        .stderr(contains("stapel: several open tickets, name one: ABC-1, ABC-2"))
+        .get_output()
+        .stdout
+        .clone();
+    first_fact_is(&String::from_utf8(out).unwrap(), ".git/hooks/pre-push");
+}
