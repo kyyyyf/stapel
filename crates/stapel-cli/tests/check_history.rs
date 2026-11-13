@@ -1998,3 +1998,83 @@ fn base_merge_step_test_unit() {
     );
     assert!(text.contains(&again[..7]), "the fault is the re-add: {text}");
 }
+
+// STP-30 AC-1 (d24-2): a data file beside a cargo step test, added at the RED and deleted inside the
+// merge commit, blocks at the merge; a data file that main deleted and the merge brought gives none.
+#[test]
+fn base_merge_deletion_in_merge() {
+    fn scenario(main_deletes: bool) -> (String, String) {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        let main = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_string();
+        if main_deletes {
+            write(dir, "crates/tiny/tests/data/table.txt", "one\n");
+            commit(dir, "a data file");
+        }
+        let mut state = common::state_json(dir, "ABC-1");
+        state["base_branch"] = serde_json::json!(main);
+        state["base"] = serde_json::json!(git(dir, &["rev-parse", "HEAD"]).trim());
+        write(
+            dir,
+            ".stapel/tickets/ABC-1/state.json",
+            &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+        );
+        commit(dir, "ABC-1: base branch");
+        git(dir, &["checkout", "-q", "-b", "ticket"]);
+        if !main_deletes {
+            write(dir, "crates/tiny/tests/data/table.txt", "one\n");
+        }
+        clean_pair(dir, "step 1", "one");
+        git(dir, &["checkout", "-q", &main]);
+        if main_deletes {
+            git(dir, &["rm", "-q", "crates/tiny/tests/data/table.txt"]);
+        } else {
+            write(dir, "README.md", "main moved\n");
+        }
+        commit(dir, "main: moves on");
+        git(dir, &["checkout", "-q", "ticket"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=test-user",
+                "-c",
+                "user.email=test-user.invalid",
+                "merge",
+                "-q",
+                "--no-ff",
+                "--no-commit",
+                &main,
+            ],
+        );
+        if !main_deletes {
+            git(dir, &["rm", "-q", "crates/tiny/tests/data/table.txt"]);
+        }
+        commit(dir, "ABC-1: merge main");
+        let merge = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+        let (_, text, _) = history(dir);
+        (text, merge)
+    }
+
+    let step_one = |text: &str| {
+        text.lines()
+            .find(|l| l.starts_with("step 1: "))
+            .unwrap_or_else(|| panic!("no step 1:\n{text}"))
+            .to_string()
+    };
+
+    // Under cargo a deleted data file is a build input change, not `tests-changed` (as outside a
+    // merge); the merge that deletes it blocks the step and is named.
+    let (text, merge) = scenario(false);
+    let line = step_one(&text);
+    assert_ne!(line, "step 1: needs-run", "{text}");
+    assert!(
+        line.contains("crates/tiny/tests/data/table.txt") && line.contains(&merge[..7]),
+        "the fault names the file and the merge: {text}"
+    );
+
+    let (text, _) = scenario(true);
+    assert_eq!(step_one(&text), "step 1: needs-run", "{text}");
+}
