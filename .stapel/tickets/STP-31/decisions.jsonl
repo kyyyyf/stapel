@@ -29,3 +29,4 @@
 {"v":1,"id":"d-d81cf2abe21a","at":"2026-11-13T09:23:32Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:7d16a9e077c5019efb5bef6f64a825b2066d28051e02ecf23bb4004358f6c8dd","via":"grant"}
 {"v":1,"id":"d-9a590729c5cb","at":"2026-11-13T09:23:32Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:2356adea395771fdd2b5ce0d5d156a6000abd51cd522c6b8f6e079fd908adffa","via":"grant"}
 {"v":1,"id":"d-2224eb6a28e1","at":"2026-11-13T09:23:32Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:635bfaa19d7c3f431e09f037d8cfc58bb0eb21c7f38d62629a271230a77f78d5","via":"grant"}
+{"v":1,"id":"d-4e37966b66a6","at":"2026-11-13T11:31:21Z","by":"kyyyyf","action":"close","reason":"stapel init --local, stapel export and the local pre-push keep the process files out of a foreign repository's shared history, every criterion AC-1 to AC-22 has a passing test, and the last check passes with 946 tests after three review rounds."}
