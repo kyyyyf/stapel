@@ -461,4 +461,35 @@ Coverage after the verification review (round 3):
 
 ## Summary
 
-TODO
+stapel can now run on a foreign repository without putting its files into the shared history.
+`stapel init --local` records the local mode, writes its ignore and merge lines into `.git/info/`, lists a
+pre-push hook in a tracked hooks folder (husky) in `.git/info/exclude`, offers a commented `junit` `[check]`
+template, and ends with the person's checklist. The process still commits `.stapel/` and `.claude/` on local
+branches; `stapel export KEY` writes `export/KEY`, the ticket's commits with the process paths taken from
+the upstream (raw commit objects kept, emptied commits and empty pull merges dropped, from any checkout),
+and the local pre-push refuses a push whose new commits touch `.stapel/`. `stapel next` names a missing or
+stale stapel hook first, also at session start and from a ticket worktree, so a `core.hooksPath` change by
+`npm install` does not switch the protection off silently.
+
+For the pilot: run `stapel init --local --prefix GAP` after `npm install`, follow the checklist, fill
+`[check] command`, push only `export/<KEY>` branches from the main checkout.
+
+Measures against STP-29 (the previous ticket of stage A):
+
+- Escaped defects of earlier tickets found here: none.
+- Code review HIGH and MEDIUM inside the promise: round 1: 1 HIGH (export from a subfolder kept process
+  files) and 8 MEDIUM; round 2: 2 MEDIUM; verification round 3: 2 MEDIUM, both test gaps (STP-29: 4 MEDIUM
+  over two rounds). Spec review caught 1 HIGH and 11 MEDIUM before the build. Most code-review MEDIUMs were
+  git states the spec named too loosely (linked worktrees with a relative hooks path, foreign hooks, raw
+  commit headers): `catchable_at` spec or test-plan.
+- `ticket.md`: 51.9 KB before this section (STP-29: 40.7 KB).
+- Size: 3 102 lines added and 29 removed in 14 files under `crates/`, against an estimate of 400 source
+  and 800 test lines.
+- Steps: 12 planned, 27 built (12 planned pairs and coverage, 13 fix pairs and coverage after three review
+  rounds); 57 commits.
+- Tokens: orchestrator 171 k output, builder 230 k, reviewers 67 k, drift 10 k (measured).
+- Attention: 12 dialogs, 5 questions, 57 min attention over 21 h 27 min wall time.
+- What improved: the two-check decision saved check runs (5 instead of about 27); the person's decisions
+  came in 5 question dialogs. What did not: a suite-only failure surfaced late (one fix step); builders broke
+  the Edit-only rule 7 times; coverage commits made every step unverified three times until the rule
+  "a coverage commit only adds `#[test]` functions" was followed; `stapel review start` has no round 3.
