@@ -1,1 +1,1 @@
-{"v":1,"ticket":"ABC-1","action":"confirm","subject":null,"command":"stapel ok ABC-1","path":null,"facts":["spec confirmation is stale: confirmed under normal form 0","plan not confirmed"]}
+{"v":1,"ticket":"ABC-1","action":"write-page","subject":null,"command":"stapel page ABC-1","path":null,"facts":["spec confirmation is stale: confirmed under normal form 0","plan not confirmed"]}

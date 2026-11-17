@@ -12,6 +12,9 @@ const TICKET: &str = ".stapel/tickets/ABC-1/ticket.md";
 /// The `code-review` line before any review round ran.
 const REVIEW_ONE: &str = "next: code-review — stapel review start ABC-1 --round 1";
 
+/// The line before `confirm`: the page of the waiting sections is missing or not fresh (STP-32).
+const WRITE_PAGE: &str = "next: write-page — stapel page ABC-1";
+
 /// The standard output of `stapel next` with `args`, after the exit code `code` is checked.
 fn output(dir: &Path, args: &[&str], code: i32) -> String {
     let out = stapel(dir)
@@ -333,7 +336,7 @@ fn spec_review_until_a_fact() {
     assert_eq!(action(dir), spec_review);
 
     add_finding(dir, "spec-review");
-    assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
+    assert_eq!(action(dir), WRITE_PAGE);
 
     // A line that is not JSON is skipped.
     let repo = written();
@@ -349,7 +352,7 @@ fn spec_review_until_a_fact() {
     let repo = written();
     let dir = repo.path();
     stapel(dir).args(["ok", "plan"]).assert().success();
-    assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
+    assert_eq!(action(dir), WRITE_PAGE);
 }
 
 // AC-8: a light route has no spec review.
@@ -358,7 +361,7 @@ fn light_route_skips_spec_review() {
     let repo = written();
     let dir = repo.path();
     let spec_review = format!("next: spec-review — {TICKET}");
-    let confirm = "next: confirm — stapel ok ABC-1";
+    let confirm = WRITE_PAGE;
     for (line, light) in [
         ("Route: light, pinned.", true),
         ("Route: LIGHT", true),
@@ -385,7 +388,7 @@ fn findings_without_version() {
     let repo = written();
     let dir = repo.path();
     add_unversioned_finding(dir);
-    assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
+    assert_eq!(action(dir), WRITE_PAGE);
 }
 
 // AC-9
@@ -412,7 +415,7 @@ fn confirm_names_each_section() {
     );
     assert_eq!(lines[2], "blocked: proof not confirmed");
     assert_eq!(lines[3], "blocked: plan not confirmed");
-    assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
+    assert_eq!(action(dir), WRITE_PAGE);
 
     // Dependencies and a missing section are stale too, in the words of `stapel status`.
     let repo = written();
@@ -424,7 +427,7 @@ fn confirm_names_each_section() {
     assert!(lines.contains(
         &"blocked: design confirmation is stale: depends on spec, which changed".to_string()
     ));
-    assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
+    assert_eq!(action(dir), WRITE_PAGE);
 }
 
 // AC-7, coverage (step 1c): a label with a letter is named with its letter.
@@ -459,7 +462,7 @@ fn route_word_edges() {
     let repo = written();
     let dir = repo.path();
     let spec_review = format!("next: spec-review — {TICKET}");
-    let confirm = "next: confirm — stapel ok ABC-1";
+    let confirm = WRITE_PAGE;
     for (line, light) in [
         ("Route: light.", true),
         ("Route: light;", true),
@@ -497,7 +500,7 @@ fn stale_reasons_each_a_fact() {
         design[1],
         "blocked: design confirmation is stale: depends on spec, which changed"
     );
-    assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
+    assert_eq!(action(dir), WRITE_PAGE);
 }
 
 // AC-7 and AC-9, coverage (step 1c): a lowercase key names the ticket, the output uses the folder key.
@@ -513,7 +516,7 @@ fn folder_key_in_outputs() {
     let repo = written();
     let dir = repo.path();
     add_finding(dir, "spec-review");
-    assert_eq!(action_of(dir, &["abc-1"]), "next: confirm — stapel ok ABC-1");
+    assert_eq!(action_of(dir, &["abc-1"]), WRITE_PAGE);
     assert!(output(dir, &["abc-1"], 0).starts_with("ticket: ABC-1 — "));
 }
 
@@ -559,7 +562,7 @@ fn history_read_only_when_needed() {
         state["base"] = serde_json::json!("0".repeat(40));
         write_state(dir, &state);
     };
-    let confirm = "next: confirm — stapel ok ABC-1";
+    let confirm = WRITE_PAGE;
 
     // A shallow clone at the confirm stage: the action is printed.
     let repo = written();
@@ -1703,7 +1706,7 @@ fn writes_nothing() {
     let dir = repo.path();
     add_finding(dir, "spec-review");
     commit(dir, &[], "initial");
-    check(dir, "next: confirm — stapel ok ABC-1");
+    check(dir, WRITE_PAGE);
 
     // `build-step`.
     let repo = written();
@@ -1910,7 +1913,7 @@ fn facts_wait_for_confirm() {
 
     // At `confirm`: the facts.
     add_finding(dir, "spec-review");
-    assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
+    assert_eq!(action(dir), WRITE_PAGE);
     assert!(
         facts(dir).contains(&"blocked: spec not confirmed".to_string()),
         "{:?}",
@@ -2775,4 +2778,45 @@ fn hook_fact_in_worktrees_and_foreign_hooks() {
         .stdout
         .clone();
     first_fact_is(&String::from_utf8(out).unwrap(), ".git/hooks/pre-push");
+}
+
+// STP-32 AC-9: `write-page` stands before `confirm` until the page is fresh.
+#[test]
+fn page_before_confirm() {
+    let repo = written();
+    let dir = repo.path();
+    std::fs::write(dir.join(".gitignore"), "/.stapel/tickets/*/page.md\n").unwrap();
+    add_finding(dir, "spec-review");
+
+    // No page: `write-page`, with the facts that `confirm` prints.
+    let text = output(dir, &[], 0);
+    assert_eq!(
+        text.lines().last().unwrap(),
+        "next: write-page — stapel page ABC-1"
+    );
+    assert_eq!(facts(dir).len(), 4, "{text}");
+    assert_eq!(facts(dir)[0], "blocked: spec not confirmed");
+    let json = output(dir, &["--json"], 0);
+    assert!(json.contains("\"action\":\"write-page\""), "{json}");
+    assert!(json.contains("\"command\":\"stapel page ABC-1\""), "{json}");
+
+    // A fresh page: `confirm`, the same facts.
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
+    assert_eq!(facts(dir).len(), 4);
+    let json = output(dir, &["--json"], 0);
+    assert!(json.contains("\"action\":\"confirm\""), "{json}");
+
+    // An edit of the Spec makes the page stale.
+    set_section(dir, "ABC-1", "Spec", "The spec, edited.");
+    assert_eq!(action(dir), WRITE_PAGE);
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    assert_eq!(action(dir), "next: confirm — stapel ok ABC-1");
+
+    // An edit of the page file makes it stale too.
+    let page = dir.join(".stapel/tickets/ABC-1/page.md");
+    let mut bytes = std::fs::read(&page).unwrap();
+    bytes.extend_from_slice(b"\nextra\n");
+    std::fs::write(&page, bytes).unwrap();
+    assert_eq!(action(dir), WRITE_PAGE);
 }

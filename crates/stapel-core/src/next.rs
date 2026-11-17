@@ -125,6 +125,8 @@ pub struct Facts<'a> {
     pub review_round: u64,
     /// Whether a patch finding of round 1 exists (STP-24).
     pub patch_finding: bool,
+    /// Whether the page of the waiting sections is fresh (STP-32 AC-9).
+    pub page_fresh: bool,
     /// The history facts; `None` until the caller has read the history.
     pub history: Option<&'a History>,
 }
@@ -445,11 +447,19 @@ pub fn decide(f: &Facts) -> Decision {
         )
     } else if unconfirmed {
         facts.extend(confirm_facts);
-        Action::new(
-            "confirm",
-            None,
-            Some(Target::Command(format!("stapel ok {}", f.key))),
-        )
+        if f.page_fresh {
+            Action::new(
+                "confirm",
+                None,
+                Some(Target::Command(format!("stapel ok {}", f.key))),
+            )
+        } else {
+            Action::new(
+                "write-page",
+                None,
+                Some(Target::Command(format!("stapel page {}", f.key))),
+            )
+        }
     } else if let Some(h) = f.history {
         history_action(f, h, plan, &mut facts)
     } else {

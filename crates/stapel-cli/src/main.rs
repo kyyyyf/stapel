@@ -15,6 +15,7 @@ mod lint;
 mod new;
 mod next;
 mod ok;
+mod page;
 mod repo;
 mod review;
 mod status;
@@ -61,6 +62,11 @@ enum Command {
         /// One-time grant from the permission dialog; set by the guard, never by hand.
         #[arg(long, hide = true)]
         grant: Option<String>,
+    },
+    /// Write the page of the waiting sections of a ticket to `.stapel/tickets/<KEY>/page.md`.
+    Page {
+        /// The ticket key; without it, the only open ticket.
+        key: Option<String>,
     },
     /// Show whose decision a ticket waits for and which confirmations went stale.
     Status {
@@ -352,6 +358,12 @@ fn main() -> ExitCode {
                 [key, section] => ok::run(Some(key), section, grant.as_deref()),
                 _ => unreachable!("clap limits the arguments"),
             }
+        }
+        Command::Page { key } => {
+            if let Some(refusal) = fail::branch_refusal(key.as_deref(), false) {
+                return refusal;
+            }
+            page::run(key.as_deref())
         }
         Command::Findings(FindingsAction::Import { file, key }) => {
             return fail::finish(findings::import(&file, key.as_deref()));

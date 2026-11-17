@@ -111,6 +111,14 @@ pub fn run(key: Option<&str>, section: &str, grant: Option<&str>) -> Result<(), 
     record(&prepared, &new)
 }
 
+/// The ticket folder: that of the first waiting section, else the one under `root`.
+fn first_dir(waiting: &[Prepared], root: &Path, folder: &str) -> std::path::PathBuf {
+    match waiting.first() {
+        Some(p) => p.dir.clone(),
+        None => root.join(".stapel/tickets").join(folder),
+    }
+}
+
 /// `stapel ok KEY`: every waiting section of the ticket, all or nothing (STP-17 AC-1 to AC-4).
 /// Prints `to confirm: KEY <ids>` first, or `nothing to confirm: KEY` when no section waits.
 fn run_key(key: &str, grant: Option<&str>) -> Result<(), String> {
@@ -125,7 +133,11 @@ fn run_key(key: &str, grant: Option<&str>) -> Result<(), String> {
         None => stapel_core::tickets::resolve(&root, Some(key))?.key,
     };
     if let Some(token) = grant {
-        consume(&root, token, &ok_key_facts(&folder, &waiting))?;
+        let page = match std::fs::read(first_dir(&waiting, &root, &folder).join("page.md")) {
+            Ok(bytes) => stapel_core::page::page_hash(&bytes),
+            Err(_) => "missing".to_string(),
+        };
+        consume(&root, token, &ok_key_facts(&folder, &waiting, &page))?;
     }
     let Some(first) = waiting.first() else {
         say!("nothing to confirm: {folder}");

@@ -1,22 +1,7 @@
 stapel: confirm 2 waiting sections of ABC-1; runs: stapel
+title: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa [31maaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaé…
+criteria: 10
 description: new, 18 lines
 spec: new, 10 lines
-Frame:
-  - frame 01
-  - frame 02
-  - frame 03
-  - frame 04
-  - frame 05
-  - frame 06
-  - frame 07
-  - frame 08
-  - frame 09
-  - frame 10
-  - frame 11
-  - frame 12
-Criteria:
-  | AC-1 | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaé…
-  | AC-2 | red [31m and tab | `t::b` |
-  | AC-3 | row 3 | `t::3` |
-… 10 more lines (frame 0, criteria 7, decisions 3); all of them: stapel status ABC-1
+page: .stapel/tickets/ABC-1/page.md (sha256:HASH)
 Answer Yes or No; do not choose "don't ask again".

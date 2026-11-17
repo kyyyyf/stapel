@@ -8,7 +8,11 @@ use std::process::Command;
 
 const CONFIG: &str = ".stapel/stapel.toml";
 const ALLOWLIST: &str = "# Reviewer false positives that were decided not to fix.\n";
-const IGNORE_LINES: [&str; 2] = ["/.stapel/index/", "/.claude/worktrees/"];
+const IGNORE_LINES: [&str; 3] = [
+    "/.stapel/index/",
+    "/.claude/worktrees/",
+    "/.stapel/tickets/*/page.md",
+];
 const UNION_LINES: [&str; 2] = [
     ".stapel/process-ledger.jsonl merge=union",
     ".stapel/sessions.jsonl merge=union",

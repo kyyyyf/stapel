@@ -6,14 +6,13 @@ use crate::brief::row_number;
 use crate::config::Config;
 use crate::confirm::Prepared;
 use crate::stage::{Reason, freshness, latest};
-use crate::ticket::{parse, read, scan};
+use crate::ticket::{Lookup, find, parse, read, scan};
 use similar::{ChangeTag, TextDiff};
 
 /// Section lines shown before the rest fold into one line.
 const MAX_SECTION_LINES: usize = 10;
 
-/// Lines of the dialog page, and characters of one line.
-const MAX_PAGE_LINES: usize = 22;
+/// Characters of one summary line.
 const MAX_LINE_CHARS: usize = 100;
 
 /// `1 line` for one, `<N> lines` otherwise.
@@ -65,12 +64,46 @@ pub fn section_line(config: &Config, p: &Prepared) -> String {
     format!("{}: {change}", p.section)
 }
 
-/// The dialog page for the waiting sections of `key`; `program` is the replaced program.
-pub fn dialog_page(config: &Config, key: &str, program: &str, waiting: &[Prepared]) -> String {
-    let mut lines = vec![format!(
-        "stapel: confirm {} of {key}; runs: {program}",
-        count(waiting.len(), "waiting section")
-    )];
+/// `sha256:` and the first 12 hex digits of a page hash.
+pub fn short_hash(hash: &str) -> &str {
+    &hash[..hash.len().min("sha256:".len() + 12)]
+}
+
+/// The AC rows of the current Spec of the ticket in `dir`; 0 when there is no such section.
+fn criteria_count(config: &Config, dir: &std::path::Path) -> usize {
+    let Some(spec) = config
+        .sections
+        .iter()
+        .find(|s| s.id.eq_ignore_ascii_case("spec"))
+    else {
+        return 0;
+    };
+    let sections = read(&dir.join("ticket.md"))
+        .map(|t| parse(&t))
+        .unwrap_or_default();
+    match find(&sections, &spec.title) {
+        Lookup::Found(body) => spec_lines(body).0.len(),
+        _ => 0,
+    }
+}
+
+/// The summary the dialog of `stapel ok KEY` shows (STP-32): the title, the criteria count, one
+/// line per waiting section (folded past the tenth), the page path and its short hash. `program`
+/// is the replaced program.
+pub fn summary(config: &Config, key: &str, program: &str, waiting: &[Prepared]) -> String {
+    let title = waiting.first().map(|p| p.state.title.as_str()).unwrap_or("");
+    let criteria = waiting
+        .first()
+        .map(|p| criteria_count(config, &p.dir))
+        .unwrap_or(0);
+    let mut lines = vec![
+        format!(
+            "stapel: confirm {} of {key}; runs: {program}",
+            count(waiting.len(), "waiting section")
+        ),
+        format!("title: {title}"),
+        format!("criteria: {criteria}"),
+    ];
     lines.extend(
         waiting
             .iter()
@@ -89,48 +122,10 @@ pub fn dialog_page(config: &Config, key: &str, program: &str, waiting: &[Prepare
                 .join(", ")
         ));
     }
-    let parts = parts(waiting);
-    let total: usize = parts
-        .iter()
-        .filter(|(_, l)| !l.is_empty())
-        .map(|(_, l)| l.len() + 1)
-        .sum();
-    // The answer line is always last; the page holds `MAX_PAGE_LINES` lines.
-    let room = MAX_PAGE_LINES.saturating_sub(lines.len() + 1);
-    if total <= room {
-        for (label, part) in &parts {
-            if !part.is_empty() {
-                lines.push((*label).into());
-                lines.extend(part.iter().cloned());
-            }
-        }
-    } else {
-        let mut room = room.saturating_sub(1);
-        let mut hidden = Vec::new();
-        for (label, part) in &parts {
-            let take = if room >= 2 {
-                part.len().min(room - 1)
-            } else {
-                0
-            };
-            if take > 0 {
-                lines.push((*label).into());
-                lines.extend(part[..take].iter().cloned());
-                room -= take + 1;
-            }
-            hidden.push(part.len() - take);
-        }
-        lines.push(format!(
-            "… {} (frame {}, criteria {}, decisions {}); all of them: stapel status {key}",
-            match hidden.iter().sum::<usize>() {
-                1 => "1 more line".to_string(),
-                n => format!("{n} more lines"),
-            },
-            hidden[0],
-            hidden[1],
-            hidden[2]
-        ));
-    }
+    lines.push(format!(
+        "page: .stapel/tickets/{key}/page.md ({})",
+        short_hash(&page_hash(page_text(config, waiting).as_bytes()))
+    ));
     lines.push("Answer Yes or No; do not choose \"don't ask again\".".into());
     lines
         .iter()
@@ -175,6 +170,146 @@ pub fn terminal_page(waiting: &[Prepared]) -> String {
         }
     }
     out
+}
+
+/// The page file of the waiting sections (STP-32): the title, the Sections list, then the Frame,
+/// Criteria and Decisions parts, each in a `diff` fence with a mark before every line. Ends with
+/// one newline.
+pub fn page_text(config: &Config, waiting: &[Prepared]) -> String {
+    let Some(first) = waiting.first() else {
+        return String::new();
+    };
+    let flat = |s: &str| -> String {
+        s.chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect()
+    };
+    let mut out = format!(
+        "# {} — {}\n\n## Sections\n",
+        flat(&first.key),
+        flat(&first.state.title)
+    );
+    for p in waiting {
+        out.push_str(&format!("- {}\n", flat(&section_line(config, p))));
+    }
+    for (title, lines, tail) in marked_parts(waiting) {
+        if lines.is_empty() {
+            continue;
+        }
+        let lines: Vec<String> = lines.iter().map(|l| flat(l)).collect();
+        let longest = lines.iter().map(|l| backtick_run(l)).max().unwrap_or(0);
+        let fence = "`".repeat((longest + 1).max(3));
+        out.push_str(&format!("\n## {title}\n{fence}diff\n"));
+        for line in &lines {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str(&fence);
+        out.push('\n');
+        if let Some(tail) = tail {
+            out.push_str(&tail);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The length of the longest run of backticks in `line`.
+fn backtick_run(line: &str) -> usize {
+    let (mut best, mut cur) = (0, 0);
+    for c in line.chars() {
+        cur = if c == '`' { cur + 1 } else { 0 };
+        best = best.max(cur);
+    }
+    best
+}
+
+/// The marked lines of a line diff in place (a space, `+` or `-` before each line), with the
+/// counts of inserted and deleted lines; without an old text every line has a space.
+fn marked_diff(old: Option<&[String]>, new: &[String]) -> (Vec<String>, usize, usize) {
+    let Some(old) = old else {
+        return (new.iter().map(|l| format!(" {l}")).collect(), 0, 0);
+    };
+    let (o, n): (Vec<&str>, Vec<&str>) = (
+        old.iter().map(String::as_str).collect(),
+        new.iter().map(String::as_str).collect(),
+    );
+    let (mut shown, mut a, mut r) = (Vec::new(), 0, 0);
+    for c in TextDiff::from_slices(&o, &n).iter_all_changes() {
+        match c.tag() {
+            ChangeTag::Insert => {
+                a += 1;
+                shown.push(format!("+{}", c.value()));
+            }
+            ChangeTag::Delete => {
+                r += 1;
+                shown.push(format!("-{}", c.value()));
+            }
+            ChangeTag::Equal => shown.push(format!(" {}", c.value())),
+        }
+    }
+    (shown, a, r)
+}
+
+/// The stored text of the last confirmation of a waiting section.
+fn old_text(p: &Prepared) -> Option<&str> {
+    latest(&p.state, &p.section).and_then(|c| c.text.as_deref())
+}
+
+/// The Frame, Criteria and Decisions parts: heading, marked lines and the line after the fence.
+fn marked_parts(waiting: &[Prepared]) -> Vec<(&'static str, Vec<String>, Option<String>)> {
+    let (mut frame, mut decisions) = (Vec::new(), Vec::new());
+    if let Some(p) = waiting
+        .iter()
+        .find(|p| p.section.eq_ignore_ascii_case("description"))
+    {
+        let old = old_text(p).map(split_description);
+        let (f, d) = split_description(&p.text);
+        let part = |old: Option<&String>, new: &String| {
+            let old = old.map(|o| logical_lines(o, false).1);
+            marked_diff(old.as_deref(), &logical_lines(new, false).1).0
+        };
+        frame = part(old.as_ref().map(|o| &o.0), &f);
+        decisions = part(old.as_ref().map(|o| &o.1), &d);
+    }
+    let (mut criteria, mut added, mut removed) = (Vec::new(), 0, 0);
+    for p in waiting.iter().filter(|p| p.section.eq_ignore_ascii_case("spec")) {
+        let old = old_text(p);
+        let (rows, other) = spec_lines(&p.text);
+        let old_lines = old.map(spec_lines);
+        let had_rows = old_lines.as_ref().is_some_and(|o| !o.0.is_empty());
+        if rows.is_empty() && !had_rows {
+            let old_other = old_lines.as_ref().map(|o| o.1.as_slice());
+            criteria.extend(marked_diff(old_other, &other).0);
+            continue;
+        }
+        let (shown, ..) = marked_diff(old_lines.as_ref().map(|o| o.0.as_slice()), &rows);
+        criteria.extend(shown);
+        match &old_lines {
+            None => added += other.len(),
+            Some(o) => {
+                let (_, a, r) = marked_diff(Some(&o.1), &other);
+                added += a;
+                removed += r;
+            }
+        }
+    }
+    let count = (added + removed > 0).then(|| format!("spec, other lines: +{added} -{removed}"));
+    vec![
+        ("Frame", frame, None),
+        ("Criteria", criteria, count),
+        ("Decisions", decisions, None),
+    ]
+}
+
+/// `sha256:` and the hex sha256 of the page bytes.
+pub fn page_hash(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let hex: String = Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("sha256:{hex}")
 }
 
 /// A page line with each control character as one space, cut to 99 characters and `…` when

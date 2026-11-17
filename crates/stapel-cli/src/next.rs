@@ -7,6 +7,8 @@ use stapel_core::brief::assemble;
 use stapel_core::build_inputs::Bounds;
 use stapel_core::checkstate::{self, CheckLine};
 use stapel_core::config::{Config, History as Mode};
+use stapel_core::confirm::prepare_waiting;
+use stapel_core::page::page_text;
 use stapel_core::journal::{self, Entry};
 use stapel_core::next::{Action, Facts, Fault, History, Target, decide};
 use stapel_core::outcomes::{open_red, passing};
@@ -57,6 +59,19 @@ fn pack_round(root: &Path, key: &str) -> u64 {
         })
         .max()
         .unwrap_or(0)
+}
+
+/// Whether `page.md` holds the bytes `stapel page` would write now. A refusal of the section
+/// preparation counts as fresh: `stapel ok KEY` reports it itself.
+fn page_fresh(root: &Path, config: &Config, key: &str) -> bool {
+    let Ok(waiting) = prepare_waiting(root, config, key) else {
+        return true;
+    };
+    if waiting.is_empty() {
+        return true;
+    }
+    let path = root.join(format!(".stapel/tickets/{key}/page.md"));
+    std::fs::read(path).is_ok_and(|b| b == page_text(config, &waiting).as_bytes())
 }
 
 fn short(sha: &str) -> String {
@@ -370,6 +385,7 @@ fn lines_inner(
         blocking: &blocking,
         review_round,
         patch_finding,
+        page_fresh: page_fresh(&root, &config, &ticket.key),
         history: None,
     };
     let mut decision = decide(&facts);

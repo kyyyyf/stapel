@@ -796,6 +796,24 @@ fn skill_text_holds_the_process() {
     }
 }
 
+// STP-32 AC-10: the skill names `stapel page KEY` in the `write-page` bullet and in rule 5.
+#[test]
+fn skill_text_names_the_page() {
+    const BULLET: &str = "- `write-page`: run `stapel page KEY` and name the path it prints in the chat; the person reads the page in the editor while the dialog of `stapel ok KEY` waits.";
+    const RULE: &str = "Right after the list run `stapel page KEY`, name the path of the page in the chat, then run `stapel ok KEY` as one plain command";
+    const OLD: &str = "Right after the list run `stapel ok KEY`";
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let written = collapsed(&body_of(dir, SKILL));
+    let ours = collapsed(&body_of(&repo_root(), SKILL));
+    for (name, flat) in [("init", written), ("repository", ours)] {
+        assert!(flat.contains(BULLET), "{name}: no write-page bullet");
+        assert!(flat.contains(RULE), "{name}: no rule 5 sentence");
+        assert!(!flat.contains(OLD), "{name}: old rule 5 sentence");
+    }
+}
+
 // AC-17: each agent body holds the role lines.
 #[test]
 fn agent_texts_hold_their_rules() {
