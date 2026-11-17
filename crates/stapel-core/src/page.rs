@@ -177,6 +177,29 @@ pub fn terminal_page(waiting: &[Prepared]) -> String {
     out
 }
 
+/// The page file of the waiting sections (STP-32): the title and the Sections list; the parts of
+/// the Frame, the criteria and the Decisions follow in a later step. Ends with one newline.
+pub fn page_text(config: &Config, waiting: &[Prepared]) -> String {
+    let Some(first) = waiting.first() else {
+        return String::new();
+    };
+    let mut out = format!("# {} — {}\n\n## Sections\n", first.key, first.state.title);
+    for p in waiting {
+        out.push_str(&format!("- {}\n", section_line(config, p)));
+    }
+    out
+}
+
+/// `sha256:` and the hex sha256 of the page bytes.
+pub fn page_hash(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let hex: String = Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("sha256:{hex}")
+}
+
 /// A page line with each control character as one space, cut to 99 characters and `…` when
 /// longer than 100.
 fn clean_cut(line: &str) -> String {
