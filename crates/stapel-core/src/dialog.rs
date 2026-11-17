@@ -39,8 +39,9 @@ pub fn ok_facts(p: &Prepared) -> Facts {
 }
 
 /// The grant facts of the key form: action `ok-key`, the waiting ids, their hashes and the
-/// dependencies of every one (`id:dep=hash`), all in `stapel.toml` order (STP-17 AC-8).
-pub fn ok_key_facts(key: &str, waiting: &[Prepared]) -> Facts {
+/// dependencies of every one (`id:dep=hash`), all in `stapel.toml` order (STP-17 AC-8), and the
+/// item `page=<page hash>` or `page=missing` (STP-32 AC-8).
+pub fn ok_key_facts(key: &str, waiting: &[Prepared], page: &str) -> Facts {
     Facts {
         key: key.into(),
         action: "ok-key".into(),
@@ -61,6 +62,7 @@ pub fn ok_key_facts(key: &str, waiting: &[Prepared]) -> Facts {
                     .iter()
                     .map(|(dep, hash)| format!("{}:{dep}={hash}", p.section))
             })
+            .chain(std::iter::once(format!("page={page}")))
             .collect(),
     }
 }
@@ -135,6 +137,24 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
                     if waiting.is_empty() {
                         return Err(format!("nothing to confirm: {folder}"));
                     }
+                    let fresh = crate::page::page_text(&config, &waiting);
+                    let page_path = format!(".stapel/tickets/{folder}/page.md");
+                    match std::fs::read(root.join(&page_path)) {
+                        Err(_) => {
+                            return Err(format!(
+                                "the page of {folder} is missing; run stapel page {folder} and \
+                                 read {page_path}"
+                            ));
+                        }
+                        Ok(bytes) if bytes != fresh.as_bytes() => {
+                            return Err(format!(
+                                "the page of {folder} is stale; run stapel page {folder} and \
+                                 read {page_path} again"
+                            ));
+                        }
+                        Ok(_) => {}
+                    }
+                    let page = crate::page::page_hash(fresh.as_bytes());
                     let reason = crate::page::summary(
                         &config,
                         &folder,
@@ -142,7 +162,8 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
                         &waiting,
                     );
                     let tail = format!("ok {}", quote(&folder));
-                    return finish(inv, &root, ok_key_facts(&folder, &waiting), reason, tail);
+                    let facts = ok_key_facts(&folder, &waiting, &page);
+                    return finish(inv, &root, facts, reason, tail);
                 }
                 Target::Section(section) => (None, section),
             },
