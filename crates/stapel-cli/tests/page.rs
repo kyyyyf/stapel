@@ -2,7 +2,9 @@
 
 mod common;
 
-use common::{git_in, read, repo_with_ticket, stapel, state_json, two_ticket_worktrees};
+use common::{
+    git_in, read, repo_with_ticket, set_section, stapel, state_json, two_ticket_worktrees,
+};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
@@ -41,7 +43,7 @@ fn writes_the_page() {
     assert_eq!(
         String::from_utf8(bytes.clone()).unwrap(),
         "# ABC-1 — First\n\n## Sections\n- spec: new, 1 line\n- design: new, 1 line\n\
-         - proof: new, 1 line\n- plan: new, 1 line\n"
+         - proof: new, 1 line\n- plan: new, 1 line\n\n## Criteria\n```diff\n The spec.\n```\n"
     );
 
     // Run again with no edit, and with no KEY: the same bytes.
@@ -144,4 +146,68 @@ fn refuses_when_not_ignored() {
     assert!(!git_in(dir, &["status", "--porcelain", "-uall"]).contains("page.md"));
     stapel(dir).args(["page", "ABC-1"]).assert().success();
     assert!(dir.join(PAGE).is_file());
+}
+
+/// Inserts the template's `description` entry as the first `[[sections]]` entry.
+fn add_description_section(dir: &Path) {
+    let path = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let at = text.find("[[sections]]").unwrap();
+    let entry = "[[sections]]\nid = \"description\"\ntitle = \"Description\"\nowner = \"product\"\n\n";
+    std::fs::write(&path, format!("{}{entry}{}", &text[..at], &text[at..])).unwrap();
+}
+
+const DESCRIPTION: &str =
+    "Source: the chat.\n\n### Frame\n\nframe one\n\nframe two\n\n### Decisions\n\n- d1\n- d2";
+const SPEC: &str = "- term: old\n| AC-1 | first | `t::a` |\n| AC-2 | second | `t::b` |";
+
+fn golden(name: &str) -> String {
+    std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/golden")
+            .join(name),
+    )
+    .unwrap()
+}
+
+fn new_ticket_repo() -> tempfile::TempDir {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    ignore_in_gitignore(dir);
+    add_description_section(dir);
+    set_section(dir, "ABC-1", "Description", DESCRIPTION);
+    set_section(dir, "ABC-1", "Spec", SPEC);
+    repo
+}
+
+#[test]
+fn layout_of_a_new_ticket() {
+    let repo = new_ticket_repo();
+    let dir = repo.path();
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    assert_eq!(read(dir, PAGE), golden("page_new.md"));
+}
+
+#[test]
+fn marks_since_the_last_confirmation() {
+    let repo = new_ticket_repo();
+    let dir = repo.path();
+    for id in ["description", "spec", "design", "proof", "plan"] {
+        stapel(dir).args(["ok", "ABC-1", id]).assert().success();
+    }
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "Source: the chat.\n\n### Frame\n\nframe one\n\nframe 2\n\n### Decisions\n\n- d1",
+    );
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "- term: new\n| AC-1 | first | `t::a` |\n| AC-2 | second | `t::c` |\n\
+         | AC-3 | third | `t::d` |",
+    );
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    assert_eq!(read(dir, PAGE), golden("page_changed.md"));
 }

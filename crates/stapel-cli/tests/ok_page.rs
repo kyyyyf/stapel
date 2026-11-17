@@ -81,6 +81,17 @@ fn section_lines() {
 
 #[test]
 fn criteria_new_and_changed() {
+    fn page_of(dir: &Path) -> String {
+        let ignore = dir.join(".gitignore");
+        let mut text = std::fs::read_to_string(&ignore).unwrap_or_default();
+        if !text.contains("/.stapel/tickets/*/page.md") {
+            text.push_str("\n/.stapel/tickets/*/page.md\n");
+            std::fs::write(&ignore, text).unwrap();
+        }
+        stapel(dir).args(["page", "ABC-1"]).assert().success();
+        std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/page.md")).unwrap()
+    }
+
     let spec = "- term: old\n\
                 | № | Criterion | Test |\n\
                 |---|---|---|\n\
@@ -89,12 +100,12 @@ fn criteria_new_and_changed() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     set_section(dir, "ABC-1", "Spec", spec);
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!(
-            "\nCriteria:\n  | AC-1 | first | `t::a` |\n  | AC-2 | second | `t::b` |\n\
-             spec, other lines: +1 -0\n{ANSWER}"
-        )),
+        reason.contains(
+            "\n## Criteria\n```diff\n | AC-1 | first | `t::a` |\n | AC-2 | second | `t::b` |\n```\n\
+             spec, other lines: +1 -0\n"
+        ),
         "{reason}"
     );
 
@@ -108,20 +119,21 @@ fn criteria_new_and_changed() {
                    | AC-2 | second | `t::c` |\n\
                    | AC-3 | third | `t::d` |";
     set_section(dir, "ABC-1", "Spec", changed);
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!(
-            "\nCriteria:\n- | AC-2 | second | `t::b` |\n+ | AC-2 | second | `t::c` |\n\
-             + | AC-3 | third | `t::d` |\nspec, other lines: +1 -1\n{ANSWER}"
-        )),
+        reason.contains(
+            "\n## Criteria\n```diff\n | AC-1 | first | `t::a` |\n\
+             -| AC-2 | second | `t::b` |\n+| AC-2 | second | `t::c` |\n\
+             +| AC-3 | third | `t::d` |\n```\nspec, other lines: +1 -1\n"
+        ),
         "{reason}"
     );
 
     // The Spec does not wait: no Criteria part.
     confirm(dir, "spec");
     set_section(dir, "ABC-1", "Design", "The design, revised.");
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
-    assert!(!reason.contains("Criteria:"), "{reason}");
+    let reason = page_of(dir);
+    assert!(!reason.contains("## Criteria"), "{reason}");
 
     // A blank line and a re-wrap among the other lines: logical lines are the same, so no
     // count line and no Criteria part (+0 -0).
@@ -142,11 +154,14 @@ fn criteria_new_and_changed() {
         "Spec",
         "intro one intro\ntwo\n\n\n  | AC-1 | first | `t::a` |",
     );
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
-    assert!(!reason.contains("Criteria:"), "{reason}");
+    let reason = page_of(dir);
+    assert!(
+        reason.contains("\n## Criteria\n```diff\n | AC-1 | first | `t::a` |\n```\n"),
+        "{reason}"
+    );
     assert!(!reason.contains("other lines"), "{reason}");
 
-    // A removed row: shown with `- `, and no count line.
+    // A removed row: shown with `-`, and no count line.
     set_section(
         dir,
         "ABC-1",
@@ -162,13 +177,14 @@ fn criteria_new_and_changed() {
         "Spec",
         "intro one intro two\n\n| AC-1 | first | `t::a` |",
     );
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!(
-            "\nCriteria:\n- | AC-2 | second | `t::b` |\n{ANSWER}"
-        )),
+        reason.ends_with(
+            "\n## Criteria\n```diff\n | AC-1 | first | `t::a` |\n-| AC-2 | second | `t::b` |\n```\n"
+        ),
         "{reason}"
     );
+    assert!(!reason.contains("other lines"), "{reason}");
 
     // A confirmation without stored text: every row and the other lines as new.
     let repo = repo_with_ticket();
@@ -191,12 +207,12 @@ fn criteria_new_and_changed() {
         }
     }
     std::fs::write(path, state.to_string()).unwrap();
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!(
-            "\nCriteria:\n  | AC-1 | first | `t::a` |\n  | AC-2 | second | `t::b` |\n\
-             spec, other lines: +1 -0\n{ANSWER}"
-        )),
+        reason.contains(
+            "\n## Criteria\n```diff\n | AC-1 | first | `t::a` |\n | AC-2 | second | `t::b` |\n```\n\
+             spec, other lines: +1 -0\n"
+        ),
         "{reason}"
     );
 
@@ -209,11 +225,11 @@ fn criteria_new_and_changed() {
         "Spec",
         "```\n| AC-1 | fenced | `t::a` |\n```\n\n   | AC-2 | real | `t::b` |",
     );
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!(
-            "\nCriteria:\n  | AC-2 | real | `t::b` |\nspec, other lines: +1 -0\n{ANSWER}"
-        )),
+        reason.contains(
+            "\n## Criteria\n```diff\n | AC-2 | real | `t::b` |\n```\nspec, other lines: +1 -0\n"
+        ),
         "{reason}"
     );
 
@@ -230,34 +246,45 @@ fn criteria_new_and_changed() {
         confirm(dir, id);
     }
     set_section(dir, "ABC-1", "Spec", "intro");
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!(
-            "\nCriteria:\n- | AC-1 | first | `t::a` |\n- | AC-2 | second | `t::b` |\n{ANSWER}"
-        )),
+        reason.contains(
+            "\n## Criteria\n```diff\n-| AC-1 | first | `t::a` |\n-| AC-2 | second | `t::b` |\n```\n"
+        ),
         "{reason}"
     );
 }
 
 #[test]
 fn criteria_without_rows() {
+    fn page_of(dir: &Path) -> String {
+        let ignore = dir.join(".gitignore");
+        let mut text = std::fs::read_to_string(&ignore).unwrap_or_default();
+        if !text.contains("/.stapel/tickets/*/page.md") {
+            text.push_str("\n/.stapel/tickets/*/page.md\n");
+            std::fs::write(&ignore, text).unwrap();
+        }
+        stapel(dir).args(["page", "ABC-1"]).assert().success();
+        std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/page.md")).unwrap()
+    }
+
     let repo = repo_with_ticket();
     let dir = repo.path();
     set_section(dir, "ABC-1", "Spec", "first line\nwrapped here\n\nsecond paragraph");
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!(
-            "\nCriteria:\n  first line wrapped here\n  second paragraph\n{ANSWER}"
-        )),
+        reason.contains(
+            "\n## Criteria\n```diff\n first line wrapped here\n second paragraph\n```\n"
+        ),
         "{reason}"
     );
     assert!(!reason.contains("other lines"), "{reason}");
 
     // An `AC-` line without ` |` after the number is not a row.
     set_section(dir, "ABC-1", "Spec", "| AC-1x | no row\n\nsecond");
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!("\nCriteria:\n  | AC-1x | no row\n  second\n{ANSWER}")),
+        reason.contains("\n## Criteria\n```diff\n | AC-1x | no row\n second\n```\n"),
         "{reason}"
     );
     assert!(!reason.contains("other lines"), "{reason}");
@@ -266,47 +293,45 @@ fn criteria_without_rows() {
     let dir = repo.path();
     let page = |text: &str| {
         set_section(dir, "ABC-1", "Spec", text);
-        ask(dir, "stapel ok ABC-1").0
+        page_of(dir)
     };
 
     // A heading is a line of its own; four spaces of indent make it plain text.
     let reason = page("para\n   # h\nafter\n    # x\nend");
     assert!(
-        reason.contains(&format!(
-            "\nCriteria:\n  para\n  # h\n  after # x end\n{ANSWER}"
-        )),
+        reason.contains("\n## Criteria\n```diff\n para\n # h\n after # x end\n```\n"),
         "{reason}"
     );
 
     // No heading inside a fence or an HTML comment.
     let reason = page("para\n```\n# x\n```\nafter");
     assert!(
-        reason.contains(&format!("\nCriteria:\n  para ``` # x ``` after\n{ANSWER}")),
+        reason.contains("diff\n para ``` # x ``` after\n"),
         "{reason}"
     );
     let reason = page("para\n<!--\n# x\n-->\nafter");
     assert!(
-        reason.contains(&format!("\nCriteria:\n  para <!-- # x --> after\n{ANSWER}")),
+        reason.contains("\n## Criteria\n```diff\n para <!-- # x --> after\n```\n"),
         "{reason}"
     );
 
     // List items start a line; `1.x` does not.
     let reason = page("intro\n- a\n- b\n* c\n1. d\n12. e\n2.x tail");
     assert!(
-        reason.contains(&format!(
-            "\nCriteria:\n  intro\n  - a\n  - b\n  * c\n  1. d\n  12. e 2.x tail\n{ANSWER}"
-        )),
+        reason.contains(
+            "\n## Criteria\n```diff\n intro\n - a\n - b\n * c\n 1. d\n 12. e 2.x tail\n```\n"
+        ),
         "{reason}"
     );
 
-    // The diff form: only inserted and deleted logical lines, no count line.
+    // The diff form: the whole text with marks, no count line.
     set_section(dir, "ABC-1", "Spec", "one\n\ntwo");
     for id in ["spec", "design", "proof", "plan"] {
         confirm(dir, id);
     }
     let reason = page("one\n\nthree");
     assert!(
-        reason.contains(&format!("\nCriteria:\n- two\n+ three\n{ANSWER}")),
+        reason.contains("\n## Criteria\n```diff\n one\n-two\n+three\n```\n"),
         "{reason}"
     );
     assert!(!reason.contains("other lines"), "{reason}");
@@ -323,23 +348,36 @@ fn add_description_section(dir: &Path) {
 
 #[test]
 fn frame_and_decisions_new_and_changed() {
+    fn page_of(dir: &Path) -> String {
+        let ignore = dir.join(".gitignore");
+        let mut text = std::fs::read_to_string(&ignore).unwrap_or_default();
+        if !text.contains("/.stapel/tickets/*/page.md") {
+            text.push_str("\n/.stapel/tickets/*/page.md\n");
+            std::fs::write(&ignore, text).unwrap();
+        }
+        stapel(dir).args(["page", "ABC-1"]).assert().success();
+        std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/page.md")).unwrap()
+    }
+
     let repo = repo_with_ticket();
     let dir = repo.path();
     add_description_section(dir);
     let body = "Source: the chat.\n\n### Frame\n\n**Problem.** It hurts\nover two lines.\n\n\
                 - first item\n- second item\n\n### Decisions\n\n- decide one\n- decide two";
     set_section(dir, "ABC-1", "Description", body);
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!(
-            "\nFrame:\n  Source: the chat.\n  ### Frame\n  **Problem.** It hurts over two lines.\n  \
-             - first item\n  - second item\nCriteria:\n  The spec.\n\
-             Decisions:\n  - decide one\n  - decide two\n{ANSWER}"
-        )),
+        reason.contains(
+            "\n## Frame\n```diff\n Source: the chat.\n ### Frame\n \
+             **Problem.** It hurts over two lines.\n - first item\n - second item\n```\n\n\
+             ## Criteria\n```diff\n The spec.\n```\n\n\
+             ## Decisions\n```diff\n - decide one\n - decide two\n```\n"
+        ),
         "{reason}"
     );
 
-    // After a confirmation, one Decisions item added: only that item, no Frame part.
+    // After a confirmation, one Decisions item added: only that item is marked, the Frame part
+    // is all unchanged lines.
     for id in ["description", "spec", "design", "proof", "plan"] {
         confirm(dir, id);
     }
@@ -349,12 +387,20 @@ fn frame_and_decisions_new_and_changed() {
         "Description",
         &format!("{body}\n- decide three"),
     );
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!("\nDecisions:\n+ - decide three\n{ANSWER}")),
+        reason.ends_with(
+            "\n## Decisions\n```diff\n - decide one\n - decide two\n+- decide three\n```\n"
+        ),
         "{reason}"
     );
-    assert!(!reason.contains("Frame:"), "{reason}");
+    assert!(
+        reason.contains(
+            "\n## Frame\n```diff\n Source: the chat.\n ### Frame\n \
+             **Problem.** It hurts over two lines.\n - first item\n - second item\n```\n"
+        ),
+        "{reason}"
+    );
 
     // `### decisions` is no heading: its lines stay in the Frame part.
     let repo = repo_with_ticket();
@@ -366,18 +412,30 @@ fn frame_and_decisions_new_and_changed() {
         "Description",
         "Source.\n\n### decisions\n\n- x\n\n### Decisions\n\n- d",
     );
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!(
-            "\nFrame:\n  Source.\n  ### decisions\n  - x\nCriteria:\n  The spec.\n\
-             Decisions:\n  - d\n{ANSWER}"
-        )),
+        reason.contains(
+            "\n## Frame\n```diff\n Source.\n ### decisions\n - x\n```\n\n\
+             ## Criteria\n```diff\n The spec.\n```\n\n\
+             ## Decisions\n```diff\n - d\n```\n"
+        ),
         "{reason}"
     );
 }
 
 #[test]
 fn description_without_headings() {
+    fn page_of(dir: &Path) -> String {
+        let ignore = dir.join(".gitignore");
+        let mut text = std::fs::read_to_string(&ignore).unwrap_or_default();
+        if !text.contains("/.stapel/tickets/*/page.md") {
+            text.push_str("\n/.stapel/tickets/*/page.md\n");
+            std::fs::write(&ignore, text).unwrap();
+        }
+        stapel(dir).args(["page", "ABC-1"]).assert().success();
+        std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/page.md")).unwrap()
+    }
+
     let repo = repo_with_ticket();
     let dir = repo.path();
     add_description_section(dir);
@@ -389,13 +447,15 @@ fn description_without_headings() {
         "Description",
         "Plain paragraph\nwrapped.\n\n- an item\n\n### Decisions\n\n- d1",
     );
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains("\nFrame:\n  Plain paragraph wrapped.\n  - an item\nCriteria:\n"),
+        reason.contains(
+            "\n## Frame\n```diff\n Plain paragraph wrapped.\n - an item\n```\n\n## Criteria\n"
+        ),
         "{reason}"
     );
     assert!(
-        reason.contains(&format!("\nDecisions:\n  - d1\n{ANSWER}")),
+        reason.ends_with("\n## Decisions\n```diff\n - d1\n```\n"),
         "{reason}"
     );
 
@@ -406,12 +466,14 @@ fn description_without_headings() {
         "Description",
         "Plain paragraph.\n\n### Frame\n\nframe text",
     );
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains("\nFrame:\n  Plain paragraph.\n  ### Frame\n  frame text\nCriteria:\n"),
+        reason.contains(
+            "\n## Frame\n```diff\n Plain paragraph.\n ### Frame\n frame text\n```\n\n## Criteria\n"
+        ),
         "{reason}"
     );
-    assert!(!reason.contains("Decisions:"), "{reason}");
+    assert!(!reason.contains("## Decisions"), "{reason}");
 }
 
 /// Drops every `depends_on` line of `.stapel/stapel.toml`, so a changed Spec makes no other
@@ -471,43 +533,24 @@ fn dialog_exactly_at_the_limit() {
     for id in ["design", "proof", "plan"] {
         confirm(dir, id);
     }
-    let overflow =
-        "… 1 more line (frame 0, criteria 1, decisions 0); all of them: stapel status ABC-1";
+    let ignore = dir.join(".gitignore");
+    let mut text = std::fs::read_to_string(&ignore).unwrap_or_default();
+    text.push_str("\n/.stapel/tickets/*/page.md\n");
+    std::fs::write(&ignore, text).unwrap();
 
-    // Frame label and 15 lines, Criteria label and one line: exactly 22 lines, no overflow line.
-    set_section(dir, "ABC-1", "Description", &items("f", 15));
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
-    assert_eq!(reason.lines().count(), 22, "{reason}");
-    assert!(!reason.contains("more line"), "{reason}");
-    assert!(
-        reason.ends_with(&format!("\n  - f15\nCriteria:\n  The spec.\n{ANSWER}")),
-        "{reason}"
-    );
-
-    // One more Frame line: the Criteria part has no room, its one line is counted.
-    set_section(dir, "ABC-1", "Description", &items("f", 16));
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
-    assert_eq!(reason.lines().count(), 22, "{reason}");
-    assert!(
-        reason.ends_with(&format!("\n  - f16\n{overflow}\n{ANSWER}")),
-        "{reason}"
-    );
-    assert!(!reason.contains("Criteria:"), "{reason}");
-
-    // A Decisions label with no room for a line is left out; its two lines are counted.
-    confirm(dir, "spec");
-    let description = format!("{}\n\n### Decisions\n\n{}", items("f", 17), items("d", 2));
-    set_section(dir, "ABC-1", "Description", &description);
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
-    assert_eq!(reason.lines().count(), 22, "{reason}");
-    assert!(
-        reason.ends_with(&format!(
-            "\n  - f17\n… 2 more lines (frame 0, criteria 0, decisions 2); all of them: stapel \
-             status ABC-1\n{ANSWER}"
-        )),
-        "{reason}"
-    );
-    assert!(!reason.contains("Decisions:"), "{reason}");
+    // 40 Frame lines and a criterion of 300 characters: the page holds all, whole, with no cut.
+    let row = format!("| AC-1 | {} | `t::a` |", "c".repeat(300 - 20));
+    assert_eq!(row.chars().count(), 300);
+    set_section(dir, "ABC-1", "Description", &items("f", 40));
+    set_section(dir, "ABC-1", "Spec", &row);
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    let page = std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/page.md")).unwrap();
+    assert!(!page.contains("more line"), "{page}");
+    assert!(!page.contains('…'), "{page}");
+    for i in 1..=40 {
+        assert!(page.contains(&format!("\n - f{i:02}\n")), "{page}");
+    }
+    assert!(page.contains(&format!("\n {row}\n")), "{page}");
 }
 
 #[test]
@@ -632,11 +675,19 @@ fn grant_binds_the_description() {
 fn config_without_description() {
     let repo = repo_with_ticket();
     let dir = repo.path();
+    let ignore = dir.join(".gitignore");
+    let mut text = std::fs::read_to_string(&ignore).unwrap_or_default();
+    text.push_str("\n/.stapel/tickets/*/page.md\n");
+    std::fs::write(&ignore, text).unwrap();
     set_section(dir, "ABC-1", "Description", "Source text.\n\n### Decisions\n\n- d1");
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
-    assert!(reason.contains("\nCriteria:\n  The spec.\n"), "{reason}");
-    assert!(!reason.contains("Frame:"), "{reason}");
-    assert!(!reason.contains("Decisions:"), "{reason}");
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    let reason = std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/page.md")).unwrap();
+    assert!(
+        reason.contains("\n## Criteria\n```diff\n The spec.\n```\n"),
+        "{reason}"
+    );
+    assert!(!reason.contains("## Frame"), "{reason}");
+    assert!(!reason.contains("## Decisions"), "{reason}");
     assert!(!reason.contains("Source text"), "{reason}");
 }
 
@@ -680,7 +731,12 @@ fn decisions_boundaries() {
         let dir = repo.path();
         add_description_section(dir);
         set_section(dir, "ABC-1", "Description", description);
-        ask(dir, "stapel ok ABC-1").0
+        let ignore = dir.join(".gitignore");
+        let mut text = std::fs::read_to_string(&ignore).unwrap_or_default();
+        text.push_str("\n/.stapel/tickets/*/page.md\n");
+        std::fs::write(&ignore, text).unwrap();
+        stapel(dir).args(["page", "ABC-1"]).assert().success();
+        std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/page.md")).unwrap()
     };
 
     // A heading of level 3 after Decisions goes back to Frame; `#### sub` stays in Decisions.
@@ -688,40 +744,54 @@ fn decisions_boundaries() {
         "Source.\n\n### Decisions\n\n- d1\n\n#### sub\n\n- d2\n\n### Next\n\nback in frame",
     );
     assert!(
-        reason.contains(&format!(
-            "\nFrame:\n  Source.\n  ### Next\n  back in frame\nCriteria:\n  The spec.\n\
-             Decisions:\n  - d1\n  #### sub\n  - d2\n{ANSWER}"
-        )),
+        reason.contains(
+            "\n## Frame\n```diff\n Source.\n ### Next\n back in frame\n```\n\n\
+             ## Criteria\n```diff\n The spec.\n```\n\n\
+             ## Decisions\n```diff\n - d1\n #### sub\n - d2\n```\n"
+        ),
         "{reason}"
     );
 
     // A heading of level 2 ends the Description: its text is no part of the page.
     let reason = page("Source.\n\n### Decisions\n\n- d1\n\n## Next\n\nafter the section");
     assert!(
-        reason.contains(&format!("\nDecisions:\n  - d1\n{ANSWER}")),
+        reason.ends_with("\n## Decisions\n```diff\n - d1\n```\n"),
         "{reason}"
     );
     assert!(!reason.contains("after the section"), "{reason}");
 
-    // A fenced `### Decisions` is no heading: no Decisions label, the lines stay in Frame.
+    // A fenced `### Decisions` is no heading: no Decisions part, the lines stay in Frame.
     let reason = page("Source.\n\n```\n### Decisions\n- fenced\n```");
-    assert!(!reason.contains("Decisions:"), "{reason}");
+    assert!(!reason.contains("\n## Decisions"), "{reason}");
     assert!(
-        reason.contains("\nFrame:\n  Source.\n  ``` ### Decisions - fenced ```\nCriteria:\n"),
+        reason.contains("diff\n Source.\n ``` ### Decisions - fenced ```\n"),
         "{reason}"
     );
 
-    // An empty `### Decisions` gives no label.
+    // An empty `### Decisions` gives no part.
     let reason = page("Source.\n\n### Decisions\n");
-    assert!(!reason.contains("Decisions:"), "{reason}");
+    assert!(!reason.contains("## Decisions"), "{reason}");
     assert!(
-        reason.contains(&format!("\nFrame:\n  Source.\nCriteria:\n  The spec.\n{ANSWER}")),
+        reason.contains(
+            "\n## Frame\n```diff\n Source.\n```\n\n## Criteria\n```diff\n The spec.\n```\n"
+        ),
         "{reason}"
     );
 }
 
 #[test]
 fn frame_and_decisions_diffs() {
+    fn page_of(dir: &Path) -> String {
+        let ignore = dir.join(".gitignore");
+        let mut text = std::fs::read_to_string(&ignore).unwrap_or_default();
+        if !text.contains("/.stapel/tickets/*/page.md") {
+            text.push_str("\n/.stapel/tickets/*/page.md\n");
+            std::fs::write(&ignore, text).unwrap();
+        }
+        stapel(dir).args(["page", "ABC-1"]).assert().success();
+        std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/page.md")).unwrap()
+    }
+
     let repo = repo_with_ticket();
     let dir = repo.path();
     add_description_section(dir);
@@ -735,23 +805,24 @@ fn frame_and_decisions_diffs() {
         confirm(dir, id);
     }
 
-    // A Frame line changed and a Decisions line removed: `+ ` and `- `.
+    // A Frame line changed and a Decisions line removed: `+` and `-`, in place.
     set_section(
         dir,
         "ABC-1",
         "Description",
         "Source.\n\n### Frame\n\nframe two\n\n### Decisions\n\n- d1",
     );
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!(
-            "\nFrame:\n- frame one\n+ frame two\nDecisions:\n- - d2\n{ANSWER}"
-        )),
+        reason.contains(
+            "\n## Frame\n```diff\n Source.\n ### Frame\n-frame one\n+frame two\n```\n\n\
+             ## Decisions\n```diff\n - d1\n-- d2\n```\n"
+        ),
         "{reason}"
     );
-    assert!(!reason.contains("Criteria:"), "{reason}");
+    assert!(!reason.contains("## Criteria"), "{reason}");
 
-    // A confirmation without stored text: every line with two spaces.
+    // A confirmation without stored text: every line unchanged, with a space.
     let path = dir.join(".stapel/tickets/ABC-1/state.json");
     let mut state = state_json(dir, "ABC-1");
     for c in state["confirmations"].as_array_mut().unwrap() {
@@ -760,14 +831,16 @@ fn frame_and_decisions_diffs() {
         }
     }
     std::fs::write(path, state.to_string()).unwrap();
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    let reason = page_of(dir);
     assert!(
-        reason.contains(&format!(
-            "\nFrame:\n  Source.\n  ### Frame\n  frame two\nDecisions:\n  - d1\n{ANSWER}"
-        )),
+        reason.contains(
+            "\n## Frame\n```diff\n Source.\n ### Frame\n frame two\n```\n\n\
+             ## Decisions\n```diff\n - d1\n```\n"
+        ),
         "{reason}"
     );
-    assert!(!reason.contains("\n- "), "{reason}");
+    let parts = &reason[reason.find("## Frame").unwrap()..];
+    assert!(!parts.contains("\n+") && !parts.contains("\n-"), "{reason}");
 }
 
 #[test]
