@@ -949,6 +949,52 @@ fn cut_and_limit_boundaries() {
 }
 
 #[test]
+fn terminal_after_an_edit() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    add_description_section(dir);
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "Source.\n\n### Frame\n\nframe one\n\n### Decisions\n\n- d1\n- d2",
+    );
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "- term: old\n| AC-1 | first | `t::a` |\n| AC-2 | second | `t::b` |",
+    );
+    for id in ["description", "spec", "design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "Source.\n\n### Frame\n\nframe two\n\n### Decisions\n\n- d1",
+    );
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "- term: new\n| AC-1 | first | `t::a` |\n| AC-2 | second | `t::c` |\n| AC-3 | third | `t::d` |",
+    );
+    let out = stapel(dir).args(["ok", "ABC-1"]).assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("\n- frame one\n+ frame two\n"), "{stdout}");
+    assert!(stdout.contains("\n- - d2\n"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "\nCriteria:\n- | AC-2 | second | `t::b` |\n\
+             + | AC-2 | second | `t::c` |\n+ | AC-3 | third | `t::d` |\n\
+             spec, other lines: +1 -1\n"
+        ),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn grant_passes_when_unchanged() {
     let repo = repo_with_ticket();
     let dir = repo.path();
