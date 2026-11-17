@@ -117,7 +117,7 @@ fn appends_to_existing_gitignore() {
 
     assert_eq!(
         read(repo.path(), ".gitignore"),
-        "/target\n/.stapel/index/\n/.claude/worktrees/\n"
+        "/target\n/.stapel/index/\n/.claude/worktrees/\n/.stapel/tickets/*/page.md\n"
     );
 }
 
@@ -552,4 +552,26 @@ fn roles_row_added() {
         .success()
         .stdout(contains("already set up"));
     assert_eq!(common::snapshot(dir), before);
+}
+
+// STP-32 AC-5: the page file is ignored in both modes, and in this repository.
+#[test]
+fn page_is_ignored_in_both_modes() {
+    const LINE: &str = "/.stapel/tickets/*/page.md";
+    for (args, file) in [
+        (vec!["init", "--prefix", "ABC"], ".gitignore"),
+        (vec!["init", "--local", "--prefix", "ABC"], ".git/info/exclude"),
+    ] {
+        let repo = git_repo();
+        let dir = repo.path();
+        stapel(dir).args(&args).assert().success();
+        let lines = read(dir, file);
+        assert!(lines.lines().any(|l| l == LINE), "{file}: {lines}");
+        std::fs::create_dir_all(dir.join(".stapel/tickets/ABC-1")).unwrap();
+        std::fs::write(dir.join(".stapel/tickets/ABC-1/page.md"), "# page\n").unwrap();
+        let status = common::git_in(dir, &["status", "--porcelain", "-uall"]);
+        assert!(!status.contains("page.md"), "{status}");
+    }
+    let own = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.gitignore")).unwrap();
+    assert!(own.lines().any(|l| l == LINE), "{own}");
 }
