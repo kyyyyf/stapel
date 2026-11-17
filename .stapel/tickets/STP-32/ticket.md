@@ -115,8 +115,9 @@ Terms:
   category Cc, become spaces); a KEY of 49 characters or more, whose `page:` summary line is cut; a person
   who read an older page before the agent rewrote it (SR1-7, deferred); the Spec lines that are not AC
   rows, shown only as the count line (SR1-8, deferred); `write-page` when the waiting sections cannot be
-  prepared (a missing or doubled section): `next` says `confirm` and `stapel ok KEY` reports the refusal
-  (D1-1, deferred).
+  prepared (any refusal, such as a missing or doubled section or a foreign KEY): `next` says `confirm`
+  and `stapel ok KEY` reports the refusal (D1-1, ER1-3, deferred); a `page.md` that git tracked before
+  the ignore line existed (R2-2, deferred).
 
 ## Test plan
 
@@ -124,8 +125,8 @@ CLI tests in the new file `crates/stapel-cli/tests/page.rs` with `common::repo_w
 `common::set_section`, `common::ask` and `common::hook_bash`; golden files
 `crates/stapel-cli/tests/golden/page_new.md` and `page_changed.md`; `ok_page_dialog.txt` is rewritten.
 The STP-25 tests in `tests/ok_page.rs` named in AC-3, AC-4 and AC-6 keep their names, which STP-25
-names for the lint, and change their bodies: they read the page in place of the dialog text (a coverage
-commit, step 2), or the summary in place of the STP-25 dialog page (the RED of step 3a);
+names for the lint, and change their bodies: they read the page in place of the dialog text (the RED
+of step 1b), or the summary in place of the STP-25 dialog page (the RED of step 3a);
 `ok_page::dialog_exactly_at_the_limit` now proves that the page has no limit. `common::ask`
 runs `stapel page <arg>` first when the command is `stapel ok <one arg>`, ignoring its result, so that the
 old dialog tests keep a fresh page. The `next` tests and golden files that expect `confirm` without a page
@@ -145,9 +146,9 @@ init_process`); before each GREEN also `--test ticket_drift`.
 | Fence | a criterion with three backticks and one with five: the Criteria fence has six; a Frame line with `\x1b[31m` and a tab: spaces; a title with a tab: a space | `page::fence_longer_than_any_backtick_run` |
 | No limit | 40 Frame lines and a criterion of 300 characters: all in the page, whole, no `more line` text | `ok_page::dialog_exactly_at_the_limit` |
 | Ignore lines | `stapel init` and `stapel init --local`: the line in `.gitignore` or `.git/info/exclude`; a written page is not in `git status --porcelain`; this repository's `.gitignore` holds it; the existing `.gitignore` case gets the new line among its exact lines | `init::page_is_ignored_in_both_modes`, `init::appends_to_existing_gitignore` |
-| Summary | the STP-25 fixture of `section_lines`: the summary with `title: ABC-1 title`, `criteria: 0`, the section lines and the `page:` line; no `Criteria:` label; a confirmed Spec with two AC rows and a waiting Plan: `criteria: 2` | `ok_page::section_lines` |
+| Summary | the STP-25 fixture of `section_lines`: the summary with `title: First`, `criteria: 0`, the section lines and the `page:` line; no `Criteria:` label; a confirmed Spec with two AC rows and a waiting Plan: `criteria: 2` | `ok_page::section_lines` |
 | Fold | 12 waiting sections: ten lines, then `… 2 more waiting sections: s11, s12`; the page lists all twelve | `ok_page::many_waiting_sections` |
-| Cut | a title of 300 characters with `é` at the cut and `\x1b[31m`: the summary equal to `ok_page_dialog.txt`; a title of 100 characters whole, 101 cut | `ok_page::dialog_limit_and_cut`, `ok_page::cut_and_limit_boundaries` |
+| Cut | a title of 300 characters with `é` at the cut and `\x1b[31m`: the summary equal to `ok_page_dialog.txt`; a `title:` line of 100 characters whole, 101 cut (titles of 93 and 94 characters) | `ok_page::dialog_limit_and_cut`, `ok_page::cut_and_limit_boundaries` |
 | Missing page | no `page.md` (`hook_bash` without `stapel page`): deny with the AC-7 text, no grant written | `page::guard_refuses_without_the_page` |
 | Stale page | the page, then a Spec edit; again, then a hand edit of `page.md`; again, then `stapel ok ABC-1 spec` in the terminal: each denied with the stale text | `page::guard_refuses_a_stale_page` |
 | Grant | the dialog, then `page.md` edited by hand (ticket unchanged); again, then removed; again, then rewritten after a Decisions edit: exit 1 with the grant mismatch text, `state.json` and `decisions.jsonl` unchanged | `page::grant_binds_the_page` |
@@ -278,6 +279,11 @@ grant facts with the page hash and prints the mismatch text, no own freshness ch
 - The `dialog_limit_and_cut` fixture writes the escape sequence into `state.json`, because `stapel new`
   refuses control characters in a title.
 - This repository's skill and `.gitignore` were written by `stapel cargo run -p stapel-cli -- init`.
+- Fix step 7 (after code review round 1, ER1-1) adds the coverage test `ok_page::terminal_after_an_edit`
+  for the terminal form of a confirmed, then edited ticket; no code changed.
+- Until the stapel binary is reinstalled after PIL-3 closes, the installed binary has no `stapel page`
+  and shows the STP-25 dialog; the orchestrator of this repository skips `stapel page` until then (the
+  human, 2026-11-17, ER1-2; ledger decision at the close).
 
 ## Proof
 
@@ -334,8 +340,59 @@ Route: full (tags `guard`, `interface`), auto.
 
 ## Review
 
-TODO
+- Spec review, round 1 (2026-11-17): `stapel-spec-reviewer`; 13 findings, 0 HIGH, 8 MEDIUM, 5 LOW; 11
+  inside (10 fixed in the text, SR1-11 no change), 2 outside and deferred (SR1-7, SR1-8). No round 2.
+- Checks: after step 1 pass (989 tests); after step 3a pass (993); before code review pass (998); after
+  fix step 7 pass (999). Steps 2 and 2a: step 2 merged into the RED of step 1b (history rewrite with the
+  human's consent), step 2a and step 7 coverage commits.
+- Drift review, once before code review (2026-11-17): `stapel-drift`; 1 LOW outside (D1-1), deferred.
+- Code review, round 1 (2026-11-17): `stapel-reviewer` (role reviewer), `stapel-reviewer` (role external),
+  `stapel-drift` on the whole ticket; 13 findings, 0 HIGH, 2 MEDIUM (ER1-1 the terminal form lost its
+  test, ER1-2 the installed binary lags the skill), 11 LOW; ER1-1 patched by coverage step 7, ER1-2 no
+  change by the human's answer (merge, ledger decision), ER1-5 no change, 10 deferred.
+- Code review, round 2 (2026-11-17): the same three reviewers; the ER1-1 patch confirmed; 6 findings, 0
+  HIGH, 1 MEDIUM (ER2-1, ledger records cited by the ticket not in the branch), 5 LOW; ER2-1 and ER2-3 no
+  code change (the ledger records are committed at the close, the texts fixed), 4 deferred. No round 3.
 
 ## Summary
 
-TODO
+The person reads the page of a ticket as a file in the editor. `stapel page KEY` writes
+`.stapel/tickets/KEY/page.md`: the title, one line per waiting section, and the Frame, the criteria and the
+Decisions in full, each in a `diff` fence with a space, `+` or `-` before each line since the last
+confirmation. The file is ignored by git (`stapel init` adds the line in both modes; `stapel page` refuses
+an unignored path). The dialog of `stapel ok KEY` shows a short summary (title, criteria count, section
+lines, the page's path and short hash); the guard refuses it when the page is missing or stale, and the
+grant binds the page file's hash. `stapel next` names `write-page` before `confirm`, and the skill tells
+the orchestrator to run `stapel page KEY` and name the path before `stapel ok KEY`.
+
+Until the binary is reinstalled after PIL-3 closes, this repository runs the old binary: no `stapel page`,
+the STP-25 dialog (ER1-2, the human's decision).
+
+For the person to decide (deferred, outside the promise or later work):
+
+- SR1-7: the person read one page and the agent rewrote the ticket and the page before the dialog; only
+  the section lines of the summary show it.
+- SR1-8: the Spec lines that are not AC rows (Terms) show only as the count line.
+- ER1-8: when only Design, Proof or Plan wait, the page holds no changed text of them.
+- D1-1, ER1-3: `next` says `confirm`, not `write-page`, when the waiting sections cannot be prepared.
+- drift-1, R1-1, R2-1: the part lines are built twice (page and terminal form); one shared diff core.
+- ER1-6: section lines count physical lines, the fences mark logical lines.
+- ER2-2: two terminal branches of `criteria_part` without a test; R2-2: a page tracked before the ignore
+  line; drift-2, ER1-7, R2-3: small cleanups; ER1-4: the module doc of `page.rs` and the STP-25 texts.
+
+Measures against STP-31:
+
+- Escaped defects of earlier tickets found here: none.
+- Code review HIGH and MEDIUM inside the promise: round 1: 2 MEDIUM; round 2: 1 MEDIUM, a process gap
+  (STP-31: 1 HIGH and 12 MEDIUM over three rounds). Spec review: 0 HIGH, 8 MEDIUM before the build.
+- `ticket.md`: about 34 KB (STP-31: 51.9 KB).
+- Size: about 1 170 lines added and 290 removed in 23 files, against an estimate of 300 source and 600
+  test lines.
+- Steps: 9 planned, 8 built (step 2 merged into 1b), 2 coverage commits, 1 fix step; one history rewrite
+  and one fixup.
+- Tokens (measured): orchestrator 109 k output, builder 112 k, reviewers 50 k, drift 9 k.
+- Attention: 4 dialogs, 5 questions; 29 min attention, 3 h 28 min wall time (STP-31: 12 dialogs, 57 min).
+- What improved: ok at three points and drift once kept the dialogs at 4; checks at four points instead of
+  one per step (the human, 2026-11-17). What did not: a coverage commit that changed old test bodies made
+  two steps unverified again (a history rewrite); a builder ran `cargo fmt` on the whole package and one
+  used `sed -i`; a step 3 GREEN broke a step 1 test that its builder did not run.
