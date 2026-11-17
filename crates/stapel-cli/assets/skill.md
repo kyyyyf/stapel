@@ -13,6 +13,7 @@ the file to use; the facts that block an action come first. Do not re-read the w
 
 - `new-ticket`: `stapel new "<title>"`, then write the Frame (rule 1).
 - `write-section`: write that section of `ticket.md`.
+- `write-page`: run `stapel page KEY` and name the path it prints in the chat; the person reads the page in the editor while the dialog of `stapel ok KEY` waits.
 - `build-step` and `green-step`: start the agent `stapel-builder` with the ticket path, the step and the
   base commit only; it runs `stapel brief KEY STEP` itself. During the build you do not read the brief;
   before the spec review you run stapel brief only to check each step's size.
@@ -91,7 +92,7 @@ list must not only grow.
 5. **The person confirms each round once.** The spec changes after one review round are made as one
    change, confirmed by one `stapel ok KEY`, which prints the diff of every section since its last
    confirmation. Before it, list each change in one plain sentence: what the ticket now says and why, never
-   only a finding id. Right after the list run `stapel ok KEY` as one plain command, without pipes and
+   only a finding id. Right after the list run `stapel page KEY`, name the path of the page in the chat, then run `stapel ok KEY` as one plain command, without pipes and
    without waiting for an "ok" in the chat: the permission dialog is the person's one answer. stapel ok runs
    at three points: after the spec review, before code review, and at the close. During the build the ticket
    is not edited, except when the ticket lint demands it, or when a change widens the promise or changes a
