@@ -104,7 +104,8 @@ Terms:
 
 - **Promised:** the Frame's promise, by AC-1 to AC-10. Unchanged: the terminal form of `stapel ok KEY` (it
   prints the STP-25 terminal page and needs no `page.md`); the one-section form; the grant facts other
-  than the page hash; the other actions of `next` and their order. Unchanged and kept passing: the STP-25
+  than the page hash; the other actions of `next` and their order. The terminal form after an edit is
+  tested by `ok_page::terminal_after_an_edit` (ER1-1). Unchanged and kept passing: the STP-25
   tests `ok_page::description_missing_or_twice` (a missing or doubled section is denied with its text
   before the page is read), `ok_page::grant_binds_the_description` and `ok_page::grant_passes_when_unchanged`.
 - **Not promised:** the Frame's list; how an editor renders the fence; a page left behind after the
@@ -325,6 +326,10 @@ Route: full (tags `guard`, `interface`), auto.
 6. The skill text (AC-10; test `init_process::skill_text_names_the_page`); the GREEN changes
    `crates/stapel-cli/assets/` and runs `init` here. Must not change: the skill sentences other than the
    `write-page` bullet and the rule 5 sentence.
+7. Fix after code review round 1, coverage, no GREEN (ER1-1; test `ok_page::terminal_after_an_edit`): the
+   terminal form of `stapel ok KEY` for a ticket confirmed and then edited (an AC row changed and one
+   added, a Terms line changed, a Frame line changed, a Decisions line removed) prints the STP-25 `+ ` and
+   `- ` lines and `spec, other lines: +1 -1`; a new `#[test]` function only. Must not change: steps 1 to 6.
 
 ## Review
 
