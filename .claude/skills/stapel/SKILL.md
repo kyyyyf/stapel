@@ -1,7 +1,7 @@
 ---
 name: stapel
 description: "Carries a development ticket from description to merge with the stapel process."
-# stapel: 0.1.0 sha256:195307d4600417c4ef8fa012697f1ab9f9e5547612af7d2dbbeac1c30631c18d
+# stapel: 0.1.0 sha256:8139d6da1d10803e4a7a48e899af4b2903e396a4b0a3a00fe86a91062a7590a9
 ---
 # The stapel process
 
@@ -89,21 +89,26 @@ list must not only grow.
 4. **One spec review, in order.** The agent `stapel-spec-reviewer` first reads only the Frame and the
    criteria and writes its own list of inputs, external states and bypass attempts; then it reads Design,
    the tables and the promise and compares. It returns a Clear/Partial/Missing map over the coverage
-   categories and findings tagged **inside** the promise (defects) or **outside** it (proposals to widen it,
-   which the person decides). A second round only when a finding is HIGH. The build starts after that review.
+   categories and findings tagged **inside** the promise (defects) or **outside** it (proposals to widen it).
+   An outside finding is not a question for the person during the ticket: it gets the fate `defer`, and the
+   Summary lists it for the person to decide at the close or in the next ticket. A second round only when a
+   finding is HIGH. The build starts after that review.
 5. **The person confirms each round once.** The spec changes after one review round are made as one
    change, confirmed by one `stapel ok KEY`, which prints the diff of every section since its last
    confirmation. Before it, list each change in one plain sentence: what the ticket now says and why, never
    only a finding id. Right after the list run `stapel ok KEY` as one plain command, without pipes and
-   without waiting for an "ok" in the chat: the permission dialog is the person's one answer. Spec changes
-   inside the promise during the build are collected and confirmed by one stapel ok before code review; a
-   change that widens the promise or changes a criterion's meaning stops the build until it is confirmed.
-   A GREEN commit that changes a criterion's meaning says spec change: AC-<n>, <reason> in its message;
+   without waiting for an "ok" in the chat: the permission dialog is the person's one answer. stapel ok runs
+   at three points: after the spec review, before code review, and at the close. During the build the ticket
+   is not edited, except when the ticket lint demands it, or when a change widens the promise or changes a
+   criterion's meaning, which stops the build until it is confirmed; the builder keeps the planned test
+   names, so the lint demands nothing. Spec changes inside the promise found during the build go to the
+   notes and into the ticket once, confirmed by the ok before code review. The fix steps added after a code
+   review round are confirmed by one ok before their build. A GREEN commit that changes a criterion's meaning says spec change: AC-<n>, <reason> in its message;
    stapel check reads it.
 6. **During the build.** Keep Design "as built" as notes and move them into the ticket once, before code
-   review; an uncommitted edit of `ticket.md` makes its confirmation stale. A drift review runs after a
-   GREEN step when the step touches a criterion of a tagged ticket; the agent `stapel-drift` gets the step's
-   diff and its criteria, nothing else. `stapel check` shows that every step's tests failed at RED and pass
+   review; an uncommitted edit of `ticket.md` makes its confirmation stale. A drift review runs once on a
+   tagged ticket, before code review: the agent `stapel-drift` gets the diff `base..HEAD` of the steps that
+   touch a criterion and those criteria, nothing else. `stapel check` shows that every step's tests failed at RED and pass
    at GREEN and HEAD; run it after every builder commit. stapel check runs the tests with the lock file as
    it is, so a stale lock file fails the check. The ticket lint fails when a ticket names a test that does
    not exist, a test exists that no ticket names, a criterion quotes an output line that is not in the code,
@@ -132,8 +137,10 @@ list must not only grow.
   `intent_gap`, which you ask the person about in the chat. Its tokens are journaled with the role
   `builder`.
 - Review by risk. An untagged ticket gets the ticket lint and one stapel-reviewer; a tagged ticket gets
-  stapel-reviewer, an external reviewer, and stapel-drift after each GREEN step that touches a criterion.
-  The ticket records the reviewers that ran and the round.
+  stapel-reviewer, an external reviewer, and stapel-drift once before code review. The ticket records the
+  reviewers that ran and the round.
+- Code review rounds: two by default. A third round runs without a question when round 2 left no HIGH
+  finding inside the promise; a HIGH finding after round 2 goes to the person.
 - Every code reviewer also does the deletion check, the claims check (falsify each claim of the criteria
   and of Design "as built" against the code) and the verification gap (would an existing test fail if a
   behaviour change were wrong). A test that did not run counts as missing.

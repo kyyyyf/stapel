@@ -789,7 +789,8 @@ fn skill_text_holds_the_process() {
     let flat = collapsed(&body);
     for sentence in [
         "Before the spec review, run stapel brief on every Plan step and split the steps it refuses.",
-        "Spec changes inside the promise during the build are collected and confirmed by one stapel ok before code review; a change that widens the promise or changes a criterion's meaning stops the build until it is confirmed.",
+        "stapel ok runs at three points: after the spec review, before code review, and at the close.",
+        "Spec changes inside the promise found during the build go to the notes and into the ticket once, confirmed by the ok before code review.",
     ] {
         assert!(flat.contains(sentence), "missing {sentence:?}");
     }
@@ -851,7 +852,8 @@ fn skill_text_is_consistent() {
     init_in(dir);
     let flat = collapsed(&body_of(dir, SKILL));
     for sentence in [
-        "An untagged ticket gets the ticket lint and one stapel-reviewer; a tagged ticket gets stapel-reviewer, an external reviewer, and stapel-drift after each GREEN step that touches a criterion.",
+        "An untagged ticket gets the ticket lint and one stapel-reviewer; a tagged ticket gets stapel-reviewer, an external reviewer, and stapel-drift once before code review.",
+        "A third round runs without a question when round 2 left no HIGH finding inside the promise; a HIGH finding after round 2 goes to the person.",
         "stapel ok and stapel close run only as one plain command whose permission dialog the person answers.",
         "During the build you do not read the brief; before the spec review you run stapel brief only to check each step's size.",
         "A ticket tagged guard or security has an Abuse table: each attempt of a careless agent and its outcome.",
