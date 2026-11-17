@@ -246,3 +246,112 @@ fn fence_longer_than_any_backtick_run() {
     assert!(page.contains("\n red  [31mtext end\n"), "{page}");
     assert!(!page.contains('\x1b') && !page.contains('\t'), "{page}");
 }
+
+const MISSING: &str = "the page of ABC-1 is missing; run stapel page ABC-1 and read \
+     .stapel/tickets/ABC-1/page.md";
+const STALE: &str = "the page of ABC-1 is stale; run stapel page ABC-1 and read \
+     .stapel/tickets/ABC-1/page.md again";
+
+#[test]
+fn guard_refuses_without_the_page() {
+    let repo = new_ticket_repo();
+    let dir = repo.path();
+    assert!(!dir.join(PAGE).exists());
+    common::hook_bash(dir, "stapel ok ABC-1", "auto")
+        .code(2)
+        .stderr(predicates::str::contains(MISSING));
+    // No grant was written.
+    let written = std::fs::read_dir(common::grants_dir(dir))
+        .map(|d| d.count())
+        .unwrap_or(0);
+    assert_eq!(written, 0);
+
+    // With the page the guard asks.
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    common::hook_bash(dir, "stapel ok ABC-1", "auto").success();
+}
+
+#[test]
+fn guard_refuses_a_stale_page() {
+    let repo = new_ticket_repo();
+    let dir = repo.path();
+    let denied = || {
+        common::hook_bash(dir, "stapel ok ABC-1", "auto")
+            .code(2)
+            .stderr(predicates::str::contains(STALE));
+    };
+
+    // A Spec edit after the page.
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    common::hook_bash(dir, "stapel ok ABC-1", "auto").success();
+    set_section(dir, "ABC-1", "Spec", "| AC-1 | edited | `t::a` |");
+    denied();
+
+    // A hand edit of the page: one byte added.
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    common::hook_bash(dir, "stapel ok ABC-1", "auto").success();
+    let mut bytes = std::fs::read(dir.join(PAGE)).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(dir.join(PAGE), bytes).unwrap();
+    denied();
+
+    // Changed line endings, and an empty file.
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    let text = read(dir, PAGE).replace('\n', "\r\n");
+    std::fs::write(dir.join(PAGE), text).unwrap();
+    denied();
+    std::fs::write(dir.join(PAGE), "").unwrap();
+    denied();
+
+    // A section confirmed in the terminal after the page.
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    stapel(dir).args(["ok", "ABC-1", "spec"]).assert().success();
+    denied();
+}
+
+#[test]
+fn grant_binds_the_page() {
+    let repo = new_ticket_repo();
+    let dir = repo.path();
+    let state = dir.join(".stapel/tickets/ABC-1/state.json");
+    let decisions = dir.join(".stapel/tickets/ABC-1/decisions.jsonl");
+    let files = || {
+        (
+            std::fs::read(&state).unwrap_or_default(),
+            std::fs::read(&decisions).unwrap_or_default(),
+        )
+    };
+    let grant_fails = |replaced: &str| {
+        let before = files();
+        stapel(dir)
+            .args(["ok", "ABC-1", "--grant", &common::token_of(replaced)])
+            .env("CLAUDECODE", "1")
+            .assert()
+            .code(1)
+            .stderr(predicates::str::contains("the grant does not match"));
+        assert_eq!(files(), before);
+    };
+
+    // The page edited by hand after the dialog.
+    let (_, replaced) = common::ask(dir, "stapel ok ABC-1");
+    let mut bytes = std::fs::read(dir.join(PAGE)).unwrap();
+    bytes.extend_from_slice(b"edited\n");
+    std::fs::write(dir.join(PAGE), bytes).unwrap();
+    grant_fails(&replaced);
+
+    // The page removed after the dialog.
+    let (_, replaced) = common::ask(dir, "stapel ok ABC-1");
+    std::fs::remove_file(dir.join(PAGE)).unwrap();
+    grant_fails(&replaced);
+
+    // A Decisions edit and the page written again after the dialog.
+    let (_, replaced) = common::ask(dir, "stapel ok ABC-1");
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "Source: the chat.\n\n### Frame\n\nframe one\n\nframe two\n\n### Decisions\n\n- d1\n- d3",
+    );
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    grant_fails(&replaced);
+}
