@@ -135,7 +135,7 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
                     if waiting.is_empty() {
                         return Err(format!("nothing to confirm: {folder}"));
                     }
-                    let reason = crate::page::dialog_page(
+                    let reason = crate::page::summary(
                         &config,
                         &folder,
                         &program(inv).join(" "),

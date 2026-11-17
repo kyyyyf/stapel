@@ -6,14 +6,13 @@ use crate::brief::row_number;
 use crate::config::Config;
 use crate::confirm::Prepared;
 use crate::stage::{Reason, freshness, latest};
-use crate::ticket::{parse, read, scan};
+use crate::ticket::{Lookup, find, parse, read, scan};
 use similar::{ChangeTag, TextDiff};
 
 /// Section lines shown before the rest fold into one line.
 const MAX_SECTION_LINES: usize = 10;
 
-/// Lines of the dialog page, and characters of one line.
-const MAX_PAGE_LINES: usize = 22;
+/// Characters of one summary line.
 const MAX_LINE_CHARS: usize = 100;
 
 /// `1 line` for one, `<N> lines` otherwise.
@@ -65,12 +64,46 @@ pub fn section_line(config: &Config, p: &Prepared) -> String {
     format!("{}: {change}", p.section)
 }
 
-/// The dialog page for the waiting sections of `key`; `program` is the replaced program.
-pub fn dialog_page(config: &Config, key: &str, program: &str, waiting: &[Prepared]) -> String {
-    let mut lines = vec![format!(
-        "stapel: confirm {} of {key}; runs: {program}",
-        count(waiting.len(), "waiting section")
-    )];
+/// `sha256:` and the first 12 hex digits of a page hash.
+pub fn short_hash(hash: &str) -> &str {
+    &hash[..hash.len().min("sha256:".len() + 12)]
+}
+
+/// The AC rows of the current Spec of the ticket in `dir`; 0 when there is no such section.
+fn criteria_count(config: &Config, dir: &std::path::Path) -> usize {
+    let Some(spec) = config
+        .sections
+        .iter()
+        .find(|s| s.id.eq_ignore_ascii_case("spec"))
+    else {
+        return 0;
+    };
+    let sections = read(&dir.join("ticket.md"))
+        .map(|t| parse(&t))
+        .unwrap_or_default();
+    match find(&sections, &spec.title) {
+        Lookup::Found(body) => spec_lines(body).0.len(),
+        _ => 0,
+    }
+}
+
+/// The summary the dialog of `stapel ok KEY` shows (STP-32): the title, the criteria count, one
+/// line per waiting section (folded past the tenth), the page path and its short hash. `program`
+/// is the replaced program.
+pub fn summary(config: &Config, key: &str, program: &str, waiting: &[Prepared]) -> String {
+    let title = waiting.first().map(|p| p.state.title.as_str()).unwrap_or("");
+    let criteria = waiting
+        .first()
+        .map(|p| criteria_count(config, &p.dir))
+        .unwrap_or(0);
+    let mut lines = vec![
+        format!(
+            "stapel: confirm {} of {key}; runs: {program}",
+            count(waiting.len(), "waiting section")
+        ),
+        format!("title: {title}"),
+        format!("criteria: {criteria}"),
+    ];
     lines.extend(
         waiting
             .iter()
@@ -89,48 +122,10 @@ pub fn dialog_page(config: &Config, key: &str, program: &str, waiting: &[Prepare
                 .join(", ")
         ));
     }
-    let parts = parts(waiting);
-    let total: usize = parts
-        .iter()
-        .filter(|(_, l)| !l.is_empty())
-        .map(|(_, l)| l.len() + 1)
-        .sum();
-    // The answer line is always last; the page holds `MAX_PAGE_LINES` lines.
-    let room = MAX_PAGE_LINES.saturating_sub(lines.len() + 1);
-    if total <= room {
-        for (label, part) in &parts {
-            if !part.is_empty() {
-                lines.push((*label).into());
-                lines.extend(part.iter().cloned());
-            }
-        }
-    } else {
-        let mut room = room.saturating_sub(1);
-        let mut hidden = Vec::new();
-        for (label, part) in &parts {
-            let take = if room >= 2 {
-                part.len().min(room - 1)
-            } else {
-                0
-            };
-            if take > 0 {
-                lines.push((*label).into());
-                lines.extend(part[..take].iter().cloned());
-                room -= take + 1;
-            }
-            hidden.push(part.len() - take);
-        }
-        lines.push(format!(
-            "… {} (frame {}, criteria {}, decisions {}); all of them: stapel status {key}",
-            match hidden.iter().sum::<usize>() {
-                1 => "1 more line".to_string(),
-                n => format!("{n} more lines"),
-            },
-            hidden[0],
-            hidden[1],
-            hidden[2]
-        ));
-    }
+    lines.push(format!(
+        "page: .stapel/tickets/{key}/page.md ({})",
+        short_hash(&page_hash(page_text(config, waiting).as_bytes()))
+    ));
     lines.push("Answer Yes or No; do not choose \"don't ask again\".".into());
     lines
         .iter()
