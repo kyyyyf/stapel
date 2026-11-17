@@ -155,6 +155,11 @@ pub fn hook_bash(dir: &Path, command: &str, mode: &str) -> assert_cmd::assert::A
 
 /// The hook's answer for a command it asks about: (reason, replaced command).
 pub fn ask(dir: &Path, command: &str) -> (String, String) {
+    // STP-32: the page of a key form is written first, so that the dialog sees a fresh page.
+    // The result is ignored: a section or a refused page has no page to write.
+    if let ["stapel", "ok", arg] = command.split_whitespace().collect::<Vec<_>>().as_slice() {
+        let _ = stapel(dir).args(["page", arg]).output();
+    }
     let out = hook_bash(dir, command, "auto")
         .success()
         .get_output()

@@ -7,6 +7,29 @@ use std::path::Path;
 
 const ANSWER: &str = "Answer Yes or No; do not choose \"don't ask again\".";
 
+/// The `page:` line of the summary: the path and the short hash of the page file the guard's
+/// dialog left (STP-32 step 3a).
+fn page_line(dir: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(dir.join(".stapel/tickets/ABC-1/page.md")).unwrap();
+    let hex: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("page: .stapel/tickets/ABC-1/page.md (sha256:{})", &hex[..12])
+}
+
+/// A repository with the ticket ABC-1 of the given title and the usual section texts.
+fn titled_repo(title: &str) -> tempfile::TempDir {
+    let repo = common::stapel_repo();
+    let dir = repo.path();
+    stapel(dir).args(["new", title]).assert().success();
+    set_section(dir, "ABC-1", "Spec", "The spec.");
+    set_section(dir, "ABC-1", "Design", "The design.");
+    set_section(dir, "ABC-1", "Proof", "The proof.");
+    repo
+}
+
 fn confirm(dir: &Path, section: &str) {
     stapel(dir)
         .args(["ok", "ABC-1", section])
@@ -27,14 +50,15 @@ fn section_lines() {
         reason,
         format!(
             "stapel: confirm 4 waiting sections of ABC-1; runs: stapel\n\
+             title: First\n\
+             criteria: 0\n\
              spec: 2 lines changed (+1 -1)\n\
              design: unchanged; depends on spec, which changed\n\
              proof: new, 1 line\n\
              plan: new, 1 line\n\
-             Criteria:\n\
-             - The spec.\n\
-             + The spec, revised.\n\
-             {ANSWER}"
+             {}\n\
+             {ANSWER}",
+            page_line(dir)
         )
     );
 
@@ -58,6 +82,33 @@ fn section_lines() {
     assert!(
         reason.contains("\nplan: new, 3 lines; depends on spec, which changed\n"),
         "{reason}"
+    );
+
+    // A confirmed Spec with two AC rows and a waiting Plan: two criteria.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| AC-1 | first | `t::a` |\n| AC-2 | second | `t::b` |",
+    );
+    for id in ["spec", "design", "proof", "plan"] {
+        confirm(dir, id);
+    }
+    set_section(dir, "ABC-1", "Plan", "The plan, revised.");
+    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    assert_eq!(
+        reason,
+        format!(
+            "stapel: confirm 1 waiting section of ABC-1; runs: stapel\n\
+             title: First\n\
+             criteria: 2\n\
+             plan: 2 lines changed (+1 -1)\n\
+             {}\n\
+             {ANSWER}",
+            page_line(dir)
+        )
     );
 
     // A re-wrapped Spec paragraph: four changed lines, and no Criteria part.
@@ -499,13 +550,30 @@ fn items(prefix: &str, n: usize) -> String {
 
 #[test]
 fn dialog_limit_and_cut() {
-    let repo = repo_with_ticket();
+    // 300 characters: an escape in the first part, and `é` as the last character kept.
+    let title = format!(
+        "{}\x1b[31m{}é{}",
+        "a".repeat(40),
+        "a".repeat(46),
+        "b".repeat(208)
+    );
+    assert_eq!(title.chars().count(), 300);
+    let repo = common::stapel_repo();
     let dir = repo.path();
+    // `stapel new` refuses control characters: the escape goes into the state file.
+    stapel(dir)
+        .args(["new", &title.replace('\x1b', " ")])
+        .assert()
+        .success();
+    let path = dir.join(".stapel/tickets/ABC-1/state.json");
+    let mut state = state_json(dir, "ABC-1");
+    state["title"] = serde_json::Value::String(title.clone());
+    std::fs::write(path, state.to_string()).unwrap();
     independent_sections(dir);
     for id in ["design", "proof", "plan"] {
         confirm(dir, id);
     }
-    let long = format!("| AC-1 | {}é{} | `t::a` |", "a".repeat(87), "b".repeat(200));
+    let long = format!("| AC-1 | {} | `t::a` |", "a".repeat(87));
     let mut spec = vec![long, "| AC-2 | red\x1b[31m and\ttab | `t::b` |".to_string()];
     spec.extend((3..=10).map(|i| format!("| AC-{i} | row {i} | `t::{i}` |")));
     set_section(dir, "ABC-1", "Spec", &spec.join("\n"));
@@ -520,8 +588,10 @@ fn dialog_limit_and_cut() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ok_page_dialog.txt"),
     )
     .unwrap();
-    assert_eq!(reason, golden.trim_end_matches('\n'));
-    assert_eq!(reason.lines().count(), 22);
+    let hash = page_line(dir);
+    let hash = &hash[hash.find("sha256:").unwrap() + 7..hash.len() - 1];
+    assert_eq!(reason, golden.replace("HASH", hash).trim_end_matches('\n'));
+    assert_eq!(reason.lines().count(), 7);
     assert!(reason.lines().all(|l| l.chars().count() <= 100), "{reason}");
 }
 
@@ -576,26 +646,34 @@ fn many_waiting_sections() {
 
     let (reason, _) = ask(dir, "stapel ok ABC-1");
     let lines: Vec<&str> = reason.lines().collect();
-    assert_eq!(lines.len(), 13, "{reason}");
+    assert_eq!(lines.len(), 16, "{reason}");
     assert_eq!(
         lines[0],
         "stapel: confirm 12 waiting sections of ABC-1; runs: stapel"
     );
-    assert_eq!(lines[1], "s1: new, 1 line");
-    assert_eq!(lines[10], "s10: new, 1 line");
-    assert_eq!(lines[11], "… 2 more waiting sections: s11, s12");
-    assert_eq!(lines[12], ANSWER);
+    assert_eq!(lines[1], "title: First");
+    assert_eq!(lines[2], "criteria: 0");
+    assert_eq!(lines[3], "s1: new, 1 line");
+    assert_eq!(lines[12], "s10: new, 1 line");
+    assert_eq!(lines[13], "… 2 more waiting sections: s11, s12");
+    assert_eq!(lines[14], page_line(dir));
+    assert_eq!(lines[15], ANSWER);
+    let page = std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/page.md")).unwrap();
+    assert!(
+        page.contains("\n- s11: new, 1 line\n- s12: new, 1 line\n"),
+        "{page}"
+    );
 
     // Eleven waiting sections: one folded.
     confirm(dir, "s12");
     let (reason, _) = ask(dir, "stapel ok ABC-1");
     let lines: Vec<&str> = reason.lines().collect();
-    assert_eq!(lines.len(), 13, "{reason}");
+    assert_eq!(lines.len(), 16, "{reason}");
     assert_eq!(
         lines[0],
         "stapel: confirm 11 waiting sections of ABC-1; runs: stapel"
     );
-    assert_eq!(lines[11], "… 1 more waiting section: s11");
+    assert_eq!(lines[13], "… 1 more waiting section: s11");
 }
 
 #[test]
@@ -845,51 +923,29 @@ fn frame_and_decisions_diffs() {
 
 #[test]
 fn cut_and_limit_boundaries() {
-    let repo = repo_with_ticket();
-    let dir = repo.path();
-    independent_sections(dir);
-    for id in ["design", "proof", "plan"] {
-        confirm(dir, id);
-    }
-
-    // A dialog line of 100 characters stays whole, one of 101 is cut to 99 and `…`.
-    let hundred = "x".repeat(98);
-    let over = "y".repeat(99);
-    set_section(
-        dir,
-        "ABC-1",
-        "Description",
-        &format!("{hundred}\n\n{over}"),
-    );
-    let (reason, _) = ask(dir, "stapel ok ABC-1");
+    // A summary line of 100 characters stays whole, one of 101 is cut to 99 and `…`.
+    let whole = "x".repeat(93);
+    let repo = titled_repo(&whole);
+    let (reason, _) = ask(repo.path(), "stapel ok ABC-1");
     let lines: Vec<&str> = reason.lines().collect();
-    assert!(lines.contains(&format!("  {hundred}").as_str()), "{reason}");
-    assert_eq!(lines.iter().filter(|l| l.chars().count() == 100).count(), 2);
-    let cut = format!("  {}…", "y".repeat(97));
-    assert!(lines.contains(&cut.as_str()), "{reason}");
+    assert_eq!(lines[1], format!("title: {whole}"), "{reason}");
+    assert_eq!(lines[1].chars().count(), 100);
+
+    let over = "y".repeat(94);
+    let repo = titled_repo(&over);
+    let (reason, _) = ask(repo.path(), "stapel ok ABC-1");
+    let lines: Vec<&str> = reason.lines().collect();
+    assert_eq!(lines[1], format!("title: {}…", "y".repeat(92)), "{reason}");
     assert!(!reason.contains(&over), "{reason}");
 
-    // Frame ends with 15 lines and Criteria has three shown lines (two rows, the old Spec line
-    // counted as other lines): the overflow line takes one of the two free lines, the Criteria
-    // label has no line after it, so the page holds 21 lines.
-    confirm(dir, "spec");
-    set_section(
-        dir,
-        "ABC-1",
-        "Spec",
-        "| AC-1 | one | `t::a` |\n| AC-2 | two | `t::b` |",
-    );
-    set_section(dir, "ABC-1", "Description", &items("f", 15));
+    // The summary does not grow with the text: a long Frame adds no line.
+    let repo = titled_repo("t");
+    let dir = repo.path();
+    independent_sections(dir);
+    set_section(dir, "ABC-1", "Description", &items("f", 40));
     let (reason, _) = ask(dir, "stapel ok ABC-1");
-    assert_eq!(reason.lines().count(), 21, "{reason}");
-    assert!(
-        reason.ends_with(&format!(
-            "\n  - f15\n… 3 more lines (frame 0, criteria 3, decisions 0); all of them: stapel \
-             status ABC-1\n{ANSWER}"
-        )),
-        "{reason}"
-    );
-    assert!(!reason.contains("Criteria:"), "{reason}");
+    assert_eq!(reason.lines().count(), 10, "{reason}");
+    assert!(!reason.contains("f01"), "{reason}");
 }
 
 #[test]
