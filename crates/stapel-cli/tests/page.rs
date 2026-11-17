@@ -211,3 +211,38 @@ fn marks_since_the_last_confirmation() {
     stapel(dir).args(["page", "ABC-1"]).assert().success();
     assert_eq!(read(dir, PAGE), golden("page_changed.md"));
 }
+
+#[test]
+fn fence_longer_than_any_backtick_run() {
+    let repo = new_ticket_repo();
+    let dir = repo.path();
+    set_section(
+        dir,
+        "ABC-1",
+        "Description",
+        "Source: the chat.\n\n### Frame\n\nred \x1b[31mtext\tend\n\n### Decisions\n\n- d1",
+    );
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| AC-1 | has ``` three | `t::a` |\n| AC-2 | has ````` five | `t::b` |",
+    );
+    let path = dir.join(".stapel/tickets/ABC-1/state.json");
+    let mut state = state_json(dir, "ABC-1");
+    state["title"] = serde_json::json!("Ti\ttle");
+    std::fs::write(path, state.to_string()).unwrap();
+    stapel(dir).args(["page", "ABC-1"]).assert().success();
+    let page = read(dir, PAGE);
+    assert!(page.starts_with("# ABC-1 — Ti tle\n"), "{page}");
+    assert!(
+        page.contains(
+            "## Criteria\n``````diff\n | AC-1 | has ``` three | `t::a` |\n \
+             | AC-2 | has ````` five | `t::b` |\n``````\n"
+        ),
+        "{page}"
+    );
+    assert!(page.contains("## Frame\n```diff\n Source: the chat.\n"), "{page}");
+    assert!(page.contains("\n red  [31mtext end\n"), "{page}");
+    assert!(!page.contains('\x1b') && !page.contains('\t'), "{page}");
+}
