@@ -93,11 +93,11 @@ Terms:
 | AC-2 | WHEN a ticket was never confirmed THE page holds every part with a space before each line, as the golden file `page_new.md`; WHEN it was confirmed and then edited THE page marks the changed lines with `+` and `-` in place, as `page_changed.md`. | `page::layout_of_a_new_ticket`, `page::marks_since_the_last_confirmation` |
 | AC-3 | WHEN parts are built THE rules of STP-25 hold in the page: the Frame and the Decisions split at `### Decisions`, every AC row whole, the count line of the Terms when other Spec lines changed, a Spec without rows as its logical lines, no part for a section that is not configured or not waiting. | `ok_page::criteria_new_and_changed`, `ok_page::criteria_without_rows`, `ok_page::frame_and_decisions_new_and_changed`, `ok_page::description_without_headings`, `ok_page::config_without_description`, `ok_page::decisions_boundaries`, `ok_page::frame_and_decisions_diffs` |
 | AC-4 | WHEN a part's line holds backticks or control characters THE fence is longer than any backtick run in the part and each control character is one space; the page has no line limit and no cut. | `page::fence_longer_than_any_backtick_run`, `ok_page::dialog_exactly_at_the_limit` |
-| AC-5 | WHEN `stapel init` writes its ignore lines, in shared and in local mode THE lines hold `/.stapel/tickets/*/page.md`; this repository's `.gitignore` holds it too. | `init::page_is_ignored_in_both_modes` |
+| AC-5 | WHEN `stapel init` writes its ignore lines, in shared and in local mode THE lines hold `/.stapel/tickets/*/page.md`; this repository's `.gitignore` holds it too. | `init::page_is_ignored_in_both_modes`, `init::appends_to_existing_gitignore` |
 | AC-6 | WHEN the guard asks about `stapel ok KEY` with a fresh page THE dialog text is the summary, as the golden file `ok_page_dialog.txt`; the Frame, criteria and Decisions lines are not in it. | `ok_page::section_lines`, `ok_page::many_waiting_sections`, `ok_page::dialog_limit_and_cut`, `ok_page::cut_and_limit_boundaries` |
 | AC-7 | IF the page is missing THEN the guard denies `stapel ok KEY` with `the page of <KEY> is missing; run stapel page <KEY> and read <path>`; IF it is not fresh THEN with `the page of <KEY> is stale; run stapel page <KEY> and read <path> again`. | `page::guard_refuses_without_the_page`, `page::guard_refuses_a_stale_page` |
 | AC-8 | IF the page file changes after the dialog, rewritten or edited by hand, or is removed THEN `stapel ok KEY` with the dialog's grant exits 1 with the grant mismatch text of STP-17 and records nothing; the command does not check freshness itself, the grant facts hold the page hash or `missing`. | `page::grant_binds_the_page` |
-| AC-9 | WHEN sections wait and nothing before `confirm` blocks, and the page is missing or not fresh THE `stapel next` action is `write-page` with the command `stapel page <KEY>` and the facts lines of `confirm`; with a fresh page it is `confirm` as before. | `next::page_before_confirm` |
+| AC-9 | WHEN sections wait and nothing before `confirm` blocks, and the page is missing or not fresh THE `stapel next` action is `write-page` with the command `stapel page <KEY>` and the facts lines of `confirm`; with a fresh page it is `confirm` as before. | `next::page_before_confirm`, `triage::next_triage_before_confirm` |
 | AC-10 | WHEN `stapel init` writes the skill THE skill holds ``- `write-page`: run `stapel page KEY` and name the path it prints in the chat; the person reads the page in the editor while the dialog of `stapel ok KEY` waits.`` and rule 5 holds ``Right after the list run `stapel page KEY`, name the path of the page in the chat, then run `stapel ok KEY` as one plain command``. | `init_process::skill_text_names_the_page` |
 
 ### Guarantees
@@ -113,7 +113,9 @@ Terms:
   case-insensitive file systems; bidi and other format characters (only control characters, Unicode
   category Cc, become spaces); a KEY of 49 characters or more, whose `page:` summary line is cut; a person
   who read an older page before the agent rewrote it (SR1-7, deferred); the Spec lines that are not AC
-  rows, shown only as the count line (SR1-8, deferred).
+  rows, shown only as the count line (SR1-8, deferred); `write-page` when the waiting sections cannot be
+  prepared (a missing or doubled section): `next` says `confirm` and `stapel ok KEY` reports the refusal
+  (D1-1, deferred).
 
 ## Test plan
 
@@ -134,21 +136,21 @@ init_process`); before each GREEN also `--test ticket_drift`.
 |---|---|---|
 | Write | waiting spec and plan: `page.md` written, the line `page: .stapel/tickets/ABC-1/page.md (sha256:` + 12 hex + `)`, the hash equal to the sha256 of the file; run again with no edit: the same bytes | `page::writes_the_page` |
 | Nothing waits | every section confirmed: `nothing to confirm: ABC-1`, no `page.md` | `page::nothing_waits` |
-| Refusals | an unknown KEY, a closed ticket, a foreign KEY in a ticket worktree: exit 1 with the same text as `stapel ok KEY`; no file | `page::refusals_as_ok` |
+| Refusals | an unknown KEY, a closed ticket, a foreign KEY in a ticket worktree: the exit code and text of `stapel ok KEY` (1 for an unknown KEY or a closed ticket, 2 for a foreign KEY); no file | `page::refusals_as_ok` |
 | Not ignored | the ignore line removed from `.gitignore`: exit 1 with the AC-1 text, no file; the line in `.git/info/exclude` only: written | `page::refuses_when_not_ignored` |
 | New ticket | Description with Source, Frame and Decisions; Spec with two AC rows; Design, Proof and Plan waiting: equal to `page_new.md` | `page::layout_of_a_new_ticket` |
 | Changed ticket | the same, confirmed, then one Frame line changed, AC-2 changed, AC-3 added, a Terms line changed, a Decisions line removed: equal to `page_changed.md`; unchanged lines keep a space; `spec, other lines: +1 -1` after the Criteria fence | `page::marks_since_the_last_confirmation` |
 | Parts (STP-25) | the cases of the STP-25 rows for these tests, read from `page.md` with the marks of the Terms | `ok_page::criteria_new_and_changed`, `ok_page::criteria_without_rows`, `ok_page::frame_and_decisions_new_and_changed`, `ok_page::description_without_headings`, `ok_page::config_without_description`, `ok_page::decisions_boundaries`, `ok_page::frame_and_decisions_diffs` |
 | Fence | a criterion with three backticks and one with five: the Criteria fence has six; a Frame line with `\x1b[31m` and a tab: spaces; a title with a tab: a space | `page::fence_longer_than_any_backtick_run` |
 | No limit | 40 Frame lines and a criterion of 300 characters: all in the page, whole, no `more line` text | `ok_page::dialog_exactly_at_the_limit` |
-| Ignore lines | `stapel init` and `stapel init --local`: the line in `.gitignore` or `.git/info/exclude`; a written page is not in `git status --porcelain`; this repository's `.gitignore` holds it | `init::page_is_ignored_in_both_modes` |
+| Ignore lines | `stapel init` and `stapel init --local`: the line in `.gitignore` or `.git/info/exclude`; a written page is not in `git status --porcelain`; this repository's `.gitignore` holds it; the existing `.gitignore` case gets the new line among its exact lines | `init::page_is_ignored_in_both_modes`, `init::appends_to_existing_gitignore` |
 | Summary | the STP-25 fixture of `section_lines`: the summary with `title: ABC-1 title`, `criteria: 0`, the section lines and the `page:` line; no `Criteria:` label; a confirmed Spec with two AC rows and a waiting Plan: `criteria: 2` | `ok_page::section_lines` |
 | Fold | 12 waiting sections: ten lines, then `… 2 more waiting sections: s11, s12`; the page lists all twelve | `ok_page::many_waiting_sections` |
 | Cut | a title of 300 characters with `é` at the cut and `\x1b[31m`: the summary equal to `ok_page_dialog.txt`; a title of 100 characters whole, 101 cut | `ok_page::dialog_limit_and_cut`, `ok_page::cut_and_limit_boundaries` |
 | Missing page | no `page.md` (`hook_bash` without `stapel page`): deny with the AC-7 text, no grant written | `page::guard_refuses_without_the_page` |
 | Stale page | the page, then a Spec edit; again, then a hand edit of `page.md`; again, then `stapel ok ABC-1 spec` in the terminal: each denied with the stale text | `page::guard_refuses_a_stale_page` |
 | Grant | the dialog, then `page.md` edited by hand (ticket unchanged); again, then removed; again, then rewritten after a Decisions edit: exit 1 with the grant mismatch text, `state.json` and `decisions.jsonl` unchanged | `page::grant_binds_the_page` |
-| Next | waiting sections, no page: `next: write-page — stapel page ABC-1` with the `blocked:` lines that `confirm` prints; after `stapel page`: `next: confirm — stapel ok ABC-1`; after a Spec edit: `write-page` again; a blocking finding comes first; the JSON `command` field | `next::page_before_confirm` |
+| Next | waiting sections, no page: `next: write-page — stapel page ABC-1` with the `blocked:` lines that `confirm` prints; after `stapel page`: `next: confirm — stapel ok ABC-1`; after a Spec edit: `write-page` again; the JSON `command` field; a blocking finding comes first, then `write-page` once it is triaged | `next::page_before_confirm`, `triage::next_triage_before_confirm` |
 | Old next tests | the `confirm` expectations of `tests/next.rs`, `tests/triage.rs`, `golden/next_text.txt` and `golden/next_json.txt` become `write-page`, or write the page first where the test means `confirm` | the tests of those files |
 | Skill text | the two AC-10 texts in the skill written by `init` and in this repository's skill; the old `Right after the list run \`stapel ok KEY\`` absent | `init_process::skill_text_names_the_page` |
 
@@ -252,7 +254,28 @@ grant facts with the page hash and prints the mismatch text, no own freshness ch
 
 ### Decisions (as built)
 
-TODO
+- `crates/stapel-core/src/page.rs` holds `page_text(config, waiting)` (the file), `page_hash(bytes)`,
+  `summary(config, key, program, waiting)` (the dialog) and `short_hash`; `marked_parts` and `marked_diff`
+  build the parts with the bare mark, `backtick_run` sizes the fence. `dialog_page`, its overflow line
+  and `MAX_PAGE_LINES` are gone. There is no `page_state` type: the guard (`dialog.rs`) and `next`
+  (`page_fresh` in `crates/stapel-cli/src/next.rs`) each compare the bytes of `page.md` with `page_text`.
+- `criteria_count` reads the Spec of `ticket.md` itself, so `criteria: <n>` counts the rows whether Spec
+  waits or not.
+- The guard reads the page after `prepare_waiting`, so the STP-25 section errors come first.
+  `ok_key_facts(key, waiting, page)` adds `page=<page hash>` or `page=missing`; `ok.rs::run_key` hashes
+  `page.md` as it is.
+- `next` counts the page as fresh when `prepare_waiting` refuses or nothing waits, so `stapel ok KEY`
+  reports the refusal itself.
+- `stapel page` asks `git check-ignore -q --no-index`, so a tracked or untracked path is judged by the
+  ignore lines alone. A foreign KEY exits 2 through `fail::branch_refusal`, as `stapel ok KEY` does.
+- Plan step 2 (a coverage commit of the STP-25 part tests) was merged into the RED of step 1b with the
+  human's consent (2026-11-17): changed bodies of old tests in a coverage commit made steps 1 and 1b
+  unverified (`build-input-changed`), and in the RED of step 1b they fail as they should. The history was
+  rewritten; `page::refuses_when_not_ignored` was fixed in the RED of step 1 by a fixup, because the
+  GREEN of step 3 made `init` write the ignore line it assumed absent.
+- The `dialog_limit_and_cut` fixture writes the escape sequence into `state.json`, because `stapel new`
+  refuses control characters in a title.
+- This repository's skill and `.gitignore` were written by `stapel cargo run -p stapel-cli -- init`.
 
 ## Proof
 
@@ -262,11 +285,11 @@ TODO
 | AC-2 | `page::layout_of_a_new_ticket`, `page::marks_since_the_last_confirmation` |
 | AC-3 | `ok_page::criteria_new_and_changed`, `ok_page::criteria_without_rows`, `ok_page::frame_and_decisions_new_and_changed`, `ok_page::description_without_headings`, `ok_page::config_without_description`, `ok_page::decisions_boundaries`, `ok_page::frame_and_decisions_diffs` |
 | AC-4 | `page::fence_longer_than_any_backtick_run`, `ok_page::dialog_exactly_at_the_limit` |
-| AC-5 | `init::page_is_ignored_in_both_modes` |
+| AC-5 | `init::page_is_ignored_in_both_modes`, `init::appends_to_existing_gitignore` |
 | AC-6 | `ok_page::section_lines`, `ok_page::many_waiting_sections`, `ok_page::dialog_limit_and_cut`, `ok_page::cut_and_limit_boundaries` |
 | AC-7 | `page::guard_refuses_without_the_page`, `page::guard_refuses_a_stale_page` |
 | AC-8 | `page::grant_binds_the_page` |
-| AC-9 | `next::page_before_confirm` |
+| AC-9 | `next::page_before_confirm`, `triage::next_triage_before_confirm` |
 | AC-10 | `init_process::skill_text_names_the_page` |
 
 ## Plan
@@ -277,18 +300,19 @@ Route: full (tags `guard`, `interface`), auto.
    `page::refusals_as_ok`, `page::refuses_when_not_ignored`): the page holds the title and the Sections
    list only; the parts come in step 1b. The tests write the ignore line themselves where they need it.
    Must not change: the dialog and the terminal form.
-1b. The parts and the marks (AC-2; tests `page::layout_of_a_new_ticket`,
-   `page::marks_since_the_last_confirmation`); the golden files come with the RED. Must not change: step 1.
-2. Coverage, no GREEN (AC-3, AC-4; tests `ok_page::criteria_new_and_changed`,
+1b. The parts and the marks (AC-2, AC-3, AC-4; tests `page::layout_of_a_new_ticket`,
+   `page::marks_since_the_last_confirmation`, `ok_page::criteria_new_and_changed`,
    `ok_page::criteria_without_rows`, `ok_page::frame_and_decisions_new_and_changed`,
    `ok_page::description_without_headings`, `ok_page::config_without_description`,
    `ok_page::decisions_boundaries`, `ok_page::frame_and_decisions_diffs`,
-   `ok_page::dialog_exactly_at_the_limit`): the old bodies read `page.md` in place of the dialog text and
-   pass at once, because step 1 writes the parts.
-2a. The fence and the cleaning (AC-4; test `page::fence_longer_than_any_backtick_run`). Must not change:
-   steps 1 and 2.
-3. The ignore line (AC-5; test `init::page_is_ignored_in_both_modes`); the GREEN also runs `init` here.
-   Must not change: the other ignore lines.
+   `ok_page::dialog_exactly_at_the_limit`); the golden files come with the RED; the old STP-25 bodies read
+   `page.md` in place of the dialog text and fail at the RED, because step 1 writes no parts; the RED also
+   adds the Criteria part to the bytes `page::writes_the_page` expects. Must not change: step 1.
+2a. Coverage, no GREEN (AC-4; test `page::fence_longer_than_any_backtick_run`): step 1b already writes the
+   longer fence and the cleaning, so the test passes at once.
+3. The ignore line (AC-5; tests `init::page_is_ignored_in_both_modes`, `init::appends_to_existing_gitignore`,
+   whose exact lines the RED extends); the GREEN also runs `init` here. Must not change: the other ignore
+   lines.
 3a. The summary (AC-6; tests `ok_page::section_lines`, `ok_page::many_waiting_sections`,
    `ok_page::dialog_limit_and_cut`, `ok_page::cut_and_limit_boundaries`): the RED changes `common::ask`
    and the golden file `ok_page_dialog.txt`. Must not change: the terminal form, the grant facts.
@@ -296,8 +320,8 @@ Route: full (tags `guard`, `interface`), auto.
    `page::guard_refuses_a_stale_page`, `page::grant_binds_the_page`). Must not change: 3a and the STP-25
    tests `ok_page::description_missing_or_twice`, `ok_page::grant_binds_the_description`,
    `ok_page::grant_passes_when_unchanged`.
-5. `write-page` in `next` (AC-9; test `next::page_before_confirm`); the RED also changes the old `confirm`
-   expectations. Must not change: the order of the other actions.
+5. `write-page` in `next` (AC-9; tests `next::page_before_confirm`, `triage::next_triage_before_confirm`);
+   the RED also changes the old `confirm` expectations of twelve `next` tests and the two golden files. Must not change: the order of the other actions.
 6. The skill text (AC-10; test `init_process::skill_text_names_the_page`); the GREEN changes
    `crates/stapel-cli/assets/` and runs `init` here. Must not change: the skill sentences other than the
    `write-page` bullet and the rule 5 sentence.
