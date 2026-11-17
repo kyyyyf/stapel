@@ -1223,7 +1223,7 @@ fn next_triage_before_confirm() {
     append(dir, &triage_line("F-1", json!({"fate": "patch"})));
     let (facts, action) = next_lines(dir);
     assert!(facts.is_empty(), "{facts:?}");
-    assert_eq!(action, "next: confirm — stapel ok ABC-1");
+    assert_eq!(action, "next: write-page — stapel page ABC-1");
 }
 
 #[test]
