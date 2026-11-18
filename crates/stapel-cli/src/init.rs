@@ -191,6 +191,8 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
         }
     }
 
+    write_workflow(&root, &config)?;
+
     if !on_path("stapel") {
         warn!(
             "warning: stapel is not on PATH; until it is, the hook denies every tool call it \
@@ -210,6 +212,38 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
         say!("{}", LOCAL_CHECKLIST.trim_end());
     }
     Ok(())
+}
+
+const WORKFLOW: &str = ".github/workflows/stapel-check.yml";
+
+/// The prefix of a key `<PREFIX>-{n}` with 2 to 8 uppercase Latin letters.
+fn key_prefix(key: &str) -> Option<&str> {
+    let prefix = key.strip_suffix("-{n}")?;
+    let ok = (2..=8).contains(&prefix.len()) && prefix.bytes().all(|b| b.is_ascii_uppercase());
+    ok.then_some(prefix)
+}
+
+/// Writes the workflow when nothing is at its path, a clean build commit and a prefix exist.
+/// Silent; an existing path is never touched.
+fn write_workflow(root: &Path, config: &Config) -> Result<(), String> {
+    let path = root.join(WORKFLOW);
+    if std::fs::symlink_metadata(&path).is_ok() {
+        return Ok(());
+    }
+    let crate::build_commit::BuildCommit::Clean(commit) = crate::build_commit::build_commit()
+    else {
+        return Ok(());
+    };
+    let Some(prefix) = key_prefix(&config.tickets.key) else {
+        return Ok(());
+    };
+    let text = include_str!("../assets/stapel-check.yml")
+        .replace("{PREFIX}", prefix)
+        .replace("{COMMIT}", &commit);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::write(&path, text).map_err(|e| format!("{WORKFLOW}: {e}"))
 }
 
 /// The person's manual steps after `init` in the local mode.
