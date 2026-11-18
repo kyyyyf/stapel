@@ -1964,3 +1964,48 @@ fn depends_agent_fields() {
         .stdout(contains("updated: .stapel/stapel.toml"));
     assert!(read(odir, ".stapel/stapel.toml").contains("stapel-depends = \"depends\""));
 }
+
+// STP-33 AC-11: this repository's workflow is stapel's file, equal to the golden cargo workflow for
+// prefix STP and the commit of its install line; `docs/install.md` holds the install command.
+#[test]
+fn this_repository_has_the_workflow() {
+    let root = repo_root();
+    let text = std::fs::read_to_string(root.join(".github/workflows/stapel-check.yml"))
+        .expect("this repository has no workflow");
+    let (marker, body) = text.split_once('\n').expect("marker line");
+    let rest = marker.strip_prefix("# stapel: ").expect("marker form");
+    let (version, hash) = rest.split_once(" sha256:").expect("marker form");
+    assert_eq!(version, env!("CARGO_PKG_VERSION"));
+    let digest: String = Sha256::digest(body.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(digest, hash, "the hash does not match");
+    let head = "cargo install --git https://github.com/kyyyyf/stapel --rev ";
+    let line = body.lines().find(|l| l.contains(head)).expect("install line");
+    let commit = line
+        .split_once(head)
+        .unwrap()
+        .1
+        .split_once(" --locked stapel-cli")
+        .expect("install line form")
+        .0;
+    assert!(
+        (commit.len() == 40 || commit.len() == 64)
+            && commit
+                .chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+        "commit {commit:?}"
+    );
+    let golden = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/stapel_check_cargo.yml"),
+    )
+    .unwrap()
+    .replace("<prefix>", "STP")
+    .replace("<commit>", commit);
+    assert_eq!(body, golden);
+    let install = std::fs::read_to_string(root.join("docs/install.md")).unwrap();
+    for want in ["STAPEL_BUILD_COMMIT=", "git rev-parse HEAD", "git status --porcelain"] {
+        assert!(install.contains(want), "docs/install.md lacks {want}");
+    }
+}
