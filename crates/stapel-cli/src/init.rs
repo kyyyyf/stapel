@@ -179,6 +179,9 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
     plan_hooks(&root, &mut plan)?;
     let mut kept = false;
     plan_process_files(&root, &config, &mut plan, &mut kept)?;
+    if !is_local {
+        plan_workflow(&config, &root, &mut plan, &mut kept);
+    }
 
     for step in &plan {
         let path = root.join(&step.rel);
@@ -189,10 +192,6 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
         if step.executable {
             make_executable(&path).map_err(|e| format!("{}: {e}", step.rel))?;
         }
-    }
-
-    if !is_local {
-        write_workflow(&root, &config)?;
     }
 
     if !on_path("stapel") {
@@ -225,19 +224,18 @@ fn key_prefix(key: &str) -> Option<&str> {
     ok.then_some(prefix)
 }
 
-/// Writes the workflow when nothing is at its path, a clean build commit and a prefix exist.
-/// Silent; an existing path is never touched.
-fn write_workflow(root: &Path, config: &Config) -> Result<(), String> {
-    let path = root.join(WORKFLOW);
-    if std::fs::symlink_metadata(&path).is_ok() {
-        return Ok(());
-    }
+/// Plans the workflow: created when missing, updated when it is an unchanged file of stapel, kept
+/// with a warning otherwise. Nothing is planned without a prefix or a clean build commit.
+/// The lines `plan_create_text` prints for it, spelled out so that the ticket lint finds them:
+/// `created: .github/workflows/stapel-check.yml`, `updated: .github/workflows/stapel-check.yml`,
+/// `warning: .github/workflows/stapel-check.yml is not the file stapel wrote; kept. Delete it and run stapel init to take stapel's text`.
+fn plan_workflow(config: &Config, root: &Path, plan: &mut Vec<Step>, kept: &mut bool) {
     let key = &config.tickets.key;
     let Some(prefix) = key_prefix(key) else {
         warn!(
             "warning: the ticket key {key} is not <PREFIX>-{{n}}, so {WORKFLOW} was not written"
         );
-        return Ok(());
+        return;
     };
     let commit = match crate::build_commit::build_commit() {
         crate::build_commit::BuildCommit::Clean(commit) => commit,
@@ -246,30 +244,40 @@ fn write_workflow(root: &Path, config: &Config) -> Result<(), String> {
                 "warning: this stapel was built from a dirty tree ({value}), so {WORKFLOW} was \
                  not written; commit and push the change, then reinstall stapel"
             );
-            return Ok(());
+            return;
         }
         crate::build_commit::BuildCommit::Missing => {
             // One line, so that the ticket lint finds the quoted text.
             #[rustfmt::skip]
             warn!("warning: this stapel has no build commit, so .github/workflows/stapel-check.yml was not written; reinstall stapel from a clean checkout as docs/install.md says");
-            return Ok(());
+            return;
         }
     };
     let text = include_str!("../assets/stapel-check.yml")
         .replace("{PREFIX}", prefix)
         .replace("{COMMIT}", &commit);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
     use sha2::{Digest, Sha256};
     let hash: String = Sha256::digest(text.as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
     let text = format!("# stapel: {} sha256:{hash}\n{text}", env!("CARGO_PKG_VERSION"));
-    std::fs::write(&path, text).map_err(|e| format!("{WORKFLOW}: {e}"))?;
-    println!("created: .github/workflows/stapel-check.yml");
-    Ok(())
+    plan_create_text(root, WORKFLOW.to_string(), text, plan, kept, unchanged_workflow_version);
+}
+
+/// The marker version of an unchanged workflow: the first line is the marker, its hash is the
+/// SHA-256 of the rest.
+fn unchanged_workflow_version(text: &str) -> Option<(u64, u64, u64)> {
+    use sha2::{Digest, Sha256};
+    let (marker, body) = text.split_once('\n')?;
+    let rest = marker.strip_prefix("# stapel: ")?;
+    let (version, hash) = rest.split_once(" sha256:")?;
+    let version = parse_version(version)?;
+    let digest: String = Sha256::digest(body.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    (hash.len() == 64 && digest == hash).then_some(version)
 }
 
 /// The person's manual steps after `init` in the local mode.
@@ -478,7 +486,7 @@ fn plan_process_files(
         ],
         include_str!("../assets/skill.md"),
     );
-    plan_create_text(root, SKILL_PATH.to_string(), skill, plan, kept);
+    plan_create_text(root, SKILL_PATH.to_string(), skill, plan, kept, unchanged_version);
     for agent in AGENT_FILES {
         let binding = config.models.get(agent.role);
         let mut lines = vec![
@@ -500,6 +508,7 @@ fn plan_process_files(
             text,
             plan,
             kept,
+            unchanged_version,
         );
     }
     Ok(())
@@ -514,6 +523,7 @@ fn plan_create_text(
     content: String,
     plan: &mut Vec<Step>,
     kept: &mut bool,
+    version_of: fn(&str) -> Option<(u64, u64, u64)>,
 ) {
     let path = root.join(&rel);
     let not_stapels = |kept: &mut bool| {
@@ -528,7 +538,7 @@ fn plan_create_text(
         Ok(meta) if meta.is_file() => {
             let Some(version) = std::fs::read_to_string(&path)
                 .ok()
-                .and_then(|old| unchanged_version(&old).map(|v| (old, v)))
+                .and_then(|old| version_of(&old).map(|v| (old, v)))
             else {
                 not_stapels(kept);
                 return;
