@@ -362,6 +362,54 @@ fn version_names_the_commit() {
     }
 }
 
+// STP-33 AC-9: under the junit runner the workflow is the junit golden workflow and `init` prints the
+// `note:` line, also on a re-run with the same text; a missing commit prints no note.
+#[test]
+fn junit_setup_step() {
+    use sha2::{Digest, Sha256};
+    let note = "note: fill in the step Setup of .github/workflows/stapel-check.yml; the job fails \
+                until you do";
+    let repo = common::git_repo();
+    let dir = repo.path();
+    // The cargo workflow has no note and no Setup step.
+    let first = init_with(dir, None, &["--prefix", "ABC"]);
+    assert!(!first.contains("note: fill in"), "{first}");
+    let path = dir.join(".stapel/stapel.toml");
+    let mut toml = std::fs::read_to_string(&path).unwrap();
+    toml.push_str("\n[check]\nrunner = \"junit\"\ncommand = \"true {file}\"\nreport = \"junit.xml\"\n");
+    std::fs::write(&path, toml).unwrap();
+
+    let out = init_with(dir, Some(SHA), &[]);
+    assert!(has_line(&out, &format!("created: {WORKFLOW}")), "{out}");
+    assert!(has_line(&out, note), "{out}");
+    let text = common::read(dir, WORKFLOW);
+    let (marker, body) = text.split_once('\n').expect("marker line");
+    let rest = marker.strip_prefix("# stapel: ").expect("marker form");
+    let (version, hash) = rest.split_once(" sha256:").expect("marker form");
+    assert_eq!(version, env!("CARGO_PKG_VERSION"));
+    let digest: String = Sha256::digest(body.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(digest, hash);
+    let golden = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/stapel_check_junit.yml"),
+    )
+    .unwrap()
+    .replace("<prefix>", "ABC")
+    .replace("<commit>", SHA);
+    assert_eq!(body, golden);
+
+    let again = init_with(dir, Some(SHA), &[]);
+    assert!(has_line(&again, note), "{again}");
+    assert!(!again.contains("updated:"), "{again}");
+    assert_eq!(common::read(dir, WORKFLOW), text);
+
+    let missing = init_with(dir, None, &[]);
+    assert!(missing.contains("has no build commit"), "{missing}");
+    assert!(!missing.contains("note: fill in"), "{missing}");
+}
+
 fn refused(dir: &std::path::Path, commit: Option<&str>, message: &str) {
     let mut cmd = common::stapel(dir);
     cmd.env_remove("STAPEL_TEST_BUILD_COMMIT");
