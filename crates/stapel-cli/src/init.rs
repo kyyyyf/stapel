@@ -180,6 +180,7 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
     let mut kept = false;
     plan_process_files(&root, &config, &mut plan, &mut kept)?;
     if !is_local {
+        check_workflow_path(&root)?;
         plan_workflow(&config, &root, &mut plan, &mut kept);
     }
 
@@ -216,6 +217,22 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
 }
 
 const WORKFLOW: &str = ".github/workflows/stapel-check.yml";
+
+/// Refuses when the workflow's path, `.github` or `.github/workflows` is not a place to write a
+/// file: a folder at the file path, a file or a symlink at a folder path. A missing path is fine.
+fn check_workflow_path(root: &Path) -> Result<(), String> {
+    for rel in [".github", ".github/workflows"] {
+        if let Ok(meta) = std::fs::symlink_metadata(root.join(rel)) {
+            if !meta.is_dir() {
+                return Err(format!("{rel} is not a directory; nothing was written"));
+            }
+        }
+    }
+    if std::fs::symlink_metadata(root.join(WORKFLOW)).is_ok_and(|m| m.is_dir()) {
+        return Err(format!("{WORKFLOW} is a directory; nothing was written"));
+    }
+    Ok(())
+}
 
 /// The prefix of a key `<PREFIX>-{n}` with 2 to 8 uppercase Latin letters.
 fn key_prefix(key: &str) -> Option<&str> {
