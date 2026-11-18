@@ -232,6 +232,13 @@ fn write_workflow(root: &Path, config: &Config) -> Result<(), String> {
     if std::fs::symlink_metadata(&path).is_ok() {
         return Ok(());
     }
+    let key = &config.tickets.key;
+    let Some(prefix) = key_prefix(key) else {
+        warn!(
+            "warning: the ticket key {key} is not <PREFIX>-{{n}}, so {WORKFLOW} was not written"
+        );
+        return Ok(());
+    };
     let commit = match crate::build_commit::build_commit() {
         crate::build_commit::BuildCommit::Clean(commit) => commit,
         crate::build_commit::BuildCommit::Dirty(value) => {
@@ -242,15 +249,11 @@ fn write_workflow(root: &Path, config: &Config) -> Result<(), String> {
             return Ok(());
         }
         crate::build_commit::BuildCommit::Missing => {
-            warn!(
-                "warning: this stapel has no build commit, so .github/workflows/stapel-check.yml \
-                 was not written; reinstall stapel from a clean checkout as docs/install.md says"
-            );
+            // One line, so that the ticket lint finds the quoted text.
+            #[rustfmt::skip]
+            warn!("warning: this stapel has no build commit, so .github/workflows/stapel-check.yml was not written; reinstall stapel from a clean checkout as docs/install.md says");
             return Ok(());
         }
-    };
-    let Some(prefix) = key_prefix(&config.tickets.key) else {
-        return Ok(());
     };
     let text = include_str!("../assets/stapel-check.yml")
         .replace("{PREFIX}", prefix)
