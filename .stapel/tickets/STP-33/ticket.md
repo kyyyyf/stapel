@@ -305,7 +305,7 @@ into that branch; not promised).
 | AC-8 | `init_workflow::key_without_prefix` |
 | AC-9 | `init_workflow::junit_setup_step` |
 | AC-10 | `init_workflow::version_names_the_commit` |
-| AC-11 | `init_process::this_repository_has_the_workflow`; the green run of the workflow on branch `STP-33` (link added after the person pushes) |
+| AC-11 | `init_process::this_repository_has_the_workflow`; the green run of the workflow on branch `STP-33` at `4bad7c3`: https://github.com/kyyyyf/stapel/actions/runs/44380029933 (2026-11-18, 10 min 55 s for the whole job, under the estimate of SR1-9) |
 
 ## Plan
 
