@@ -1,6 +1,7 @@
 #[macro_use]
 mod out;
 mod brief;
+mod build_commit;
 mod cargo;
 mod check;
 mod close;
@@ -27,7 +28,7 @@ use std::process::ExitCode;
 
 /// Carries a development ticket from description to merge.
 #[derive(Parser)]
-#[command(name = "stapel", version)]
+#[command(name = "stapel", version = build_commit::version_text())]
 struct Cli {
     #[command(subcommand)]
     command: Command,
