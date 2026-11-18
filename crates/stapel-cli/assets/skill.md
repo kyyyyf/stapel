@@ -68,10 +68,14 @@ list must not only grow.
    estimate: a ticket that outgrows its frame is split, not grown. The person confirms the frame.
 2. **Questions before text.** Ask the person questions from the coverage map (the categories of
    `.stapel/config/coverage-taxonomy.yml` and the dimensions of every external system the ticket reads, from
-   `.stapel/config/external-states.yml`), one at a time or in a small group, each with options and a
+   `.stapel/config/external-states.yml`) in one dialog at the Frame, at most four, each with options and a
    recommendation. Answers go into the ticket's **Decisions** log with their date; nothing is invented where
    the person has not answered. For a tagged ticket, study the prior art (earlier tickets, other tools)
-   before the questions.
+   before the questions. After the Frame is confirmed the orchestrator asks no question in the chat, except an
+   `intent_gap` of the builder and a HIGH finding after round 2: a choice that comes up during the build or a
+   review is taken as the orchestrator's recommendation, recorded in Decisions with its date and the mark
+   `agent`, and listed in the Summary for the person to overrule at the close; a change that widens the
+   promise still goes through the `stapel ok` dialog (rule 5).
 3. **Short criteria.** One behaviour per criterion, at most about 500 characters, written as
    `WHEN <event> THE <command> <does>` or `IF <unwanted condition> THEN …`, each naming its test. Exact output
    lives in golden files; internal mechanics go to Design "as built". The test plan has an **Inputs** table
@@ -104,7 +108,9 @@ list must not only grow.
 6. **During the build.** Keep Design "as built" as notes and move them into the ticket once, before code
    review; an uncommitted edit of `ticket.md` makes its confirmation stale. A drift review runs once on a
    tagged ticket, before code review: the agent `stapel-drift` gets the diff `base..HEAD` of the steps that
-   touch a criterion and those criteria, nothing else. `stapel check` shows that every step's tests failed at RED and pass
+   touch a criterion and those criteria, nothing else. A promise about what a person sees on a screen (layout,
+   scrolling, a size that a unit test stubs) is checked by the orchestrator in a real browser on a local stand
+   before code review, not asked of the person; the Review section records the stand and the numbers. `stapel check` shows that every step's tests failed at RED and pass
    at GREEN and HEAD; run it after every builder commit. stapel check runs the tests with the lock file as
    it is, so a stale lock file fails the check. The ticket lint fails when a ticket names a test that does
    not exist, a test exists that no ticket names, a criterion quotes an output line that is not in the code,
