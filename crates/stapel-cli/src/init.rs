@@ -191,7 +191,9 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
         }
     }
 
-    write_workflow(&root, &config)?;
+    if !is_local {
+        write_workflow(&root, &config)?;
+    }
 
     if !on_path("stapel") {
         warn!(
