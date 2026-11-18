@@ -248,11 +248,11 @@ into that branch; not promised).
 - A new module `crates/stapel-cli/src/build_commit.rs` gives `build_commit() -> BuildCommit` (`Clean(sha)`,
   `Dirty(value)`, `Missing`) from `option_env!("STAPEL_BUILD_COMMIT")`, or in a debug build from the run-time
   variable `STAPEL_TEST_BUILD_COMMIT` when it is set; and `version_text()` for clap's `version`.
-- A new module `crates/stapel-cli/src/workflow.rs` holds the two templates as `include_str!` of
-  `crates/stapel-cli/assets/workflow/stapel-check.yml` with a marked junit block, fills `<prefix>` and
-  `<commit>` by plain replacement of those two tokens only (the marker's version and hash are computed,
-  not filled), adds the marker line, and gives `plan_workflow(root, config, local, plan, kept)`. The
-  marker check is a first-line form of `unchanged_version`, sharing its version and hash rules.
+- A new module holds the templates as `include_str!` of one asset with a marked junit block, fills
+  `<prefix>` and `<commit>` by plain replacement of those two tokens only (the marker's version and hash
+  are computed, not filled), adds the marker line, and gives `plan_workflow`. The marker check is a
+  first-line form of `unchanged_version`, sharing its version and hash rules. (As built differs: see
+  below.)
 - `init::run` calls `plan_workflow` after `plan_process_files`; it follows the order of outcomes of the
   Terms; the path refusals of AC-5 (`symlink_metadata` of `.github`, `.github/workflows` and the file)
   join the other refusals before anything is written; the warnings and the `note:` line print with the
@@ -263,6 +263,33 @@ into that branch; not promised).
 - This repository's workflow is written by `stapel cargo run -p stapel-cli -- init` in the worktree with
   `STAPEL_BUILD_COMMIT` set to the RED commit of step 6 (clean, holding all the code), not by the installed
   binary.
+
+### Decisions (as built)
+
+- `crates/stapel-cli/src/build_commit.rs` holds `BuildCommit`, `parse`, `build_commit()` and
+  `version_text()`; `main.rs` declares `version = build_commit::version_text()`.
+- There is no `workflow.rs`: the workflow code lives in `crates/stapel-cli/src/init.rs` as
+  `check_workflow_path` (the AC-5 refusals, shared mode only, before anything is written), `key_prefix`,
+  `plan_workflow` (the warnings in the order of the Terms, then `plan_create_text`; it returns whether the
+  junit `note:` line is due) and `unchanged_workflow_version` (the first-line marker).
+  `plan_create_text` takes the marker reader as an argument; the process files pass `unchanged_version`.
+- Two templates, not one with a block: `crates/stapel-cli/assets/stapel-check.yml` and
+  `crates/stapel-cli/assets/stapel-check-junit.yml`, with the tokens `{PREFIX}` and `{COMMIT}`; the golden
+  files use `<prefix>` and `<commit>`.
+- Step 2 first wrote the workflow outside the plan; step 4 moved it into the plan, so a kept workflow
+  stops the `already set up` line as a kept process file does.
+- `workflow_lines` checks the shared mode only and nothing about `init`'s output lines; it also checks the
+  `push:` and `pull_request:` triggers and the whole `if:` line (D1-3). The RED of step 3 makes
+  `init_process::hash_computed_by_hand` and `hooks_install::no_warning_when_stapel_on_path` expect exactly
+  the AC-7 missing-commit warning (D1-2), so both fail at that RED.
+- The history was rewritten with the human's consent (2026-11-18): `stapel check` found steps 2a, 2b and
+  3 `no-red`, because their REDs changed old tests that did not fail there. The `workflow_lines` changes
+  moved into the RED of step 2, and the two step 3 tests became exact. The old head is the local branch
+  `STP-33-backup`.
+- The quoted output lines stand as literals in the code that prints them (the ticket lint looks for them);
+  the missing-commit warning is one line under `#[rustfmt::skip]`. Step 4 also repeats the `created:`,
+  `updated:` and kept lines in a doc comment of `plan_workflow`.
+- This repository's workflow pins `f49448d2da1aabeea046a5e44d5b72bb56f319e7`, the RED commit of step 6.
 
 ## Proof
 
