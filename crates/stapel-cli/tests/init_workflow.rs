@@ -177,6 +177,42 @@ fn dirty_build_commit() {
     assert!(dir.join(".claude/skills/stapel/SKILL.md").is_file());
 }
 
+// STP-33 AC-8: a key without a `<PREFIX>-{n}` form writes no workflow and prints the warning, also
+// when the build commit is missing.
+#[test]
+fn key_without_prefix() {
+    let bad = ["{n}", "abc-{n}", "ABC{n}", "A-{n}", "ABCDEFGHI-{n}"];
+    for commit in [Some(SHA), None] {
+        for key in bad {
+            let repo = common::git_repo();
+            let dir = repo.path();
+            init_with(dir, None, &["--prefix", "ABC"]);
+            let path = dir.join(".stapel/stapel.toml");
+            let text = std::fs::read_to_string(&path).unwrap();
+            std::fs::write(&path, text.replace("ABC-{n}", key)).unwrap();
+            let output = init_with(dir, commit, &[]);
+            let warning = format!(
+                "warning: the ticket key {key} is not <PREFIX>-{{n}}, so \
+                 .github/workflows/stapel-check.yml was not written"
+            );
+            assert!(output.lines().any(|l| l == warning), "{key} {commit:?}: {output}");
+            assert!(!output.contains("no build commit"), "{key} {commit:?}: {output}");
+            assert!(!dir.join(".github").exists(), "{key} {commit:?}");
+        }
+    }
+    for key in ["AB-{n}", "ABCDEFGH-{n}"] {
+        let repo = common::git_repo();
+        let dir = repo.path();
+        init_with(dir, None, &["--prefix", "ABC"]);
+        let path = dir.join(".stapel/stapel.toml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, text.replace("ABC-{n}", key)).unwrap();
+        let output = init_with(dir, Some(SHA), &[]);
+        assert!(!output.contains("is not <PREFIX>-{n}"), "{key}: {output}");
+        assert!(dir.join(WORKFLOW).is_file(), "{key}");
+    }
+}
+
 #[test]
 fn version_names_the_commit() {
     let version = env!("CARGO_PKG_VERSION");
