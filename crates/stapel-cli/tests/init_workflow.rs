@@ -96,6 +96,53 @@ fn writes_the_workflow() {
     assert_eq!(body, golden);
 }
 
+// STP-33 AC-6: the local mode writes no workflow and prints nothing about it.
+#[test]
+fn local_mode_writes_no_workflow() {
+    let sha_dirty = format!("{SHA}-dirty");
+    // (commit, extra toml appended before a second run, folder at the workflow path)
+    let cases: [(Option<&str>, &str, bool); 5] = [
+        (Some(SHA), "", false),
+        (None, "", false),
+        (Some(SHA), "\n[tickets]\nkey = \"{n}\"\n", false),
+        (Some(SHA), "\n[check]\nrunner = \"junit\"\ncommand = \"true {file}\"\nreport = \"junit.xml\"\n", false),
+        (Some(SHA), "", true),
+    ];
+    for (commit, extra, folder) in cases {
+        let repo = common::git_repo();
+        let dir = repo.path();
+        if folder {
+            std::fs::create_dir_all(dir.join(WORKFLOW)).unwrap();
+        }
+        let mut outputs = vec![init_with(dir, commit, &["--local", "--prefix", "ABC"])];
+        if !extra.is_empty() {
+            let path = dir.join(".stapel/stapel.toml");
+            let mut text = std::fs::read_to_string(&path).unwrap();
+            if extra.contains("[tickets]") {
+                text = text.replace("ABC-{n}", "{n}");
+            } else {
+                text.push_str(extra);
+            }
+            std::fs::write(&path, text).unwrap();
+            outputs.push(init_with(dir, commit, &["--local"]));
+        }
+        outputs.push(init_with(dir, Some(&sha_dirty), &["--local"]));
+        for out in outputs {
+            for line in out.lines() {
+                assert!(
+                    !line.contains("stapel-check") && !line.contains("workflow"),
+                    "line about the workflow: {line}\n{out}"
+                );
+            }
+        }
+        if folder {
+            assert!(dir.join(WORKFLOW).is_dir());
+        } else {
+            assert!(!dir.join(".github").exists());
+        }
+    }
+}
+
 #[test]
 fn version_names_the_commit() {
     let version = env!("CARGO_PKG_VERSION");
