@@ -243,7 +243,15 @@ fn write_workflow(root: &Path, config: &Config) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
-    std::fs::write(&path, text).map_err(|e| format!("{WORKFLOW}: {e}"))
+    use sha2::{Digest, Sha256};
+    let hash: String = Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let text = format!("# stapel: {} sha256:{hash}\n{text}", env!("CARGO_PKG_VERSION"));
+    std::fs::write(&path, text).map_err(|e| format!("{WORKFLOW}: {e}"))?;
+    println!("created: .github/workflows/stapel-check.yml");
+    Ok(())
 }
 
 /// The person's manual steps after `init` in the local mode.
