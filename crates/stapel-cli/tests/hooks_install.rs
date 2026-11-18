@@ -172,7 +172,8 @@ fn no_warning_when_stapel_on_path() {
         .env("PATH", path)
         .assert()
         .success()
-        .stderr(predicates::str::is_empty());
+        // STP-33 AC-7: the missing build commit is the only line on stderr.
+        .stderr("warning: this stapel has no build commit, so .github/workflows/stapel-check.yml was not written; reinstall stapel from a clean checkout as docs/install.md says\n");
 }
 
 fn installed_command(dir: &Path) -> String {

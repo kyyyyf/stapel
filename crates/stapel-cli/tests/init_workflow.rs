@@ -143,6 +143,40 @@ fn local_mode_writes_no_workflow() {
     }
 }
 
+// STP-33 AC-7: a missing build commit writes no workflow and prints the warning; the skill is written.
+#[test]
+fn no_build_commit() {
+    let warning = "warning: this stapel has no build commit, so .github/workflows/stapel-check.yml \
+                   was not written; reinstall stapel from a clean checkout as docs/install.md says";
+    let upper = SHA.to_uppercase();
+    let short = &SHA[..39];
+    for commit in [None, Some(""), Some("abc"), Some(short), Some(upper.as_str())] {
+        let repo = common::git_repo();
+        let dir = repo.path();
+        let output = init_with(dir, commit, &["--prefix", "ABC"]);
+        assert!(output.lines().any(|l| l == warning), "{commit:?}: {output}");
+        assert!(!dir.join(".github").exists(), "{commit:?}");
+        assert!(dir.join(".claude/skills/stapel/SKILL.md").is_file(), "{commit:?}");
+    }
+}
+
+// STP-33 AC-7: a dirty build commit writes no workflow and the warning names the value.
+#[test]
+fn dirty_build_commit() {
+    let repo = common::git_repo();
+    let dir = repo.path();
+    let value = format!("{SHA}-dirty");
+    let output = init_with(dir, Some(&value), &["--prefix", "ABC"]);
+    let warning = format!(
+        "warning: this stapel was built from a dirty tree ({value}), so \
+         .github/workflows/stapel-check.yml was not written; commit and push the change, then \
+         reinstall stapel"
+    );
+    assert!(output.lines().any(|l| l == warning), "{output}");
+    assert!(!dir.join(".github").exists());
+    assert!(dir.join(".claude/skills/stapel/SKILL.md").is_file());
+}
+
 #[test]
 fn version_names_the_commit() {
     let version = env!("CARGO_PKG_VERSION");

@@ -1346,7 +1346,9 @@ fn hash_computed_by_hand() {
             .any(|l| l == format!("updated: {}", AGENTS[0])),
         "{stdout}"
     );
-    assert!(!stderr.contains("warning"), "{stderr}");
+    // STP-33 AC-7: the only warning is the one about the missing build commit.
+    let warnings: Vec<&str> = stderr.lines().filter(|l| l.contains("warning")).collect();
+    assert_eq!(warnings, vec!["warning: this stapel has no build commit, so .github/workflows/stapel-check.yml was not written; reinstall stapel from a clean checkout as docs/install.md says"], "{stderr}");
     assert_eq!(read(dir, AGENTS[0]), want);
 }
 
