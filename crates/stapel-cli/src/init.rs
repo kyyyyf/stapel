@@ -179,9 +179,10 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
     plan_hooks(&root, &mut plan)?;
     let mut kept = false;
     plan_process_files(&root, &config, &mut plan, &mut kept)?;
+    let mut junit_note = false;
     if !is_local {
         check_workflow_path(&root)?;
-        plan_workflow(&config, &root, &mut plan, &mut kept);
+        junit_note = plan_workflow(&config, &root, &mut plan, &mut kept);
     }
 
     for step in &plan {
@@ -206,6 +207,9 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
     }
     for step in plan {
         say!("{}", step.label);
+    }
+    if junit_note {
+        say!("note: fill in the step Setup of .github/workflows/stapel-check.yml; the job fails until you do");
     }
     if new_folders {
         say!("note: restart Claude Code so that it loads the new agents and skill");
@@ -246,13 +250,13 @@ fn key_prefix(key: &str) -> Option<&str> {
 /// The lines `plan_create_text` prints for it, spelled out so that the ticket lint finds them:
 /// `created: .github/workflows/stapel-check.yml`, `updated: .github/workflows/stapel-check.yml`,
 /// `warning: .github/workflows/stapel-check.yml is not the file stapel wrote; kept. Delete it and run stapel init to take stapel's text`.
-fn plan_workflow(config: &Config, root: &Path, plan: &mut Vec<Step>, kept: &mut bool) {
+fn plan_workflow(config: &Config, root: &Path, plan: &mut Vec<Step>, kept: &mut bool) -> bool {
     let key = &config.tickets.key;
     let Some(prefix) = key_prefix(key) else {
         warn!(
             "warning: the ticket key {key} is not <PREFIX>-{{n}}, so {WORKFLOW} was not written"
         );
-        return;
+        return false;
     };
     let commit = match crate::build_commit::build_commit() {
         crate::build_commit::BuildCommit::Clean(commit) => commit,
@@ -261,16 +265,22 @@ fn plan_workflow(config: &Config, root: &Path, plan: &mut Vec<Step>, kept: &mut 
                 "warning: this stapel was built from a dirty tree ({value}), so {WORKFLOW} was \
                  not written; commit and push the change, then reinstall stapel"
             );
-            return;
+            return false;
         }
         crate::build_commit::BuildCommit::Missing => {
             // One line, so that the ticket lint finds the quoted text.
             #[rustfmt::skip]
             warn!("warning: this stapel has no build commit, so .github/workflows/stapel-check.yml was not written; reinstall stapel from a clean checkout as docs/install.md says");
-            return;
+            return false;
         }
     };
-    let text = include_str!("../assets/stapel-check.yml")
+    let junit = config.check.as_ref().is_some_and(|c| c.runner == "junit");
+    let template = if junit {
+        include_str!("../assets/stapel-check-junit.yml")
+    } else {
+        include_str!("../assets/stapel-check.yml")
+    };
+    let text = template
         .replace("{PREFIX}", prefix)
         .replace("{COMMIT}", &commit);
     use sha2::{Digest, Sha256};
@@ -279,7 +289,11 @@ fn plan_workflow(config: &Config, root: &Path, plan: &mut Vec<Step>, kept: &mut 
         .map(|b| format!("{b:02x}"))
         .collect();
     let text = format!("# stapel: {} sha256:{hash}\n{text}", env!("CARGO_PKG_VERSION"));
+    let before = plan.len();
+    let equal = std::fs::symlink_metadata(root.join(WORKFLOW)).is_ok_and(|m| m.is_file())
+        && std::fs::read_to_string(root.join(WORKFLOW)).is_ok_and(|old| old == text);
     plan_create_text(root, WORKFLOW.to_string(), text, plan, kept, unchanged_workflow_version);
+    junit && (plan.len() > before || equal)
 }
 
 /// The marker version of an unchanged workflow: the first line is the marker, its hash is the
