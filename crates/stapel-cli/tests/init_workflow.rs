@@ -63,6 +63,39 @@ fn workflow_lines() {
     assert!(!text.contains("secrets."), "{text}");
 }
 
+// STP-33 AC-1: the written file is the marker line plus the golden cargo workflow, and `init` says
+// `created:`.
+#[test]
+fn writes_the_workflow() {
+    use sha2::{Digest, Sha256};
+    let repo = common::git_repo();
+    let dir = repo.path();
+    let output = init_with(dir, Some(SHA), &["--prefix", "ABC"]);
+    assert!(
+        output
+            .lines()
+            .any(|l| l == format!("created: {WORKFLOW}")),
+        "{output}"
+    );
+    let text = common::read(dir, WORKFLOW);
+    let (marker, body) = text.split_once('\n').expect("marker line");
+    let rest = marker.strip_prefix("# stapel: ").expect("marker form");
+    let (version, hash) = rest.split_once(" sha256:").expect("marker form");
+    assert_eq!(version, env!("CARGO_PKG_VERSION"));
+    let digest: String = Sha256::digest(body.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(digest, hash, "the hash does not match");
+    let golden = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/stapel_check_cargo.yml"),
+    )
+    .unwrap()
+    .replace("<prefix>", "ABC")
+    .replace("<commit>", SHA);
+    assert_eq!(body, golden);
+}
+
 #[test]
 fn version_names_the_commit() {
     let version = env!("CARGO_PKG_VERSION");
