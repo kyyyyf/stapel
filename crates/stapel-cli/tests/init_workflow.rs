@@ -361,3 +361,84 @@ fn version_names_the_commit() {
         assert_eq!(version_with(missing), format!("stapel {version}\n"));
     }
 }
+
+fn refused(dir: &std::path::Path, commit: Option<&str>, message: &str) {
+    let mut cmd = common::stapel(dir);
+    cmd.env_remove("STAPEL_TEST_BUILD_COMMIT");
+    if let Some(v) = commit {
+        cmd.env("STAPEL_TEST_BUILD_COMMIT", v);
+    }
+    let out = cmd
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.lines().any(|l| l == format!("stapel: {message}")),
+        "{stderr}"
+    );
+    assert!(!dir.join(".stapel").exists());
+    assert!(!dir.join(".claude").exists());
+}
+
+// STP-33 AC-5: a directory at the workflow's path refuses before any write.
+#[test]
+fn workflow_path_is_a_directory() {
+    for commit in [Some(SHA), None] {
+        let repo = common::git_repo();
+        let dir = repo.path();
+        std::fs::create_dir_all(dir.join(WORKFLOW)).unwrap();
+        refused(
+            dir,
+            commit,
+            &format!("{WORKFLOW} is a directory; nothing was written"),
+        );
+    }
+}
+
+// STP-33 AC-5: `.github` or `.github/workflows` that is a file or a symlink refuses before any
+// write, and nothing is written through the symlink.
+#[test]
+fn github_folder_is_not_a_directory() {
+    for commit in [Some(SHA), None] {
+        // `.github` a file.
+        let repo = common::git_repo();
+        let dir = repo.path();
+        std::fs::write(dir.join(".github"), "x").unwrap();
+        refused(
+            dir,
+            commit,
+            ".github is not a directory; nothing was written",
+        );
+        assert_eq!(common::read(dir, ".github"), "x");
+
+        // `.github/workflows` a file.
+        let repo = common::git_repo();
+        let dir = repo.path();
+        std::fs::create_dir_all(dir.join(".github")).unwrap();
+        std::fs::write(dir.join(".github/workflows"), "x").unwrap();
+        refused(
+            dir,
+            commit,
+            ".github/workflows is not a directory; nothing was written",
+        );
+        assert_eq!(common::read(dir, ".github/workflows"), "x");
+
+        // `.github` a symlink to a folder outside the repository.
+        #[cfg(unix)]
+        {
+            let repo = common::git_repo();
+            let dir = repo.path();
+            let outside = common::bare_dir();
+            std::os::unix::fs::symlink(outside.path(), dir.join(".github")).unwrap();
+            refused(
+                dir,
+                commit,
+                ".github is not a directory; nothing was written",
+            );
+            assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+        }
+    }
+}
