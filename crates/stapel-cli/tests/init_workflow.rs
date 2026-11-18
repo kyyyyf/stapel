@@ -213,6 +213,126 @@ fn key_without_prefix() {
     }
 }
 
+fn has_line(output: &str, line: &str) -> bool {
+    output.lines().any(|l| l == line)
+}
+
+fn sha256_hex(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+const NOT_STAPELS: &str = "warning: .github/workflows/stapel-check.yml is not the file stapel \
+                           wrote; kept. Delete it and run stapel init to take stapel's text";
+
+// STP-33 AC-3: an unchanged workflow of stapel is rewritten when its text differs, silently skipped
+// when equal, and left alone under a dirty commit or a key without prefix.
+#[test]
+fn rewrites_an_unchanged_workflow() {
+    let other = "fedcba9876543210fedcba9876543210fedcba98";
+    let sha64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let repo = common::git_repo();
+    let dir = repo.path();
+    init_with(dir, Some(SHA), &["--prefix", "ABC"]);
+    let first = common::read(dir, WORKFLOW);
+
+    let again = init_with(dir, Some(SHA), &[]);
+    assert!(!again.contains("stapel-check"), "{again}");
+    assert_eq!(common::read(dir, WORKFLOW), first);
+
+    let updated = init_with(dir, Some(other), &[]);
+    assert!(has_line(&updated, &format!("updated: {WORKFLOW}")), "{updated}");
+    let text = common::read(dir, WORKFLOW);
+    assert!(text.contains(other) && !text.contains(SHA), "{text}");
+
+    let updated = init_with(dir, Some(sha64), &[]);
+    assert!(has_line(&updated, &format!("updated: {WORKFLOW}")), "{updated}");
+    assert!(common::read(dir, WORKFLOW).contains(sha64));
+    let before = common::read(dir, WORKFLOW);
+
+    let dirty = format!("{SHA}-dirty");
+    let out = init_with(dir, Some(&dirty), &[]);
+    assert!(out.contains("built from a dirty tree"), "{out}");
+    assert!(!out.contains("updated:") && !out.contains(NOT_STAPELS), "{out}");
+    assert_eq!(common::read(dir, WORKFLOW), before);
+
+    let path = dir.join(".stapel/stapel.toml");
+    let toml = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, toml.replace("ABC-{n}", "{n}")).unwrap();
+    let out = init_with(dir, Some(SHA), &[]);
+    assert!(out.contains("is not <PREFIX>-{n}"), "{out}");
+    assert!(!out.contains("updated:") && !out.contains(NOT_STAPELS), "{out}");
+    assert_eq!(common::read(dir, WORKFLOW), before);
+}
+
+// STP-33 AC-4: a workflow that is not stapel's is kept with a warning, byte for byte.
+#[test]
+fn keeps_a_hand_edited_workflow() {
+    let other = "fedcba9876543210fedcba9876543210fedcba98";
+    let repo = common::git_repo();
+    let dir = repo.path();
+    init_with(dir, Some(SHA), &["--prefix", "ABC"]);
+    let path = dir.join(WORKFLOW);
+    let original = std::fs::read_to_string(&path).unwrap();
+
+    let marker_removed: String = original.split_inclusive('\n').skip(1).collect();
+    let variants = [
+        format!("{original}# my line\n"),
+        marker_removed,
+        String::new(),
+    ];
+    for edited in variants {
+        std::fs::write(&path, &edited).unwrap();
+        let out = init_with(dir, Some(other), &[]);
+        assert!(has_line(&out, NOT_STAPELS), "{out}");
+        assert!(!out.contains("updated:"), "{out}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    }
+
+    // A hand-edited file with a missing build commit: only the missing-commit warning.
+    std::fs::write(&path, format!("{original}# my line\n")).unwrap();
+    let out = init_with(dir, None, &[]);
+    assert!(out.contains("has no build commit"), "{out}");
+    assert!(!out.contains(NOT_STAPELS), "{out}");
+
+    // A symlink to a stapel workflow is not stapel's file.
+    #[cfg(unix)]
+    {
+        let target = dir.join("elsewhere.yml");
+        std::fs::write(&target, &original).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        let out = init_with(dir, Some(other), &[]);
+        assert!(has_line(&out, NOT_STAPELS), "{out}");
+        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), original);
+    }
+}
+
+// STP-33 AC-4: a workflow of a newer stapel is kept with the newer-version warning.
+#[test]
+fn keeps_a_newer_workflow() {
+    let repo = common::git_repo();
+    let dir = repo.path();
+    init_with(dir, Some(SHA), &["--prefix", "ABC"]);
+    let path = dir.join(WORKFLOW);
+    let original = std::fs::read_to_string(&path).unwrap();
+    let (_, body) = original.split_once('\n').unwrap();
+    let newer = format!("# stapel: 99.0.0 sha256:{}\n{body}", sha256_hex(body));
+    std::fs::write(&path, &newer).unwrap();
+    let out = init_with(dir, Some("fedcba9876543210fedcba9876543210fedcba98"), &[]);
+    let own = env!("CARGO_PKG_VERSION");
+    let warning = format!(
+        "warning: {WORKFLOW} was written by stapel 99.0.0, newer than this stapel {own}; kept"
+    );
+    assert!(has_line(&out, &warning), "{out}");
+    assert!(!out.contains("updated:"), "{out}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+}
+
 #[test]
 fn version_names_the_commit() {
     let version = env!("CARGO_PKG_VERSION");
