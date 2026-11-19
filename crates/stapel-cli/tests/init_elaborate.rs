@@ -419,3 +419,87 @@ fn stapel_skill_names_it() {
         .count();
     assert_eq!(lines, 1, "{body}");
 }
+
+// AC-7: the headings of `template.md` in order, the example ids, the Breakdown words and the three
+// guidance lines.
+#[test]
+fn template_sections() {
+    let repo = git_repo();
+    let dir = repo.path();
+    first_run(dir);
+    let text = read(dir, FILES[1]);
+    let headings: Vec<&str> = text.lines().filter_map(|l| l.strip_prefix("# ")).collect();
+    assert_eq!(
+        headings,
+        [
+            "Description",
+            "Outcome",
+            "Done when",
+            "Boundaries",
+            "Requirements",
+            "Constraints",
+            "Decisions",
+            "Breakdown"
+        ]
+    );
+    let section = |name: &str| -> String {
+        let mut out = String::new();
+        let mut inside = false;
+        for l in text.lines() {
+            if let Some(h) = l.strip_prefix("# ") {
+                inside = h == name;
+            } else if inside {
+                out.push_str(l);
+                out.push('\n');
+            }
+        }
+        out
+    };
+    let reqs = section("Requirements");
+    for id in ["R1", "R2"] {
+        assert!(
+            reqs.lines().any(|l| l.trim_start().starts_with(id)),
+            "no line starting with {id} in {reqs}"
+        );
+    }
+    let breakdown = section("Breakdown");
+    assert!(breakdown.contains("covers") && breakdown.contains("after"), "{breakdown}");
+    for phrase in [
+        "three to six checks",
+        "at least one thing out",
+        "never reused or renumbered",
+    ] {
+        assert!(text.contains(phrase), "missing {phrase:?}");
+    }
+}
+
+// AC-8: check lines `- EL-<n>:` with increasing ids, and a check in each of the four groups.
+#[test]
+fn checklist_ids() {
+    let repo = git_repo();
+    let dir = repo.path();
+    first_run(dir);
+    let text = read(dir, FILES[2]);
+    let mut last = 0u64;
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for line in text.lines() {
+        if let Some(h) = line.strip_prefix("## ") {
+            counts.push((h.to_string(), 0));
+        } else if let Some(rest) = line.strip_prefix("- EL-") {
+            let (n, _) = rest
+                .split_once(':')
+                .unwrap_or_else(|| panic!("no colon in {line:?}"));
+            let n: u64 = n.parse().unwrap_or_else(|_| panic!("bad id in {line:?}"));
+            assert!(n > last, "id {n} does not increase after {last}");
+            last = n;
+            counts
+                .last_mut()
+                .unwrap_or_else(|| panic!("check outside a group: {line:?}"))
+                .1 += 1;
+        }
+    }
+    for g in ["Draft", "Requirements", "Breakdown", "Dependencies"] {
+        let found = counts.iter().find(|(h, _)| h == g);
+        assert!(matches!(found, Some((_, c)) if *c >= 1), "group {g}: {counts:?}");
+    }
+}
