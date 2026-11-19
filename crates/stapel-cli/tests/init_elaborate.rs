@@ -538,3 +538,36 @@ fn method_name_only_in_notice() {
         assert_eq!(found, [FILES[3]], "local={local}");
     }
 }
+
+// AC-13: the report has the three headings, and each item under Taken and Not taken has a `Why:` part.
+#[test]
+fn method_report() {
+    let path = repo_root().join("docs/method-reports/e435a22.md");
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let mut section = String::new();
+    let mut items: Vec<(String, String)> = Vec::new();
+    let mut headings: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if let Some(h) = line.strip_prefix("## ") {
+            section = h.trim().to_string();
+            headings.push(section.clone());
+        } else if line.starts_with("- ") {
+            items.push((section.clone(), line.to_string()));
+        } else if line.starts_with("  ") && !line.trim().is_empty() {
+            if let Some(last) = items.last_mut() {
+                last.1.push(' ');
+                last.1.push_str(line.trim());
+            }
+        }
+    }
+    for h in ["Taken", "Not taken", "Ideas for later"] {
+        assert!(headings.iter().any(|x| x == h), "heading {h}: {headings:?}");
+    }
+    for s in ["Taken", "Not taken"] {
+        let list: Vec<_> = items.iter().filter(|(sec, _)| sec == s).collect();
+        assert!(!list.is_empty(), "no items under {s}");
+        for (_, item) in list {
+            assert!(item.contains("Why:"), "no `Why:` in {item}");
+        }
+    }
+}
