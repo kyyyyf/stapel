@@ -123,7 +123,7 @@ Terms:
 | № | Criterion | Test |
 |---|---|---|
 | AC-1 | WHEN `stapel init` runs in the shared mode with a clean build commit and a prefix, and the workflow is missing THE command writes the golden workflow for the cargo runner and prints `created: .github/workflows/stapel-check.yml`. | `init_workflow::writes_the_workflow` |
-| AC-2 | WHEN the workflow is written THE job runs on a push of a branch matching `<PREFIX>-[0-9]+` and on a pull request whose head branch starts with `<PREFIX>-`; checks out the head commit of the branch with `fetch-depth: 0` and `persist-credentials: false`; makes a local branch for every remote branch with `git fetch --no-tags --update-head-ok origin '+refs/heads/*:refs/heads/*'`; has `permissions: contents: read` and `timeout-minutes: 60`; installs with `cargo install --git https://github.com/kyyyyf/stapel --rev <commit> --locked stapel-cli`; and runs `stapel check "$BRANCH"` with the branch name, so any exit other than 0 fails the job. | `init_workflow::workflow_lines` |
+| AC-2 | WHEN the workflow is written THE job runs on a push of a branch matching `<PREFIX>-[0-9]+` and on a pull request whose head branch starts with `<PREFIX>-`; checks out the head commit of the branch with `fetch-depth: 0` and `persist-credentials: false`; makes a local branch for every branch that Checkout fetched, without the network, with `git fetch --no-tags --update-head-ok . '+refs/remotes/origin/*:refs/heads/*' '^refs/remotes/origin/HEAD'`; has `permissions: contents: read` and `timeout-minutes: 60`; installs with `cargo install --git https://github.com/kyyyyf/stapel --rev <commit> --locked stapel-cli`; and runs `stapel check "$BRANCH"` with the branch name, so any exit other than 0 fails the job. | `init_workflow::workflow_lines` |
 | AC-3 | WHEN `stapel init` runs again and the workflow is stapel's of a version not greater than the binary's THE command writes the new text and prints `updated: .github/workflows/stapel-check.yml` when the text differs, and prints nothing for it when it is equal. | `init_workflow::rewrites_an_unchanged_workflow` |
 | AC-4 | IF the workflow is not stapel's (edited by hand, no marker, a symlink) THEN `init` keeps it and prints `warning: .github/workflows/stapel-check.yml is not the file stapel wrote; kept. Delete it and run stapel init to take stapel's text`; IF it is stapel's of a newer version THEN it keeps it with the newer-version warning of STP-22. | `init_workflow::keeps_a_hand_edited_workflow`, `init_workflow::keeps_a_newer_workflow` |
 | AC-5 | IF in the shared mode a directory stands at the workflow's path, or `.github` or `.github/workflows` is a file or a symlink THEN `init` exits 1 with `<path> is a directory; nothing was written` or `<path> is not a directory; nothing was written` and writes no file, whatever the build commit and the key. | `init_workflow::workflow_path_is_a_directory`, `init_workflow::github_folder_is_not_a_directory` |
@@ -138,8 +138,9 @@ Terms:
 
 - **Promised:** the Frame's promise items 1 to 5 by AC-1 to AC-10 (AC-5 and AC-8 under item 1); item 6 by AC-11 and by one green run
   of the workflow on the pushed branch `STP-33`, linked in Proof (the person pushes; agents may not).
-  Unchanged: every other file and line `init` writes; the exit code of `init` except AC-5; `stapel
-  check`.
+  Unchanged by the steps of this ticket: every other file and line `init` writes; the exit code of `init`
+  except AC-5; `stapel check`. Changes that came into `base..head` by the merges of main or by ledger
+  decisions, not by a step, are listed in Design "as built" (CR1-2).
 - **Not promised:** the Frame's list; the check reads the branch's own `stapel.toml`, `state.json` and
   workflow, which an agent can edit (SR1-6); a pin that stays on an old commit after later tickets change
   `stapel check` (SR1-5); a repository not hosted on GitHub (the file is written and does nothing); pull
@@ -203,13 +204,13 @@ each GREEN also `--test ticket_drift`.
 |---|---|---|---|
 | git | shallow clone in CI | `fetch-depth: 0` in the workflow | `init_workflow::workflow_lines` |
 | git | detached HEAD in CI; the merge commit of a pull request | the checkout takes the head commit; `stapel check` gets the key from `$BRANCH` | `init_workflow::workflow_lines` |
-| git | no local branches in CI (only `origin/*`); `stapel check` reads `refs/heads/<base_branch>` for a merge of the base branch (F-6) | the fetch line makes the local branches | `init_workflow::workflow_lines` |
+| git | no local branches in CI (only `origin/*`); `stapel check` reads `refs/heads/<base_branch>` for a merge of the base branch (F-6) | the local fetch line makes the local branches from `refs/remotes/origin/*` | `init_workflow::workflow_lines` |
 | git | history shape, object format, worktrees, submodules, paths, messages | as `stapel check` before; not changed | — |
 | git | the install command of `docs/install.md`: untracked files, a SHA-256 repository, a linked worktree | `git status --porcelain` counts untracked files as dirty; `git rev-parse HEAD` gives the full id (64 hex) and works in a worktree; the command is text, not run by the tests | `init_process::this_repository_has_the_workflow` |
 | git | dirty tree at build time | the dirty build commit (AC-7) | `init_workflow::dirty_build_commit` |
 | git | configuration: hooks path, `GIT_*` | not read by the new code | — |
 | github-actions | event: push of a ticket branch, pull request from it, other branches | the AC-2 triggers and condition | `init_workflow::workflow_lines` |
-| github-actions | pull request from a fork; secrets; token rights | read-only contents, no secrets, no stored credentials | `init_workflow::workflow_lines` |
+| github-actions | pull request from a fork; secrets; token rights | read-only contents, no secrets, no stored credentials; no step after Checkout uses the network, so a private repository works (CR1-1) | `init_workflow::workflow_lines` |
 | github-actions | runner image and its Rust toolchain; job time | `ubuntu-latest` with its toolchain; 60 minutes | `init_workflow::workflow_lines` |
 | cargo | network errors; the commit not on the remote; `Cargo.lock` out of date | the install step fails and the job fails; not promised | — |
 | cargo | `STAPEL_BUILD_COMMIT` changed between builds | `option_env!` makes cargo rebuild; not tested | — |
@@ -289,7 +290,22 @@ into that branch; not promised).
 - The quoted output lines stand as literals in the code that prints them (the ticket lint looks for them);
   the missing-commit warning is one line under `#[rustfmt::skip]`. Step 4 also repeats the `created:`,
   `updated:` and kept lines in a doc comment of `plan_workflow`.
-- This repository's workflow pins `f49448d2da1aabeea046a5e44d5b72bb56f319e7`, the RED commit of step 6.
+- This repository's workflow pins `f49448d2da1aabeea046a5e44d5b72bb56f319e7`, the RED commit of step 6;
+  step 7 moves the pin to its own RED commit.
+- The first CI run failed the suite on `export::export_output` (newer git refuses `git remote add my/fork`
+  while `my` exists). A ticket STP-34 for it could not close, because `stapel check` verifies no fix that
+  lies only in tests, and a fix commit inside this branch made every step unverified; that commit was
+  dropped by a second history rewrite (ledger decisions of 2026-11-18). The fix came by a commit to main
+  and a merge of main.
+- Changes in `base..head` that no step makes (CR1-2, CR1-8): by the merges of main, `tests/export.rs`
+  (`git config remote.my/fork.url`), `tests/check_history.rs` (`twenty_steps_within_five_seconds` allows
+  15 s, which weakens STP-14 AC-10, about 850 git calls through the macOS xcrun shim), `tests/tokens.rs`
+  (the fixture copy is read and written, so it gets the current modification time on macOS), and the
+  skill text of rules 2 and 6 (`crates/stapel-cli/assets/skill.md`, `.claude/skills/stapel/SKILL.md`, from
+  the STP-32 ledger decision of 2026-11-17); by a ledger decision of 2026-11-19, `check.timeout_secs` 1800
+  in `.stapel/stapel.toml` (was 900). The local check ran with `TMPDIR` on a case-sensitive disk image.
+- Step 7 (CR1-1): the `Local branches` step fetches from `.`, the local repository, not from `origin`;
+  Checkout with `fetch-depth: 0` has already fetched every branch to `refs/remotes/origin/*`.
 
 ## Proof
 
@@ -342,6 +358,11 @@ Route: full (tag `interface`), auto.
    workflow with `stapel cargo run -p stapel-cli -- init` and `STAPEL_BUILD_COMMIT` set to the RED commit
    of this step. Must not change: the other installed files. After the GREEN the person pushes the branch
    and the run's link goes into Proof.
+7. The local fetch (AC-2; test `init_workflow::workflow_lines`, which fails at the RED on the new fetch
+   line; the RED also changes that line in both golden files): the GREEN changes the `Local branches` line
+   of both templates and rewrites this repository's workflow with `stapel cargo run -p stapel-cli -- init`
+   and `STAPEL_BUILD_COMMIT` set to the RED commit of this step. Must not change: the other workflow lines.
+   After the GREEN the person pushes the branch and the new run's link goes into Proof.
 
 ## Review
 
