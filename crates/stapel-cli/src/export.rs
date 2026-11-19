@@ -10,9 +10,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// The paths that `git rm` removes from each tree; the agents are a glob.
-const REMOVE: [&str; 4] = [
+const REMOVE: [&str; 5] = [
     ".stapel",
     ".claude/skills/stapel",
+    ".claude/skills/stapel-elaborate",
     ".claude/settings.json",
     ":(glob).claude/agents/stapel-*.md",
 ];
@@ -197,6 +198,7 @@ fn is_process_path(path: &[u8]) -> bool {
     let path = String::from_utf8_lossy(path);
     path.starts_with(".stapel/")
         || path.starts_with(".claude/skills/stapel/")
+        || path.starts_with(".claude/skills/stapel-elaborate/")
         || path == ".claude/settings.json"
         || path.strip_prefix(".claude/agents/").is_some_and(|name| {
             name.starts_with("stapel-") && name.ends_with(".md") && !name.contains('/')
@@ -215,6 +217,7 @@ fn onto_entries(dir: &Path, onto: &str) -> Result<Vec<u8>, String> {
             "--",
             ".stapel",
             ".claude/skills/stapel",
+            ".claude/skills/stapel-elaborate",
             ".claude/settings.json",
             ".claude/agents",
         ],
