@@ -491,7 +491,7 @@ fn check_bindings(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-/// Plans the skill and the four agent files: each is created when missing, updated when it is an
+/// Plans the skill `stapel`, the agent files and the skill `stapel-elaborate`: each is created when missing, updated when it is an
 /// unchanged file of stapel, and kept with a warning otherwise.
 fn plan_process_files(
     root: &Path,
