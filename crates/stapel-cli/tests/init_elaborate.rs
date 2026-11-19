@@ -373,3 +373,49 @@ fn local_checklist_names_the_folder() {
     let want = "   git add -f .claude/skills/stapel .claude/skills/stapel-elaborate .claude/agents/stapel-*.md .claude/settings.json";
     assert!(output.lines().any(|l| l == want), "no checklist line in {output}");
 }
+
+/// The text after the frontmatter of an installed skill file.
+fn skill_body(dir: &Path, rel: &str) -> String {
+    let text = read(dir, rel);
+    let mut parts = text.splitn(3, "---\n");
+    parts.next();
+    parts.next();
+    parts.next().expect("a body after the frontmatter").to_string()
+}
+
+// AC-6: the collapsed body of `SKILL.md` holds the seven phrases.
+#[test]
+fn skill_text_holds_the_steps() {
+    let repo = git_repo();
+    let dir = repo.path();
+    first_run(dir);
+    let flat = skill_body(dir, FILES[0])
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for phrase in [
+        "larger than one ticket",
+        "elicit the person's intent, never author it",
+        "at most four questions in one dialog, each with options and a recommendation",
+        ".stapel/features/<slug>.md",
+        "without the first line of template.md",
+        "run checklist.md over the draft",
+        "name the path of the draft in the chat",
+    ] {
+        assert!(flat.contains(phrase), "missing {phrase:?}");
+    }
+}
+
+// AC-11: one line of the skill `stapel` names `stapel-elaborate` for work larger than one ticket.
+#[test]
+fn stapel_skill_names_it() {
+    let repo = git_repo();
+    let dir = repo.path();
+    first_run(dir);
+    let body = skill_body(dir, ".claude/skills/stapel/SKILL.md");
+    let lines = body
+        .lines()
+        .filter(|l| l.contains("stapel-elaborate") && l.contains("larger than one ticket"))
+        .count();
+    assert_eq!(lines, 1, "{body}");
+}
