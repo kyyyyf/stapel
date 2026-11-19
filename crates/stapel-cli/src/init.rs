@@ -542,7 +542,58 @@ fn plan_process_files(
             unchanged_version,
         );
     }
+    plan_elaboration_files(root, plan);
     Ok(())
+}
+
+const ELABORATION_DESCRIPTION: &str = "Turns the intent for a piece of work larger than one ticket into requirements with ids and a breakdown into tickets.";
+
+/// Plans the four files of the skill `stapel-elaborate`, each only when nothing is at its path.
+fn plan_elaboration_files(root: &Path, plan: &mut Vec<Step>) {
+    use sha2::{Digest, Sha256};
+    let skill = process_text(
+        &[
+            "name: stapel-elaborate".to_string(),
+            format!("description: \"{ELABORATION_DESCRIPTION}\""),
+        ],
+        include_str!("../assets/elaborate/skill.md"),
+    );
+    let line_marked = |body: &str| {
+        let hash: String = Sha256::digest(body.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        format!(
+            "<!-- stapel: {} sha256:{hash} -->\n{body}",
+            env!("CARGO_PKG_VERSION")
+        )
+    };
+    let files = [
+        ("SKILL.md", skill),
+        (
+            "template.md",
+            line_marked(include_str!("../assets/elaborate/template.md")),
+        ),
+        (
+            "checklist.md",
+            line_marked(include_str!("../assets/elaborate/checklist.md")),
+        ),
+        (
+            "NOTICE.md",
+            line_marked(include_str!("../assets/elaborate/notice.md")),
+        ),
+    ];
+    for (name, content) in files {
+        let rel = format!(".claude/skills/stapel-elaborate/{name}");
+        if std::fs::symlink_metadata(root.join(&rel)).is_err() {
+            plan.push(Step {
+                label: format!("created: {rel}"),
+                rel,
+                content,
+                executable: false,
+            });
+        }
+    }
 }
 
 /// Plans `rel` when nothing is at its path, not even a symlink; plans an update when the file is
