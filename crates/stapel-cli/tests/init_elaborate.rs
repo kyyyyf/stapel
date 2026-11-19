@@ -503,3 +503,38 @@ fn checklist_ids() {
         assert!(matches!(found, Some((_, c)) if *c >= 1), "group {g}: {counts:?}");
     }
 }
+
+// AC-9: the body of `NOTICE.md` equals the golden file (the asset keeps one blank line after the marker).
+#[test]
+fn notice_text() {
+    let repo = git_repo();
+    let dir = repo.path();
+    first_run(dir);
+    let body = unmarked(dir, FILES[3]);
+    let golden = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/elaborate_notice.md"),
+    )
+    .unwrap();
+    assert_eq!(body.strip_prefix('\n').unwrap_or(&body), golden);
+}
+
+// AC-10: the method's name is in `NOTICE.md` and in no other file `init` writes, in both modes.
+#[test]
+fn method_name_only_in_notice() {
+    for local in [false, true] {
+        let repo = git_repo();
+        let dir = repo.path();
+        let mut args = vec!["init", "--prefix", "ABC"];
+        if local {
+            args.push("--local");
+        }
+        stapel(dir).args(args).assert().success();
+        let mut found: Vec<String> = Vec::new();
+        for (rel, bytes, _) in common::snapshot(dir) {
+            if String::from_utf8_lossy(&bytes).to_lowercase().contains("bmad") {
+                found.push(rel);
+            }
+        }
+        assert_eq!(found, [FILES[3]], "local={local}");
+    }
+}
