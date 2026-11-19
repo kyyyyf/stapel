@@ -542,14 +542,14 @@ fn plan_process_files(
             unchanged_version,
         );
     }
-    plan_elaboration_files(root, plan);
+    plan_elaboration_files(root, plan, kept);
     Ok(())
 }
 
 const ELABORATION_DESCRIPTION: &str = "Turns the intent for a piece of work larger than one ticket into requirements with ids and a breakdown into tickets.";
 
-/// Plans the four files of the skill `stapel-elaborate`, each only when nothing is at its path.
-fn plan_elaboration_files(root: &Path, plan: &mut Vec<Step>) {
+/// Plans the four files of the skill `stapel-elaborate` by the rules of the other process files.
+fn plan_elaboration_files(root: &Path, plan: &mut Vec<Step>, kept: &mut bool) {
     use sha2::{Digest, Sha256};
     let skill = process_text(
         &[
@@ -569,31 +569,49 @@ fn plan_elaboration_files(root: &Path, plan: &mut Vec<Step>) {
         )
     };
     let files = [
-        ("SKILL.md", skill),
+        ("SKILL.md", skill, unchanged_version as fn(&str) -> _),
         (
             "template.md",
             line_marked(include_str!("../assets/elaborate/template.md")),
+            line_marker_version,
         ),
         (
             "checklist.md",
             line_marked(include_str!("../assets/elaborate/checklist.md")),
+            line_marker_version,
         ),
         (
             "NOTICE.md",
             line_marked(include_str!("../assets/elaborate/notice.md")),
+            line_marker_version,
         ),
     ];
-    for (name, content) in files {
+    for (name, content, version_of) in files {
         let rel = format!(".claude/skills/stapel-elaborate/{name}");
-        if std::fs::symlink_metadata(root.join(&rel)).is_err() {
-            plan.push(Step {
-                label: format!("created: {rel}"),
-                rel,
-                content,
-                executable: false,
-            });
-        }
+        plan_create_text(root, rel, content, plan, kept, version_of);
     }
+}
+
+/// The marker version of an unchanged file whose first line is
+/// `<!-- stapel: <version> sha256:<hex> -->` and whose hash is that of the text after that line.
+/// `None` for any other text.
+fn line_marker_version(text: &str) -> Option<(u64, u64, u64)> {
+    use sha2::{Digest, Sha256};
+    let (first, rest) = text.split_once('\n')?;
+    let inner = first
+        .strip_prefix("<!-- stapel: ")?
+        .strip_suffix(" -->")?;
+    let (version, hash) = inner.split_once(" sha256:")?;
+    let version = parse_version(version)?;
+    let valid_hash = hash.len() == 64
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    let digest: String = Sha256::digest(rest.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    (valid_hash && digest == hash).then_some(version)
 }
 
 /// Plans `rel` when nothing is at its path, not even a symlink; plans an update when the file is
