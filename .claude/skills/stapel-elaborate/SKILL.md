@@ -1,7 +1,7 @@
 ---
 name: stapel-elaborate
 description: "Turns the intent for a piece of work larger than one ticket into requirements with ids and a breakdown into tickets."
-# stapel: 0.1.0 sha256:fa674e82340aca9b146767cabb9824fa2230355080ee0aaf1405454c8b535fd7
+# stapel: 0.1.0 sha256:e2444ca9eff087a3b86ac199a519b7f297b9ea0c5d630c4ae4f9dde695499f72
 ---
 
 # Elaborate a piece of work larger than one ticket
@@ -24,9 +24,12 @@ Your task is to elicit the person's intent, never author it. The person knows wh
 
 ## Steps
 
-1. Choose a short slug from the title: lowercase words joined with `-`.
+1. Choose a short slug from the title line of the draft (the first line of the draft, `# <title>`): lowercase
+   words joined with `-`.
 2. Write the draft to `.stapel/features/<slug>.md`, copied from `template.md` without the first line of
-   template.md (the line is the marker of stapel). Keep every section; write `None` in a section that is empty.
+   template.md (the line is the marker of stapel). The files `template.md` and `checklist.md` are in the folder
+   `.claude/skills/stapel-elaborate/`. Keep every section. Write `None` only in Constraints when it is empty;
+   Description, Outcome, Done when, Boundaries, Requirements and Breakdown always have content.
 3. Fill Description, Outcome, Done when (three to six checks), Boundaries (at least one thing out) and
    Constraints from what the person said.
 4. Write the requirements as lines `R<n>`. A requirement says what is possible and what shows it was met.
