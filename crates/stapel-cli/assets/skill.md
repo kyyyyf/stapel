@@ -11,6 +11,7 @@ Run `stapel next`, do what it names, then run `stapel next` again. It reads the 
 the file to use; the facts that block an action come first. Do not re-read the whole ticket on every turn:
 `stapel next` and `stapel brief KEY STEP` give what the turn needs.
 
+- For work larger than one ticket, run the skill `stapel-elaborate` before `stapel new`; it writes a draft of requirements and a breakdown into tickets.
 - `new-ticket`: `stapel new "<title>"`, then write the Frame (rule 1).
 - `write-section`: write that section of `ticket.md`.
 - `write-page`: run `stapel page KEY` and name the path it prints in the chat; the person reads the page in the editor while the dialog of `stapel ok KEY` waits.
