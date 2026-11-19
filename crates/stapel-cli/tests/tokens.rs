@@ -170,7 +170,9 @@ fn fixture(dir: &Path, name: &str) -> std::path::PathBuf {
         .join("tests/fixtures")
         .join(name);
     let dst = dir.join(name);
-    std::fs::copy(src, &dst).unwrap();
+    // Read and write, not `std::fs::copy`: on macOS a copy keeps the source's modification time, so
+    // the copy would not count as a transcript still being written.
+    std::fs::write(&dst, std::fs::read(src).unwrap()).unwrap();
     dst
 }
 
