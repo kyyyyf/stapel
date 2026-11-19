@@ -225,6 +225,31 @@ CRLF line ends in an edited file (read as not stapel's; not tested); a person's 
   checklist id leaves a gap and is never reused (SR1-4); a file or a symlink at the folder path is
   refused before anything is written, as STP-33 refuses one at `.github` (SR1-8).
 
+### Decisions (as built)
+
+- `init.rs::plan_elaboration_files` plans the four files through `plan_create_text`: `SKILL.md` with
+  `process_text` and `unchanged_version`, the other three with a line marker and the new reader
+  `line_marker_version` (a valid version, a lower-case 64-hex hash that matches the bytes after the first
+  line, the closing ` -->`). `plan_process_files` calls it last; the four file paths join its directory
+  refusal, and a file or a symlink at `.claude/skills/stapel-elaborate` refuses with
+  `<path> is not a directory; nothing was written` before anything is written.
+- The assets are `crates/stapel-cli/assets/elaborate/skill.md`, `template.md`, `checklist.md` and
+  `notice.md`. The three files with a line marker start with one blank line after the marker;
+  `init_elaborate::notice_text` drops that line before it compares with the golden file.
+- `checklist.md` holds EL-1 to EL-25: Draft, Requirements, Breakdown and Dependencies.
+- The line of the skill `stapel` (AC-11) is the first item of its loop list, before `new-ticket`.
+- `export.rs`: `REMOVE`, `is_process_path` and the pathspecs of `onto_entries` name
+  `.claude/skills/stapel-elaborate`; the copy of `is_process_path` in `tests/export.rs` does too.
+- The builders could not read the method's source files (outside the worktree); the orchestrator gave
+  the content to adapt in the step requests, and the NOTICE text word for word.
+- 2026-11-19, agent: `init_local::foreign_repository_end_to_end` failed from the step 1 GREEN to the step
+  3a GREEN, because `stapel export` did not yet remove the new folder; the step order was kept, since
+  `stapel check` runs the suite at HEAD only and the export change in step 1 would make the step 3a RED
+  pass. Rejected: the export change in step 1; step 3a before step 1.
+- The ticket lint failed at the RED of step 7, because the ticket names `docs/method-reports/` before
+  the GREEN writes the report; it passes at the GREEN.
+- The local checks ran with `TMPDIR` on a case-sensitive disk image (ledger 2026-11-19 of STP-33).
+
 ## Proof
 
 | Criterion | Test |
