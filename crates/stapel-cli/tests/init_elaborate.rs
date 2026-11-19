@@ -316,3 +316,44 @@ fn keeps_a_newer_file() {
         assert_eq!(read(dir, rel), newer, "{rel}");
     }
 }
+
+// AC-4: a directory at a file path, or a file or a symlink at the folder path, stops init with
+// exit 1 and writes nothing.
+#[test]
+fn refuses_a_directory() {
+    for rel in FILES {
+        let repo = git_repo();
+        let dir = repo.path();
+        std::fs::create_dir_all(dir.join(rel)).unwrap();
+        let out = stapel(dir).args(["init", "--prefix", "ABC"]).assert().code(1);
+        let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+        assert!(
+            stderr.contains(&format!("{rel} is a directory; nothing was written")),
+            "{rel}: {stderr}"
+        );
+        for other in FILES.iter().filter(|f| **f != rel) {
+            assert!(!dir.join(other).exists(), "{other} was written");
+        }
+        assert!(!dir.join(".stapel/stapel.toml").exists());
+    }
+    for kind in ["file", "symlink"] {
+        let repo = git_repo();
+        let dir = repo.path();
+        std::fs::create_dir_all(dir.join(".claude/skills")).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        if kind == "file" {
+            std::fs::write(dir.join(DIR), "x").unwrap();
+        } else {
+            std::os::unix::fs::symlink(outside.path(), dir.join(DIR)).unwrap();
+        }
+        let out = stapel(dir).args(["init", "--prefix", "ABC"]).assert().code(1);
+        let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+        assert!(
+            stderr.contains(&format!("{DIR} is not a directory; nothing was written")),
+            "{kind}: {stderr}"
+        );
+        assert!(!dir.join(".stapel/stapel.toml").exists(), "{kind}");
+        assert!(!dir.join(".claude/skills/stapel/SKILL.md").exists(), "{kind}");
+        assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0, "{kind}");
+    }
+}
