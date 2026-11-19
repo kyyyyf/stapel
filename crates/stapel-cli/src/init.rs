@@ -315,7 +315,7 @@ fn unchanged_workflow_version(text: &str) -> Option<(u64, u64, u64)> {
 const LOCAL_CHECKLIST: &str = "checklist:
 1. Commit the installed files on the base branch with these two lines:
    git add .stapel
-   git add -f .claude/skills/stapel .claude/agents/stapel-*.md .claude/settings.json
+   git add -f .claude/skills/stapel .claude/skills/stapel-elaborate .claude/agents/stapel-*.md .claude/settings.json
 2. Fill in [check] command in .stapel/stapel.toml.
 3. Restart Claude Code and see \"stapel next\" at session start.
 4. Run stapel init again after anything changes core.hooksPath (husky does on npm install).
