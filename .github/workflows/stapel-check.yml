@@ -1,4 +1,4 @@
-# stapel: 0.1.0 sha256:e3eb1820f1569e2a3cc3e2c037bac71dba9a9695aa998fecd4baefe2add1fd6a
+# stapel: 0.1.0 sha256:4a81a7fc34f08c4ab699d510e38a85836658abd20d05eed279790480844cbd2d
 name: stapel check
 on:
   push:
@@ -19,9 +19,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Local branches
-        run: git fetch --no-tags --update-head-ok origin '+refs/heads/*:refs/heads/*'
+        run: git fetch --no-tags --update-head-ok . '+refs/remotes/origin/*:refs/heads/*' '^refs/remotes/origin/HEAD'
       - name: Install stapel
-        run: cargo install --git https://github.com/kyyyyf/stapel --rev f49448d2da1aabeea046a5e44d5b72bb56f319e7 --locked stapel-cli
+        run: cargo install --git https://github.com/kyyyyf/stapel --rev 0b2d40dd14aefb70e538c1517c9dd80fa6986ea8 --locked stapel-cli
       - name: Check
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}

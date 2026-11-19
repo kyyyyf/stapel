@@ -18,7 +18,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Local branches
-        run: git fetch --no-tags --update-head-ok origin '+refs/heads/*:refs/heads/*'
+        run: git fetch --no-tags --update-head-ok . '+refs/remotes/origin/*:refs/heads/*' '^refs/remotes/origin/HEAD'
       - name: Setup
         run: 'echo "fill in the step Setup of .github/workflows/stapel-check.yml"; exit 1'
       - name: Install stapel
