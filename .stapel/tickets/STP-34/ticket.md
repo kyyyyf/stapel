@@ -30,8 +30,9 @@ that names the new skill.
    `template.md`, `checklist.md` and `NOTICE.md`. Each carries a stapel marker with the version and the
    hash; `SKILL.md` has it in its frontmatter as the skill `stapel` has. A re-run creates a missing file,
    updates an unchanged file of stapel, and keeps an edited, unmarked or newer file with a warning
-   line, as for the other process files. The local and the shared mode, and `stapel export`, treat the
-   folder as they treat the folder of the skill `stapel`.
+   line, as for the other process files; a person's own file in that folder is kept so, and the missing
+   files are still written. The local and the shared mode, and `stapel export`, treat the folder as they
+   treat the folder of the skill `stapel`.
 2. `SKILL.md` says when the skill applies (a piece of work the person describes as larger than one
    ticket), the questions it asks (elicit the person's intent, never author it; at most four per dialog,
    each with options and a recommendation), and its steps: write the draft from `template.md` to
@@ -54,7 +55,7 @@ that names the new skill.
    `init_process::this_repository_has_the_current_files` passes.
 
 Not promised: a check by code that a feature draft follows the template or the checklist; a CRLF file;
-a person's own file named `stapel-elaborate`; deliberate circumvention.
+deliberate circumvention.
 
 **Prior art.** Decisions 0001 to 0003 (what was taken from the method before: the coverage map, the
 silent-dimension rule, non-goals, review lenses, typed Decisions lines); the ledger decisions of
@@ -67,7 +68,7 @@ agent's PRD templates; the PO agent's `references/spec.md`, `slice.md` and `vali
 **Size.** About 130 changed source lines (`crates/stapel-cli/src/init.rs`: four more files, the marker of
 a file without frontmatter, the skill folder in both modes; `crates/stapel-cli/src/export.rs`: the folder
 as a process path), about 350 lines of skill text under `crates/stapel-cli/assets/`, about 350 test
-lines, and the report. 8 Plan steps; split past 300 source lines. Route: full (tag `interface`), auto.
+lines, and the report. 9 Plan steps; split past 300 source lines. Route: full (tag `interface`), auto.
 
 ### Decisions
 
@@ -107,6 +108,8 @@ Terms:
   of the file's bytes after that line. `SKILL.md` carries the frontmatter marker of the skill `stapel`
   (STP-22) instead. A file is **stapel's** when its marker is valid and its hash matches.
 - **The method's name**: the text `bmad` in any letter case.
+- **Collapsed body**: the text after the frontmatter with every run of whitespace made one space, as
+  `init_process::collapsed` makes it.
 
 | № | Criterion | Test |
 |---|---|---|
@@ -114,14 +117,14 @@ Terms:
 | AC-2 | WHEN `stapel init` runs again and an elaboration file is stapel's of a version not greater than the binary's THE command writes the new text and prints `updated: <path>` when the text differs, and prints nothing for that file when it is equal. | `init_elaborate::updates_an_unchanged_file` |
 | AC-3 | IF an elaboration file is edited, has no valid marker, is a symlink or is not UTF-8 THEN `init` keeps its bytes and prints the kept warning of STP-22 for that path; IF it is stapel's of a newer version THEN `init` keeps it with the newer-version warning. | `init_elaborate::keeps_an_edited_file`, `init_elaborate::keeps_a_newer_file` |
 | AC-4 | IF a directory stands at the path of an elaboration file THEN `init` exits 1 with `<path> is a directory; nothing was written`; IF a file or a symlink stands at the path of the folder `.claude/skills/stapel-elaborate` THEN `init` exits 1 with `<path> is not a directory; nothing was written`; in both cases it writes no file. | `init_elaborate::refuses_a_directory` |
-| AC-5 | WHEN `stapel init` runs in the local mode THE checklist's `git add -f` line names `.claude/skills/stapel-elaborate` next to `.claude/skills/stapel`. | `init_elaborate::local_checklist_names_the_folder` |
+| AC-5 | WHEN `stapel init` runs in the local mode THE checklist's line is `git add -f .claude/skills/stapel .claude/skills/stapel-elaborate .claude/agents/stapel-*.md .claude/settings.json`. | `init_elaborate::local_checklist_names_the_folder` |
 | AC-6 | WHEN the skill is written THE collapsed body of `SKILL.md` holds each of: `larger than one ticket`; `elicit the person's intent, never author it`; `at most four questions in one dialog, each with options and a recommendation`; `.stapel/features/<slug>.md`; `without the first line of template.md`; `run checklist.md over the draft`; `name the path of the draft in the chat`. | `init_elaborate::skill_text_holds_the_steps` |
 | AC-7 | WHEN the skill is written THE headings of `template.md` are, in order: Description, Outcome, Done when, Boundaries, Requirements, Constraints, Decisions, Breakdown; its Requirements example lines start with `R1` and `R2`, its Breakdown line names `covers` and `after`, and the template holds the lines `three to six checks`, `at least one thing out` and `never reused or renumbered`. | `init_elaborate::template_sections` |
 | AC-8 | WHEN the skill is written THE check lines of `checklist.md` start with `- EL-<n>:`, the ids increase down the file and never repeat (a gap left by a pruned check is allowed), and each group heading (Draft, Requirements, Breakdown, Dependencies) has at least one check. | `init_elaborate::checklist_ids` |
 | AC-9 | WHEN the skill is written THE body of `NOTICE.md` equals the golden file `elaborate_notice.md`: the statement that the texts are adapted from the method, the repository URL, the full commit id of `e435a22`, a table of each stapel file and its source files, and the method's MIT copyright and permission notice word for word. | `init_elaborate::notice_text` |
 | AC-10 | WHEN `stapel init` writes its files THE method's name appears in `NOTICE.md` and in no other file it writes, in the shared and the local mode. | `init_elaborate::method_name_only_in_notice` |
 | AC-11 | WHEN the skill `stapel` is written THE body has one line that names the skill `stapel-elaborate` for work larger than one ticket. | `init_elaborate::stapel_skill_names_it` |
-| AC-12 | WHEN the tests of this repository run THE four elaboration files of this repository equal what `init` writes. | `init_elaborate::this_repository_has_the_files` |
+| AC-12 | WHEN the tests of this repository run THE four elaboration files exist in this repository, and each equals what `init` writes. | `init_elaborate::this_repository_has_the_files` |
 | AC-13 | WHEN the tests of this repository run THE report `docs/method-reports/e435a22.md` has the headings Taken, Not taken and Ideas for later, and each list item under Taken and Not taken has a `Why:` part. | `init_elaborate::method_report` |
 | AC-14 | WHEN `stapel export` writes the export branch THE paths under `.claude/skills/stapel-elaborate/` are removed from its commits and taken from the Onto tree, as the paths under `.claude/skills/stapel/` are. | `export::removes_the_elaboration_skill` |
 
@@ -142,8 +145,8 @@ CLI tests in the new file `crates/stapel-cli/tests/init_elaborate.rs` with `comm
 `common::stapel` and `common::read`; the marker checks reuse the rules of `init_process::check_marker`
 (frontmatter) and of `init_workflow` (first line). Golden file
 `crates/stapel-cli/tests/golden/elaborate_notice.md`. Light tests: `stapel cargo test -j 4 -p stapel-cli
---test init_elaborate -- --test-threads=4` (and `--test init_process`, `--test init`, and `--test
-export` in step 3); before each GREEN also `--test ticket_drift`. Every GREEN that changes an asset also
+--test init_elaborate -- --test-threads=4` (and `--test init_process`, `--test init`, `--test
+init_local`, `--test init_workflow`, and `--test export` in step 3a); before each GREEN also `--test ticket_drift`. Every GREEN that changes an asset also
 runs `stapel cargo run -p stapel-cli -- init` in the worktree, so the installed files of this repository
 stay equal to the assets and `init_process` passes at every step.
 
@@ -163,7 +166,7 @@ stay equal to the assets and `init_process` passes at every step.
 | Stapel skill | one line names `stapel-elaborate` | `init_elaborate::stapel_skill_names_it` |
 | This repository | the four files against a fresh `init` | `init_elaborate::this_repository_has_the_files` |
 | Report | the three headings; a `Why:` part in each item under Taken and Not taken | `init_elaborate::method_report` |
-| Export | a ticket commit that adds `.claude/skills/stapel-elaborate/SKILL.md`; an Onto tree that has the folder: the export commits do not change it, the export tree has the Onto's entries | `export::removes_the_elaboration_skill` |
+| Export | a ticket commit that adds `.claude/skills/stapel-elaborate/SKILL.md`; an Onto tree that has the folder: the export commits do not change it, the export tree has the Onto's entries; a person's `.claude/skills/stapel-foo/SKILL.md` stays in the export commits | `export::removes_the_elaboration_skill` |
 
 ### Inputs
 
@@ -190,7 +193,7 @@ stay equal to the assets and `init_process` passes at every step.
 (the code review reads the asset texts; no test); an HTML comment marker that a markdown viewer hides, so
 a person edits the file without seeing the marker (kept as not stapel's on the next run; not tested);
 CRLF line ends in an edited file (read as not stapel's; not tested); a person's own skill folder
-`stapel-elaborate` (kept with a warning, AC-3).
+`stapel-elaborate` (each own file kept with a warning, AC-3; the missing files written).
 
 ## Design
 
@@ -249,8 +252,9 @@ Route: full (tag `interface`), auto.
    `init_elaborate::this_repository_has_the_files`, which fail at the RED because no file is written):
    the new file `tests/init_elaborate.rs` comes with this RED; the GREEN adds the four assets with short
    first texts, writes each with its marker only when nothing is at its path, silently on a later run and
-   never rewriting (knowingly wrong until step 2), and runs `init` in the worktree. Must not change: the
-   other process files.
+   never rewriting (knowingly wrong until step 2), and runs `init` in the worktree. The RED also adds
+   the folder to the `git add -f` list of `init_local::foreign_repository_real_pushes`, which fails there
+   because the path does not exist yet. Must not change: the other process files.
 2. Re-run and kept files (AC-2, AC-3; tests `init_elaborate::updates_an_unchanged_file`,
    `init_elaborate::keeps_an_edited_file`, `init_elaborate::keeps_a_newer_file`, which fail at the RED
    because step 1 never rewrites and prints no warning): the GREEN moves the files into
@@ -258,9 +262,14 @@ Route: full (tag `interface`), auto.
 2a. Refusals (AC-4; test `init_elaborate::refuses_a_directory`, which fails at the RED because a file or
    a symlink at the folder path is not checked before the write): the GREEN checks the folder path with
    the other refusals. Must not change: step 2.
-3. Local mode and export (AC-5, AC-14; tests `init_elaborate::local_checklist_names_the_folder`,
-   `export::removes_the_elaboration_skill`). Must not change: the other checklist lines; the other
-   process paths of `stapel export`.
+3. Local checklist (AC-5; test `init_elaborate::local_checklist_names_the_folder`, which fails at the
+   RED because the line lacks the folder): the RED also changes the line in the golden file
+   `init_local_checklist.txt`, so `init_local::prints_the_checklist` fails there too; the GREEN changes
+   `LOCAL_CHECKLIST`. Must not change: the other checklist lines.
+3a. Export (AC-14; test `export::removes_the_elaboration_skill`, which fails at the RED because the
+   folder is no process path of `export.rs`): the RED extends the `is_process_path` copy of
+   `tests/export.rs`; the GREEN adds the folder to `REMOVE`, `is_process_path` and `onto_entries`. Must not
+   change: the other process paths; a person's other skill folders.
 4. The skill texts (AC-6, AC-11; tests `init_elaborate::skill_text_holds_the_steps`,
    `init_elaborate::stapel_skill_names_it`): the GREEN writes the body of `SKILL.md` and the line of the
    skill `stapel`, and runs `init` in the worktree. Must not change: the other lines of the skill
