@@ -760,6 +760,7 @@ fn foreign_repository_real_pushes() {
             "add",
             "-f",
             ".claude/skills/stapel",
+            ".claude/skills/stapel-elaborate",
             ".claude/agents/stapel-*.md",
             ".claude/settings.json",
         ],
