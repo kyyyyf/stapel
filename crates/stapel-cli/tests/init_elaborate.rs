@@ -429,7 +429,9 @@ fn template_sections() {
     let dir = repo.path();
     first_run(dir);
     let text = read(dir, FILES[1]);
-    let headings: Vec<&str> = text.lines().filter_map(|l| l.strip_prefix("# ")).collect();
+    let body = text.split_once("\n\n").expect("a blank line after the marker").1;
+    assert_eq!(body.lines().next(), Some("# [Title of the feature]"), "{text}");
+    let headings: Vec<&str> = text.lines().filter_map(|l| l.strip_prefix("## ")).collect();
     assert_eq!(
         headings,
         [
@@ -447,7 +449,7 @@ fn template_sections() {
         let mut out = String::new();
         let mut inside = false;
         for l in text.lines() {
-            if let Some(h) = l.strip_prefix("# ") {
+            if let Some(h) = l.strip_prefix("## ") {
                 inside = h == name;
             } else if inside {
                 out.push_str(l);
