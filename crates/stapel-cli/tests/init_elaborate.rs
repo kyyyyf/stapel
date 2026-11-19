@@ -136,3 +136,183 @@ fn this_repository_has_the_files() {
         assert!(ours == fresh, "{rel} differs from what init writes");
     }
 }
+
+fn first_run(dir: &Path) {
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+}
+
+fn rerun(dir: &Path) -> (String, String) {
+    let out = stapel(dir).arg("init").assert().success();
+    let out = out.get_output();
+    (
+        String::from_utf8(out.stdout.clone()).unwrap(),
+        String::from_utf8(out.stderr.clone()).unwrap(),
+    )
+}
+
+/// The text of `rel` without its marker, as the hash sees it.
+fn unmarked(dir: &Path, rel: &str) -> String {
+    let text = read(dir, rel);
+    if rel.ends_with("SKILL.md") {
+        let line = text.lines().find(|l| l.starts_with("# stapel:")).unwrap();
+        text.replacen(&format!("{line}\n"), "", 1)
+    } else {
+        text.split_once('\n').unwrap().1.to_string()
+    }
+}
+
+/// `body` marked with `version` and the hash of `body`, in the form of `rel`.
+fn marked(rel: &str, version: &str, body: &str) -> String {
+    let hash = hex_of(body);
+    if rel.ends_with("SKILL.md") {
+        let at = body.find("\n---\n").expect("frontmatter end") + 1;
+        let mut text = body.to_string();
+        text.insert_str(at, &format!("# stapel: {version} sha256:{hash}\n"));
+        text
+    } else {
+        format!("<!-- stapel: {version} sha256:{hash} -->\n{body}")
+    }
+}
+
+// AC-2: an older unchanged file with other text is updated; an equal file prints nothing.
+#[test]
+fn updates_an_unchanged_file() {
+    let repo = git_repo();
+    let dir = repo.path();
+    first_run(dir);
+    let want: Vec<String> = FILES.iter().map(|r| read(dir, r)).collect();
+    for rel in FILES {
+        let body = unmarked(dir, rel) + "A hand-made extra line.\n";
+        std::fs::write(dir.join(rel), marked(rel, "0.0.1", &body)).unwrap();
+    }
+    let (stdout, _) = rerun(dir);
+    for (rel, text) in FILES.iter().zip(&want) {
+        assert!(
+            stdout.lines().any(|l| l == format!("updated: {rel}")),
+            "{rel}: {stdout}"
+        );
+        assert_eq!(&read(dir, rel), text, "{rel}");
+    }
+    let (stdout, stderr) = rerun(dir);
+    for rel in FILES {
+        assert!(!stdout.contains(rel), "{rel}: {stdout}");
+        assert!(!stderr.contains(rel), "{rel}: {stderr}");
+    }
+}
+
+const KEPT: &str =
+    "is not the file stapel wrote; kept. Delete it and run stapel init to take stapel's text";
+
+// AC-3: edited, unmarked, malformed, misplaced, symlinked and non-UTF-8 files are kept with the warning.
+#[test]
+fn keeps_an_edited_file() {
+    let repo = git_repo();
+    let dir = repo.path();
+    first_run(dir);
+    let body = unmarked(dir, FILES[1]);
+    let hash = hex_of(&body);
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        (FILES[0], (read(dir, FILES[0]) + "one more line\n").into_bytes()),
+        (FILES[1], format!("{body}one more line\n").into_bytes()),
+        (FILES[1], body.clone().into_bytes()),
+        (
+            FILES[1],
+            format!("<!-- stapel: 0.0.1 sha256:{} -->\n{body}", "0".repeat(64)).into_bytes(),
+        ),
+        (
+            FILES[1],
+            format!("<!-- stapel: 0.0.1 sha256:{} -->\n{body}", hash.to_uppercase()).into_bytes(),
+        ),
+        (
+            FILES[1],
+            format!("<!-- stapel: 0.0.1 sha256:{} -->\n{body}", &hash[..32]).into_bytes(),
+        ),
+        (
+            FILES[1],
+            format!("<!-- stapel: 1.2 sha256:{hash} -->\n{body}").into_bytes(),
+        ),
+        (
+            FILES[1],
+            format!("<!-- stapel: 0.0.1 sha256:{hash}\n{body}").into_bytes(),
+        ),
+        (
+            FILES[1],
+            format!("\n<!-- stapel: 0.0.1 sha256:{hash} -->\n{body}").into_bytes(),
+        ),
+        (FILES[1], {
+            let mut b = marked(FILES[1], "0.0.1", &body).into_bytes();
+            b.push(0xff);
+            b
+        }),
+    ];
+    let stapels: Vec<Vec<u8>> = FILES
+        .iter()
+        .map(|r| std::fs::read(dir.join(r)).unwrap())
+        .collect();
+    for (rel, bytes) in &cases {
+        std::fs::write(dir.join(rel), bytes).unwrap();
+        let (_, stderr) = rerun(dir);
+        assert!(
+            stderr
+                .lines()
+                .any(|l| l == format!("warning: {rel} {KEPT}")),
+            "{rel}: {stderr}"
+        );
+        assert_eq!(&std::fs::read(dir.join(rel)).unwrap(), bytes, "{rel}");
+        let i = FILES.iter().position(|f| f == rel).unwrap();
+        std::fs::write(dir.join(rel), &stapels[i]).unwrap();
+    }
+    // The skill file with its marker removed.
+    let bare = unmarked(dir, FILES[0]);
+    std::fs::write(dir.join(FILES[0]), &bare).unwrap();
+    let (_, stderr) = rerun(dir);
+    assert!(
+        stderr
+            .lines()
+            .any(|l| l == format!("warning: {} {KEPT}", FILES[0])),
+        "{stderr}"
+    );
+    assert_eq!(read(dir, FILES[0]), bare);
+    std::fs::write(dir.join(FILES[0]), &stapels[0]).unwrap();
+    // A symlink to a copy of stapel's text.
+    let outside = tempfile::tempdir().unwrap();
+    let copy = outside.path().join("copy.md");
+    std::fs::write(&copy, &stapels[2]).unwrap();
+    std::fs::remove_file(dir.join(FILES[2])).unwrap();
+    std::os::unix::fs::symlink(&copy, dir.join(FILES[2])).unwrap();
+    let (_, stderr) = rerun(dir);
+    assert!(
+        stderr
+            .lines()
+            .any(|l| l == format!("warning: {} {KEPT}", FILES[2])),
+        "{stderr}"
+    );
+    assert!(
+        std::fs::symlink_metadata(dir.join(FILES[2]))
+            .unwrap()
+            .is_symlink()
+    );
+}
+
+// AC-3: an unchanged file of a newer version is kept with the newer-version warning.
+#[test]
+fn keeps_a_newer_file() {
+    let repo = git_repo();
+    let dir = repo.path();
+    first_run(dir);
+    let own = env!("CARGO_PKG_VERSION");
+    for rel in FILES {
+        let body = unmarked(dir, rel) + "A hand-made extra line.\n";
+        let newer = marked(rel, "99.0.0", &body);
+        std::fs::write(dir.join(rel), &newer).unwrap();
+        let (_, stderr) = rerun(dir);
+        let warning = format!(
+            "warning: {rel} was written by stapel 99.0.0, newer than this stapel {own}; kept"
+        );
+        assert!(stderr.lines().any(|l| l == warning), "{rel}: {stderr}");
+        assert_eq!(read(dir, rel), newer, "{rel}");
+    }
+}
