@@ -385,6 +385,16 @@ stapel continues as planned only if all three hold on the pilot's numbers:
 Otherwise stapel narrows to `check` and the token journal for CI. The decision is a ledger record. If it
 narrows, phases 3 to 5 below are not taken.
 
+Verdict after three pilot tickets (ledger 2026-11-19, with the human; the reports are in
+`.stapel/scratch/pilot/`): point 1 fails by its letter, because the person of this pilot does not read the
+agent's code, so the term "plus the review of its code" is zero and stapel's 51 to 88 minutes stand against
+the plain agent's 14; point 2 cannot be counted, because the plain agent's branch was never merged; point 3
+passes on every measure (returns 10 against 24, output tokens 369 k against 639 k). The human decided to go
+on with phases 3 to 5 and replaced points 1 and 2 by measures that fit a person who does not read code: the
+returns to the person (dialogs, question dialogs, typed messages) and the minutes of interaction against a
+plain agent on the next foreign repository, and escaped defects counted by the project's CI after the merge
+and by a mutation run on the diff (phase 5). The order of the phases changed the same day (below).
+
 Also decided at the gate (ledger 2026-11-10, third decision): the kind `bug`. Until then a bug goes through
 the current process unchanged; the RED test is the reproduction. Every escaped defect of a pilot ticket
 becomes a bug ticket, and its attention numbers (item 1.14) show what a bug costs. If that cost is too high
@@ -392,9 +402,17 @@ for a two-step fix, the kind `bug` enters phase 4 by a ledger decision.
 
 ### After the gate — phases 3 to 5 (ledger 2026-11-10, second decision)
 
-Taken only if the gate (2.4) passes, in this order, chosen by the human. The pilot's findings may reorder
-them only by a ledger decision. The numbers 3 to 5 are new; they do not mean the earlier phases 3 to 5.
-Each item is one ticket under the rule of 12 Plan steps.
+Taken in this order, chosen by the human: phase 3, then phase 3b, then phase 5, then phase 4 (ledger
+2026-11-19; before that day the order was 3, 4, 5). The pilot's findings may reorder them only by a ledger
+decision. The numbers 3 to 5 are new; they do not mean the earlier phases 3 to 5. Each item is one ticket
+under the rule of 12 Plan steps. Item 4.1 was started on 2026-11-19 before the reorder and finishes; the
+next ticket after it is 3.3.
+
+Why this order: the pilot showed that stapel's value lies in the checks at the boundary (the stand, RED
+before GREEN, the project's CI) and its cost in the mechanics of the process (dialogs per review round, the
+grant lifetime, the history rules). Phase 3b removes the cost, phase 5 adds the checks and gives the
+mutation run that stands in for the uncountable escaped defects; the feature level of phase 4 plans larger
+work, which no pilot ticket needed.
 
 **Phase 3 — one ticket made lighter.**
 
@@ -405,6 +423,35 @@ Each item is one ticket under the rule of 12 Plan steps.
   the page changed after it was written. No editor extension and no LSP.
 - 3.2 `stapel check` in the CI of the repository: the same check on the merge request, so the boundary
   decides, not the agent's shell. This is what lets the guard stay frozen.
+
+**Phase 3b — the mechanics after the pilot (ledger 2026-11-19).** Five small tickets, each from a pilot finding
+named in `.stapel/scratch/pilot/report-ticket-2.md` and `report-ticket-3.md`.
+
+- 3.3 the grant lifetime (finding G-6): a grant of `stapel ok` and `stapel close` lives 24 hours instead of 30
+  minutes, so that an answer after a pause does not cost a second dialog; the sweep still removes expired
+  grants.
+- 3.4 fix steps without a dialog per round (the structure of the returns): the fix and coverage steps that a
+  review round adds are built on a provisional permit and confirmed together by the `stapel ok` before the
+  close; a fix step that widens the promise or changes a criterion's meaning still stops for its own dialog.
+  Expected: three dialogs per ticket (after the spec review, before code review, close).
+- 3.5 the close needs the project's own checks (finding G-12): `stapel check` runs the project's check command
+  under the Node version the project pins (`.nvmrc`, `engines`), and the close runs the project's pre-commit
+  checks on the whole diff (for the pilot: prettier, eslint, tsc), so that nothing is left to the CI after the
+  merge. In this repository the CI of 3.2 is that check.
+- 3.6 softer history rules (finding G-10): a GREEN commit may change a step's test file and a build input may
+  change after a RED when the commit message says so (`history: <reason>`), and `stapel check` judges the
+  result (the tests fail at RED and pass at GREEN and HEAD), not the shape of the history. The four history
+  rewrites of pilot ticket three were its largest cost.
+- 3.7 small findings in one ticket: `stapel review start` accepts any round number (G-7); `stapel close` writes
+  the rule 9 ledger records `catches` and `finding` from the ticket's findings (G-11); an agent edit of
+  `.stapel/stapel.toml` goes through a dialog like `stapel ok` instead of being denied (G-9).
+
+**Phase 5 — the sum of changes.**
+
+- 5.1 the guards folder: machine checks out of the agent's reach with ratchet baselines ("no worse than
+  now": existing violations recorded, new ones fail, a fixed one leaves the baseline for good); `stapel
+  check` and the CI run them.
+- 5.2 a new dependency only through a dialog, and a public API snapshot.
 
 **Phase 4 — the feature level.** Optional: a ticket without a feature works as before. Two levels only,
 feature and ticket.
@@ -434,13 +481,6 @@ feature and ticket.
 The quality of a feature spec is measured, per ticket, by three numbers: `intent_gap` findings and
 questions (enough information), brief size and builder tokens (not too much), dialogs and the human's
 minutes (attention). A rule of the elaboration skill that catches nothing is removed as in the spec process.
-
-**Phase 5 — the sum of changes.**
-
-- 5.1 the guards folder: machine checks out of the agent's reach with ratchet baselines ("no worse than
-  now": existing violations recorded, new ones fail, a fixed one leaves the baseline for good); `stapel
-  check` and the CI run them.
-- 5.2 a new dependency only through a dialog, and a public API snapshot.
 
 ### Candidates without a place in the order
 
