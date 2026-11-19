@@ -1,0 +1,29 @@
+name: stapel check
+on:
+  push:
+    branches: ["<prefix>-[0-9]+"]
+  pull_request:
+jobs:
+  check:
+    if: github.event_name == 'push' || startsWith(github.head_ref, '<prefix>-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Local branches
+        run: git fetch --no-tags --update-head-ok . '+refs/remotes/origin/*:refs/heads/*' '^refs/remotes/origin/HEAD'
+      - name: Setup
+        run: 'echo "fill in the step Setup of .github/workflows/stapel-check.yml"; exit 1'
+      - name: Install stapel
+        run: cargo install --git https://github.com/kyyyyf/stapel --rev <commit> --locked stapel-cli
+      - name: Check
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: stapel check "$BRANCH"

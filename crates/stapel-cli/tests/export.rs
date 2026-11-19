@@ -727,9 +727,10 @@ fn export_output() {
     let tip = rev(dir, "export/ABC-1");
     assert_eq!(out, golden.replace("<tip>", &tip));
 
-    // Remotes `my` and `my/fork`: the longest name wins.
+    // Remotes `my` and `my/fork`: the longest name wins. Newer git refuses `git remote add my/fork`
+    // while `my` exists, so the second remote is set by its config key.
     git_n(dir, 1, &["remote", "add", "my", "/nonexistent/my"]);
-    git_n(dir, 1, &["remote", "add", "my/fork", "/nonexistent/fork"]);
+    git_n(dir, 1, &["config", "remote.my/fork.url", "/nonexistent/fork"]);
     git_n(dir, 1, &["update-ref", "refs/remotes/my/fork/release/1", "main"]);
     let out = run("my/fork/release/1");
     let lines: Vec<_> = out.lines().collect();

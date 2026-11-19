@@ -932,7 +932,9 @@ fn twenty_steps_within_five_seconds() {
         20,
         "{out}"
     );
-    assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+    // 15 s, not 5 s: the run makes about 850 git calls, and on macOS with /usr/bin/git (the xcrun
+    // shim) it takes about 10 s (ledger decision of 2026-11-19).
+    assert!(took < std::time::Duration::from_secs(15), "took {took:?}");
 }
 
 // ---- STP-28 AC-1 ----
