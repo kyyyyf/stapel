@@ -21,3 +21,4 @@
 {"v":1,"id":"d-d1d1130589d2","at":"2026-11-19T10:52:33Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:863784b346e8afde627e2069cb8e93fafbfedfe9d95a283789029650fbaa10cd","via":"grant"}
 {"v":1,"id":"d-8c3841b5da18","at":"2026-11-19T10:52:33Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:43f0d7ee8a0d22e5ae382931e3844a15cf4388d4602e0e9bbe0d64fc1e682e69","via":"grant"}
 {"v":1,"id":"d-7b31b5d9d95d","at":"2026-11-19T10:52:33Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:77039294f2bfb5f1c61bf7bcc0443deacdffab32bc5cd9d53e00e621b85cb182","via":"grant"}
+{"v":1,"id":"d-7749f847592e","at":"2026-11-19T11:13:11Z","by":"kyyyyf","action":"close","reason":"stapel init writes a pinned stapel check workflow for GitHub Actions, this repository has it, and its runs on GitHub are green."}
