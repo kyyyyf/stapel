@@ -427,6 +427,12 @@ work, which no pilot ticket needed.
 **Phase 3b — the mechanics after the pilot (ledger 2026-11-19).** Five small tickets, each from a pilot finding
 named in `.stapel/scratch/pilot/report-ticket-2.md` and `report-ticket-3.md`.
 
+- 3.2a faster fixtures of `tests/check.rs` (ledger 2026-11-19, after STP-34; taken before 3.3): the 175 tests
+  run real cargo on the fixture crate `tiny` one at a time, each with a cold target folder, so a local
+  `stapel check` takes 30 to 100 minutes. A shared `CARGO_TARGET_DIR` for the fixture builds, and a fake
+  cargo for the tests whose subject is the logic of `stapel check`; real cargo stays in a few tests of the
+  cargo boundary. Measured: the time of `tests/check.rs` and of the whole local check, before and after.
+  Also: `check.timeout_secs` did not stop a suite run of more than 77 minutes.
 - 3.3 the grant lifetime (finding G-6): a grant of `stapel ok` and `stapel close` lives 24 hours instead of 30
   minutes, so that an answer after a pause does not cost a second dialog; the sweep still removes expired
   grants.
