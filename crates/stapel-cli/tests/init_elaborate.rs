@@ -383,7 +383,7 @@ fn skill_body(dir: &Path, rel: &str) -> String {
     parts.next().expect("a body after the frontmatter").to_string()
 }
 
-// AC-6: the collapsed body of `SKILL.md` holds the seven phrases.
+// AC-6: the collapsed body of `SKILL.md` holds the eight phrases.
 #[test]
 fn skill_text_holds_the_steps() {
     let repo = git_repo();
@@ -401,6 +401,7 @@ fn skill_text_holds_the_steps() {
         "without the first line of template.md",
         "run checklist.md over the draft",
         "name the path of the draft in the chat",
+        ".claude/skills/stapel-elaborate/",
     ] {
         assert!(flat.contains(phrase), "missing {phrase:?}");
     }
