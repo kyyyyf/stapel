@@ -1,16 +1,41 @@
 
 # Description
 
+[One paragraph: what is true when the work is done, and why it matters. Point at the inputs, such as the person's text or linked files.]
+
 # Outcome
+
+[One sentence: who benefits and what changes for them. Add the source's own measure of success only when the source states one.]
 
 # Done when
 
+[Write three to six checks, taken from the measures and limits of the source, at the altitude of the requirements. Each check is testable or demonstrable.]
+
 # Boundaries
+
+[Name at least one thing out, from the person's non-goals. Name what belongs to another feature. Add lines `Must not change: <behaviour>`.]
 
 # Requirements
 
+[One line per requirement, in the form below. Say WHAT is possible, never HOW. Ids are never reused or renumbered, even when a requirement is removed.]
+
+R1: [what is possible]; shown by [what shows it was met]
+R2: [what is possible]; shown by [what shows it was met]
+
 # Constraints
+
+[Each non-negotiable that bends a design decision, with its source.]
 
 # Decisions
 
+[One typed line per entry, with the date, in these forms.]
+
+- [date]: Decision: [what was decided and by whom]
+- [date]: Assumption: [a fact you assume, not confirmed]
+- [date]: Open question: [a point the person has not answered]
+
 # Breakdown
+
+[One line per ticket. The first ticket is a thin end-to-end path, unless a Decision line says why not.]
+
+- 1. [title] — covers R1, R2; after none; done when [one runnable check]
