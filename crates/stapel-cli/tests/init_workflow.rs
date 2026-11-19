@@ -43,7 +43,7 @@ fn workflow_lines() {
         "ref: ${{ github.event.pull_request.head.sha || github.sha }}",
         "fetch-depth: 0",
         "persist-credentials: false",
-        "git fetch --no-tags --update-head-ok origin '+refs/heads/*:refs/heads/*'",
+        "git fetch --no-tags --update-head-ok . '+refs/remotes/origin/*:refs/heads/*' '^refs/remotes/origin/HEAD'",
         "contents: read",
         "timeout-minutes: 60",
         "BRANCH: ${{ github.head_ref || github.ref_name }}",
