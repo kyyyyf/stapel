@@ -357,3 +357,19 @@ fn refuses_a_directory() {
         assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0, "{kind}");
     }
 }
+
+// AC-5: the local checklist adds the folder of the skill with `git add -f`.
+#[test]
+fn local_checklist_names_the_folder() {
+    let repo = git_repo();
+    let dir = repo.path();
+    let out = stapel(dir)
+        .args(["init", "--local", "--prefix", "ABC"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let output = String::from_utf8(out.stdout).unwrap() + &String::from_utf8(out.stderr).unwrap();
+    let want = "   git add -f .claude/skills/stapel .claude/skills/stapel-elaborate .claude/agents/stapel-*.md .claude/settings.json";
+    assert!(output.lines().any(|l| l == want), "no checklist line in {output}");
+}
