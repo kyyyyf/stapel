@@ -143,8 +143,10 @@ Terms:
   decisions, not by a step, are listed in Design "as built" (CR1-2).
 - **Not promised:** the Frame's list; the check reads the branch's own `stapel.toml`, `state.json` and
   workflow, which an agent can edit (SR1-6); a pin that stays on an old commit after later tickets change
-  `stapel check` (SR1-5); a repository not hosted on GitHub (the file is written and does nothing); pull
-  requests from forks whose branch is a ticket key of another repository; a pull request branch that
+  `stapel check` (SR1-5); under the junit runner, a pin after the person edits the `Setup` step: `init`
+  then keeps the file as not stapel's and never moves `--rev` (CR2-2); a repository not hosted on GitHub
+  (the file is written and does nothing); pull requests from forks (Checkout may not reach the fork's
+  commit, CR2-9); a pull request branch that
   starts with `<PREFIX>-` but is no ticket key, or differs in case (the check refuses and the job fails);
   two runs for one commit pushed and opened as a pull request; a build commit that is not on
   `github.com/kyyyyf/stapel` (the install step fails); a binary installed by `cargo install --git` without `STAPEL_BUILD_COMMIT` (no
@@ -153,7 +155,7 @@ Terms:
   a workflow file that cannot be read for reasons other than AC-5 (exit 1 with the file system's error,
   not tested).
 - **Time (SR1-9):** estimate for this repository on a GitHub runner of 4 cores: `cargo install` about 4
-  minutes; `stapel check` of 10 steps about 25 minutes (here about 10 minutes at `-j 4`, the runner taken
+  minutes; `stapel check` of 10 steps (11 after step 7) about 25 minutes (here about 10 minutes at `-j 4`, the runner taken
   as 2 to 3 times slower, cold). The green run in Proof records the measured time; a run over 45 minutes
   goes to the person as a finding at the close.
 
@@ -210,7 +212,7 @@ each GREEN also `--test ticket_drift`.
 | git | dirty tree at build time | the dirty build commit (AC-7) | `init_workflow::dirty_build_commit` |
 | git | configuration: hooks path, `GIT_*` | not read by the new code | — |
 | github-actions | event: push of a ticket branch, pull request from it, other branches | the AC-2 triggers and condition | `init_workflow::workflow_lines` |
-| github-actions | pull request from a fork; secrets; token rights | read-only contents, no secrets, no stored credentials; no step after Checkout uses the network, so a private repository works (CR1-1) | `init_workflow::workflow_lines` |
+| github-actions | pull request from a fork; secrets; token rights | read-only contents, no secrets, no stored credentials; no step after Checkout needs the repository's credentials, so a private repository should work (CR1-1; not run, CR2-4) | `init_workflow::workflow_lines` |
 | github-actions | runner image and its Rust toolchain; job time | `ubuntu-latest` with its toolchain; 60 minutes | `init_workflow::workflow_lines` |
 | cargo | network errors; the commit not on the remote; `Cargo.lock` out of date | the install step fails and the job fails; not promised | — |
 | cargo | `STAPEL_BUILD_COMMIT` changed between builds | `option_env!` makes cargo rebuild; not tested | — |
@@ -290,8 +292,10 @@ into that branch; not promised).
 - The quoted output lines stand as literals in the code that prints them (the ticket lint looks for them);
   the missing-commit warning is one line under `#[rustfmt::skip]`. Step 4 also repeats the `created:`,
   `updated:` and kept lines in a doc comment of `plan_workflow`.
-- This repository's workflow pins `f49448d2da1aabeea046a5e44d5b72bb56f319e7`, the RED commit of step 6;
-  step 7 moves the pin to its own RED commit.
+- This repository's workflow pins `0b2d40dd14aefb70e538c1517c9dd80fa6986ea8`, the RED commit of step 7
+  (step 6 pinned `f49448d`, its own RED). The text comes from the step 7 GREEN templates, so `init` by a
+  binary built at the pin would write the old fetch line back; the pin only installs the `stapel check`
+  that CI runs, which step 7 does not change (CR2-3).
 - The first CI run failed the suite on `export::export_output` (newer git refuses `git remote add my/fork`
   while `my` exists). A ticket STP-34 for it could not close, because `stapel check` verifies no fix that
   lies only in tests, and a fix commit inside this branch made every step unverified; that commit was
@@ -302,7 +306,8 @@ into that branch; not promised).
   15 s, which weakens STP-14 AC-10, about 850 git calls through the macOS xcrun shim), `tests/tokens.rs`
   (the fixture copy is read and written, so it gets the current modification time on macOS), and the
   skill text of rules 2 and 6 (`crates/stapel-cli/assets/skill.md`, `.claude/skills/stapel/SKILL.md`, from
-  the STP-32 ledger decision of 2026-11-17); by a ledger decision of 2026-11-19, `check.timeout_secs` 1800
+  the STP-32 ledger decision of 2026-11-17, with `.stapel/tickets/STP-32/tokens.jsonl`); by the ledger
+  decision dated 2026-11-18 that the human confirmed in its dialog, `check.timeout_secs` 1800
   in `.stapel/stapel.toml` (was 900). The local check ran with `TMPDIR` on a case-sensitive disk image.
 - Step 7 (CR1-1): the `Local branches` step fetches from `.`, the local repository, not from `origin`;
   Checkout with `fetch-depth: 0` has already fetched every branch to `refs/remotes/origin/*`.
@@ -366,8 +371,53 @@ Route: full (tag `interface`), auto.
 
 ## Review
 
-TODO
+Reviewers: round 1 and round 2, each with stapel-reviewer (claude-sonnet-5-5), an external stapel-reviewer
+(claude-fable-5-1) and stapel-drift on the whole ticket; drift on the steps ran once before (D1-1 to D1-3).
+
+- Round 1: 1 HIGH, 3 MEDIUM, 6 LOW. CR1-1 (HIGH, the network fetch fails on a private repository) was
+  fixed by step 7; CR1-2, CR1-8 (changes in `base..head` no step makes) by the ticket text; CR1-3 by the
+  green run after step 7; CR1-4 (junit pin) deferred, then CR2-2.
+- Round 2: no HIGH, 1 MEDIUM, 9 LOW. CR2-2 (junit pin, Not promised was false) fixed by the text, the
+  human's choice; CR2-9 (pull requests from forks) deferred, the human's choice; CR2-3, CR2-4, CR2-6,
+  CR2-8 and CR2-10 fixed by the text. CR2-5: the commits after the green run at `2a16ff8` change only
+  `.stapel/` files. Left as LOW: CR2-1 (the STP-14 AC-10 bound), CR2-7 and CR1-5 to CR1-7 (test gaps),
+  CR1-9, CR1-10.
 
 ## Summary
 
-TODO
+`stapel init` in the shared mode writes `.github/workflows/stapel-check.yml`, a GitHub Actions job that
+installs stapel at the commit the running binary was built from and runs `stapel check` on every push of a
+ticket branch and every pull request from one. The binary records that commit (`stapel --version`
+names it); without a clean commit, or without a key prefix, `init` writes no workflow and warns. The file
+carries a marker, so a re-run updates stapel's own file and keeps a hand-edited one; junit gets a `Setup`
+step to fill in. This repository has the workflow, and its runs on GitHub are green (Proof).
+
+For the person to decide (deferred, outside the promise or later work):
+
+- SR1-5, CR2-2: the pin stays on its commit until `init` runs again; under junit, after the `Setup` step is
+  edited, never. A later ticket could keep the `Setup` step and move only the pin.
+- SR1-6: the check reads the branch's own `stapel.toml`, `state.json` and workflow.
+- CR2-9: pull requests from forks (not run).
+- CR2-1: `check_history::twenty_steps_within_five_seconds` allows 15 s against STP-14 AC-10's 5 s; the
+  real fix is fewer git calls in `stapel check --history` (about 43 a step).
+- Process findings in the ledger: `stapel check` names no failing suite test; it has no form for a fix
+  that lies only in tests (STP-34 was cancelled for it); a nested `stapel check` inside `stapel cargo`
+  waits for its own lock; a ticket-only commit asks for a new full check; the local suite needs a
+  case-sensitive `TMPDIR` on this machine.
+
+Measures against STP-32:
+
+- Escaped defects of earlier tickets found here: two tests that fail on newer git or on macOS
+  (`export::export_output`, `tokens::import_refuses_live_transcript_without_until`), fixed in main.
+- Code review HIGH and MEDIUM inside the promise: round 1: 1 HIGH, 2 MEDIUM; round 2: 1 MEDIUM (STP-32:
+  3 MEDIUM). Spec review: two rounds, 21 findings, before the build.
+- `ticket.md`: about 36 KB (STP-32: 36 KB).
+- Size: about 850 lines added in 12 files against main, most of them tests (`init_workflow.rs`, 490).
+- Steps: 10 planned, 11 built with the fix step 7; two history rewrites with the human's consent.
+- Tokens (measured, output): orchestrator 230 k, builder 79 k, reviewers 38 k, drift 3 k (STP-32: 181 k,
+  112 k, 50 k, 9 k).
+- Attention: 12 dialogs, 17 questions; 3 h 19 min attention, 27 h wall time (STP-32: 11 dialogs, 5
+  questions, 2 h 6 min).
+- What improved: builders kept to named test files after the step 3 deadlock; the green CI run is the
+  promise's own proof. What did not: the CI failure took two diagnostic branches, a cancelled ticket and
+  two commits to main to clear, and each ticket-only commit cost a full local check of about 30 minutes.
