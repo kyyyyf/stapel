@@ -118,10 +118,10 @@ Terms:
 | AC-3 | IF an elaboration file is edited, has no valid marker, is a symlink or is not UTF-8 THEN `init` keeps its bytes and prints the kept warning of STP-22 for that path; IF it is stapel's of a newer version THEN `init` keeps it with the newer-version warning. | `init_elaborate::keeps_an_edited_file`, `init_elaborate::keeps_a_newer_file` |
 | AC-4 | IF a directory stands at the path of an elaboration file THEN `init` exits 1 with `<path> is a directory; nothing was written`; IF a file or a symlink stands at the path of the folder `.claude/skills/stapel-elaborate` THEN `init` exits 1 with `<path> is not a directory; nothing was written`; in both cases it writes no file. | `init_elaborate::refuses_a_directory` |
 | AC-5 | WHEN `stapel init` runs in the local mode THE checklist's line is `git add -f .claude/skills/stapel .claude/skills/stapel-elaborate .claude/agents/stapel-*.md .claude/settings.json`. | `init_elaborate::local_checklist_names_the_folder` |
-| AC-6 | WHEN the skill is written THE collapsed body of `SKILL.md` holds each of: `larger than one ticket`; `elicit the person's intent, never author it`; `at most four questions in one dialog, each with options and a recommendation`; `.stapel/features/<slug>.md`; `without the first line of template.md`; `run checklist.md over the draft`; `name the path of the draft in the chat`. | `init_elaborate::skill_text_holds_the_steps` |
-| AC-7 | WHEN the skill is written THE headings of `template.md` are, in order: Description, Outcome, Done when, Boundaries, Requirements, Constraints, Decisions, Breakdown; its Requirements example lines start with `R1` and `R2`, its Breakdown line names `covers` and `after`, and the template holds the lines `three to six checks`, `at least one thing out` and `never reused or renumbered`. | `init_elaborate::template_sections` |
+| AC-6 | WHEN the skill is written THE collapsed body of `SKILL.md` holds each of: `larger than one ticket`; `elicit the person's intent, never author it`; `at most four questions in one dialog, each with options and a recommendation`; `.stapel/features/<slug>.md`; `without the first line of template.md`; `run checklist.md over the draft`; `name the path of the draft in the chat`; `.claude/skills/stapel-elaborate/`. | `init_elaborate::skill_text_holds_the_steps` |
+| AC-7 | WHEN the skill is written THE first line of the body of `template.md` is `# [Title of the feature]`, and its section headings are, in order: Description, Outcome, Done when, Boundaries, Requirements, Constraints, Decisions, Breakdown; its Requirements example lines start with `R1` and `R2`, its Breakdown line names `covers` and `after`, and the template holds the lines `three to six checks`, `at least one thing out` and `never reused or renumbered`. | `init_elaborate::template_sections` |
 | AC-8 | WHEN the skill is written THE check lines of `checklist.md` start with `- EL-<n>:`, the ids increase down the file and never repeat (a gap left by a pruned check is allowed), and each group heading (Draft, Requirements, Breakdown, Dependencies) has at least one check. | `init_elaborate::checklist_ids` |
-| AC-9 | WHEN the skill is written THE body of `NOTICE.md` equals the golden file `elaborate_notice.md`: the statement that the texts are adapted from the method, the repository URL, the full commit id of `e435a22`, a table of each stapel file and its source files, and the method's MIT copyright and permission notice word for word. | `init_elaborate::notice_text` |
+| AC-9 | WHEN the skill is written THE body of `NOTICE.md` equals the golden file `elaborate_notice.md`: the statement that the texts are adapted from the method, the repository URL, the full commit id of `e435a22`, a table of each stapel file and its source files, and the method's `LICENSE` file at that commit word for word (the MIT copyright and permission notice and its trademark notice). | `init_elaborate::notice_text` |
 | AC-10 | WHEN `stapel init` writes its files THE method's name appears in `NOTICE.md` and in no other file it writes, in the shared and the local mode. | `init_elaborate::method_name_only_in_notice` |
 | AC-11 | WHEN the skill `stapel` is written THE body has one line that names the skill `stapel-elaborate` for work larger than one ticket. | `init_elaborate::stapel_skill_names_it` |
 | AC-12 | WHEN the tests of this repository run THE four elaboration files exist in this repository, and each equals what `init` writes. | `init_elaborate::this_repository_has_the_files` |
@@ -158,8 +158,8 @@ stay equal to the assets and `init_process` passes at every step.
 | Newer | marker version `99.0.0` with a valid hash: kept, warning names `99.0.0` | `init_elaborate::keeps_a_newer_file` |
 | Directory | a folder at each of the four paths in turn; a file and a symlink at the folder path: exit 1, the AC-4 text, no file written | `init_elaborate::refuses_a_directory` |
 | Local | `init --local`: the checklist line | `init_elaborate::local_checklist_names_the_folder` |
-| Skill text | each of the seven AC-6 phrases in the collapsed body | `init_elaborate::skill_text_holds_the_steps` |
-| Template | headings in order; `R1`, `R2`; `covers`, `after`; the three guidance lines | `init_elaborate::template_sections` |
+| Skill text | each of the eight AC-6 phrases in the collapsed body | `init_elaborate::skill_text_holds_the_steps` |
+| Template | the title line first; headings in order; `R1`, `R2`; `covers`, `after`; the three guidance lines | `init_elaborate::template_sections` |
 | Checklist | ids increase and never repeat; four groups, each with a check | `init_elaborate::checklist_ids` |
 | Notice | body equals the golden file | `init_elaborate::notice_text` |
 | Name | every file `init` writes in the shared and the local mode, case-insensitive search: found in `NOTICE.md` (so the test fails at the RED on the first text), found nowhere else | `init_elaborate::method_name_only_in_notice` |
@@ -306,6 +306,22 @@ Route: full (tag `interface`), auto.
    `init` in the worktree. Must not change: the other three files.
 7. The report (AC-13; test `init_elaborate::method_report`): the GREEN writes
    `docs/method-reports/e435a22.md`. Must not change: the installed files.
+
+Fix steps after code review round 1 (findings in `findings.jsonl`):
+
+8. The trademark notice (X1-2; AC-9; test `init_elaborate::notice_text`, which fails at the RED because
+   the RED adds the six lines of the `TRADEMARK NOTICE` paragraph of the method's `LICENSE` to the golden
+   file): the GREEN adds them to the asset `notice.md` and runs `init` in the worktree. Must not change:
+   the other lines of `NOTICE.md`.
+9. The skill text (R1-1, R1-2; AC-6; test `init_elaborate::skill_text_holds_the_steps`, which fails at
+   the RED on the folder phrase): the GREEN says in `SKILL.md` where the two files are, that `None` is
+   allowed only in Constraints, and that the slug comes from the title line of the draft; runs `init` in
+   the worktree. Must not change: `template.md`, `checklist.md`.
+9a. The template (X1-3, X1-4, X1-5; AC-7; test `init_elaborate::template_sections`, which fails at the
+   RED on the title line): the GREEN starts `template.md` with the title line, makes the Breakdown example
+   a plain list line, writes `the person` for `the source` and drops the idiom; corrects the report's
+   introduction on the Closure check and the stale doc comment of `plan_process_files`; runs `init` in the
+   worktree. Must not change: the checks of `checklist.md`.
 
 ## Review
 
