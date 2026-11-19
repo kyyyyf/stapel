@@ -1,4 +1,4 @@
-<!-- stapel: 0.1.0 sha256:1f4098d359a4266bfed6346c7a6932dc0d29c9e5f86b4dd841019f2fb130e0d6 -->
+<!-- stapel: 0.1.0 sha256:f0a7ba8bec354299bcff58970b738fb8246192f5ccb7bc3681adecf789673d33 -->
 
 # Notice
 
@@ -40,3 +40,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+TRADEMARK NOTICE:
+BMad™, BMad Method™, and BMad Core™ are trademarks of BMad Code, LLC, covering all
+casings and variations (including BMAD, bmad, BMadMethod, BMAD-METHOD, etc.). The use of
+these trademarks in this software does not grant any rights to use the trademarks
+for any other purpose. See [TRADEMARK.md](TRADEMARK.md) for detailed guidelines.

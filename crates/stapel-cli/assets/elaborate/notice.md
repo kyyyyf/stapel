@@ -39,3 +39,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+TRADEMARK NOTICE:
+BMad™, BMad Method™, and BMad Core™ are trademarks of BMad Code, LLC, covering all
+casings and variations (including BMAD, bmad, BMadMethod, BMAD-METHOD, etc.). The use of
+these trademarks in this software does not grant any rights to use the trademarks
+for any other purpose. See [TRADEMARK.md](TRADEMARK.md) for detailed guidelines.
