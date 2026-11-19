@@ -500,11 +500,21 @@ fn plan_process_files(
     kept: &mut bool,
 ) -> Result<(), String> {
     check_bindings(config)?;
-    let paths = std::iter::once(SKILL_PATH.to_string()).chain(
-        AGENT_FILES
-            .iter()
-            .map(|a| format!(".claude/agents/stapel-{}.md", a.name)),
-    );
+    let folder = ".claude/skills/stapel-elaborate";
+    if std::fs::symlink_metadata(root.join(folder)).is_ok_and(|m| !m.is_dir()) {
+        return Err(format!("{folder} is not a directory; nothing was written"));
+    }
+    let paths = std::iter::once(SKILL_PATH.to_string())
+        .chain(
+            AGENT_FILES
+                .iter()
+                .map(|a| format!(".claude/agents/stapel-{}.md", a.name)),
+        )
+        .chain(
+            ["SKILL.md", "template.md", "checklist.md", "NOTICE.md"]
+                .iter()
+                .map(|n| format!("{folder}/{n}")),
+        );
     for rel in paths {
         if std::fs::symlink_metadata(root.join(&rel)).is_ok_and(|m| m.is_dir()) {
             return Err(format!("{rel} is a directory; nothing was written"));
