@@ -515,6 +515,8 @@ fn notice_text() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/elaborate_notice.md"),
     )
     .unwrap();
+    // The whole LICENSE of the source, its trademark notice included (X1-2).
+    assert!(golden.contains("\nTRADEMARK NOTICE:\n"), "{golden}");
     assert_eq!(body.strip_prefix('\n').unwrap_or(&body), golden);
 }
 
