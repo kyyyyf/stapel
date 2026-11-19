@@ -175,6 +175,7 @@ fn entries(dir: &Path, commit: &str) -> BTreeMap<String, String> {
 fn is_process_path(path: &str) -> bool {
     path.starts_with(".stapel/")
         || path.starts_with(".claude/skills/stapel/")
+        || path.starts_with(".claude/skills/stapel-elaborate/")
         || path == ".claude/settings.json"
         || (path.starts_with(".claude/agents/stapel-")
             && path.ends_with(".md")
@@ -1171,4 +1172,43 @@ fn keeps_pull_merges_with_own_changes() {
     };
     run(false);
     run(true);
+}
+
+// STP-34 AC-14: the folder of the elaboration skill is a process path; a person's own skill folder is not.
+#[test]
+fn removes_the_elaboration_skill() {
+    let repo = base_repo();
+    let dir = repo.path();
+    commit(
+        dir,
+        2,
+        &[
+            ("src/red.txt", "red\n"),
+            (".stapel/tickets/ABC-1/state.json", "{\"key\":\"ABC-1\"}\n"),
+            (".claude/skills/stapel-elaborate/SKILL.md", "ticket skill\n"),
+            (".claude/skills/stapel-foo/SKILL.md", "foo\n"),
+        ],
+        "RED",
+    );
+    git_n(dir, 3, &["checkout", "-q", "main"]);
+    commit(
+        dir,
+        3,
+        &[(".claude/skills/stapel-elaborate/SKILL.md", "onto skill\n")],
+        "onto skill",
+    );
+    git_n(dir, 4, &["checkout", "-q", "ABC-1"]);
+    let tmp = bare_dir();
+    export(dir, "main", tmp.path());
+
+    let onto = entries(dir, "main");
+    let elaborate = ".claude/skills/stapel-elaborate/SKILL.md";
+    let new = commits(dir, "main..export/ABC-1");
+    assert_eq!(new.len(), 1);
+    let first = entries(dir, &new[0].1);
+    assert_eq!(first.get(elaborate), onto.get(elaborate), "{first:?}");
+    assert!(first.contains_key(".claude/skills/stapel-foo/SKILL.md"), "{first:?}");
+    let tree = entries(dir, "export/ABC-1");
+    assert_eq!(tree.get(elaborate), onto.get(elaborate), "{tree:?}");
+    assert!(tree.contains_key(".claude/skills/stapel-foo/SKILL.md"));
 }
