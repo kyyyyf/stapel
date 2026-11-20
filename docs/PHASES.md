@@ -406,7 +406,7 @@ Taken in this order, chosen by the human: phase 3, then phase 3b, then phase 5, 
 2026-11-19; before that day the order was 3, 4, 5). The pilot's findings may reorder them only by a ledger
 decision. The numbers 3 to 5 are new; they do not mean the earlier phases 3 to 5. Each item is one ticket
 under the rule of 12 Plan steps. Item 4.1 was started on 2026-11-19 before the reorder and finishes; the
-next ticket after it is 3.3.
+next ticket after it is 3.2a, then 3.3.
 
 Why this order: the pilot showed that stapel's value lies in the checks at the boundary (the stand, RED
 before GREEN, the project's CI) and its cost in the mechanics of the process (dialogs per review round, the
@@ -424,8 +424,8 @@ work, which no pilot ticket needed.
 - 3.2 `stapel check` in the CI of the repository: the same check on the merge request, so the boundary
   decides, not the agent's shell. This is what lets the guard stay frozen.
 
-**Phase 3b — the mechanics after the pilot (ledger 2026-11-19).** Five small tickets, each from a pilot finding
-named in `.stapel/scratch/pilot/report-ticket-2.md` and `report-ticket-3.md`.
+**Phase 3b — the mechanics after the pilot (ledger 2026-11-19).** Six small tickets: 3.2a from the
+local check time, the others each from a pilot finding named in `.stapel/scratch/pilot/report-ticket-2.md` and `report-ticket-3.md`.
 
 - 3.2a faster fixtures of `tests/check.rs` (ledger 2026-11-19, after STP-34; taken before 3.3): the 175 tests
   run real cargo on the fixture crate `tiny` one at a time, each with a cold target folder, so a local
