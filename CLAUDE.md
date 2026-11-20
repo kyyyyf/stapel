@@ -2,8 +2,8 @@
 
 ## What this is
 
-`stapel` carries a development ticket from description to merge with a repeatable result. Plan: `docs/PLAN.md`,
-phases: `docs/PHASES.md`. Rust, one cargo workspace.
+`stapel` carries a development ticket from description to merge with a repeatable result. Plan: `docs/PLAN.md`
+(history: `docs/HISTORY.md`). Rust, one cargo workspace.
 
 ## The process
 
@@ -23,11 +23,11 @@ fails until the installed files match.
 
 ## The plan
 
-The plan is `docs/PHASES.md` (`docs/decisions/0004`). Tickets are taken in the order of its items; a ticket's
+The plan is `docs/PLAN.md` (`docs/decisions/0004`; the earlier phase plan is `docs/HISTORY.md`). Tickets are taken in the order of its items; a ticket's
 Frame names its plan item (`1.3`) and its promise stays inside that item. An item is added, moved, split or widened only by a
 dated `decision` record in `.stapel/process-ledger.jsonl` that names the reason, made with the human in the
 chat; an agent never does it on its own. A ticket gets its `STP-<n>` key from `stapel new` when it is taken;
-the keys in the phase-0 list that have no folder are labels. Since plan item 1.13 tickets may build in
+the keys in the phase-0 list of `docs/HISTORY.md` that have no folder are labels. Since plan item 1.13 tickets may build in
 parallel, each in its own branch and worktree made by `stapel new`; agents run cargo only through
 `stapel cargo`, which waits for the machine-wide lock; after a close the orchestrator merges the branch
 into main locally and removes the worktree.

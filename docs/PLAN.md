@@ -1,254 +1,173 @@
-# stapel — overall plan
+# stapel — the plan
 
-Status: plan at the start of the project, 2026-10-02. Changed by decisions recorded in tickets and in
-`docs/decisions/`; the product direction and the interface changed on 2026-10-19 (`docs/decisions/0004`).
-The plan was cut to the pilot on 2026-11-10 (ledger): phases 2 to 5 below are replaced by the stages in
-`docs/PHASES.md`, "The plan after STP-27"; §8 compares with a plain agent, not with klc.
-The feature level is stapel's own (ledger 2026-11-10, second decision): the method studied in decisions
-0001 to 0003 is a source of ideas and a possible input, not the upper layer of stapel.
+One document, current as of 2026-11-20 (ledger decision of that day). What was planned before, with the
+phases 0 to 2, the pilot and the gate, is in `docs/HISTORY.md`; the product direction is
+`docs/decisions/0004`. An item below is added, moved, split, widened or removed only by a dated `decision`
+record in `.stapel/process-ledger.jsonl`, made with the human in the chat and named here; an agent never
+does it on its own.
 
-## 1. What it is
+## 1. What stapel is
 
-`stapel` is a tool that takes a development ticket from description to merge so that the result is
-repeatable, the process is understandable without reading the internals, and token spending is measured from
-day one. It is built for a team of three roles — product, engineer, QA — who may be the same person. It
-works on any repository that has a `.stapel/` folder.
+`stapel` takes a development ticket from description to merge so that the result is repeatable, the
+process is understandable without reading the internals, and token spending is measured from day one. It is
+for companies and departments that build software they could not afford before and want it to stay
+changeable at a known cost: first a department with one technical person, then a founder who builds alone.
+It is not for fast hypothesis checks; an agent alone serves those. It works on new and existing
+repositories alike, for features, bug fixes and refactoring.
 
-**For whom (2026-10-19, `docs/decisions/0004`).** Companies and departments that build software they could
-not afford before, and keep it changeable: the first segment is a company or department with one technical
-person; the second stage is a founder who builds alone, served by a configurable autonomy level (phase 3).
-Not for fast hypothesis checks: an agent alone serves those. The claim is "stays changeable at a known cost", measured by escaped defects and tokens per
-ticket (§8).
-
-**Interface.** The person works in the Claude Code chat and types no stapel command: the orchestrator (the
-Claude Code main agent with the stapel skill) asks questions, writes the ticket, runs builders and reviewers
-as subagents, and confirms with the person through the permission dialog. `stapel` is the backbone the agent
-calls. The merge request in GitLab or GitHub is the second interface, for the reviewers. Zed is optional.
-
-The name means a slipway: the place where a ship is built step by step before it is launched.
+The person works in the Claude Code chat and types no stapel command. The orchestrator (the Claude Code
+main agent with the stapel skill) asks the questions, writes the ticket, runs builders and reviewers as
+subagents, and confirms with the person through the permission dialog; `stapel` is the backbone it calls.
+The merge request in GitLab or GitHub is the second interface. The name means a slipway: the place where a
+ship is built step by step before it is launched.
 
 ## 2. Principles
 
-1. **Agreements become verifiable artifacts.** An acceptance criterion is a test. A design risk is a test.
-   An agent's claim is marked "verified", "read" or "assumption".
-2. **Determinism comes from code.** Everything a program can check, the program checks: tests, the RED→GREEN
-   order, "criterion → test", the diff against the plan. The model is responsible only for judgment.
-3. **State is facts, the phase is computed.** What is stored: confirmations with a section hash, green steps
-   on a commit, open findings, the release. "Whose decision is needed now" is derived from the facts.
-4. **Three kinds of checks.** Semantic ones stop the process. Format errors the tool fixes itself. Advice is
-   visible and does not block.
-5. **People make only decisions.** Answering a question, choosing an option, confirming, "do not fix,
-   because". Every decision is recorded: who, when, why.
-6. **One live author session per ticket, independent agents only for review.** The prompt cache works, and
-   independence is where it is needed.
-7. **The index answers questions instead of guessing files.** Its product is the blast radius of a change
-   and a selective test run.
-8. **Tokens are counted from day one**, by role, marked "measured" or "estimate".
-9. **One binary.** No environments and no dependencies on the developer's machine.
-10. **The process is data.** Definitions of sections, checks, roles and models live in TOML and Markdown;
-    the core executes them.
+1. Agreements become verifiable artifacts: an acceptance criterion is a test, and a claim is marked
+   verified, read or assumption.
+2. Determinism comes from code: whatever a program can check, the program checks; the model is responsible
+   only for judgment.
+3. State is facts, the phase is computed from them.
+4. Semantic checks stop the process, format errors the tool fixes, advice is visible and does not block.
+5. People make only decisions, and every decision is recorded with who, when and why.
+6. One live author session per ticket; independent agents only for review.
+7. The index answers questions instead of guessing files; its product is the blast radius of a change.
+8. Tokens are counted from day one, by role, marked measured or estimate.
+9. One binary, no environment on the developer's machine.
+10. The process is data: sections, checks, roles and models live in TOML and Markdown.
 
-## 3. What it looks like for the team
+## 3. What exists (2026-11-20)
 
-For the person, one ticket is six moments (`docs/decisions/0004` §4): the request in the chat; the frame
-and coverage questions, each with options and a recommendation; one dialog that confirms the human page
-(the Frame and the criteria, with their diff) and with it every section; a question only for an
-`intent_gap` or a finding the orchestrator could not settle; one dialog for the push and the MR; the
-summary after the merge. Which of these moments ask the person is the autonomy level (phase 3).
+The process is the skill `stapel init` installs: a ticket with a Frame, a promise, criteria written as
+tests, a plan of RED and GREEN steps, a spec review, builders per step, a drift review, code review rounds
+with findings and fates, and a close that needs a passing `stapel check`. The binary has `init`, `new`,
+`ok`, `page`, `status`, `next`, `brief`, `depends`, `export`, `close`, `tokens`, `check` (the cargo and
+junit runners, in the CI of this repository since item 3.2), `lint`, `cargo`, `findings`, `review`,
+`ledger` and the hooks. Tickets build in parallel in worktrees. The pilot on a foreign TypeScript
+repository (three tickets, `docs/HISTORY.md` part 2, stage B) is over; its reports are in
+`.stapel/scratch/pilot/`.
 
-For the orchestrator, the backbone is a few commands, each one deterministic:
+## 4. How success is measured
 
-```text
-stapel new <title>         create a ticket; a link to an external tracker as an option
-stapel next [KEY]          the next action from the facts, with its command or file (phase 1)
-stapel brief KEY STEP      the builder brief for one plan step, 900 to 1 300 tokens (phase 1)
-stapel ok KEY              confirm, through the permission dialog; shows the diff since the last confirmation
-stapel check [KEY]         every step's tests failed at RED and pass at GREEN and HEAD; --history in seconds
-stapel lint [KEY]          the ticket is consistent: tests and paths exist, tables present, lists agree (phase 1)
-stapel review start KEY    the git archive copy and the review pack for a round (phase 1)
-stapel ship KEY            preconditions, push and the MR with the review map, through the dialog (phase 1)
-stapel close KEY           close after the merge, through the dialog
-stapel q <question>        query the index: symbol | refs | callers | tests | impact (phase 4)
-```
+Per ticket: the returns to the person (permission dialogs, question dialogs, typed messages) and the
+minutes of interaction; escaped defects, counted by the project's CI after the merge and by a mutation run
+on the diff; HIGH and MEDIUM inside-promise findings of code review; the size of `ticket.md`; tokens by
+role. The product claim is judged against a plain agent on the same ticket of a foreign repository with
+CI; the pilot's gate in its first form is in `docs/HISTORY.md` with its verdict (2026-11-19).
 
-Records: `findings import`, `findings triage` and `ledger add --kind finding|catches` without a dialog (STP-23);
-`tokens import-records` and `ledger add --kind decision` through the dialog; `tokens` for the report. Auxiliary: `status`, `init`, `hook` (the entry points Claude Code calls). The orchestrator's skill
-is one rule: run `stapel next`, do what it says, run it again.
+## 5. The order of work
 
-One file for people — `ticket.md`:
+Each item is one ticket of at most 12 Plan steps, taken in a new session in this order. Item 4.1 was
+started on 2026-11-19 before the order changed and finishes; after it: 3.2a, 3.2b, 3.3 and so on. The
+foreign repository for the next comparison (a fork of an open-source TypeScript project with jest, open
+issues, GitHub Actions and an MIT or Apache licence) is chosen by a ledger decision right after 3.2b, from
+three candidates. The empty crates `stapel-agent`, `stapel-forge` and `stapel-lsp` are removed inside the
+next ticket that touches the workspace; `stapel-index` and `stapel-mcp` are filled by phase 5.
 
-| Section | Owner | Contents |
-|---|---|---|
-| Description | customer | the original task, a link to the tracker |
-| Spec | product | acceptance criteria (each one is a test), questions with answers, "Out of scope" |
-| Design | engineer | options, the choice with a reason, risks (each one is a test) |
-| Proof | QA | a table "criterion or risk → test → result" (the tool fills in the result) |
-| Plan | engineer | build steps: tests, the check command, the expectation |
-| Review | generated | a map "required / desirable / can be skipped", findings and their fate |
-| Summary | generated | time, tokens by role, review rounds, what the review found, three lines from a human |
+Why this order: the pilot showed that stapel's value lies in the checks at the boundary (the stand, RED
+before GREEN, the project's CI) and its cost in the mechanics of the process. Phase 3b removes the cost,
+phase 5 adds the checks and the index, and the feature level of phase 4 waits until a real feature shows
+the need.
 
-Machine files sit next to it, and only the tool writes them: `state.json` (facts), `decisions.jsonl`,
-`findings.jsonl`, `runs.jsonl`, `tokens.jsonl`.
+### Phase 3 — one ticket made lighter (done)
 
-Roles work in parallel on drafts. A confirmation is tied to the section hash: if the spec changed, the
-confirmations of the design and the proof become stale, and the tool shows exactly what changed. The build
-is permitted when the three confirmations refer to the same version of the spec; the engineer may start
-earlier with a mark "at own risk".
+- 3.1 the human page as a file (STP-32): `stapel page` writes the Frame, the criteria, the Decisions and
+  one line per other section to `page.md`; the `stapel ok` dialog shows a summary and refuses when the page
+  changed.
+- 3.2 `stapel check` in the CI of this repository (STP-33): the workflow `stapel init` writes installs the
+  binary at its build commit and runs the same check on the merge request.
 
-The scope is determined by rules (how many modules are touched, whether an interface or a data format
-changes, a migration, security); a human may raise or lower it, with a reason. A small task goes the same
-way, only shorter: its sections consist of one line or are created automatically.
+### Phase 3b — the mechanics after the pilot
 
-## 4. Architecture
+- 3.2a faster fixtures of `tests/check.rs`: a shared `CARGO_TARGET_DIR` for the fixture builds and a fake
+  cargo for the tests whose subject is the logic of `stapel check`; real cargo stays in a few tests of the
+  cargo boundary; `check.timeout_secs` must stop a run. Measured: the time of `tests/check.rs` and of the
+  local check, before and after.
+- 3.2b check levels, points and the step cache. A step whose RED commit, GREEN commit, test list, lock file
+  hash and stapel version match a passing record of `runs.jsonl` is not run again. Levels in `[check]
+  level` and as a flag: `steps` (the new steps at RED and GREEN and their tests at HEAD, no suite), `head`
+  (every step's tests at HEAD and the suite), `full` (everything, cache ignored). The points at which
+  `stapel next` demands a check are `[check] points`, by default step, review and close; `step` can be
+  dropped, `close` cannot, a RED run is never skipped, and `full` runs in CI, which the close needs. A check
+  stays valid after commits that touch only `.stapel/tickets/`. `[check] suite_exclude` thins the local
+  suite only. Measured on this repository and on a jest project.
+- 3.3 the grant lifetime: 24 hours instead of 30 minutes, so that an answer after a pause does not cost a
+  second dialog.
+- 3.4 fix steps without a dialog per round: the fix and coverage steps a review round adds are built on a
+  provisional permit and confirmed together by the `stapel ok` before the close; a step that widens the
+  promise still stops for its own dialog. The same ticket adds the setting `[process] dialogs` with the
+  level `close` for light tickets (no dialog but the close), measured after it as the next autonomy level.
+  Expected: three dialogs per ticket.
+- 3.5 the close needs the project's own checks: `stapel check` runs the project's command under the Node
+  version the project pins, and the close runs the project's pre-commit and CI checks on the whole diff
+  (prettier, eslint, tsc in the pilot), so nothing is left to the CI after the merge.
+- 3.6 softer history rules: a GREEN commit may change a step's test file and a build input may change after
+  a RED when the commit message says `history: <reason>`; `stapel check` judges the result, not the shape of
+  the history.
+- 3.7 small findings in one ticket: `stapel review start` accepts any round number; `stapel close` writes
+  the rule 9 ledger records from the ticket's findings; an agent edit of `.stapel/stapel.toml` goes through
+  a dialog instead of being denied.
+- 3.8 the worktree and the session start: `stapel new` runs the project's `[worktree] setup` command (for
+  the pilot: link `node_modules`, copy the git hooks), and the SessionStart hook names the open tickets with
+  their worktrees instead of `new-ticket`, so no typed line is needed after a resume.
+- 3.9 records write the ticket: the Review section (rounds, reviewers, findings, check runs, stand runs)
+  is generated by `stapel review` and `stapel check` from `findings.jsonl` and `runs.jsonl`, not written by
+  the orchestrator; `stapel export` also writes the text of the merge request (the Summary and the deferred
+  findings) next to the branch.
+- 3.10 the measures: `stapel tokens measure` prints the minutes of interaction, the capped waits and the
+  returns apart; `stapel ledger rules` counts, per rule and per ticket, what each rule caught, so that rule
+  9 (a rule that caught nothing in three tickets is removed) can be applied.
 
-Rust, one cargo workspace with several packages:
+### Phase 5 — the sum of changes, and the index
 
-| Package | Responsibility |
-|---|---|
-| `stapel-core` | tickets, state facts, section hashes, checks, the decision log, process definitions from TOML |
-| `stapel-agent` | model providers, roles, context packages with a budget, the token journal, running the author and the reviewers |
-| `stapel-index` | the index core and language adapters: structure (tree-sitter), references (SCIP), tests, git history; blast radius |
-| `stapel-forge` | MR/PR, CI, line comments: GitLab and GitHub through `glab`/`gh` or the API |
-| `stapel-mcp` | MCP server: index queries and ticket state for the agent |
-| `stapel-lsp` | LSP server for Zed: buttons above sections, highlighting, hints |
-| `stapel-cli` | the `stapel` binary |
+- 5.1 the guards folder: machine checks out of the agent's reach with ratchet baselines ("no worse than
+  now"); `stapel check` and the CI run them. The folder adopts the project's existing guards as they are
+  (the pilot repository has a `tests/guards/` folder with a coverage floor, a bundle ceiling and forbidden
+  colours) and does not impose a format of its own.
+- 5.2 the structural index and `stapel q`: a tree-sitter parse of every tracked file gives symbols, the
+  import graph and the test files of a module; it lives in `.stapel/index/`, outside git. Queries: `symbol`,
+  `refs`, `tests`, `impact` (the blast radius of a set of files and their tests). The index trusts the
+  working tree, not git events: every query compares the content hash of each tracked file with the hash it
+  indexed and re-parses the changed files before it answers, so a change made outside a ticket is seen by
+  the next query; `stapel index` rebuilds everything, and a stapel version change does that on its own.
+  Languages are adapters as data (a grammar and its queries), TypeScript and Rust first, so that Go and
+  Python are cheap to add.
+- 5.3 the blast radius in the process: the investigation before the Frame runs `impact` and the Frame lists
+  the places the ticket changes; the brief carries the places of its step; the review and drift packs carry
+  the blast radius of the diff; the Review Focus names the tests of the radius the plan does not run; the
+  agent queries the index as a tool through `stapel-mcp`. Measured: the same ticket with and without the
+  index, tokens and turns to the first correct change.
+- 5.4 a new dependency only through a dialog, and a public API snapshot computed from the index and kept in
+  the guards folder; a change of it is a ratchet failure until the person confirms it.
+- 5.5 precise references through a SCIP indexer where one exists, run at commit boundaries, with a line
+  that says which commit it is current for; the structural index answers for the files changed since,
+  marked imprecise.
 
-Layout in the project repository:
+### Phase 4 — the feature level
 
-```text
-.stapel/
-  stapel.toml          process: sections, checks, roles, models, scope rules
-  tickets/STP-12/      ticket.md, state.json, decisions.jsonl, findings.jsonl, runs.jsonl, tokens.jsonl
-  index/               index cache (not in git)
-  allowlist.toml       reviewers' false positives
-```
+Optional: a ticket without a feature works as before. Two levels only, feature and ticket.
 
-Ticket state lives in git: either in the ticket's own branch next to the code, or in a separate state
-branch (as in klc). The choice is a phase 1 decision; by default a separate branch `stapel-state`.
+- 4.1 the elaboration skill (STP-34, in progress): the questions, the template and the checklists for
+  elaborating a feature, ported from the method studied in decisions 0001 to 0003 under its MIT licence,
+  into the skill; the method's name appears only in a truthful compatibility statement.
+- Before 4.2: one real feature of several tickets is run with the questions of 4.1 and a plain breakdown
+  file; items 4.2 to 4.4 are taken only if that run shows the orchestrator cannot keep the breakdown and
+  the requirements straight in plain text (a ledger decision with the measure).
+- 4.2 the kind `feature`: a ticket with requirements with ids, a Decisions log and a breakdown into tickets
+  with dependencies, confirmed by the same dialog and page; child tickets name the requirements they cover.
+- 4.3 staleness from requirements to tickets: a changed requirement makes an unbuilt ticket wait for a new
+  confirmation, stops a ticket in build, and marks a closed ticket built against the old text until the
+  human decides.
+- 4.4 computed readiness: a feature is done when its tickets are closed and each requirement is proved by
+  a named test; `stapel next` on a feature names the next ticket and what blocks it.
+- Candidates on the ticket-kind mechanism of 4.2: the kind `bug` (a three-line form: the reproduction, the
+  cause hypothesis from the index, the source ticket; one RED, one GREEN, one dialog) and the kind
+  `refactor` (the promise "behaviour unchanged"; the proof: characterisation tests on the blast radius, the
+  API snapshot of 5.4 and the full list of call sites from the index).
 
-A language adapter is four things: a tree-sitter grammar, a source of references (a SCIP indexer or a
-fallback on ripgrep marked "imprecise"), test recognition, module boundaries. The first adapters: Python,
-TypeScript/JavaScript, Go, Rust. C++ is added later as one more adapter (scip-clang); the core does not
-change.
+## 6. Out of scope
 
-## 5. Models and providers
-
-Providers: Claude Code on a subscription (usage is taken from its JSON output), the Anthropic API with a key
-(the `usage` field), room for others. A role is bound to a model in `stapel.toml`; the token journal brings
-records to one form and marks them "measured" or "estimate".
-
-Starting values, to be changed by measurements:
-
-| Role | Model | Why |
-|---|---|---|
-| spec and design author (`ask`, options) | claude-opus-5-5 | judgment, questions, design |
-| builder (`build`) | claude-sonnet-5-5 | a lot of mechanical work by the plan; cheaper |
-| fresh code reviewer | claude-sonnet-5-5 | an independent look at the diff against the criteria |
-| external reviewer | claude-fable-5-1 | the strongest model and a different one from the author's: real independence |
-| drift reviewer (code ↔ plan ↔ spec) | claude-sonnet-5-5 | cross-checking, not creative work |
-| cheap judgments (scope, finding classification) | claude-haiku-4-5 | where a deterministic rule was not enough |
-
-```toml
-# .stapel/stapel.toml — fragment
-[models]
-author   = { provider = "claude-code", model = "claude-opus-5-5" }
-builder  = { provider = "claude-code", model = "claude-sonnet-5-5" }
-reviewer = { provider = "claude-code", model = "claude-sonnet-5-5" }
-external = { provider = "anthropic-api", model = "claude-fable-5-1", required = false }
-drift    = { provider = "claude-code", model = "claude-sonnet-5-5" }
-cheap    = { provider = "claude-code", model = "claude-haiku-4-5" }
-```
-
-If a role has no key or subscription, the tool says so and works with what it has (`required = false` for
-the external reviewer). The orchestrator role is played by Claude Code in an interactive session in every
-phase (`docs/decisions/0004`); from phase 1 it follows `stapel next`, and every other role runs as a Claude
-Code subagent whose definition `stapel init` writes from `[models]`. The `anthropic-api` provider stays an
-option for a role that must run outside the subscription.
-
-## 6. Integrations
-
-- **Forge.** One ticket — one branch — one MR. `build` opens the MR as a draft at the first step. Reviewers'
-  findings and people's comments are visible as MR line comments; the source of truth is `findings.jsonl`.
-  A human's comment in the MR or in Zed becomes a finding of kind `human-review`, and the builder must
-  assess it.
-- **CI.** The proof of a test is a record "command, output, commit, source". The source is CI or a local
-  run. Both are acceptable, and the difference is visible in the ticket summary.
-- **Tracker.** An adapter from day one: key, link, status sent outward. Jira is connected later.
-- **Claude Code.** Installed by `init` as data: the hooks (no writes to code before the build permit, no
-  push for agents, no writes to machine files, the permission dialog for `ok`, `close`, `ship` and the
-  record commands, token records at `SubagentStop` and `Stop`), the orchestrator skill (the spec process),
-  and the agent definitions (builder, drift reviewer, code reviewers, spec reviewer) with tools, model and
-  permission mode; reviewers are read-only. The person's own edits to these files survive a re-run.
-- **Zed.** Optional, after a pilot person asks for it: `stapel-lsp` buttons would each call one existing
-  command. Not in the phases (`docs/decisions/0004`).
-
-## 7. What is carried over from klc
-
-As ideas and data, not as code: the finding format and accepting answers with one command; the reviewer
-roles and their prompts; questions with a recommendation and a coverage map; criteria checking (the form
-"who · what · with what · under what condition", vague words, "Out of scope"); the provenance of claims;
-the code ↔ plan ↔ spec cross-check; repeating the checks on the final commit; the reason for a return; the
-allowlist of false positives; review on an isolated copy; hashes before and after live operations and a
-rehearsal on a copy (`guide`); scope checking through the blast radius; simple section locks; protecting
-the public mirror from private terms; hooks against writes by agents.
-
-Not carried over: the separate learn and manual stages, tracks as different sets of stages, ranking files
-for a ticket, dashboards drawn by a model.
-
-## 8. How success is measured
-
-On the same tickets through `stapel` and through klc (phase 4):
-
-| Metric | How it is counted |
-|---|---|
-| human hours per ticket | from the decision log: the time between decisions that required a human |
-| stops for no good reason | how many times the process stopped for a reason other than a code defect |
-| review rounds and defects found | from `findings.jsonl` |
-| tokens per ticket, by role | from `tokens.jsonl`, measurements only |
-| index savings | the same ticket with and without the index: tokens and turns to the first correct change |
-| CI minutes | selective run against a full run |
-| escaped defects | defects found after a ticket closed: by `stapel check` on its history, by later tickets, by the human |
-
-**Added after STP-4.** Escaped defects are the main quality measure, and the per-ticket spec process is
-judged by them, by the HIGH and MEDIUM inside-promise findings of code review, by the size of `ticket.md`
-and by tokens — not by the share of review findings catchable before code. That share measured mostly the
-reviewers' quotas: code review found 30 to 38 findings on every ticket from STP-2 to STP-4, while the spec
-work grew to 54 KB and 89 findings before code on STP-4. The spec process is in `CLAUDE.md`, "The spec
-process"; rules that catch nothing for three tickets are removed (`.stapel/process-ledger.jsonl`).
-
-## 9. Risks
-
-- **It will grow complicated again.** Defense: the process is data; every new check must be semantic or
-  self-fixing; once per phase, a revision of the commands and checks with the numbers of their use.
-- **Rust will slow down early iterations.** Defense: the core is small, everything changeable is in TOML and
-  Markdown.
-- **SCIP is not for every language and is not always up to date.** Defense: a fallback path on tree-sitter
-  and ripgrep with an honest mark "imprecise"; the review map sends people to look at exactly the imprecise
-  places.
-- **Subagent tokens inside an interactive Claude Code session are hard to measure.** Defense: subagent logs;
-  until there is a number, the mark "estimate", never presenting it as a measurement.
-- **A single maintainer.** Defense: the tool must run its own tickets as early as possible (phase 1), so
-  that the process does not depend on one person's memory.
-- **The product runs inside Claude Code.** Hooks, the permission dialog, custom agents and skills are
-  documented; the transcript format is documented as internal and may change. Defense: the `estimate` mark
-  when a transcript cannot be read, and the usage of headless runs as a second source.
-- **The process stays heavier than the segment accepts.** Phase 0 tickets reached 50 KB and 2 500 changed
-  lines for small commands. Defense: the human page and the engagement levels (phase 3), the ticket lint's
-  size limits, and the pilot's measurements before the index is built.
-
-## 10. Phases
-
-In detail — in `docs/PHASES.md`.
-
-```text
-0  bootstrap         state core, sections, confirmations, RED→GREEN, findings, tokens;      closed 2026-10-19
-                     guard, dialog, check on history, records through the dialog
-1  backbone          next, briefs, the process installed by init, tokens from hooks,         ~3 weeks
-                     review packs, lint, ship with the review map, one dialog, the junit runner
-2  pilot             a foreign TypeScript repository: init there, three tickets,             ~2–3 weeks
-                     the first one also through klc, the comparison
-3  context & guards  project context, machine guards out of the agent's reach,               ~3–4 weeks
-                     autonomy levels, the human page, bug and spike tickets
-4  index             TypeScript and Rust adapters, blast radius, selective tests, MCP         ~2–3 weeks
-5  Zed & languages   stapel-lsp buttons, inbox; Python and Go adapters and runners           not sized
-```
+Jira sync (a one-way import of a ticket's text was declined on 2026-11-20), semantic search on embeddings,
+multi-user locks, a hosted service, a web UI, agents other than Claude Code, deploy and operations after the
+merge, a planning method of stapel's own beyond the feature level, more than two levels of work items, an
+editor extension, `stapel ship` (the person pushes and opens the merge request).
