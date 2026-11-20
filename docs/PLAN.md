@@ -58,15 +58,16 @@ CI; the pilot's gate in its first form is in `docs/HISTORY.md` with its verdict 
 ## 5. The order of work
 
 Each item is one ticket of at most 12 Plan steps, taken in a new session in this order. Item 4.1 was
-started on 2026-11-19 before the order changed and finishes; after it: 3.2a, 3.2b, 3.3 and so on. The
+started on 2026-11-19 before the order changed and finishes; after it the four tickets of phase 3b in
+their order, then phase 3c, then phase 5, then phase 4. The
 foreign repository for the next comparison (a fork of an open-source TypeScript project with jest, open
-issues, GitHub Actions and an MIT or Apache licence) is chosen by a ledger decision right after 3.2b, from
-three candidates. The empty crates `stapel-agent`, `stapel-forge` and `stapel-lsp` are removed inside the
-next ticket that touches the workspace; `stapel-index` and `stapel-mcp` are filled by phase 5.
+issues, GitHub Actions and an MIT or Apache licence) is chosen by a ledger decision right after ticket 3b-1, from
+three candidates. The empty crates `stapel-agent` and `stapel-forge` are removed inside the next ticket that
+touches the workspace; `stapel-lsp` is filled by phase 3c, `stapel-index` and `stapel-mcp` by phase 5.
 
 Why this order: the pilot showed that stapel's value lies in the checks at the boundary (the stand, RED
 before GREEN, the project's CI) and its cost in the mechanics of the process. Phase 3b removes the cost,
-phase 5 adds the checks and the index, and the feature level of phase 4 waits until a real feature shows
+phase 3c gives the person a place to read and answer, phase 5 adds the checks and the index, and the feature level of phase 4 waits until a real feature shows
 the need.
 
 ### Phase 3 — one ticket made lighter (done)
@@ -78,6 +79,14 @@ the need.
   binary at its build commit and runs the same check on the merge request.
 
 ### Phase 3b — the mechanics after the pilot
+
+Four tickets (ledger 2026-11-20: the ten items of the first cut were grouped, because the fixed part of a
+ticket, the Frame, the spec review and the close, costs about half an hour of the person's attention and
+about 150 k tokens whatever its size). The item numbers stay as names inside each ticket, so that the
+decisions that name them keep their meaning. Each ticket stays under 12 Plan steps; if a Frame finds more,
+the ticket is split there, not here.
+
+**Ticket 3b-1, the check** (items 3.2a and 3.2b; both change `stapel check` and its tests).
 
 - 3.2a faster fixtures of `tests/check.rs`: a shared `CARGO_TARGET_DIR` for the fixture builds and a fake
   cargo for the tests whose subject is the logic of `stapel check`; real cargo stays in a few tests of the
@@ -91,6 +100,10 @@ the need.
   dropped, `close` cannot, a RED run is never skipped, and `full` runs in CI, which the close needs. A check
   stays valid after commits that touch only `.stapel/tickets/`. `[check] suite_exclude` thins the local
   suite only. Measured on this repository and on a jest project.
+
+**Ticket 3b-2, the dialogs and the returns to the person** (items 3.3, 3.4, 3.8 and the `stapel.toml`
+part of 3.7; the theme is how often the process turns to the person).
+
 - 3.3 the grant lifetime: 24 hours instead of 30 minutes, so that an answer after a pause does not cost a
   second dialog.
 - 3.4 fix steps without a dialog per round: the fix and coverage steps a review round adds are built on a
@@ -98,18 +111,27 @@ the need.
   promise still stops for its own dialog. The same ticket adds the setting `[process] dialogs` with the
   level `close` for light tickets (no dialog but the close), measured after it as the next autonomy level.
   Expected: three dialogs per ticket.
+- 3.7a an agent edit of `.stapel/stapel.toml` goes through a dialog like `stapel ok` instead of being
+  denied.
+- 3.8 the worktree and the session start: `stapel new` runs the project's `[worktree] setup` command (for
+  the pilot: link `node_modules`, copy the git hooks), and the SessionStart hook names the open tickets with
+  their worktrees instead of `new-ticket`, so no typed line is needed after a resume.
+
+**Ticket 3b-3, the close and the history** (items 3.5, 3.6 and the rest of 3.7; the theme is what must be
+true at the close).
+
 - 3.5 the close needs the project's own checks: `stapel check` runs the project's command under the Node
   version the project pins, and the close runs the project's pre-commit and CI checks on the whole diff
   (prettier, eslint, tsc in the pilot), so nothing is left to the CI after the merge.
 - 3.6 softer history rules: a GREEN commit may change a step's test file and a build input may change after
   a RED when the commit message says `history: <reason>`; `stapel check` judges the result, not the shape of
   the history.
-- 3.7 small findings in one ticket: `stapel review start` accepts any round number; `stapel close` writes
-  the rule 9 ledger records from the ticket's findings; an agent edit of `.stapel/stapel.toml` goes through
-  a dialog instead of being denied.
-- 3.8 the worktree and the session start: `stapel new` runs the project's `[worktree] setup` command (for
-  the pilot: link `node_modules`, copy the git hooks), and the SessionStart hook names the open tickets with
-  their worktrees instead of `new-ticket`, so no typed line is needed after a resume.
+- 3.7b `stapel review start` accepts any round number; `stapel close` writes the rule 9 ledger records
+  `catches` and `finding` from the ticket's findings.
+
+**Ticket 3b-4, the records and the measures** (items 3.9 and 3.10; the theme is that the records write the
+documents, not the orchestrator).
+
 - 3.9 records write the ticket: the Review section (rounds, reviewers, findings, check runs, stand runs)
   is generated by `stapel review` and `stapel check` from `findings.jsonl` and `runs.jsonl`, not written by
   the orchestrator; `stapel export` also writes the text of the merge request (the Summary and the deferred
@@ -117,6 +139,22 @@ the need.
 - 3.10 the measures: `stapel tokens measure` prints the minutes of interaction, the capped waits and the
   returns apart; `stapel ledger rules` counts, per rule and per ticket, what each rule caught, so that rule
   9 (a rule that caught nothing in three tickets is removed) can be applied.
+
+### Phase 3c — the editor (ledger 2026-11-20)
+
+The person of the pilot asked for it, which is what `docs/decisions/0004` waited for. The measure it works
+on is the person's attention: the ticket text is not read at 45 to 53 kB, and the page of 3.1 is a half
+step towards a place where the person reads and answers. An LSP server, not an extension of one editor, so
+that Zed, VS Code and every editor that speaks the protocol get the same.
+
+- 3c.1 `stapel-lsp`, the buttons: a language server for `ticket.md` and `page.md` with a code action above
+  each section that calls one existing command (`stapel ok`, `stapel page`, `stapel status`, `stapel next`),
+  run as an editor task outside the agent's shell, so the grant and the dialog rules hold as they do today;
+  the sections that wait for a confirmation and the lines changed since the last one are highlighted.
+- 3c.2 the inbox: the decisions the person owes (questions, findings with the fate `ask-human`, waiting
+  confirmations) listed in one view with a button per answer, written back as the same records the chat
+  would write; measured by the returns and the interaction minutes of a ticket run from the editor against
+  the chat.
 
 ### Phase 5 — the sum of changes, and the index
 
@@ -170,4 +208,4 @@ Optional: a ticket without a feature works as before. Two levels only, feature a
 Jira sync (a one-way import of a ticket's text was declined on 2026-11-20), semantic search on embeddings,
 multi-user locks, a hosted service, a web UI, agents other than Claude Code, deploy and operations after the
 merge, a planning method of stapel's own beyond the feature level, more than two levels of work items, an
-editor extension, `stapel ship` (the person pushes and opens the merge request).
+extension of one editor (the editor is served through LSP, phase 3c), `stapel ship` (the person pushes and opens the merge request).
