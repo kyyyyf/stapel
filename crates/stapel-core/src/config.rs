@@ -85,6 +85,13 @@ pub struct Check {
     /// The junit runner: build input globs; the default is filled in at load.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inputs: Option<Vec<String>>,
+    /// The level of `stapel check` (STP-35 AC-7): `steps`, `head` or `full`; absent means `head`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    /// Where `stapel next` demands a check (STP-35 AC-13): `step`, `review`, `close`; absent means
+    /// all three.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<Vec<String>>,
 }
 
 pub const DEFAULT_TEST_GLOBS: [&str; 3] = ["**/*.test.*", "**/*.spec.*", "**/__tests__/**"];
@@ -405,6 +412,19 @@ impl Config {
                     return Err(format!(
                         "check.runner \"{other}\" is not supported: use cargo or junit"
                     ));
+                }
+            }
+            if let Some(level) = &check.level {
+                if !matches!(level.as_str(), "steps" | "head" | "full") {
+                    return Err(format!("check.level must be steps, head or full: {level}"));
+                }
+            }
+            if let Some(points) = &check.points {
+                let known = points
+                    .iter()
+                    .all(|p| matches!(p.as_str(), "step" | "review" | "close"));
+                if !known || !points.iter().any(|p| p == "close") {
+                    return Err("check.points must hold close and only step, review, close".into());
                 }
             }
             if !TIMEOUT_RANGE.contains(&check.timeout_secs) {

@@ -220,7 +220,15 @@ fn range_end(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Optio
     }
 }
 
-pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
+pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) -> ExitCode {
+    if let Some(level) = level {
+        if list || history {
+            return refuse("--level does not go with --list or --history");
+        }
+        if !matches!(level, "steps" | "head" | "full") {
+            return refuse(format!("--level must be steps, head or full: {level}"));
+        }
+    }
     let (root, config) = match repo::open() {
         Ok(v) => v,
         Err(e) => return refuse(e),

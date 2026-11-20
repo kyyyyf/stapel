@@ -132,6 +132,9 @@ enum Command {
         /// Print the outcomes history alone gives, without cargo; other steps read `needs-run`.
         #[arg(long, conflicts_with = "list")]
         history: bool,
+        /// How much to run: steps, head or full; the flag wins over `[check] level`.
+        #[arg(long)]
+        level: Option<String>,
     },
     /// Report the tests a ticket names that do not exist and the step tests no ticket names.
     Lint {
@@ -389,8 +392,13 @@ fn main() -> ExitCode {
         Command::Hook(HookCommand::SubagentStop) => return hook::subagent_stop(),
         Command::Hook(HookCommand::Stop) => return hook::stop(),
         Command::Hook(HookCommand::SessionEnd) => return hook::session_end(),
-        Command::Check { key, list, history } => {
-            return check::run(key.as_deref(), list, history);
+        Command::Check {
+            key,
+            list,
+            history,
+            level,
+        } => {
+            return check::run(key.as_deref(), list, history, level.as_deref());
         }
         Command::Export { key, onto } => {
             return fail::finish(export::run(key.as_deref(), onto.as_deref()));
