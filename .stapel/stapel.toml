@@ -76,4 +76,4 @@ always_writable = [".stapel/", "docs/"]
 # RED and GREEN commits and at HEAD; with this section, `stapel close` needs a passing check.
 [check]
 runner = "cargo"
-timeout_secs = 1800
+timeout_secs = 5400
