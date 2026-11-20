@@ -161,7 +161,7 @@ fn check_section_is_validated() {
     let with = |body: &str| Config::parse(&format!("{base}\n[check]\n{body}\n"));
     let check = with("runner = \"cargo\"").unwrap().check.unwrap();
     assert_eq!(check.runner, "cargo");
-    assert_eq!(check.timeout_secs, 900);
+    assert_eq!(check.timeout_secs, 3600);
     assert_eq!(with("").unwrap().check.unwrap().runner, "cargo");
     for ok in ["10", "86400"] {
         let c = with(&format!("timeout_secs = {ok}"))
@@ -287,7 +287,7 @@ fn junit_check_keys() {
     assert_eq!(check.runner, "junit");
     assert_eq!(check.command.as_deref(), Some("npx jest {file}"));
     assert_eq!(check.report.as_deref(), Some("junit.xml"));
-    assert_eq!(check.timeout_secs, 900);
+    assert_eq!(check.timeout_secs, 3600);
     assert_eq!(
         check.tests.as_deref().unwrap(),
         ["**/*.test.*", "**/*.spec.*", "**/__tests__/**"]

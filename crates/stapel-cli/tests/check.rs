@@ -1023,12 +1023,17 @@ fn red_paths_allowed_and_capped() {
 
 /// Sets `[check] timeout_secs` and commits it.
 fn set_timeout(dir: &Path, secs: u32) {
-    edit(
-        dir,
-        ".stapel/stapel.toml",
-        "timeout_secs = 900",
-        &format!("timeout_secs = {secs}"),
-    );
+    let text: String = read(dir, ".stapel/stapel.toml")
+        .lines()
+        .map(|l| {
+            if l.starts_with("timeout_secs = ") {
+                format!("timeout_secs = {secs}\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    write(dir, ".stapel/stapel.toml", &text);
     commit(dir, "ABC-1: a shorter time limit");
 }
 
@@ -1228,9 +1233,10 @@ fn outcome_unverified_on_timeout_and_stale_lock() {
         "{text}"
     );
     assert_eq!(outcome(&text, "step 2"), "unverified", "{text}");
+    // The limit of the whole check ran out in step 1: step 2 was not judged.
     assert!(
-        text.lines()
-            .any(|l| l.starts_with("step 2: unverified") && l.contains("Cargo.lock")),
+        text.lines().any(|l| l
+            .starts_with("step 2: unverified: the time limit of 10 s for the check ran out")),
         "{text}"
     );
     let left = std::process::Command::new("pgrep")
@@ -1241,6 +1247,39 @@ fn outcome_unverified_on_timeout_and_stale_lock() {
         left.stdout.is_empty(),
         "a child survived: {}",
         String::from_utf8_lossy(&left.stdout)
+    );
+    // Without the hanging step the stale lock file is still the reason of step 2.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    add_test(
+        dir,
+        "basic",
+        "before_bump",
+        "assert_eq!(tiny::add(1, 1), 3);",
+    );
+    commit(dir, "ABC-1 step 1 RED: a test");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    edit(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "version = \"0.1.0\"",
+        "version = \"0.2.0\"",
+    );
+    commit(dir, "ABC-1: a version bump without the lock file");
+    add_test(
+        dir,
+        "basic",
+        "after_bump",
+        "assert_eq!(tiny::add(1, 1), 3);",
+    );
+    commit(dir, "ABC-1 step 2 RED: a test");
+    commit(dir, "ABC-1 step 2 GREEN: code");
+    let (code, text) = check_with(dir, Cargo::Real);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("step 2: unverified") && l.contains("Cargo.lock")),
+        "{text}"
     );
 }
 
@@ -2192,13 +2231,14 @@ fn set_cargo_key(dir: &Path, cargo: &str) {
     let text: String = text
         .lines()
         .filter(|l| !l.starts_with("cargo = "))
-        .map(|l| format!("{l}\n"))
+        .map(|l| {
+            if l.starts_with("timeout_secs = ") {
+                format!("{l}\ncargo = \"{cargo}\"\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
         .collect();
-    let text = text.replacen(
-        "timeout_secs = 900\n",
-        &format!("timeout_secs = 900\ncargo = \"{cargo}\"\n"),
-        1,
-    );
     write(dir, ".stapel/stapel.toml", &text);
     commit(dir, "ABC-1: the cargo key");
 }
@@ -6224,4 +6264,103 @@ fn real_cargo_only_at_the_boundary() {
         .map(|(name, _)| name.as_str())
         .collect();
     assert!(own.is_empty(), "tests that bypass check_command: {own:?}");
+}
+
+// ---- STP-35 AC-3: the time limit bounds the whole check ----
+
+#[test]
+fn time_limit_bounds_the_whole_check() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    // Every `cargo test` takes 6 s: three steps need 36 s, the limit is 10 s.
+    let slow = script(
+        scripts.path(),
+        "cargo",
+        &format!(
+            "if [ \"$1\" = test ]; then sleep 6; fi\nexec {} \"$@\"",
+            fake_cargo_program()
+        ),
+    );
+    set_cargo_key(dir, &slow);
+    set_timeout(dir, 10);
+    for n in 1..=3 {
+        add_test(
+            dir,
+            "basic",
+            &format!("slow_{n}"),
+            "assert_eq!(tiny::add(1, 1), 3);",
+        );
+        commit(dir, &format!("ABC-1 step {n} RED: a test"));
+        commit(dir, &format!("ABC-1 step {n} GREEN: code"));
+    }
+    let started = std::time::Instant::now();
+    let (code, text) = check_with(dir, Cargo::Fake);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "took {:?}\n{text}",
+        started.elapsed()
+    );
+    let reason = "unverified: the time limit of 10 s for the check ran out";
+    for label in ["step 3", "suite"] {
+        assert!(
+            text.lines().any(|l| l.starts_with(&format!("{label}: {reason}"))),
+            "{label}:\n{text}"
+        );
+    }
+    let last = run_records(dir).pop().unwrap();
+    assert_eq!(last["result"], "fail", "{last}");
+}
+
+#[test]
+fn time_limit_kills_nested_groups() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    // The sleeps run under a path of this test only, so another run's leftovers are not counted, and
+    // the guard kills them on every exit, a failed assertion too.
+    let nap = scripts.path().join("nap");
+    std::os::unix::fs::symlink("/bin/sleep", &nap).unwrap();
+    let nap = nap.display().to_string();
+    struct Reap(String);
+    impl Drop for Reap {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("pkill")
+                .args(["-f", &self.0])
+                .status();
+        }
+    }
+    let _reap = Reap(nap.clone());
+    // Job control puts the background sleep into a process group of its own; it stays a child.
+    let nested = script(
+        scripts.path(),
+        "cargo",
+        &format!(
+            "if [ \"$1\" = test ]; then\n  set -m\n  '{nap}' 303 &\n  '{nap}' 200\nfi\nexec {} \"$@\"",
+            fake_cargo_program()
+        ),
+    );
+    set_cargo_key(dir, &nested);
+    set_timeout(dir, 10);
+    add_test(dir, "basic", "nested", "assert_eq!(tiny::add(1, 1), 3);");
+    commit(dir, "ABC-1 step 1 RED: a test");
+    commit(dir, "ABC-1 step 1 GREEN: code");
+    let started = std::time::Instant::now();
+    let (code, text) = check_with(dir, Cargo::Fake);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "took {:?}\n{text}",
+        started.elapsed()
+    );
+    let left = std::process::Command::new("pgrep")
+        .args(["-f", &nap])
+        .output()
+        .unwrap();
+    assert!(
+        left.stdout.is_empty(),
+        "a process of another group survived: {}",
+        String::from_utf8_lossy(&left.stdout)
+    );
 }
