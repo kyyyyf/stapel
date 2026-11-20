@@ -261,6 +261,12 @@ CRLF line ends in an edited file (read as not stapel's; not tested); a person's 
   2026-11-19).
 - X1-1 is deferred: a test-only commit inside the range would make every step unverified (ledger
   2026-11-18).
+- The builder of step 10a changed the test file with a short Python script; the orchestrator read the
+  resulting diff. The RED of step 10 fails first on `Choose the title with the person`, a phrase the
+  RED checks besides `already exists`.
+- 2026-11-20: `origin/main` was merged again (`aa22022`); it brought the plan rewrite (`docs/PLAN.md`,
+  `docs/HISTORY.md`, `docs/PHASES.md` as a pointer) and no code. The ledger was taken from main, which
+  already held the two decisions of this branch.
 
 ## Proof
 
@@ -350,8 +356,59 @@ Fix steps after code review round 2:
 
 ## Review
 
-TODO
+Reviewers: round 1 and round 2, each with stapel-reviewer (claude-sonnet-5-5), an external stapel-reviewer
+(claude-fable-5-2) and stapel-drift on the whole ticket. Spec review: two rounds (SR1, SR2) before the
+build.
+
+- Round 1: no HIGH, no MEDIUM, 10 LOW. R1-1, R1-2, X1-2 to X1-5 fixed by steps 8, 9 and 9a; R1-3, R1-4
+  no change; X1-1, X1-6 deferred.
+- Round 2: no HIGH, 1 MEDIUM, 10 LOW. X2-1 (the workflow pin `595746e`) is no change: the pin and its
+  commit are on `origin/main` and came with the merge. X2-2, R2-1 to R2-3, X2-5, D2-1, X2-3 fixed by steps
+  10 and 10a; X2-4 by a plan commit, also pushed to main; R2-4 no change; X2-6 deferred.
+- No round 3: `stapel review start` refuses round 3 ("after round 2 the person decides"); the person chose
+  the close on 2026-11-20. Steps 10 and 10a changed only the skill text and the checklist (LOW findings).
 
 ## Summary
 
-TODO
+`stapel init` installs a second skill, `stapel-elaborate`, in `.claude/skills/stapel-elaborate/`: its
+`SKILL.md`, a draft template, a checklist of 25 checks (EL-1 to EL-25) and a `NOTICE.md` that names the
+source method and holds its LICENSE word for word. The skill turns a piece of work larger than one ticket
+into a draft `.stapel/features/<slug>.md` with numbered requirements and a breakdown into tickets; no
+stapel command reads the draft yet. The files follow the update rules of the other process files, the
+local checklist and `stapel export` name the folder, and the skill `stapel` points to it. The report
+`docs/method-reports/e435a22.md` lists what was taken from the method and what was not.
+
+For the person to decide (deferred, outside the promise, or agent decisions):
+
+- SR1-12: a markdown viewer hides the marker line; a visible line saying that `init` keeps an edited
+  file would widen the promise.
+- X1-1: `export::removes_the_elaboration_skill` passes without the `REMOVE` entry; only
+  `init_local::foreign_repository_end_to_end` catches it. X2-6: `init_elaborate::checklist_ids` skips check
+  lines of another form. Both need a test-only commit, which makes every step unverified (ledger
+  2026-11-18); candidates for the next ticket that touches export or the checklist.
+- X1-6: on a repository with `.claude/skills` and `.claude/agents`, `init` creates the new skill folder
+  without the restart note.
+- R1-3: a symlink at `.claude/skills/stapel-elaborate` is refused (AC-4), as STP-33 refuses a symlinked
+  `.github`.
+- Agent decisions in Design "as built": the step order with `init_local::foreign_repository_end_to_end`
+  red from step 1 to step 3a; the rewrite of the two local commits of step 8.
+- Size: about 613 test lines against about 350 estimated in the Frame.
+- Process: `stapel review start` has no round 3 (plan item 3.7); each ticket-only commit asked for a
+  new full local check of 30 to 80 minutes (plan items 3.2a, 3.2b).
+
+Measures against STP-33:
+
+- Escaped defects of earlier tickets found here: none.
+- Code review HIGH and MEDIUM inside the promise: round 1: none; round 2: 1 MEDIUM, no change (STP-33:
+  1 HIGH and 2 MEDIUM, then 1 MEDIUM). Spec review: two rounds, 18 findings, 1 HIGH (SR1-1, the export
+  leak), before the build.
+- `ticket.md`: about 30 KB (STP-33: 36 KB).
+- Size: about 940 lines added in 12 files under `crates/` against main; most are assets and tests.
+- Steps: 9 planned, 14 built with the fix steps 8, 9, 9a, 10 and 10a; one history rewrite (step 8).
+- Tokens (measured, output): orchestrator 142 k, builder 72 k, reviewers 42 k, drift 4 k (STP-33: 230 k,
+  79 k, 38 k, 3 k).
+- Attention: 10 dialogs, 8 questions; 1 h 59 min attention, 20 h wall time (STP-33: 12 dialogs, 17
+  questions, 3 h 19 min, 27 h).
+- What improved: fewer questions and less attention; no HIGH finding in code review. What did not: the
+  local check took up to 80 minutes a run; five runs are recorded and two were stopped because
+  a later commit made them stale.
