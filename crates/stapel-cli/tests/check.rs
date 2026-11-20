@@ -2308,6 +2308,74 @@ fn cargo_runs_see_every_allowed_variable_and_one_cargo() {
     assert_eq!(tests, seen - 1, "test runs of {seen} runs");
 }
 
+// ---- STP-35 AC-1: the fake cargo ----
+
+/// A ticket of three steps, a passing one, one with no RED and one that is not green. Each test
+/// has a `// fake: needs` marker for the fake cargo; the real cargo reads the code.
+fn fake_fixture(dir: &Path) {
+    let lib = format!(
+        "{LIB}\npub fn triple(x: u32) -> u32 {{\n    x + x\n}}\n\npub fn quad(x: u32) -> u32 {{\n    x * 3\n}}\n"
+    );
+    write(dir, "crates/tiny/src/lib.rs", &lib);
+    commit(dir, "ABC-1: library functions to fix");
+    add_test(
+        dir,
+        "basic",
+        "triples",
+        "// fake: needs x + x + x\n    assert_eq!(tiny::triple(2), 6);",
+    );
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    edit(dir, "crates/tiny/src/lib.rs", "x + x", "x + x + x");
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    add_test(
+        dir,
+        "basic",
+        "already_true",
+        "assert_eq!(tiny::add(1, 1), 2);",
+    );
+    commit(dir, "ABC-1 step 2 RED: passes from the start");
+    commit(dir, "ABC-1 step 2 GREEN: nothing");
+    add_test(
+        dir,
+        "basic",
+        "quads",
+        "// fake: needs x * 4\n    assert_eq!(tiny::quad(2), 8);",
+    );
+    commit(dir, "ABC-1 step 3 RED: quad is wrong");
+    edit(dir, "crates/tiny/src/lib.rs", "x * 3", "x * 5");
+    commit(dir, "ABC-1 step 3 GREEN: still wrong");
+}
+
+#[test]
+fn fake_cargo_matches_real_cargo() {
+    let real = cargo_repo();
+    fake_fixture(real.path());
+    let (real_code, real_text) = check(real.path());
+
+    let scripts = tempfile::tempdir().unwrap();
+    let fake_repo = cargo_repo();
+    set_cargo_key(fake_repo.path(), &common::fake_cargo(scripts.path()));
+    fake_fixture(fake_repo.path());
+    let (fake_code, fake_text) = check(fake_repo.path());
+
+    // The fixture is not vacuous: every case shows in the real report.
+    assert_eq!(outcome(&real_text, "step 1"), "pass", "{real_text}");
+    assert_eq!(outcome(&real_text, "step 2"), "no-red", "{real_text}");
+    assert_eq!(outcome(&real_text, "step 3"), "not-green", "{real_text}");
+    assert_eq!(real_code, 1, "{real_text}");
+
+    assert_eq!(fake_code, real_code, "{fake_text}");
+    assert!(
+        cargo_line(&fake_text).ends_with("(cargo 0.0.0 (fake))"),
+        "{fake_text}"
+    );
+    assert_eq!(
+        without_cargo_line(&without_ids(&fake_text)),
+        without_cargo_line(&without_ids(&real_text)),
+        "fake:\n{fake_text}\nreal:\n{real_text}"
+    );
+}
+
 #[test]
 fn cargo_path_and_version_are_reported() {
     let repo = passing_repo();
