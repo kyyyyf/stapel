@@ -256,8 +256,8 @@ CRLF line ends in an edited file (read as not stapel's; not tested); a person's 
 - The headings of `template.md` are at level 2 under the title line `# [Title of the feature]` (step 9a).
 - The builder of step 9 changed the asset with a short Python script; the orchestrator read the
   resulting diff.
-- 2026-11-19: `origin/main` was merged into the branch (`4b5d1a4`); it brought the new plan order and
-  no code. Plan item 3.2a (faster fixtures of `tests/check.rs`) comes next after this ticket (ledger
+- 2026-11-19: `origin/main` was merged into the branch (`4b5d1a4`); it brought the new plan order, the
+  workflow pin `595746e` of the STP-33 close (`6f0a463`, on `origin/main`) and no code. Plan item 3.2a (faster fixtures of `tests/check.rs`) comes next after this ticket (ledger
   2026-11-19).
 - X1-1 is deferred: a test-only commit inside the range would make every step unverified (ledger
   2026-11-18).
@@ -334,6 +334,19 @@ Fix steps after code review round 1 (findings in `findings.jsonl`):
    a plain list line, writes `the person` for `the source` and drops the idiom; corrects the report's
    introduction on the Closure check and the stale doc comment of `plan_process_files`; runs `init` in the
    worktree. Must not change: the checks of `checklist.md`.
+
+Fix steps after code review round 2:
+
+10. The draft's title and path (X2-2, R2-1, R2-3; AC-6; test
+   `init_elaborate::skill_text_holds_the_steps`, which fails at the RED on the phrase `already exists`):
+   the GREEN makes `SKILL.md` choose the title with the person and the slug from it, write the title as
+   the draft's title line, and choose another slug when `.stapel/features/<slug>.md` already exists, never
+   overwriting it; runs `init` in the worktree. Must not change: `template.md`, `checklist.md`.
+10a. Empty sections and terms (R2-2, X2-5, D2-1; AC-6; test `init_elaborate::skill_text_holds_the_steps`,
+   which fails at the RED on the phrase `Constraints and Decisions`; the RED also corrects the module
+   comment of `tests/init_elaborate.rs`): the GREEN allows `None` in Constraints and Decisions in
+   `SKILL.md`, and EL-11 says `what the person said` for `its source`; runs `init` in the worktree. Must
+   not change: `template.md`.
 
 ## Review
 
