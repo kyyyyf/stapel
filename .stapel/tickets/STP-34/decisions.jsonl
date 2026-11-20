@@ -24,3 +24,4 @@
 {"v":1,"id":"d-449353e1884f","at":"2026-11-20T08:07:47Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:080665b09ba1b842fac5ee4c74e1bcf4702a2f67e02afebb78b8725a879b6b6c","via":"grant"}
 {"v":1,"id":"d-687c2cc60cfa","at":"2026-11-20T08:07:47Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:da8f23ee4315779d64e9d4ad21fe4ba0c687a8a40a6be7146606173c68b43ded","via":"grant"}
 {"v":1,"id":"d-f950da574c4d","at":"2026-11-20T08:07:47Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:172e37ddb5ab75342a65ca4a6244cf8f73d070b0ec27a1573432bf50487028d0","via":"grant"}
+{"v":1,"id":"d-429ee36ab620","at":"2026-11-20T12:35:45Z","by":"kyyyyf","action":"close","reason":"stapel init installs the elaboration skill with its template, checklist and notice, every criterion has a test that failed at RED, and the check of the final tree passes with no open HIGH or MEDIUM finding."}
