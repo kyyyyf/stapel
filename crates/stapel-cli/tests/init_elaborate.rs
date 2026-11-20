@@ -402,6 +402,10 @@ fn skill_text_holds_the_steps() {
         "run checklist.md over the draft",
         "name the path of the draft in the chat",
         ".claude/skills/stapel-elaborate/",
+        "Choose the title with the person",
+        "as the title line of the draft",
+        "already exists",
+        "never overwrite it",
     ] {
         assert!(flat.contains(phrase), "missing {phrase:?}");
     }
