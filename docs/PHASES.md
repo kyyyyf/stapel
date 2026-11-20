@@ -406,7 +406,7 @@ Taken in this order, chosen by the human: phase 3, then phase 3b, then phase 5, 
 2026-11-19; before that day the order was 3, 4, 5). The pilot's findings may reorder them only by a ledger
 decision. The numbers 3 to 5 are new; they do not mean the earlier phases 3 to 5. Each item is one ticket
 under the rule of 12 Plan steps. Item 4.1 was started on 2026-11-19 before the reorder and finishes; the
-next ticket after it is 3.2a, then 3.3.
+next ticket after it is 3.2a, then 3.2b, then 3.3.
 
 Why this order: the pilot showed that stapel's value lies in the checks at the boundary (the stand, RED
 before GREEN, the project's CI) and its cost in the mechanics of the process (dialogs per review round, the
@@ -424,7 +424,7 @@ work, which no pilot ticket needed.
 - 3.2 `stapel check` in the CI of the repository: the same check on the merge request, so the boundary
   decides, not the agent's shell. This is what lets the guard stay frozen.
 
-**Phase 3b — the mechanics after the pilot (ledger 2026-11-19).** Six small tickets: 3.2a from the
+**Phase 3b — the mechanics after the pilot (ledger 2026-11-19).** Seven small tickets: 3.2a and 3.2b from the
 local check time, the others each from a pilot finding named in `.stapel/scratch/pilot/report-ticket-2.md` and `report-ticket-3.md`.
 
 - 3.2a faster fixtures of `tests/check.rs` (ledger 2026-11-19, after STP-34; taken before 3.3): the 175 tests
@@ -433,6 +433,19 @@ local check time, the others each from a pilot finding named in `.stapel/scratch
   cargo for the tests whose subject is the logic of `stapel check`; real cargo stays in a few tests of the
   cargo boundary. Measured: the time of `tests/check.rs` and of the whole local check, before and after.
   Also: `check.timeout_secs` did not stop a suite run of more than 77 minutes.
+- 3.2b check levels, points and the step cache (ledger 2026-11-20): `stapel check` keeps the results it
+  has already proved. A step whose RED commit, GREEN commit, test list, lock file hash and stapel version
+  match a passing record of `runs.jsonl` is not run again, because the commits cannot change; the HEAD run
+  and the suite are what a new run adds. Three levels, in `[check] level` and as a flag: `steps` runs the
+  new steps at RED and GREEN and their tests at HEAD, without the suite; `head` runs every step's tests at
+  HEAD and the suite; `full` runs everything as today, cache ignored. The points at which `stapel next`
+  demands a check are the list `[check] points`, by default `["step", "review", "close"]`: after each
+  builder commit at `steps`, before code review and at the close at `head`; `full` runs in the CI of 3.2,
+  and the close needs it green (3.5). The list can drop `step`; `close` cannot be dropped, and a RED run is
+  never skipped. A check stays valid when the commits after it touch only `.stapel/tickets/` (finding of
+  STP-32). `[check] suite_exclude` names test binaries or files the local suite leaves out; the CI's `full`
+  run never leaves them out. Measured: the time of the `steps` check after one step and of the `head` check
+  before the close on this repository and on a jest project.
 - 3.3 the grant lifetime (finding G-6): a grant of `stapel ok` and `stapel close` lives 24 hours instead of 30
   minutes, so that an answer after a pause does not cost a second dialog; the sweep still removes expired
   grants.
@@ -452,12 +465,46 @@ local check time, the others each from a pilot finding named in `.stapel/scratch
   the rule 9 ledger records `catches` and `finding` from the ticket's findings (G-11); an agent edit of
   `.stapel/stapel.toml` goes through a dialog like `stapel ok` instead of being denied (G-9).
 
-**Phase 5 — the sum of changes.**
+**Phase 5 — the sum of changes, and the index (ledger 2026-11-20).** The index answers the questions an
+agent asks about a codebase it does not know, so that a feature, a bug fix or a refactoring names every
+place it must change before the build, instead of reading the codebase or guessing. The plan of
+`docs/PLAN.md` (principle 7, the package `stapel-index`) is taken here; the human asked for it for new and
+existing projects alike.
 
 - 5.1 the guards folder: machine checks out of the agent's reach with ratchet baselines ("no worse than
   now": existing violations recorded, new ones fail, a fixed one leaves the baseline for good); `stapel
   check` and the CI run them.
-- 5.2 a new dependency only through a dialog, and a public API snapshot.
+- 5.2 the structural index and `stapel q`. A tree-sitter parse of every tracked TypeScript and Rust file
+  gives the symbols of a file, the import graph and the test files of a module (by import); it lives in
+  `.stapel/index/`, outside git. The queries: `symbol` (where a name is defined), `refs` (who imports or
+  names it), `tests` (the tests that reach a file) and `impact` (the blast radius of a set of files: every
+  file that depends on them through the graph, and the tests of those). How the index stays current: it
+  trusts the working tree, not git events. Every query first compares the content hash of each tracked file
+  with the hash it indexed and re-parses the changed files before it answers; a parse is milliseconds, so
+  the cost is paid by the query, and a change made outside a ticket, by hand or by another tool, is seen by
+  the next query like any other. `stapel index` rebuilds everything, and a stapel version change does that
+  on its own. Nothing in the index is confirmed by the person: it is a cache of facts, and a wrong answer is
+  a bug of stapel.
+- 5.3 the blast radius in the process. The investigation before the Frame runs `impact` on the files the
+  request names and puts the result in the Frame as the list of places the ticket changes; the brief of a
+  step carries the places of that step; the review pack and the drift pack carry the blast radius of the
+  diff, so a reviewer sees what should have changed with the code; the Review Focus names the tests of the
+  radius that the plan does not run. The agent queries the index as a tool through `stapel-mcp`, not by
+  reading files. Measured as `docs/PLAN.md` says: the same ticket with and without the index, tokens and
+  turns to the first correct change.
+- 5.4 a new dependency only through a dialog, and a public API snapshot. The snapshot is computed from the
+  index (the exported symbols of the package and their signatures) and kept in the guards folder; a change
+  of it is a ratchet failure until the person confirms it.
+- 5.5 precise references. Where a SCIP indexer exists (scip-typescript, rust-analyzer), `refs` and `impact`
+  use it; it is slower, so it runs at commit boundaries (a post-commit hook, `stapel check`, `stapel review
+  start`) and the answer says which commit it is current for and lists the files changed since, for which
+  the structural index of 5.2 answers instead, marked "imprecise".
+
+Candidates on the index for phase 4, on the ticket-kind mechanism of 4.2: the kind `bug`, whose cause
+hypothesis names the callers and the tests around the failing place from the index; and the kind
+`refactor`, whose promise is "behaviour unchanged" and whose proof is characterisation tests on the blast
+radius, the API snapshot of 5.4 and the full list of call sites from the index, so that no site is left
+unchanged.
 
 **Phase 4 — the feature level.** Optional: a ticket without a feature works as before. Two levels only,
 feature and ticket.
@@ -493,7 +540,7 @@ minutes (attention). A rule of the elaboration skill that catches nothing is rem
 Not a plan; each needs a ledger decision to enter it. The other checks of `stapel lint` (item 1.6; its two
 test-name checks are built in STP-28); `stapel ship` with the
 review map (item 1.7); guard items 1.9 and 1.10; an import from the method or from a tracker when a real
-user asks; the index; autonomy levels; an editor extension; more languages; removal of the five empty
+user asks; autonomy levels; an editor extension; more languages; removal of the five empty
 crates; one short plan document in place of `docs/PLAN.md` and this file.
 
 ## What stays out of scope
