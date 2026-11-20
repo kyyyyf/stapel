@@ -20,7 +20,7 @@ pub fn starter_toml(prefix: &str, cargo: bool) -> String {
     let mut text = default_toml(prefix);
     text.push_str(CHECK_COMMENT);
     if cargo {
-        text.push_str("[check]\nrunner = \"cargo\"\ntimeout_secs = 900\n");
+        text.push_str("[check]\nrunner = \"cargo\"\ntimeout_secs = 3600\n");
     } else {
         text.push_str(
             "# [check]\n# runner = \"junit\"\n# command = \"npx jest {file} --ci --reporters=jest-junit\"\n# report = \"junit.xml\"\n# tests = [\"**/*.test.*\"]\n",
@@ -209,7 +209,7 @@ fn default_runner() -> String {
 }
 
 fn default_timeout() -> u64 {
-    900
+    3600
 }
 
 pub const TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 10..=86_400;

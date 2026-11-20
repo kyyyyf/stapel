@@ -388,6 +388,8 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
     }
     let target = dir.join("check-target");
     let timeout = Duration::from_secs(check.timeout_secs);
+    // The limit bounds the whole check (STP-35 AC-3), not each program run.
+    let deadline = std::time::Instant::now() + timeout;
     // A configuration above the worktree is found before any cargo run (AC-7).
     let outside = if junit {
         None
@@ -426,6 +428,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool) -> ExitCode {
         cargo: &cargo,
         target,
         timeout,
+        deadline,
         head: &at,
         outside: std::cell::RefCell::new(blocked),
         junit: junit_run,
@@ -570,6 +573,8 @@ struct Runner<'a> {
     cargo: &'a Path,
     target: PathBuf,
     timeout: Duration,
+    /// The end of the time limit of the whole check.
+    deadline: std::time::Instant,
     head: &'a str,
     /// Set when a build input lies above the worktree: no cargo runs, and every step and the suite
     /// read `unverified: build-input-outside: <path>`.
@@ -588,6 +593,25 @@ struct JunitRun<'a> {
 type At = Result<BTreeMap<TestId, TestState>, String>;
 
 impl Runner<'_> {
+    /// What is left of the time limit of the check, or the reason of `unverified` when it ran out.
+    fn left(&self) -> Result<Duration, String> {
+        let left = self
+            .deadline
+            .saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            Err(self.limit_reason())
+        } else {
+            Ok(left)
+        }
+    }
+
+    fn limit_reason(&self) -> String {
+        format!(
+            "the time limit of {} s for the check ran out",
+            self.timeout.as_secs()
+        )
+    }
+
     /// The search above the worktree, repeated after a cargo run (AC-7): a hit is kept, and every
     /// later run is refused.
     fn found_outside(&self) -> Option<String> {
@@ -639,15 +663,13 @@ impl Runner<'_> {
             .map(|s| s.to_string())
             .collect();
             args.extend(names.iter().cloned());
-            let run = run_cargo(self.cargo, &self.wt.path, &args, &self.target, self.timeout)?;
+            let left = self.left()?;
+            let run = run_cargo(self.cargo, &self.wt.path, &args, &self.target, left)?;
             if let Some(why) = self.found_outside() {
                 return Err(why);
             }
             if run.timed_out {
-                return Err(format!(
-                    "the time limit of {} s ran out",
-                    self.timeout.as_secs()
-                ));
+                return Err(self.limit_reason());
             }
             match parse_run(&run.output, &names, run.exit, &file, at_red) {
                 Parsed::Unverified(r) => return Err(format!("{r} (at {})", short(commit))),
@@ -710,21 +732,22 @@ impl Runner<'_> {
             return unverified("check.command is empty".into());
         };
         let args: Vec<String> = rest.iter().map(|w| w.to_string()).collect();
+        let left = match self.left() {
+            Ok(l) => l,
+            Err(e) => return unverified(e),
+        };
         let run = match run_program(
             &self.script_path(program),
             &self.wt.path,
             &args,
             &[("JEST_JUNIT_REPORT_TEST_SUITE_ERRORS", "true")],
-            self.timeout,
+            left,
         ) {
             Ok(r) => r,
             Err(e) => return unverified(e),
         };
         if run.timed_out {
-            return unverified(format!(
-                "the time limit of {} s ran out",
-                self.timeout.as_secs()
-            ));
+            return unverified(self.limit_reason());
         }
         let Some(code) = run.exit else {
             return unverified("the suite run ended by a signal".into());
@@ -793,18 +816,16 @@ impl Runner<'_> {
                     }
                 })
                 .collect();
+            let left = self.left()?;
             let run = run_program(
                 &self.script_path(program),
                 &self.wt.path,
                 &args,
                 &[("JEST_JUNIT_REPORT_TEST_SUITE_ERRORS", "true")],
-                self.timeout,
+                left,
             )?;
             if run.timed_out {
-                return Err(format!(
-                    "the time limit of {} s ran out",
-                    self.timeout.as_secs()
-                ));
+                return Err(self.limit_reason());
             }
             let Some(code) = run.exit else {
                 return Err(format!("the run of {file} ended by a signal (at {at})"));
@@ -1022,7 +1043,11 @@ impl Runner<'_> {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let run = match run_cargo(self.cargo, &self.wt.path, &args, &self.target, self.timeout) {
+        let left = match self.left() {
+            Ok(l) => l,
+            Err(e) => return unverified(e),
+        };
+        let run = match run_cargo(self.cargo, &self.wt.path, &args, &self.target, left) {
             Ok(r) => r,
             Err(e) => return unverified(e),
         };
@@ -1030,10 +1055,7 @@ impl Runner<'_> {
             return unverified(why);
         }
         if run.timed_out {
-            return unverified(format!(
-                "the time limit of {} s ran out",
-                self.timeout.as_secs()
-            ));
+            return unverified(self.limit_reason());
         }
         if run.output.contains("because --locked was passed") {
             return unverified("Cargo.lock is out of date".into());

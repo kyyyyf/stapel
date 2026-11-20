@@ -233,6 +233,64 @@ fn kill_group(pid: u32) {
 #[cfg(not(unix))]
 fn kill_group(_pid: u32) {}
 
+/// Kills `pid` and every process it started, nested process groups included, except stapel's own
+/// group (STP-35 AC-3). The table of processes is read again until no new descendant shows up,
+/// since a process may fork while it is killed.
+#[cfg(unix)]
+fn kill_tree(pid: u32) {
+    let own = std::process::id();
+    let mut seen: Vec<(u32, u32)> = Vec::new();
+    for _ in 0..5 {
+        let Ok(out) = Command::new("ps")
+            .args(["-A", "-o", "pid=,ppid=,pgid="])
+            .stderr(Stdio::null())
+            .output()
+        else {
+            break;
+        };
+        let table: Vec<(u32, u32, u32)> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| {
+                let mut f = l.split_whitespace().map(|w| w.parse::<u32>().ok());
+                Some((f.next()??, f.next()??, f.next()??))
+            })
+            .collect();
+        let own_group = table.iter().find(|r| r.0 == own).map(|r| r.2);
+        let mut tree = vec![pid];
+        let mut i = 0;
+        while i < tree.len() {
+            let parent = tree[i];
+            for r in table.iter().filter(|r| r.1 == parent) {
+                if !tree.contains(&r.0) {
+                    tree.push(r.0);
+                }
+            }
+            i += 1;
+        }
+        let found: Vec<(u32, u32)> = table
+            .iter()
+            .filter(|r| tree.contains(&r.0) && r.0 != own && Some(r.2) != own_group)
+            .map(|r| (r.0, r.2))
+            .collect();
+        let grew = found.iter().any(|f| !seen.contains(f));
+        for (p, g) in &found {
+            let _ = Command::new("kill")
+                .args(["-KILL", "--", &p.to_string(), &format!("-{g}")])
+                .stderr(Stdio::null())
+                .status();
+            if !seen.contains(&(*p, *g)) {
+                seen.push((*p, *g));
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_tree(_pid: u32) {}
+
 /// Variables of the caller that reach a cargo run (STP-6 AC-8); the check adds its own.
 pub const ENV_ALLOW: [&str; 10] = [
     "STAPEL_CARGO_LOCK_HELD",
@@ -374,6 +432,7 @@ fn run_child(mut cmd: Command, what: &str, timeout: Duration) -> Result<RunResul
             Ok(Some(status)) => break Some(status),
             Ok(None) if Instant::now() >= deadline => {
                 timed_out = true;
+                kill_tree(child.id());
                 kill_group(child.id());
                 let _ = child.kill();
                 break child.wait().ok();
