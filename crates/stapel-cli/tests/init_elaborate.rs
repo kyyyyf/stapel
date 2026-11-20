@@ -1,4 +1,4 @@
-//! STP-34 step 1: `stapel init` writes the four files of the skill `stapel-elaborate`.
+//! STP-34: `stapel init` writes the four files of the skill `stapel-elaborate`; the tests cover AC-1 to AC-13.
 
 mod common;
 
@@ -406,6 +406,7 @@ fn skill_text_holds_the_steps() {
         "as the title line of the draft",
         "already exists",
         "never overwrite it",
+        "Write `None` only in Constraints and Decisions when",
     ] {
         assert!(flat.contains(phrase), "missing {phrase:?}");
     }
