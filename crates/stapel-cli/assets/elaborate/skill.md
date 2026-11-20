@@ -24,10 +24,10 @@ Your task is to elicit the person's intent, never author it. The person knows wh
    copied from `template.md` without the first line of template.md (the line is the marker of stapel). Write the
    title as the title line of the draft (`# <title>`, the first heading, in place of `# [Title of the feature]`).
    When `.stapel/features/<slug>.md` already exists, choose another slug; never overwrite it. The files
-   `template.md` and `checklist.md` are in the folder `.claude/skills/stapel-elaborate/`. Keep every section. Write `None` only in Constraints when it is empty;
+   `template.md` and `checklist.md` are in the folder `.claude/skills/stapel-elaborate/`. Keep every section. Write `None` only in Constraints and Decisions when one is empty;
    Description, Outcome, Done when, Boundaries, Requirements and Breakdown always have content.
 3. Fill Description, Outcome, Done when (three to six checks), Boundaries (at least one thing out) and
-   Constraints from what the person said.
+   Constraints and Decisions from what the person said.
 4. Write the requirements as lines `R<n>`. A requirement says what is possible and what shows it was met.
    It says WHAT, never HOW. Ids count up from `R1`; an id is never reused or renumbered, even when its
    requirement is removed.

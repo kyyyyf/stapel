@@ -1,7 +1,7 @@
 ---
 name: stapel-elaborate
 description: "Turns the intent for a piece of work larger than one ticket into requirements with ids and a breakdown into tickets."
-# stapel: 0.1.0 sha256:27e12e5e2aa27c2c1afb993d084cc496bb2ab4a7e06ed79774128d9d7294d046
+# stapel: 0.1.0 sha256:7ecc2c461d7f6f7423578500789495aa6e7c130ebb03da6809abedd6741a5d51
 ---
 
 # Elaborate a piece of work larger than one ticket
@@ -29,10 +29,10 @@ Your task is to elicit the person's intent, never author it. The person knows wh
    copied from `template.md` without the first line of template.md (the line is the marker of stapel). Write the
    title as the title line of the draft (`# <title>`, the first heading, in place of `# [Title of the feature]`).
    When `.stapel/features/<slug>.md` already exists, choose another slug; never overwrite it. The files
-   `template.md` and `checklist.md` are in the folder `.claude/skills/stapel-elaborate/`. Keep every section. Write `None` only in Constraints when it is empty;
+   `template.md` and `checklist.md` are in the folder `.claude/skills/stapel-elaborate/`. Keep every section. Write `None` only in Constraints and Decisions when one is empty;
    Description, Outcome, Done when, Boundaries, Requirements and Breakdown always have content.
 3. Fill Description, Outcome, Done when (three to six checks), Boundaries (at least one thing out) and
-   Constraints from what the person said.
+   Constraints and Decisions from what the person said.
 4. Write the requirements as lines `R<n>`. A requirement says what is possible and what shows it was met.
    It says WHAT, never HOW. Ids count up from `R1`; an id is never reused or renumbered, even when its
    requirement is removed.

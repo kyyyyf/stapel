@@ -18,7 +18,7 @@ Run each check over the draft. A pruned id is never reused. A finding names its 
 
 - EL-9: Each requirement says what is possible and what shows it was met.
 - EL-10: Each requirement says WHAT, not HOW. Implementation goes to the tickets.
-- EL-11: Each constraint bends a design decision, and names its source.
+- EL-11: Each constraint bends a design decision, and names what the person said about it.
 - EL-12: Requirement ids are never reused or renumbered.
 - EL-13: Every load-bearing claim of the person lands in a requirement, a constraint or a `Decision` line.
 

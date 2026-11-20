@@ -1,4 +1,4 @@
-<!-- stapel: 0.1.0 sha256:542ce7005255c4b6a72c35fc8494f9fee3ed62d35350329ed85c8f07fadf0dc9 -->
+<!-- stapel: 0.1.0 sha256:1342015035d160f339334680e8255d3d74539a999d914bffb0ad41e67210454c -->
 
 # Checklist
 
@@ -19,7 +19,7 @@ Run each check over the draft. A pruned id is never reused. A finding names its 
 
 - EL-9: Each requirement says what is possible and what shows it was met.
 - EL-10: Each requirement says WHAT, not HOW. Implementation goes to the tickets.
-- EL-11: Each constraint bends a design decision, and names its source.
+- EL-11: Each constraint bends a design decision, and names what the person said about it.
 - EL-12: Requirement ids are never reused or renumbered.
 - EL-13: Every load-bearing claim of the person lands in a requirement, a constraint or a `Decision` line.
 
