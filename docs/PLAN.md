@@ -58,15 +58,16 @@ CI; the pilot's gate in its first form is in `docs/HISTORY.md` with its verdict 
 ## 5. The order of work
 
 Each item is one ticket of at most 12 Plan steps, taken in a new session in this order. Item 4.1 was
-started on 2026-11-19 before the order changed and finishes; after it: 3.2a, 3.2b, 3.3 and so on. The
+started on 2026-11-19 before the order changed and finishes; after it: 3.2a, 3.2b, 3.3 and so on through
+phase 3b, then phase 3c, then phase 5, then phase 4. The
 foreign repository for the next comparison (a fork of an open-source TypeScript project with jest, open
 issues, GitHub Actions and an MIT or Apache licence) is chosen by a ledger decision right after 3.2b, from
-three candidates. The empty crates `stapel-agent`, `stapel-forge` and `stapel-lsp` are removed inside the
-next ticket that touches the workspace; `stapel-index` and `stapel-mcp` are filled by phase 5.
+three candidates. The empty crates `stapel-agent` and `stapel-forge` are removed inside the next ticket that
+touches the workspace; `stapel-lsp` is filled by phase 3c, `stapel-index` and `stapel-mcp` by phase 5.
 
 Why this order: the pilot showed that stapel's value lies in the checks at the boundary (the stand, RED
 before GREEN, the project's CI) and its cost in the mechanics of the process. Phase 3b removes the cost,
-phase 5 adds the checks and the index, and the feature level of phase 4 waits until a real feature shows
+phase 3c gives the person a place to read and answer, phase 5 adds the checks and the index, and the feature level of phase 4 waits until a real feature shows
 the need.
 
 ### Phase 3 — one ticket made lighter (done)
@@ -117,6 +118,22 @@ the need.
 - 3.10 the measures: `stapel tokens measure` prints the minutes of interaction, the capped waits and the
   returns apart; `stapel ledger rules` counts, per rule and per ticket, what each rule caught, so that rule
   9 (a rule that caught nothing in three tickets is removed) can be applied.
+
+### Phase 3c — the editor (ledger 2026-11-20)
+
+The person of the pilot asked for it, which is what `docs/decisions/0004` waited for. The measure it works
+on is the person's attention: the ticket text is not read at 45 to 53 kB, and the page of 3.1 is a half
+step towards a place where the person reads and answers. An LSP server, not an extension of one editor, so
+that Zed, VS Code and every editor that speaks the protocol get the same.
+
+- 3c.1 `stapel-lsp`, the buttons: a language server for `ticket.md` and `page.md` with a code action above
+  each section that calls one existing command (`stapel ok`, `stapel page`, `stapel status`, `stapel next`),
+  run as an editor task outside the agent's shell, so the grant and the dialog rules hold as they do today;
+  the sections that wait for a confirmation and the lines changed since the last one are highlighted.
+- 3c.2 the inbox: the decisions the person owes (questions, findings with the fate `ask-human`, waiting
+  confirmations) listed in one view with a button per answer, written back as the same records the chat
+  would write; measured by the returns and the interaction minutes of a ticket run from the editor against
+  the chat.
 
 ### Phase 5 — the sum of changes, and the index
 
@@ -170,4 +187,4 @@ Optional: a ticket without a feature works as before. Two levels only, feature a
 Jira sync (a one-way import of a ticket's text was declined on 2026-11-20), semantic search on embeddings,
 multi-user locks, a hosted service, a web UI, agents other than Claude Code, deploy and operations after the
 merge, a planning method of stapel's own beyond the feature level, more than two levels of work items, an
-editor extension, `stapel ship` (the person pushes and opens the merge request).
+extension of one editor (the editor is served through LSP, phase 3c), `stapel ship` (the person pushes and opens the merge request).
