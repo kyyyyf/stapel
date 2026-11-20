@@ -220,6 +220,63 @@ fn range_end(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Optio
     }
 }
 
+fn sha256_hex(parts: &[&str]) -> String {
+    use sha2::Digest;
+    let mut digest = sha2::Sha256::new();
+    for part in parts {
+        digest.update(part.as_bytes());
+    }
+    digest.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The test hash of a step: SHA-256 of its sorted test ids, one per line.
+fn tests_hash(tests: &[TestId]) -> String {
+    let mut ids: Vec<String> = tests.iter().map(ToString::to_string).collect();
+    ids.sort();
+    let text: String = ids.iter().map(|i| format!("{i}\n")).collect();
+    sha256_hex(&[&text])
+}
+
+/// The lock hash at `commit`: SHA-256 of `Cargo.lock` under cargo, of every `package-lock.json`,
+/// `yarn.lock` and `pnpm-lock.yaml` under junit; the word `none` when there is none.
+fn lock_hash(root: &Path, commit: &str, junit: bool) -> String {
+    let mut paths: Vec<String> = Vec::new();
+    if junit {
+        let listing =
+            git_text(root, &["ls-tree", "-r", "--name-only", commit]).unwrap_or_default();
+        for path in listing.lines() {
+            let name = path.rsplit('/').next().unwrap_or(path);
+            if matches!(name, "package-lock.json" | "yarn.lock" | "pnpm-lock.yaml") {
+                paths.push(path.to_string());
+            }
+        }
+        paths.sort();
+    } else {
+        paths.push("Cargo.lock".to_string());
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for path in &paths {
+        if let Ok(text) = git_text(root, &["show", &format!("{commit}:{path}")]) {
+            parts.push(format!("{path}\n{text}\n"));
+        }
+    }
+    if parts.is_empty() {
+        return "none".to_string();
+    }
+    let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
+    sha256_hex(&refs)
+}
+
+/// The hash of the Plan section of the ticket, or `none` when it has no single Plan section.
+fn plan_hash(dir: &Path) -> String {
+    let text = std::fs::read_to_string(dir.join("ticket.md")).unwrap_or_default();
+    let sections = stapel_core::ticket::parse(&text);
+    match stapel_core::ticket::find(&sections, "Plan") {
+        stapel_core::ticket::Lookup::Found(body) => stapel_core::hash::section_hash(body),
+        _ => "none".to_string(),
+    }
+}
+
 pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) -> ExitCode {
     if let Some(level) = level {
         if list || history {
@@ -474,6 +531,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
                 "outcome": outcome,
                 "reason": cut(&reason, MAX_REASON),
                 "tests": a.tests.len(),
+                "tests_hash": tests_hash(&a.tests),
                 "names": names_of(&outcome, &reason),
             }));
         }
@@ -497,6 +555,16 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
     } else {
         record["cargo"] = serde_json::json!(cargo_text);
     }
+    // The fields that a later check reads (STP-35 AC-6).
+    record["level"] = serde_json::json!(level.or(check.level.as_deref()).unwrap_or("head"));
+    record["lock"] = serde_json::json!(lock_hash(&root, &at, junit));
+    record["toolchain"] = serde_json::json!(if junit {
+        check.command.clone().unwrap_or_default()
+    } else {
+        cargo_text.clone()
+    });
+    record["plan_hash"] = serde_json::json!(plan_hash(&ticket.dir));
+    record["suite_exclude"] = serde_json::json!(Vec::<String>::new());
     record["result"] = serde_json::json!(if ok { "pass" } else { "fail" });
     record["steps"] = serde_json::json!(steps_json);
     record["suite"] = serde_json::json!({
