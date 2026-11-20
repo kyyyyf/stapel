@@ -249,6 +249,18 @@ CRLF line ends in an edited file (read as not stapel's; not tested); a person's 
 - The ticket lint failed at the RED of step 7, because the ticket names `docs/method-reports/` before
   the GREEN writes the report; it passes at the GREEN.
 - The local checks ran with `TMPDIR` on a case-sensitive disk image (ledger 2026-11-19 of STP-33).
+- 2026-11-19, agent: the first RED of step 8 changed only the golden file, so `stapel check` gave the
+  step no tests. The two local commits of step 8 were made again: the RED adds an assertion on
+  `TRADEMARK NOTICE:` to `init_elaborate::notice_text`. The old commits stay on the branch
+  `STP-34-step8-backup` until the close.
+- The headings of `template.md` are at level 2 under the title line `# [Title of the feature]` (step 9a).
+- The builder of step 9 changed the asset with a short Python script; the orchestrator read the
+  resulting diff.
+- 2026-11-19: `origin/main` was merged into the branch (`4b5d1a4`); it brought the new plan order and
+  no code. Plan item 3.2a (faster fixtures of `tests/check.rs`) comes next after this ticket (ledger
+  2026-11-19).
+- X1-1 is deferred: a test-only commit inside the range would make every step unverified (ledger
+  2026-11-18).
 
 ## Proof
 
