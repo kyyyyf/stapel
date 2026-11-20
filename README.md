@@ -5,9 +5,8 @@ process is understandable without reading the internals, and token spending is m
 
 Stapel is a slipway: the place where a ship is built step by step before it is launched.
 
-- Overall plan: [docs/PLAN.md](docs/PLAN.md)
-- Phase plan: [docs/PHASES.md](docs/PHASES.md)
+- The plan: [docs/PLAN.md](docs/PLAN.md); what was planned before: [docs/HISTORY.md](docs/HISTORY.md)
 
-Status: phase 0, bootstrap.
+Status: phase 3b, the mechanics after the pilot (2026-11-20).
 
 License: MIT, see [LICENSE](LICENSE).
