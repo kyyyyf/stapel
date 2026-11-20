@@ -315,7 +315,7 @@ fn unchanged_workflow_version(text: &str) -> Option<(u64, u64, u64)> {
 const LOCAL_CHECKLIST: &str = "checklist:
 1. Commit the installed files on the base branch with these two lines:
    git add .stapel
-   git add -f .claude/skills/stapel .claude/agents/stapel-*.md .claude/settings.json
+   git add -f .claude/skills/stapel .claude/skills/stapel-elaborate .claude/agents/stapel-*.md .claude/settings.json
 2. Fill in [check] command in .stapel/stapel.toml.
 3. Restart Claude Code and see \"stapel next\" at session start.
 4. Run stapel init again after anything changes core.hooksPath (husky does on npm install).
@@ -491,7 +491,7 @@ fn check_bindings(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-/// Plans the skill and the four agent files: each is created when missing, updated when it is an
+/// Plans the skill `stapel`, the agent files and the skill `stapel-elaborate`: each is created when missing, updated when it is an
 /// unchanged file of stapel, and kept with a warning otherwise.
 fn plan_process_files(
     root: &Path,
@@ -500,11 +500,21 @@ fn plan_process_files(
     kept: &mut bool,
 ) -> Result<(), String> {
     check_bindings(config)?;
-    let paths = std::iter::once(SKILL_PATH.to_string()).chain(
-        AGENT_FILES
-            .iter()
-            .map(|a| format!(".claude/agents/stapel-{}.md", a.name)),
-    );
+    let folder = ".claude/skills/stapel-elaborate";
+    if std::fs::symlink_metadata(root.join(folder)).is_ok_and(|m| !m.is_dir()) {
+        return Err(format!("{folder} is not a directory; nothing was written"));
+    }
+    let paths = std::iter::once(SKILL_PATH.to_string())
+        .chain(
+            AGENT_FILES
+                .iter()
+                .map(|a| format!(".claude/agents/stapel-{}.md", a.name)),
+        )
+        .chain(
+            ["SKILL.md", "template.md", "checklist.md", "NOTICE.md"]
+                .iter()
+                .map(|n| format!("{folder}/{n}")),
+        );
     for rel in paths {
         if std::fs::symlink_metadata(root.join(&rel)).is_ok_and(|m| m.is_dir()) {
             return Err(format!("{rel} is a directory; nothing was written"));
@@ -542,7 +552,76 @@ fn plan_process_files(
             unchanged_version,
         );
     }
+    plan_elaboration_files(root, plan, kept);
     Ok(())
+}
+
+const ELABORATION_DESCRIPTION: &str = "Turns the intent for a piece of work larger than one ticket into requirements with ids and a breakdown into tickets.";
+
+/// Plans the four files of the skill `stapel-elaborate` by the rules of the other process files.
+fn plan_elaboration_files(root: &Path, plan: &mut Vec<Step>, kept: &mut bool) {
+    use sha2::{Digest, Sha256};
+    let skill = process_text(
+        &[
+            "name: stapel-elaborate".to_string(),
+            format!("description: \"{ELABORATION_DESCRIPTION}\""),
+        ],
+        include_str!("../assets/elaborate/skill.md"),
+    );
+    let line_marked = |body: &str| {
+        let hash: String = Sha256::digest(body.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        format!(
+            "<!-- stapel: {} sha256:{hash} -->\n{body}",
+            env!("CARGO_PKG_VERSION")
+        )
+    };
+    let files = [
+        ("SKILL.md", skill, unchanged_version as fn(&str) -> _),
+        (
+            "template.md",
+            line_marked(include_str!("../assets/elaborate/template.md")),
+            line_marker_version,
+        ),
+        (
+            "checklist.md",
+            line_marked(include_str!("../assets/elaborate/checklist.md")),
+            line_marker_version,
+        ),
+        (
+            "NOTICE.md",
+            line_marked(include_str!("../assets/elaborate/notice.md")),
+            line_marker_version,
+        ),
+    ];
+    for (name, content, version_of) in files {
+        let rel = format!(".claude/skills/stapel-elaborate/{name}");
+        plan_create_text(root, rel, content, plan, kept, version_of);
+    }
+}
+
+/// The marker version of an unchanged file whose first line is
+/// `<!-- stapel: <version> sha256:<hex> -->` and whose hash is that of the text after that line.
+/// `None` for any other text.
+fn line_marker_version(text: &str) -> Option<(u64, u64, u64)> {
+    use sha2::{Digest, Sha256};
+    let (first, rest) = text.split_once('\n')?;
+    let inner = first
+        .strip_prefix("<!-- stapel: ")?
+        .strip_suffix(" -->")?;
+    let (version, hash) = inner.split_once(" sha256:")?;
+    let version = parse_version(version)?;
+    let valid_hash = hash.len() == 64
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    let digest: String = Sha256::digest(rest.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    (valid_hash && digest == hash).then_some(version)
 }
 
 /// Plans `rel` when nothing is at its path, not even a symlink; plans an update when the file is

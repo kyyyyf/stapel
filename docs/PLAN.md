@@ -187,7 +187,7 @@ Optional: a ticket without a feature works as before. Two levels only, feature a
 
 - 4.1 the elaboration skill (STP-34, in progress): the questions, the template and the checklists for
   elaborating a feature, ported from the method studied in decisions 0001 to 0003 under its MIT licence,
-  into the skill; the method's name appears only in a truthful compatibility statement.
+  into the skill; the method's name appears only in `NOTICE.md`, which says the skill is adapted from it.
 - Before 4.2: one real feature of several tickets is run with the questions of 4.1 and a plain breakdown
   file; items 4.2 to 4.4 are taken only if that run shows the orchestrator cannot keep the breakdown and
   the requirements straight in plain text (a ledger decision with the measure).

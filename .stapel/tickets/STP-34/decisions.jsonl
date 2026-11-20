@@ -1,0 +1,27 @@
+{"v":1,"id":"d-4c18ce8c5de2","at":"2026-11-19T12:46:55Z","by":"kyyyyf","action":"ok","section":"description","hash":"sha256:41b56c6d20dccdf02f71f86893bccc37203b4bf6ad17594a064517a93f75fea4","via":"grant"}
+{"v":1,"id":"d-cbe8f2e0fe9a","at":"2026-11-19T12:46:55Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:a190d04aa0437d8c1ebbd8c8de80b6735f6add4675e53fff5279f9b6fc155842","via":"grant"}
+{"v":1,"id":"d-cb1c5e954819","at":"2026-11-19T12:46:55Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:946305fc70e4bee495691985cc1f573b3b0d4a821cd18ebc7674aaa4b7722bb8","via":"grant"}
+{"v":1,"id":"d-9902098b2ff4","at":"2026-11-19T12:46:55Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:da8f23ee4315779d64e9d4ad21fe4ba0c687a8a40a6be7146606173c68b43ded","via":"grant"}
+{"v":1,"id":"d-8bedb03334a3","at":"2026-11-19T12:46:55Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:ddae642440eb863a0c437d9749e6a8cc9da2f9edf75f1f81783bb02509839b4b","via":"grant"}
+{"v":1,"id":"d-b5c603c6cad1","at":"2026-11-19T13:46:02Z","by":"kyyyyf","action":"ok","section":"description","hash":"sha256:4432d68daef2e221b5be627212deec0cccaf15dba8093c4abdef389777fbe3be","via":"grant"}
+{"v":1,"id":"d-355396d7cbf2","at":"2026-11-19T13:46:02Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:6de61aeac71f80b6ec576a6c05fc138539b1818572f17b6fc876e98a1db1898b","via":"grant"}
+{"v":1,"id":"d-a5f240ae25b8","at":"2026-11-19T13:46:02Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:946305fc70e4bee495691985cc1f573b3b0d4a821cd18ebc7674aaa4b7722bb8","via":"grant"}
+{"v":1,"id":"d-d2bda7e577d1","at":"2026-11-19T13:46:02Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:da8f23ee4315779d64e9d4ad21fe4ba0c687a8a40a6be7146606173c68b43ded","via":"grant"}
+{"v":1,"id":"d-31f883bf87e3","at":"2026-11-19T13:46:02Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:8bc9520b984ef750916968809b4a7ad42ac8d2886a8e8f926c59bf0356034c54","via":"grant"}
+{"v":1,"id":"d-fc435af8b1b8","at":"2026-11-19T15:59:17Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:7716e694b74bef68b5ebce9b10ffbe0226ceb3e7351cbee9fdb0f37fa779fffc","via":"grant"}
+{"v":1,"id":"d-9f5f1d2e3ef8","at":"2026-11-19T15:59:17Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:da8f23ee4315779d64e9d4ad21fe4ba0c687a8a40a6be7146606173c68b43ded","via":"grant"}
+{"v":1,"id":"d-c27ac712861e","at":"2026-11-19T15:59:17Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:8bc9520b984ef750916968809b4a7ad42ac8d2886a8e8f926c59bf0356034c54","via":"grant"}
+{"v":1,"id":"d-0fa2c28b594b","at":"2026-11-19T16:09:06Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:54d96d53fbf8692c4fc3d27a5c7839345cfb08a6c027ec90ed2150139c4c83c0","via":"grant"}
+{"v":1,"id":"d-cba2da0240aa","at":"2026-11-19T16:09:06Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:7716e694b74bef68b5ebce9b10ffbe0226ceb3e7351cbee9fdb0f37fa779fffc","via":"grant"}
+{"v":1,"id":"d-6433e32b385e","at":"2026-11-19T16:09:06Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:da8f23ee4315779d64e9d4ad21fe4ba0c687a8a40a6be7146606173c68b43ded","via":"grant"}
+{"v":1,"id":"d-21d762399083","at":"2026-11-19T16:09:06Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:e9df1aa9b32a9ebe5dc44ed0b65e19b4a4f1bb438c4f484af3379395852a4775","via":"grant"}
+{"v":1,"id":"d-52dd208e5241","at":"2026-11-20T05:22:09Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:5824c391384e6baf376524499cfad97db2458912567c1bfe8e0d4fe1a60e30e3","via":"grant"}
+{"v":1,"id":"d-805acbdd1cca","at":"2026-11-20T05:22:09Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:da8f23ee4315779d64e9d4ad21fe4ba0c687a8a40a6be7146606173c68b43ded","via":"grant"}
+{"v":1,"id":"d-3867f8cf7f8c","at":"2026-11-20T05:22:09Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:e9df1aa9b32a9ebe5dc44ed0b65e19b4a4f1bb438c4f484af3379395852a4775","via":"grant"}
+{"v":1,"id":"d-e3818409db9e","at":"2026-11-20T05:28:34Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:8d0e9ead4d3125d00291c4ca73e3d346a5ec616dabcec58f751144ff74162792","via":"grant"}
+{"v":1,"id":"d-5658c99c67cd","at":"2026-11-20T05:28:34Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:da8f23ee4315779d64e9d4ad21fe4ba0c687a8a40a6be7146606173c68b43ded","via":"grant"}
+{"v":1,"id":"d-01c688dfda8f","at":"2026-11-20T05:28:34Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:172e37ddb5ab75342a65ca4a6244cf8f73d070b0ec27a1573432bf50487028d0","via":"grant"}
+{"v":1,"id":"d-449353e1884f","at":"2026-11-20T08:07:47Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:080665b09ba1b842fac5ee4c74e1bcf4702a2f67e02afebb78b8725a879b6b6c","via":"grant"}
+{"v":1,"id":"d-687c2cc60cfa","at":"2026-11-20T08:07:47Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:da8f23ee4315779d64e9d4ad21fe4ba0c687a8a40a6be7146606173c68b43ded","via":"grant"}
+{"v":1,"id":"d-f950da574c4d","at":"2026-11-20T08:07:47Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:172e37ddb5ab75342a65ca4a6244cf8f73d070b0ec27a1573432bf50487028d0","via":"grant"}
+{"v":1,"id":"d-429ee36ab620","at":"2026-11-20T12:35:45Z","by":"kyyyyf","action":"close","reason":"stapel init installs the elaboration skill with its template, checklist and notice, every criterion has a test that failed at RED, and the check of the final tree passes with no open HIGH or MEDIUM finding."}

@@ -1,7 +1,7 @@
 ---
 name: stapel
 description: "Carries a development ticket from description to merge with the stapel process."
-# stapel: 0.1.0 sha256:2a409ce0dbade7bc6dfe614ab43e04f8194ced8ae2aaa072445e9cd8d9c91a63
+# stapel: 0.1.0 sha256:c58d2167d9d36ec41896bb3c062f684fa763cf64f7ad13be304f48315744f7a3
 ---
 # The stapel process
 
@@ -16,6 +16,7 @@ Run `stapel next`, do what it names, then run `stapel next` again. It reads the 
 the file to use; the facts that block an action come first. Do not re-read the whole ticket on every turn:
 `stapel next` and `stapel brief KEY STEP` give what the turn needs.
 
+- For work larger than one ticket, run the skill `stapel-elaborate` before `stapel new`; it writes a draft of requirements and a breakdown into tickets.
 - `new-ticket`: `stapel new "<title>"`, then write the Frame (rule 1).
 - `write-section`: write that section of `ticket.md`.
 - `write-page`: run `stapel page KEY` and name the path it prints in the chat; the person reads the page in the editor while the dialog of `stapel ok KEY` waits.
