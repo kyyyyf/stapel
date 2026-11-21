@@ -6374,6 +6374,77 @@ fn time_limit_kills_nested_groups() {
     );
 }
 
+// STP-35 AC-3 (XR2-4): after the limit no step is checked out; a post-checkout hook that sleeps
+// after the limit makes every checkout after it slow.
+#[test]
+fn time_limit_stops_the_checkouts() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = cargo_repo();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    // The hook sleeps under a path of this test only; the guard kills it on every exit.
+    let nap = scripts.path().join("nap");
+    std::os::unix::fs::symlink("/bin/sleep", &nap).unwrap();
+    let nap = nap.display().to_string();
+    struct Reap(String);
+    impl Drop for Reap {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("pkill")
+                .args(["-f", &self.0])
+                .status();
+        }
+    }
+    let _reap = Reap(nap.clone());
+    // Every `cargo test` takes 6 s: three steps need 36 s, the limit is 10 s.
+    let slow = script(
+        scripts.path(),
+        "cargo",
+        &format!(
+            "if [ \"$1\" = test ]; then sleep 6; fi\nexec {} \"$@\"",
+            fake_cargo_program()
+        ),
+    );
+    set_cargo_key(dir, &slow);
+    set_timeout(dir, 10);
+    for n in 1..=3 {
+        add_test(
+            dir,
+            "basic",
+            &format!("slow_{n}"),
+            "assert_eq!(tiny::add(1, 1), 3);",
+        );
+        commit(dir, &format!("ABC-1 step {n} RED: a test"));
+        commit(dir, &format!("ABC-1 step {n} GREEN: code"));
+    }
+    let started = std::time::Instant::now();
+    let begin = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    // From 10 s after the start of the check every checkout takes 5 s.
+    let hook = dir.join(".git").join("hooks").join("post-checkout");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\nif [ $(( $(date +%s) - {begin} )) -ge 10 ]; then '{nap}' 5; fi\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, text) = check_with(dir, Cargo::Fake);
+    let took = started.elapsed();
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        took < std::time::Duration::from_secs(20),
+        "took {took:?}\n{text}"
+    );
+    let reason = "unverified: the time limit of 10 s for the check ran out";
+    assert!(
+        text.lines().any(|l| l.starts_with(&format!("step 3: {reason}"))),
+        "step 3:\n{text}"
+    );
+}
+
 // STP-35 AC-17: changes under this ticket's folder keep a check current while its Plan section is
 // unchanged; any other path, another ticket's folder or a Plan change does not.
 #[test]
