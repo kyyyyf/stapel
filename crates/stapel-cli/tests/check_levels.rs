@@ -363,3 +363,63 @@ fn flag_wins_over_the_key() {
     assert_eq!(line_after_cargo(&run.text), "level: full", "{}", run.text);
     assert_eq!(last_record(repo.path())["level"], "full");
 }
+
+// AC-12: below `full` the suite runs with `--skip <entry>` for each entry and its line ends with
+// `(left out: ...)`; at `full` nothing is left out; bad keys fail at load.
+#[test]
+fn suite_exclude() {
+    let keys = "suite_exclude = [\"slow_one\", \"tests::slow_two\"]";
+    let (repo, _scripts, log) = logged_repo(keys);
+    let dir = repo.path();
+
+    let head = run_level(dir, &log, &["--level", "head"]);
+    let cargo_log = std::fs::read_to_string(&log).unwrap();
+    let suite_run = cargo_log.lines().find(|l| l.contains("--workspace")).unwrap();
+    assert!(
+        suite_run.contains("--skip slow_one --skip tests::slow_two"),
+        "{suite_run}"
+    );
+    let suite_line = head.text.lines().find(|l| l.starts_with("suite: ")).unwrap();
+    assert!(
+        suite_line.ends_with("(left out: slow_one, tests::slow_two)"),
+        "{suite_line}"
+    );
+    assert_eq!(
+        last_record(dir)["suite_exclude"],
+        serde_json::json!(["slow_one", "tests::slow_two"])
+    );
+
+    let full = run_level(dir, &log, &["--level", "full"]);
+    let cargo_log = std::fs::read_to_string(&log).unwrap();
+    assert!(!cargo_log.contains("--skip"), "{cargo_log}");
+    let suite_line = full.text.lines().find(|l| l.starts_with("suite: ")).unwrap();
+    assert!(!suite_line.contains("left out"), "{suite_line}");
+    assert_eq!(last_record(dir)["suite_exclude"], serde_json::json!([]));
+
+    let junit = "runner = \"junit\"\ncommand = \"sh run.sh {file}\"\nreport = \"out.xml\"";
+    let bare = |extra: &str| {
+        let repo = stapel_repo();
+        let text = format!(
+            "{}\n[check]\ntimeout_secs = 3600\n{junit}\n{extra}\n",
+            read(repo.path(), ".stapel/stapel.toml")
+        );
+        std::fs::write(repo.path().join(".stapel/stapel.toml"), text).unwrap();
+        check(repo.path(), &[])
+    };
+    let (code, err) = bare("suite_exclude = [\"a\"]");
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("check.suite_exclude needs the cargo runner"), "{err}");
+    let (_, err) = bare("suite_exclude = []");
+    assert!(!err.contains("suite_exclude"), "{err}");
+
+    for bad in ["\"\"", "\" \""] {
+        let repo = stapel_repo();
+        add_to_check(repo.path(), &format!("suite_exclude = [\"ok\", {bad}]"));
+        let (code, err) = check(repo.path(), &[]);
+        assert_eq!(code, 2, "{bad}: {err}");
+        assert!(
+            err.contains("check.suite_exclude has an empty entry"),
+            "{bad}: {err}"
+        );
+    }
+}
