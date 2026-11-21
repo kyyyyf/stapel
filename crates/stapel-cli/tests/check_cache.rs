@@ -143,3 +143,154 @@ fn record_fields() {
     check(dir, &["--level", "steps"]);
     assert_eq!(last_record(dir)["level"], "steps");
 }
+
+/// A `[check] cargo` stand-in that appends the arguments of every run to `log`, then runs the fake.
+fn recording_fake(scripts: &Path, log: &Path) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(scripts.join("real")).unwrap();
+    let real = common::fake_cargo(&scripts.join("real"));
+    let path = scripts.join("cargo");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> {}\nexec {real} \"$@\"\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+/// Sets `[check] cargo` to `cargo` and commits it.
+fn set_cargo_key(dir: &Path, cargo: &str) {
+    let text = read(dir, ".stapel/stapel.toml");
+    let text: String = text
+        .lines()
+        .map(|l| {
+            if l.starts_with("timeout_secs = ") {
+                format!("{l}\ncargo = \"{cargo}\"\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    write(dir, ".stapel/stapel.toml", &text);
+    commit(dir, "ABC-1: the cargo key");
+}
+
+/// Runs `stapel check ABC-1` (exit 0 expected); returns its output and the number of cargo runs
+/// of a step's tests (`--exact`) that the log holds, after emptying the log first.
+fn run_logged(dir: &Path, log: &Path) -> (String, usize) {
+    std::fs::write(log, "").unwrap();
+    let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let runs = std::fs::read_to_string(log)
+        .unwrap()
+        .lines()
+        .filter(|l| l.contains("--exact"))
+        .count();
+    (text, runs)
+}
+
+// AC-4: a second check runs no test of the step at RED and GREEN; a third keeps the first `from`.
+#[test]
+fn reuses_a_passing_step() {
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let log = scripts.path().join("log");
+    set_cargo_key(dir, &recording_fake(scripts.path(), &log));
+
+    let (text, runs) = run_logged(dir, &log);
+    assert_eq!(runs, 3, "RED, GREEN and HEAD run at the first check: {text}");
+    let first_id = last_record(dir)["id"].as_str().unwrap().to_string();
+
+    let (text, runs) = run_logged(dir, &log);
+    assert_eq!(runs, 1, "only HEAD runs: {text}");
+    assert!(text.contains(&format!("cached from {first_id}")), "{text}");
+    let second = last_record(dir);
+    assert_eq!(second["steps"][0]["outcome"], "cached", "{second}");
+    assert_eq!(second["steps"][0]["from"], first_id.as_str(), "{second}");
+
+    let (text, runs) = run_logged(dir, &log);
+    assert_eq!(runs, 1, "{text}");
+    let third = last_record(dir);
+    assert_ne!(third["id"], second["id"]);
+    assert_eq!(third["steps"][0]["outcome"], "cached", "{third}");
+    assert_eq!(third["steps"][0]["from"], first_id.as_str(), "{third}");
+}
+
+// AC-5: one part of the key differs, or the record is no source: the step runs at RED, GREEN, HEAD.
+#[test]
+fn a_changed_key_runs_the_step() {
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let log = scripts.path().join("log");
+    set_cargo_key(dir, &recording_fake(scripts.path(), &log));
+    let (text, runs) = run_logged(dir, &log);
+    assert_eq!(runs, 3, "{text}");
+    let original = last_record(dir);
+    let path = dir.join(".stapel/tickets/ABC-1/runs.jsonl");
+    let zeros = "0".repeat(64);
+
+    type Edit = Box<dyn Fn(&mut serde_json::Value)>;
+    let z = zeros.clone();
+    let z2 = zeros.clone();
+    let variants: Vec<(&str, Option<Edit>)> = vec![
+        ("unchanged", None),
+        ("green", Some(Box::new(|r| r["steps"][0]["green"] = "1".repeat(40).into()))),
+        ("red", Some(Box::new(|r| r["steps"][0]["red"] = "2".repeat(40).into()))),
+        ("tests_hash", Some(Box::new(move |r| r["steps"][0]["tests_hash"] = z.clone().into()))),
+        ("lock", Some(Box::new(move |r| r["lock"] = z2.clone().into()))),
+        ("toolchain", Some(Box::new(|r| r["toolchain"] = "another cargo".into()))),
+        ("tool", Some(Box::new(|r| r["tool"] = "stapel 0.0.0-other".into()))),
+        ("fail", Some(Box::new(|r| r["result"] = "fail".into()))),
+        ("no-red", Some(Box::new(|r| r["steps"][0]["outcome"] = "no-red".into()))),
+        (
+            "no tests_hash",
+            Some(Box::new(|r| {
+                r["steps"][0].as_object_mut().unwrap().remove("tests_hash");
+            })),
+        ),
+        (
+            "no lock",
+            Some(Box::new(|r| {
+                r.as_object_mut().unwrap().remove("lock");
+            })),
+        ),
+        ("ticket", Some(Box::new(|r| r["ticket"] = "ABC-2".into()))),
+    ];
+
+    for (name, edit) in &variants {
+        let mut record = original.clone();
+        if let Some(edit) = edit {
+            edit(&mut record);
+        }
+        std::fs::write(&path, format!("{record}\n")).unwrap();
+        let (text, runs) = run_logged(dir, &log);
+        if edit.is_none() {
+            assert_eq!(runs, 1, "{name}: {text}");
+            assert!(text.contains("cached from"), "{name}: {text}");
+        } else {
+            assert_eq!(runs, 3, "{name}: {text}");
+            assert!(!text.contains("cached from"), "{name}: {text}");
+            assert_ne!(last_record(dir)["steps"][0]["outcome"], "cached", "{name}");
+        }
+    }
+
+    // A malformed line is no source and does not stop the check.
+    std::fs::write(&path, format!("not json\n{original}\n")).unwrap();
+    let (text, runs) = run_logged(dir, &log);
+    assert_eq!(runs, 1, "{text}");
+    // No record at all: nothing is cached.
+    std::fs::write(&path, "").unwrap();
+    let (text, runs) = run_logged(dir, &log);
+    assert_eq!(runs, 3, "{text}");
+}
