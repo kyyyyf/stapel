@@ -571,6 +571,12 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         }
         say_step(a, &outcome, &reason);
     }
+    // The entries left out of the local suite; at `full` nothing is left out (AC-12).
+    let excluded: Vec<String> = if level_now == "full" {
+        Vec::new()
+    } else {
+        check.suite_exclude.clone().unwrap_or_default()
+    };
     let suite = if level_now == "steps" {
         Suite {
             outcome: "skipped".into(),
@@ -578,7 +584,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
             counts: (0, 0, 0),
         }
     } else {
-        runner.suite()
+        runner.suite(&excluded)
     };
     ok &= suite.outcome == "pass" || suite.outcome == "skipped";
     say!("suite: {}: {}", suite.outcome, suite.detail);
@@ -602,7 +608,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
     record["lock"] = serde_json::json!(lock_now);
     record["toolchain"] = serde_json::json!(toolchain_now);
     record["plan_hash"] = serde_json::json!(plan_hash(&ticket.dir));
-    record["suite_exclude"] = serde_json::json!(Vec::<String>::new());
+    record["suite_exclude"] = serde_json::json!(excluded);
     record["result"] = serde_json::json!(if ok { "pass" } else { "fail" });
     record["steps"] = serde_json::json!(steps_json);
     record["suite"] = serde_json::json!({
@@ -1200,7 +1206,7 @@ impl Runner<'_> {
 
     /// The whole suite at HEAD.
     /// The whole suite at HEAD: outcome, detail and the summed counts.
-    fn suite(&self) -> Suite {
+    fn suite(&self, skip: &[String]) -> Suite {
         if let Some(junit) = &self.junit {
             return self.suite_junit(junit);
         }
@@ -1215,10 +1221,17 @@ impl Runner<'_> {
         if let Err(e) = self.wt.checkout(self.head) {
             return unverified(e);
         }
-        let args: Vec<String> = ["test", "--workspace", "--locked"]
+        let mut args: Vec<String> = ["test", "--workspace", "--locked"]
             .iter()
             .map(|s| s.to_string())
             .collect();
+        if !skip.is_empty() {
+            args.push("--".into());
+            for entry in skip {
+                args.push("--skip".into());
+                args.push(entry.clone());
+            }
+        }
         let left = match self.left() {
             Ok(l) => l,
             Err(e) => return unverified(e),
@@ -1242,11 +1255,14 @@ impl Runner<'_> {
             f = f.saturating_add(b);
             i = i.saturating_add(c);
         }
-        let detail = format!("{p} passed, {f} failed, {i} ignored");
+        let mut detail = format!("{p} passed, {f} failed, {i} ignored");
         let compiles = !run
             .output
             .lines()
             .any(|l| l.starts_with("error: could not compile"));
+        if !skip.is_empty() {
+            detail = format!("{detail} (left out: {})", skip.join(", "));
+        }
         let (outcome, detail) = if !compiles {
             ("fail", format!("{detail}; the workspace does not compile"))
         } else if run.exit == Some(0) && f == 0 {

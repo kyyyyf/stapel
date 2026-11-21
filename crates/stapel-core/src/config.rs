@@ -92,6 +92,9 @@ pub struct Check {
     /// all three.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub points: Option<Vec<String>>,
+    /// The cargo runner (STP-35 AC-12): `--skip` filters for the local suite below `full`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suite_exclude: Option<Vec<String>>,
 }
 
 pub const DEFAULT_TEST_GLOBS: [&str; 3] = ["**/*.test.*", "**/*.spec.*", "**/__tests__/**"];
@@ -425,6 +428,14 @@ impl Config {
                     .all(|p| matches!(p.as_str(), "step" | "review" | "close"));
                 if !known || !points.iter().any(|p| p == "close") {
                     return Err("check.points must hold close and only step, review, close".into());
+                }
+            }
+            if let Some(exclude) = &check.suite_exclude {
+                if check.runner == "junit" && !exclude.is_empty() {
+                    return Err("check.suite_exclude needs the cargo runner".into());
+                }
+                if exclude.iter().any(|e| e.trim().is_empty()) {
+                    return Err("check.suite_exclude has an empty entry".into());
                 }
             }
             if !TIMEOUT_RANGE.contains(&check.timeout_secs) {
