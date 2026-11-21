@@ -91,13 +91,13 @@ Terms:
 |---|---|---|
 | AC-1 | WHEN one fixture ticket with a passing step, a step with no RED and a step that is not green is checked with the real cargo and with the fake cargo THE two reports are equal except the `cargo:` line. | `check::fake_cargo_matches_real_cargo` |
 | AC-2 | WHEN the tests of this repository run THE `stapel check` runs of `tests/check.rs` all go through one helper that takes `Cargo::Fake` or `Cargo::Real`, and the tests that pass `Cargo::Real` are exactly those named in the file's list `REAL_CARGO`, at most 30 (the boundary tests). | `check::real_cargo_only_at_the_boundary` |
-| AC-3 | IF `check.timeout_secs` runs out while a program of the check runs THEN the check kills that program and every process it started, nested process groups included and its own group excluded, prints every step not yet judged and not cached and the suite as `unverified: the time limit of <n> s for the check ran out`, writes its record with result `fail` and exits 1 within `<n>` + 10 seconds of its start; the range of the key stays 10 to 86400, and the default that `stapel init` writes becomes 3600. | `check::time_limit_bounds_the_whole_check`, `check::time_limit_kills_nested_groups` |
+| AC-3 | IF `check.timeout_secs` runs out while a program of the check runs THEN the check kills that program and every process it started, nested process groups included and its own group excluded, prints every step not yet judged and not cached and the suite as `unverified: the time limit of <n> s for the check ran out`, writes its record with result `fail` and exits 1 within `<n>` + 10 seconds of its start, the start being after the wait for the machine-wide cargo lock, and no checkout runs after the limit; the range of the key stays 10 to 86400, and the default that `stapel init` writes becomes 3600. | `check::time_limit_bounds_the_whole_check`, `check::time_limit_kills_nested_groups`, `check::time_limit_stops_the_checkouts` |
 | AC-4 | WHEN a step is a cached step and the level is not `full` THE check runs none of its tests at RED and GREEN, prints `<label>: cached from <record id>`, and records the outcome `cached` and `from`: the id of the record that ran the step, passed on unchanged when the source step was itself cached. | `check_cache::reuses_a_passing_step` |
-| AC-5 | IF one part of the step key differs, the record failed, the step there was neither `pass` nor `cached`, or the record lacks a key field THEN the step is not cached and runs at RED, GREEN and HEAD. | `check_cache::a_changed_key_runs_the_step` |
+| AC-5 | IF one part of the step key differs, the record failed, the step there was neither `pass` nor `cached`, or the record lacks a key field THEN the step is not cached and runs at RED, GREEN and HEAD. | `check_cache::a_changed_key_runs_the_step`, `check_cache::a_changed_lock_file_runs_the_step` |
 | AC-6 | WHEN a check writes its record THE record has `level`, `lock`, `toolchain`, `plan_hash` and `suite_exclude` (the configured entries below level `full`, `[]` at `full`), and each step has `tests_hash`. | `check_cache::record_fields` |
 | AC-7 | IF `[check] level` is not `steps`, `head` or `full` THEN loading `stapel.toml` fails with `check.level must be steps, head or full: <value>`; IF `--level` is another word THEN `stapel check` exits 2 with `stapel: --level must be steps, head or full: <value>` and runs no cargo; IF `--level` comes with `--list` or `--history` THEN it exits 2 with `stapel: --level does not go with --list or --history`. | `check_levels::refuses_an_unknown_level` |
 | AC-8 | WHEN the level is `steps` THE check runs the steps that are not cached at RED, GREEN and HEAD, runs nothing of a cached step, runs no suite, prints `suite: skipped: level steps`, records the suite outcome `skipped`, and its result is `pass` when every step passes or is cached. | `check_levels::steps_level` |
-| AC-9 | WHEN the level is `head` THE check does what `steps` does, runs the tests of each cached step at HEAD, and runs the suite. | `check_levels::head_level` |
+| AC-9 | WHEN the level is `head` THE check does what `steps` does, runs the tests of each cached step at HEAD, and runs the suite; a cached step whose tests fail at HEAD runs whole and is not `cached`. | `check_levels::head_level`, `check_cache::a_cached_step_failing_at_head_runs_whole` |
 | AC-10 | WHEN the level is `full` THE check runs every step at RED, GREEN and HEAD and the whole suite, and reads neither the cache nor `suite_exclude`. | `check_levels::full_level` |
 | AC-11 | WHEN neither `--level` nor `[check] level` is given THE level is `head`; WHEN both are given THE flag wins; THE report line `level: <level>` follows the `cargo:` line. | `check_levels::flag_wins_over_the_key` |
 | AC-12 | WHEN `[check] suite_exclude` lists entries and the level is `steps` or `head` THE suite runs with `--skip <entry>` for each entry and the suite line ends with `(left out: <entries>)`; IF the key holds an entry under the junit runner (an empty list is accepted), or an entry is empty or only whitespace, THEN loading `stapel.toml` fails with `check.suite_exclude needs the cargo runner` or `check.suite_exclude has an empty entry`. | `check_levels::suite_exclude` |
@@ -130,12 +130,12 @@ sleeps and starts a child in its own process group. Light tests: `stapel cargo t
 |---|---|---|
 | Fake cargo | pass, no RED, not green, with the same report as real cargo | `check::fake_cargo_matches_real_cargo` |
 | Boundary list | a check test without the fake cargo outside `REAL_CARGO`; the list over 30 | `check::real_cargo_only_at_the_boundary` |
-| Time limit | three steps of a fake cargo that sleeps 6 s each, limit 10 s: exit 1 within 20 s, later steps and suite `unverified`; a grandchild in its own group is gone after the exit | `check::time_limit_bounds_the_whole_check`, `check::time_limit_kills_nested_groups` |
+| Time limit | three steps of a fake cargo that sleeps 6 s each, limit 10 s: exit 1 within 20 s, later steps and suite `unverified`; a grandchild in its own group is gone after the exit | `check::time_limit_bounds_the_whole_check`, `check::time_limit_kills_nested_groups`, `check::time_limit_stops_the_checkouts` |
 | Cache hit | a second check after a passing one: no cargo run at RED or GREEN of the step (the fake cargo logs its runs), the `cached from` line, the outcome `cached` and `from` in the record; a third check whose source step was cached keeps the first `from` | `check_cache::reuses_a_passing_step` |
-| Cache miss | each of: a new GREEN commit, a test added, `Cargo.lock` changed at HEAD, a nested `package-lock.json` changed under junit, another `cargo` text, another `[check] command` under junit, another version in `tool`, a failing record, a step outcome `no-red`, a record without `tests_hash`, a record of another ticket | `check_cache::a_changed_key_runs_the_step` |
+| Cache miss | each of: a new GREEN commit, a test added, `Cargo.lock` changed at HEAD, a nested `package-lock.json` changed under junit, another `cargo` text, another `[check] command` under junit, another version in `tool`, a failing record, a step outcome `no-red`, a record without `tests_hash`, a record of another ticket | `check_cache::a_changed_key_runs_the_step`, `check_cache::a_changed_lock_file_runs_the_step` |
 | Record | `level`, `lock`, `toolchain`, `plan_hash`, `suite_exclude`, `tests_hash`; the `level` is `head` with no key and no flag | `check_cache::record_fields` |
 | Level values | `fast`, empty, upper case `HEAD` in the key (load error) and the flag (exit 2); `--level` with `--list` and with `--history` | `check_levels::refuses_an_unknown_level` |
-| Levels | `steps`, `head`, `full` against the fake cargo's run log | `check_levels::steps_level`, `check_levels::head_level`, `check_levels::full_level` |
+| Levels | `steps`, `head`, `full` against the fake cargo's run log; a cached step whose test fails at HEAD | `check_levels::steps_level`, `check_levels::head_level`, `check_levels::full_level`, `check_cache::a_cached_step_failing_at_head_runs_whole` |
 | Precedence | no key and no flag; key `steps` and flag `head` | `check_levels::flag_wins_over_the_key` |
 | Suite exclude | two entries at `head`; the same at `full`; an entry under junit; `[]` under junit; an entry `""` and `" "` | `check_levels::suite_exclude` |
 | Points | default; key `full` with a `head` pass at the review point; `["close"]`; `["step", "close"]`; `[]`; `["review"]`; `["close", "deploy"]`; an untracked file after a GREEN with the step point | `check_levels::points_need_close`, `next_points::step_point`, `next_points::without_the_step_point`, `next_points::review_point` |
@@ -159,7 +159,7 @@ sleeps and starts a child in its own process group. Light tests: `stapel cargo t
 | System | Dimension | Handling | Test |
 |---|---|---|---|
 | cargo | output format of libtest | the fake cargo prints the same lines as libtest; AC-1 compares | `check::fake_cargo_matches_real_cargo` |
-| cargo | `Cargo.lock` changed at HEAD | part of the step key | `check_cache::a_changed_key_runs_the_step` |
+| cargo | `Cargo.lock` changed at HEAD | part of the step key | `check_cache::a_changed_lock_file_runs_the_step` |
 | cargo | `--skip` filters of libtest | given as entries; matching is libtest's | `check_levels::suite_exclude` |
 | cargo | workspaces, custom targets, config files, environment, offline | unchanged; covered by the boundary tests kept on real cargo | — |
 | git | a commit of the step key removed by `git gc` or a rewritten history | the key does not match; the step runs | `check_cache::a_changed_key_runs_the_step` |
@@ -274,13 +274,13 @@ that is not a GREEN (no check demanded; not tested).
 |---|---|
 | AC-1 | `check::fake_cargo_matches_real_cargo` |
 | AC-2 | `check::real_cargo_only_at_the_boundary` |
-| AC-3 | `check::time_limit_bounds_the_whole_check`, `check::time_limit_kills_nested_groups` |
+| AC-3 | `check::time_limit_bounds_the_whole_check`, `check::time_limit_kills_nested_groups`, `check::time_limit_stops_the_checkouts` |
 | AC-4 | `check_cache::reuses_a_passing_step` |
-| AC-5 | `check_cache::a_changed_key_runs_the_step` |
+| AC-5 | `check_cache::a_changed_key_runs_the_step`, `check_cache::a_changed_lock_file_runs_the_step` |
 | AC-6 | `check_cache::record_fields` |
 | AC-7 | `check_levels::refuses_an_unknown_level` |
 | AC-8 | `check_levels::steps_level` |
-| AC-9 | `check_levels::head_level` |
+| AC-9 | `check_levels::head_level`, `check_cache::a_cached_step_failing_at_head_runs_whole` |
 | AC-10 | `check_levels::full_level` |
 | AC-11 | `check_levels::flag_wins_over_the_key` |
 | AC-12 | `check_levels::suite_exclude` |
@@ -333,6 +333,18 @@ Route: full (tags `interface`, `data`), auto.
 12. CI workflow (AC-18; tests `init_workflow::workflow_lines`, `init_workflow::writes_the_workflow`,
     which fail at the RED with the new golden files): the GREEN changes the workflow assets and runs
     `stapel init` in the worktree. Must not change: the other workflow lines.
+13. Real key changes (XR2-1, AC-5; test `check_cache::a_changed_lock_file_runs_the_step`): a coverage
+    commit `STP-35 step 13 tests: ...`: after a passing check, a later RED that changes `Cargo.lock`
+    makes the earlier steps run again; under junit a changed nested `package-lock.json` does the same.
+    If the test fails, it becomes a RED and the GREEN fixes `lock_hash`. Must not change: any source file.
+14. Cached step failing at HEAD (XR2-2, AC-9; test `check_cache::a_cached_step_failing_at_head_runs_whole`):
+    a coverage commit `STP-35 step 14 tests: ...`: a step cached by an earlier check whose test fails at
+    HEAD is not reported `cached` and the result is `fail`. If the test fails, it becomes a RED and the
+    GREEN fixes `Runner::step`. Must not change: any source file.
+15. No checkout after the limit (XR2-4, AC-3; test `check::time_limit_stops_the_checkouts`, which fails at
+    the RED because a post-checkout hook that sleeps runs for every unjudged step after the limit): the
+    GREEN reads the time left in `Runner::at` before the checkout. Must not change: a run that ends in
+    time.
 
 ## Review
 
