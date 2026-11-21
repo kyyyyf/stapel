@@ -221,11 +221,15 @@ that is not a GREEN (no check demanded; not tested).
 ### Decisions (as built)
 
 - Steps 1 and 2 (the fake cargo and the move) are on main as `086bcaf` and `2f94673`; the ticket branch
-  merges main (`5bab3a1`), and the word commits `988539f` and `40699da` close the two steps (ledger
+  merges main (`5bab3a1`), and the word commits `0bc96a8` and `ebb9b23` close the two steps (ledger
   2026-11-20, the human: a test helper changed by a non-RED commit of the range blocks every later step).
 - The step 3 RED first changed the existing test `closed_ticket_build_inputs_are_read_at_its_end`, which
   passed before the code, so the check gave step 3 `no-red`. That change is on main as `4c61839`, and the
   branch was rebuilt on it (ledger 2026-11-21, the human).
+- 2026-11-21, agent: `time_limit_kills_nested_groups` failed at its GREEN in the check, because the RED
+  run panicked before its `pkill` and left `sleep 303` alive, and `pgrep` searched the whole machine. The
+  step 3 RED was amended: the sleeps run under a path of the test only, and a guard kills them on every
+  exit; the branch was rebuilt again.
 - The fake cargo is `tests/common/fake_cargo.sh` (sh and awk). A test body marker `// fake: needs <text>`
   makes the test pass only when a file under `crates/*/src` holds the text; `// fake: item <text>` makes
   the test target compile only when the text is there; `this does not compile` in a source breaks the
@@ -256,13 +260,13 @@ that is not a GREEN (no check demanded; not tested).
   the final `close` action too, so it never prints `close` while the gate refuses. 2026-11-21, agent
   (spec change of AC-16): a failing check keeps the earlier `fix-check` action, which names
   `runs.jsonl`, instead of `run-check --level head`.
-- DR-1: the CI workflow of this repository installs stapel at `7f1ba57` (the step 12 GREEN), which has
+- DR-1: the CI workflow of this repository installs stapel at `6b59ae1` (the step 12 GREEN), which has
   `--level`; the orchestrator built that commit in a clean copy with `STAPEL_BUILD_COMMIT` and ran its
-  `init` (`efe1cf2`). CI can install it once the branch is pushed.
+  `init` (`438a2cc`). CI can install it once the branch is pushed.
 - Pre-existing failures on this Mac with the default TMPDIR, at the base `e0da738` too: five
   `check_junit::absolute_script_*`, `status::refuses_ambiguous_case_variant_keys` and
   `next::refuses_a_wrong_call`.
-- This repository's `timeout_secs` is 5400 (`a40b604`).
+- This repository's `timeout_secs` is 5400 (`fcebc9d`).
 
 ## Proof
 
