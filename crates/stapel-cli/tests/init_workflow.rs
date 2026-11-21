@@ -48,7 +48,7 @@ fn workflow_lines() {
         "timeout-minutes: 60",
         "BRANCH: ${{ github.head_ref || github.ref_name }}",
         install.as_str(),
-        "stapel check \"$BRANCH\"",
+        "stapel check --level full \"$BRANCH\"",
     ] {
         assert!(
             lines.iter().any(|l| l.contains(want)),
