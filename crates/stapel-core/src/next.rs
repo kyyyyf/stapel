@@ -283,7 +283,36 @@ fn history_action(f: &Facts, h: &History, plan: Option<&str>, facts: &mut Vec<St
     });
     match open {
         Some(label) if h.labels.contains(label) => step_action("green-step", label, facts),
-        Some(label) => step_action("build-step", label, facts),
+        Some(label) => {
+            // The step point (STP-35 AC-14): after a GREEN, the next step waits for a check of
+            // level `steps`; a dirty tree is committed first.
+            let step_point = f.config.check.as_ref().is_some_and(|c| {
+                c.points
+                    .as_ref()
+                    .is_none_or(|p| p.iter().any(|w| w == "step"))
+            });
+            let after_green = h.labels.last().is_some_and(|l| h.greens.contains(l));
+            if step_point && after_green && h.check_configured && !h.check_pass {
+                if !h.dirty.is_empty() {
+                    let first: Vec<&str> = h.dirty.iter().take(5).map(String::as_str).collect();
+                    facts.push(format!("uncommitted changes: {}", first.join(", ")));
+                    return Action::new(
+                        "commit",
+                        None,
+                        Some(Target::Command("git status".to_string())),
+                    );
+                }
+                return Action::new(
+                    "run-check",
+                    None,
+                    Some(Target::Command(format!(
+                        "stapel check {} --level steps",
+                        f.key
+                    ))),
+                );
+            }
+            step_action("build-step", label, facts)
+        }
         None => after_the_steps(f, h, facts),
     }
 }
