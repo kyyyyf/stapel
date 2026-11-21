@@ -401,3 +401,38 @@ fn a_changed_lock_file_runs_the_step() {
     assert_eq!(record["steps"][1]["outcome"], "pass", "{text}");
     assert!(!text.contains("cached from"), "{text}");
 }
+
+// AC-9, XR2-2: a cached step whose test fails at HEAD runs whole and is not `cached`.
+#[test]
+fn a_cached_step_failing_at_head_runs_whole() {
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let log = scripts.path().join("log");
+    set_cargo_key(dir, &recording_fake(scripts.path(), &log));
+    let (text, runs) = run_logged(dir, &log);
+    assert_eq!(runs, 3, "{text}");
+
+    // A later commit takes `two` away: the test of step 1 fails at HEAD.
+    write(dir, "crates/tiny/src/lib.rs", "pub fn one() {}\n");
+    commit(dir, "ABC-1: drop two");
+
+    std::fs::write(&log, "").unwrap();
+    let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(!text.contains("cached from"), "{text}");
+    let record = last_record(dir);
+    assert_eq!(record["result"], "fail", "{record}");
+    assert_ne!(record["steps"][0]["outcome"], "cached", "{record}");
+    let runs = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .filter(|l| l.contains("--exact"))
+        .count();
+    assert_eq!(runs, 4, "the HEAD probe, then RED, GREEN and HEAD: {text}");
+}
