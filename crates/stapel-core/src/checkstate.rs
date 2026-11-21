@@ -48,11 +48,15 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
                 let result = m.get("result")?.as_str()?.to_string();
                 let full = (head.len() == 40 || head.len() == 64)
                     && head.bytes().all(|b| b.is_ascii_hexdigit());
-                (full && (result == "pass" || result == "fail")).then_some((head, result))
+                let plan = m
+                    .get("plan_hash")
+                    .and_then(|p| p.as_str())
+                    .map(String::from);
+                (full && (result == "pass" || result == "fail")).then_some((head, result, plan))
             }
             _ => None,
         });
-    let Some((head, result)) = last else {
+    let Some((head, result, recorded_plan)) = last else {
         return CheckLine::None;
     };
     let known = git(root, &["cat-file", "-e", &format!("{head}^{{commit}}")]).is_ok();
@@ -85,12 +89,31 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
         Some(c) => c.tests.iter().chain(c.inputs.iter()).flatten().collect(),
         None => Vec::new(),
     };
+    // This ticket's own folder keeps the check while its Plan section is unchanged (STP-35 AC-17),
+    // unless a junit test or input glob matches the path.
+    let own_folder = ticket_dir
+        .file_name()
+        .map(|k| format!(".stapel/tickets/{}/", k.to_string_lossy()));
+    let plan_same = recorded_plan.is_some_and(|recorded| {
+        let text = std::fs::read_to_string(ticket_dir.join("ticket.md")).unwrap_or_default();
+        let sections = crate::ticket::parse(&text);
+        let now = match crate::ticket::find(&sections, "Plan") {
+            crate::ticket::Lookup::Found(body) => crate::hash::section_hash(body),
+            _ => "none".to_string(),
+        };
+        now == recorded
+    });
+    let globbed = |p: &str| {
+        junit_globs
+            .iter()
+            .any(|g| crate::config::glob_matches(g, p))
+    };
     changed.retain(|p| {
         !is_machine_file(p)
-            && (!p.starts_with("docs/")
-                || junit_globs
-                    .iter()
-                    .any(|g| crate::config::glob_matches(g, p)))
+            && (!p.starts_with("docs/") || globbed(p))
+            && !(plan_same
+                && own_folder.as_deref().is_some_and(|f| p.starts_with(f))
+                && !globbed(p))
     });
     changed.sort();
     changed.dedup();
