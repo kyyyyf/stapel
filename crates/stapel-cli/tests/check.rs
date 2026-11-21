@@ -3280,7 +3280,8 @@ fn unchanged_build_inputs_are_named() {
         .position(|l| l.starts_with("step 1: "))
         .unwrap();
     assert!(at < step, "{text}");
-    assert!(lines[at - 1].starts_with("cargo: "), "{text}");
+    assert_eq!(lines[at - 1], "level: head", "{text}");
+    assert!(lines[at - 2].starts_with("cargo: "), "{text}");
     assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
     // A path that a commit of the ticket changes is not named, and the outcome follows.
     write(dir, "crates/tiny/build.rs", "fn main() { /* edited */ }\n");
