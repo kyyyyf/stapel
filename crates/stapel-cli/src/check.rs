@@ -509,6 +509,14 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
     if !inputs.unchanged.is_empty() {
         say!("build inputs: {}", named(&inputs.unchanged));
     }
+    let level_now = level.or(check.level.as_deref()).unwrap_or("head").to_string();
+    let lock_now = lock_hash(&root, &at, junit);
+    let toolchain_now = if junit {
+        check.command.clone().unwrap_or_default()
+    } else {
+        cargo_text.clone()
+    };
+    let tool_now = format!("stapel {}", env!("CARGO_PKG_VERSION"));
     let mut ok = true;
     let mut steps_json = Vec::new();
     for a in &analyses {
@@ -520,11 +528,28 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         };
         let (outcome, reason) = match history_outcome(a, blocked.as_deref()) {
             Some(o) => o,
-            None => runner.step(a),
+            None => {
+                // A cached step skips RED and GREEN below the level `full` (AC-4); one that
+                // does not hold at HEAD runs in full.
+                let source = if level_now == "full" {
+                    None
+                } else {
+                    cached_from(&ticket.dir, &ticket.key, a, &lock_now, &toolchain_now, &tool_now)
+                };
+                match source {
+                    Some(from) => match runner.step(a, true) {
+                        (o, _) if o == "cached" => (o, from),
+                        _ => runner.step(a, false),
+                    },
+                    None => runner.step(a, false),
+                }
+            }
         };
         ok &= passing(&outcome);
+        // For a cached step the reason is the id of the record that ran it.
+        let from = (outcome == "cached").then(|| reason.clone());
         if steps_json.len() < MAX_STEPS {
-            steps_json.push(serde_json::json!({
+            let mut step_json = serde_json::json!({
                 "label": cut(&a.label, MAX_LABEL),
                 "red": a.red.as_ref().map(|c| c.sha.clone()),
                 "green": a.green.as_ref().map(|c| c.sha.clone()),
@@ -533,7 +558,12 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
                 "tests": a.tests.len(),
                 "tests_hash": tests_hash(&a.tests),
                 "names": names_of(&outcome, &reason),
-            }));
+            });
+            if let Some(from) = &from {
+                step_json["from"] = serde_json::json!(from);
+                step_json["reason"] = serde_json::json!("");
+            }
+            steps_json.push(step_json);
         }
         say_step(a, &outcome, &reason);
     }
@@ -548,7 +578,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         "at": now_rfc3339(),
         "ticket": ticket.key,
         "head": head,
-        "tool": format!("stapel {}", env!("CARGO_PKG_VERSION")),
+        "tool": tool_now,
     });
     if junit {
         record["runner"] = serde_json::json!("junit");
@@ -556,13 +586,9 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         record["cargo"] = serde_json::json!(cargo_text);
     }
     // The fields that a later check reads (STP-35 AC-6).
-    record["level"] = serde_json::json!(level.or(check.level.as_deref()).unwrap_or("head"));
-    record["lock"] = serde_json::json!(lock_hash(&root, &at, junit));
-    record["toolchain"] = serde_json::json!(if junit {
-        check.command.clone().unwrap_or_default()
-    } else {
-        cargo_text.clone()
-    });
+    record["level"] = serde_json::json!(level_now);
+    record["lock"] = serde_json::json!(lock_now);
+    record["toolchain"] = serde_json::json!(toolchain_now);
     record["plan_hash"] = serde_json::json!(plan_hash(&ticket.dir));
     record["suite_exclude"] = serde_json::json!(Vec::<String>::new());
     record["result"] = serde_json::json!(if ok { "pass" } else { "fail" });
@@ -657,6 +683,58 @@ struct Runner<'a> {
     outside: std::cell::RefCell<Option<String>>,
     /// Set under the junit runner: the command and the report path of `[check]`.
     junit: Option<JunitRun<'a>>,
+}
+
+/// The id of the passing record that ran a step with this key, `None` when no record did (STP-35
+/// AC-4, AC-5). A record without a key field, a failing record, a malformed line and a record of
+/// another ticket are no source; the source step must be `pass` or `cached`.
+fn cached_from(
+    dir: &Path,
+    ticket: &str,
+    a: &Analysis,
+    lock: &str,
+    toolchain: &str,
+    tool: &str,
+) -> Option<String> {
+    let (red, green) = (a.red.as_ref()?, a.green.as_ref()?);
+    let want_tests = tests_hash(&a.tests);
+    let text = std::fs::read_to_string(dir.join("runs.jsonl")).ok()?;
+    let mut found = None;
+    for line in text.lines() {
+        let Ok(r) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let same = |field: &str, value: &str| r[field].as_str() == Some(value);
+        if !same("kind", "check")
+            || !same("ticket", ticket)
+            || !same("result", "pass")
+            || !same("lock", lock)
+            || !same("toolchain", toolchain)
+            || !same("tool", tool)
+        {
+            continue;
+        }
+        let Some(id) = r["id"].as_str() else { continue };
+        let Some(steps) = r["steps"].as_array() else {
+            continue;
+        };
+        for s in steps {
+            let outcome = s["outcome"].as_str().unwrap_or("");
+            if matches!(outcome, "pass" | "cached")
+                && s["red"].as_str() == Some(red.sha.as_str())
+                && s["green"].as_str() == Some(green.sha.as_str())
+                && s["tests_hash"].as_str() == Some(want_tests.as_str())
+            {
+                let from = if outcome == "cached" {
+                    s["from"].as_str().unwrap_or(id)
+                } else {
+                    id
+                };
+                found = Some(from.to_string());
+            }
+        }
+    }
+    found
 }
 
 /// The `[check]` keys of a junit Per-file run.
@@ -978,7 +1056,7 @@ impl Runner<'_> {
     }
 
     /// The outcome of a step without a history outcome (`history_outcome` comes first).
-    fn step(&self, a: &Analysis) -> (String, String) {
+    fn step(&self, a: &Analysis, cached: bool) -> (String, String) {
         let (Some(red), Some(green)) = (&a.red, &a.green) else {
             return ("unpaired".into(), String::new());
         };
@@ -1009,8 +1087,15 @@ impl Runner<'_> {
             }
         }
         // RED: every test fails; one that passes is no RED.
-        let at_red = self.at(&red.sha, tests, true);
-        let at_green = self.at(&green.sha, tests, false);
+        // A cached step ran at RED and GREEN in an earlier passing check: only HEAD runs (AC-4).
+        let (at_red, at_green) = if cached {
+            (Ok(BTreeMap::new()), Ok(BTreeMap::new()))
+        } else {
+            (
+                self.at(&red.sha, tests, true),
+                self.at(&green.sha, tests, false),
+            )
+        };
         // HEAD: tests missing there are removed; the rest run.
         let present: Vec<TestId> = tests
             .iter()
@@ -1089,6 +1174,9 @@ impl Runner<'_> {
             .filter(|s| **s == TestState::Compile)
             .count();
         let n = tests.len();
+        if cached {
+            return ("cached".into(), String::new());
+        }
         (
             "pass".into(),
             format!(
@@ -1226,7 +1314,9 @@ fn changed_reason(c: &Change) -> String {
 
 /// A step's outcome line and its notes, as both modes and the commit hook print them.
 fn step_lines(a: &Analysis, outcome: &str, reason: &str) -> Vec<String> {
-    let mut lines = vec![if reason.is_empty() {
+    let mut lines = vec![if outcome == "cached" {
+        format!("{}: cached from {reason}", a.label)
+    } else if reason.is_empty() {
         format!("{}: {outcome}", a.label)
     } else {
         format!("{}: {outcome}: {reason}", a.label)

@@ -792,5 +792,5 @@ pub fn history_outcome(a: &Analysis, blocked: Option<&str>) -> Option<(String, S
 
 /// Whether an outcome counts as passing.
 pub fn passing(outcome: &str) -> bool {
-    outcome == "pass" || outcome == "retired"
+    outcome == "pass" || outcome == "retired" || outcome == "cached"
 }
