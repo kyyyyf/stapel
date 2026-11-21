@@ -294,3 +294,110 @@ fn a_changed_key_runs_the_step() {
     let (text, runs) = run_logged(dir, &log);
     assert_eq!(runs, 3, "{text}");
 }
+
+// AC-5, XR2-1: a later RED that changes the lock file at HEAD makes the earlier steps run again:
+// `Cargo.lock` under cargo, a nested `package-lock.json` under junit.
+#[test]
+fn a_changed_lock_file_runs_the_step() {
+    // cargo
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let log = scripts.path().join("log");
+    set_cargo_key(dir, &recording_fake(scripts.path(), &log));
+    let (text, runs) = run_logged(dir, &log);
+    assert_eq!(runs, 3, "{text}");
+
+    // Control: a second step that leaves the lock file alone keeps step 1 cached.
+    write(
+        dir,
+        "crates/tiny/tests/second.rs",
+        "#[test]\nfn needs_three() {\n    // fake: needs pub fn three\n}\n",
+    );
+    commit(dir, "ABC-1 step 2 RED: three is missing");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        "pub fn one() {}\npub fn two() {}\npub fn three() {}\n",
+    );
+    commit(dir, "ABC-1 step 2 GREEN: three");
+    let (text, _) = run_logged(dir, &log);
+    assert_eq!(last_record(dir)["steps"][0]["outcome"], "cached", "{text}");
+
+    // A third step whose RED changes `Cargo.lock`: steps 1 and 2 run again.
+    write(
+        dir,
+        "crates/tiny/tests/third.rs",
+        "#[test]\nfn needs_four() {\n    // fake: needs pub fn four\n}\n",
+    );
+    write(
+        dir,
+        "Cargo.lock",
+        "version = 3\n\n[[package]]\nname = \"tiny\"\nversion = \"0.1.1\"\n",
+    );
+    commit(dir, "ABC-1 step 3 RED: four is missing");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        "pub fn one() {}\npub fn two() {}\npub fn three() {}\npub fn four() {}\n",
+    );
+    commit(dir, "ABC-1 step 3 GREEN: four");
+    let (text, _) = run_logged(dir, &log);
+    let record = last_record(dir);
+    assert_eq!(record["steps"][0]["outcome"], "pass", "{text}");
+    assert_eq!(record["steps"][1]["outcome"], "pass", "{text}");
+    assert!(!text.contains("cached from"), "{text}");
+
+    // junit
+    let repo = common::junit_repo();
+    let dir = repo.dir();
+    let ok = |repo: &common::JunitRepo| {
+        let out = stapel(repo.dir()).args(["check", "ABC-1"]).output().unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(0), "{text}");
+        (text, last_record(repo.dir()))
+    };
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "it(\"one\", () => { /* needs src/ok1.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/ok1.ts", "export const ok = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: one");
+    let (text, record) = ok(&repo);
+    assert_eq!(record["steps"][0]["outcome"], "pass", "{text}");
+
+    write(
+        dir,
+        "__tests__/y.test.ts",
+        "it(\"two\", () => { /* needs src/ok2.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 2 RED: two");
+    write(dir, "src/ok2.ts", "export const ok = 2;\n");
+    commit(dir, "ABC-1 step 2 GREEN: two");
+    let (text, record) = ok(&repo);
+    assert_eq!(record["steps"][0]["outcome"], "cached", "{text}");
+    assert_eq!(record["steps"][1]["outcome"], "pass", "{text}");
+
+    // The lock file is no test: step 3 itself ends `red-changes-code`; steps 1 and 2 are the subject.
+    write(
+        dir,
+        "__tests__/z.test.ts",
+        "it(\"three\", () => { /* needs src/ok3.ts */ });\n",
+    );
+    write(dir, "web/package-lock.json", "{\"lockfileVersion\": 3}\n");
+    commit(dir, "ABC-1 step 3 RED: three");
+    write(dir, "src/ok3.ts", "export const ok = 3;\n");
+    commit(dir, "ABC-1 step 3 GREEN: three");
+    let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let record = last_record(dir);
+    assert_eq!(record["steps"][0]["outcome"], "pass", "{text}");
+    assert_eq!(record["steps"][1]["outcome"], "pass", "{text}");
+    assert!(!text.contains("cached from"), "{text}");
+}
