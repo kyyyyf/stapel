@@ -1796,9 +1796,17 @@ fn machine_files_keep_a_check_current() {
     std::fs::write(&state, format!("{text_state}\n")).unwrap();
     write(dir, ".stapel/tickets/ABC-1/tokens.jsonl", "{\"v\":1}\n");
     assert_eq!(status_check_line(dir), pass);
+    // A file of this ticket's folder keeps the check too (STP-35 AC-17); one of another ticket's
+    // folder does not.
     write(
         dir,
         ".stapel/tickets/ABC-1/notes.txt",
+        "not a machine file\n",
+    );
+    assert_eq!(status_check_line(dir), pass);
+    write(
+        dir,
+        ".stapel/tickets/ABC-2/notes.txt",
         "not a machine file\n",
     );
     assert!(
@@ -6363,5 +6371,106 @@ fn time_limit_kills_nested_groups() {
         left.stdout.is_empty(),
         "a process of another group survived: {}",
         String::from_utf8_lossy(&left.stdout)
+    );
+}
+
+// STP-35 AC-17: changes under this ticket's folder keep a check current while its Plan section is
+// unchanged; any other path, another ticket's folder or a Plan change does not.
+#[test]
+fn tickets_folder_keeps_the_check() {
+    fn line(dir: &Path) -> String {
+        let out = stapel(dir).args(["status", "ABC-1"]).output().unwrap();
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .find(|l| l.starts_with("check:"))
+            .unwrap_or_default()
+            .to_string()
+    }
+    let repo = passing_repo();
+    let dir = repo.path();
+    let (code, text) = report(&check_command(dir, Cargo::Fake).output().unwrap());
+    assert_eq!(code, 0, "{text}");
+    let pass = format!("check: pass at {}", short_head(dir));
+    assert_eq!(line(dir), pass);
+    let checked = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let ticket = ".stapel/tickets/ABC-1/ticket.md";
+
+    // The ticket text outside the Plan, committed.
+    edit(dir, ticket, "## Description\n", "## Description\n\nA note.\n");
+    commit(dir, "ABC-1: a note in the description");
+    assert_eq!(line(dir), pass, "a change outside the Plan");
+    // The run log and a new file of this ticket's folder.
+    let runs = read(dir, ".stapel/tickets/ABC-1/runs.jsonl");
+    write(
+        dir,
+        ".stapel/tickets/ABC-1/runs.jsonl",
+        &format!("{runs}{{\"v\":1,\"kind\":\"other\"}}\n"),
+    );
+    write(dir, ".stapel/tickets/ABC-1/notes.txt", "a note\n");
+    commit(dir, "ABC-1: the run log and a note file");
+    assert_eq!(line(dir), pass, "this ticket's folder");
+    // Uncommitted as well.
+    edit(dir, ticket, "A note.\n", "A longer note.\n");
+    assert_eq!(line(dir), pass, "an uncommitted change outside the Plan");
+
+    // A changed Plan section makes the check stale; the same text again makes it current.
+    edit(dir, ticket, "## Plan\n", "## Plan\n\nstep 9: a new step\n");
+    commit(dir, "ABC-1: a new Plan step");
+    let stale = line(dir);
+    assert!(stale.starts_with("check: stale"), "{stale}");
+    edit(dir, ticket, "step 9: a new step\n", "");
+    commit(dir, "ABC-1: the Plan step is gone");
+    assert_eq!(line(dir), pass, "the Plan is back");
+
+    // Another ticket's folder.
+    write(dir, ".stapel/tickets/ABC-2/ticket.md", "## Description\n\nOther.\n");
+    commit(dir, "ABC-2: a ticket");
+    let stale = line(dir);
+    assert!(
+        stale.starts_with("check: stale") && stale.contains(".stapel/tickets/ABC-2/ticket.md"),
+        "{stale}"
+    );
+    std::fs::remove_file(dir.join(".stapel/tickets/ABC-2/ticket.md")).unwrap();
+    commit(dir, "ABC-2: gone");
+    assert_eq!(line(dir), pass);
+
+    // Source code.
+    edit(dir, "crates/tiny/src/lib.rs", "a + b", "b + a");
+    commit(dir, "ABC-1: source");
+    let stale = line(dir);
+    assert!(
+        stale.starts_with("check: stale") && stale.contains("crates/tiny/src/lib.rs"),
+        "{stale}"
+    );
+    edit(dir, "crates/tiny/src/lib.rs", "b + a", "a + b");
+    commit(dir, "ABC-1: source back");
+    assert_eq!(line(dir), pass);
+
+    // Under junit a path of this ticket's folder that a test glob matches makes it stale.
+    edit(
+        dir,
+        ".stapel/stapel.toml",
+        "runner = \"cargo\"",
+        "runner = \"junit\"\ncommand = \"sh x {file}\"\nreport = \"junit.xml\"\ntests = [\".stapel/tickets/ABC-1/golden/**\"]",
+    );
+    commit(dir, "ABC-1: junit");
+    let new_head = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let runs = read(dir, ".stapel/tickets/ABC-1/runs.jsonl");
+    let runs = runs
+        .lines()
+        .filter(|l| l.contains("\"kind\":\"check\""))
+        .map(|l| l.replace(&checked, &new_head))
+        .collect::<Vec<_>>()
+        .join("\n");
+    write(dir, ".stapel/tickets/ABC-1/runs.jsonl", &format!("{runs}\n"));
+    assert_eq!(line(dir), format!("check: pass at {}", short_head(dir)));
+    write(dir, ".stapel/tickets/ABC-1/notes2.txt", "still a note\n");
+    assert_eq!(line(dir), format!("check: pass at {}", short_head(dir)));
+    write(dir, ".stapel/tickets/ABC-1/golden/a.txt", "golden\n");
+    let stale = line(dir);
+    assert!(
+        stale.starts_with("check: stale") && stale.contains("golden/a.txt"),
+        "{stale}"
     );
 }
