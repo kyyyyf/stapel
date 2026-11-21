@@ -506,10 +506,12 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
     if !junit {
         say!("cargo: {cargo_text}");
     }
+    // The level follows the `cargo:` line (AC-11).
+    let level_now = level.or(check.level.as_deref()).unwrap_or("head").to_string();
+    say!("level: {level_now}");
     if !inputs.unchanged.is_empty() {
         say!("build inputs: {}", named(&inputs.unchanged));
     }
-    let level_now = level.or(check.level.as_deref()).unwrap_or("head").to_string();
     let lock_now = lock_hash(&root, &at, junit);
     let toolchain_now = if junit {
         check.command.clone().unwrap_or_default()
@@ -537,6 +539,8 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
                     cached_from(&ticket.dir, &ticket.key, a, &lock_now, &toolchain_now, &tool_now)
                 };
                 match source {
+                    // At the level `steps` a cached step runs nothing (AC-8).
+                    Some(from) if level_now == "steps" => ("cached".to_string(), from),
                     Some(from) => match runner.step(a, true) {
                         (o, _) if o == "cached" => (o, from),
                         _ => runner.step(a, false),
@@ -567,8 +571,16 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         }
         say_step(a, &outcome, &reason);
     }
-    let suite = runner.suite();
-    ok &= suite.outcome == "pass";
+    let suite = if level_now == "steps" {
+        Suite {
+            outcome: "skipped".into(),
+            detail: "level steps".into(),
+            counts: (0, 0, 0),
+        }
+    } else {
+        runner.suite()
+    };
+    ok &= suite.outcome == "pass" || suite.outcome == "skipped";
     say!("suite: {}: {}", suite.outcome, suite.detail);
     say!("result: {}", if ok { "pass" } else { "fail" });
     let mut record = serde_json::json!({
