@@ -1,4 +1,4 @@
-# stapel: 0.1.0 sha256:8f4c77468cba96129de4b1970fad509077613be07fead12de804cf78071164ae
+# stapel: 0.1.0 sha256:8bc181ce990c2a87ad7a38521e98fda84d635fbafe938de8ccd009c825c32069
 name: stapel check
 on:
   push:
@@ -25,4 +25,4 @@ jobs:
       - name: Check
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: stapel check "$BRANCH"
+        run: stapel check --level full "$BRANCH"

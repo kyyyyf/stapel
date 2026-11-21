@@ -24,4 +24,4 @@ jobs:
       - name: Check
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: stapel check "$BRANCH"
+        run: stapel check --level full "$BRANCH"
