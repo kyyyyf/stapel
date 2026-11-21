@@ -814,6 +814,8 @@ impl Runner<'_> {
         if let Some(why) = self.outside.borrow().clone() {
             return Err(why);
         }
+        // No checkout runs after the time limit (STP-35 AC-3).
+        self.left()?;
         self.wt.checkout(commit)?;
         if let Some(junit) = &self.junit {
             return self.at_junit(junit, commit, tests);
