@@ -11,7 +11,8 @@ use std::path::Path;
 pub enum CheckLine {
     NotConfigured,
     None,
-    Pass(String),
+    /// A current pass: the short commit id and the level (`steps`, `head`, `full`).
+    Pass(String, String),
     Fail(String),
     Stale(String),
 }
@@ -21,7 +22,10 @@ impl std::fmt::Display for CheckLine {
         match self {
             CheckLine::NotConfigured => write!(f, "check: not configured"),
             CheckLine::None => write!(f, "check: none"),
-            CheckLine::Pass(sha) => write!(f, "check: pass at {sha}"),
+            CheckLine::Pass(sha, level) if level == "steps" => {
+                write!(f, "check: pass at {sha} (level steps)")
+            }
+            CheckLine::Pass(sha, _) => write!(f, "check: pass at {sha}"),
             CheckLine::Fail(sha) => write!(f, "check: fail at {sha}"),
             CheckLine::Stale(reason) => write!(f, "check: stale ({reason})"),
         }
@@ -52,11 +56,17 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
                     .get("plan_hash")
                     .and_then(|p| p.as_str())
                     .map(String::from);
-                (full && (result == "pass" || result == "fail")).then_some((head, result, plan))
+                // A record without `level` was written before levels and counts as `full`.
+                let level = match m.get("level").and_then(|l| l.as_str()) {
+                    Some(l @ ("steps" | "head" | "full")) => l.to_string(),
+                    _ => "full".to_string(),
+                };
+                (full && (result == "pass" || result == "fail"))
+                    .then_some((head, result, plan, level))
             }
             _ => None,
         });
-    let Some((head, result, recorded_plan)) = last else {
+    let Some((head, result, recorded_plan, level)) = last else {
         return CheckLine::None;
     };
     let known = git(root, &["cat-file", "-e", &format!("{head}^{{commit}}")]).is_ok();
@@ -122,7 +132,7 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
         return CheckLine::Stale(format!("changed: {}", first.join(", ")));
     }
     if result == "pass" {
-        CheckLine::Pass(short(&head))
+        CheckLine::Pass(short(&head), level)
     } else {
         CheckLine::Fail(short(&head))
     }

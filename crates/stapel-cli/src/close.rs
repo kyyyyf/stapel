@@ -51,11 +51,20 @@ pub fn run(key: Option<&str>, reason: &str, grant: Option<&str>) -> Result<(), S
     }
     if config.check.is_some() {
         let line = stapel_core::checkstate::current(&root, &config, &ticket.dir);
-        if !matches!(line, stapel_core::checkstate::CheckLine::Pass(_)) {
-            return Err(format!(
-                "close needs a current passing check ({line}); run `stapel check {}` first",
-                ticket.key
-            ));
+        match &line {
+            stapel_core::checkstate::CheckLine::Pass(_, level) if level == "steps" => {
+                return Err(format!(
+                    "the close needs a check of level head or full; run stapel check {} --level head",
+                    ticket.key
+                ));
+            }
+            stapel_core::checkstate::CheckLine::Pass(..) => {}
+            _ => {
+                return Err(format!(
+                    "close needs a current passing check ({line}); run `stapel check {}` first",
+                    ticket.key
+                ));
+            }
         }
     }
     if let Some(round) = stapel_core::parallel::merge_review_due(&root, &ticket.dir) {

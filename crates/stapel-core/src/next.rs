@@ -84,6 +84,8 @@ pub struct History {
     /// Whether the newest check record is a pass that is still current: its commit is an ancestor
     /// of `HEAD` and no file outside the machine files has changed since (`CheckLine::Pass`).
     pub check_pass: bool,
+    /// The level of that pass (`steps`, `head`, `full`); `None` when there is no current pass.
+    pub check_level: Option<String>,
     /// The label of an open RED without a fault: the only step commit of its step, the newest
     /// step commit of the ticket.
     pub open_red: Option<String>,
@@ -335,13 +337,40 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
             Some(Target::Command(format!("git merge {base}"))),
         );
     }
-    if h.check_configured && !h.check_pass {
+    // The review point (STP-35 AC-15): a current pass at the level of `[check] level` or higher.
+    let rank = |level: &str| match level {
+        "steps" => 0,
+        "head" => 1,
+        _ => 2,
+    };
+    let pass_rank = h.check_level.as_deref().map(rank);
+    if let Some(check) = f.config.check.as_ref()
+        && h.check_configured
+        && check
+            .points
+            .as_ref()
+            .is_none_or(|p| p.iter().any(|w| w == "review"))
+        && pass_rank.is_none_or(|r| r < rank(check.level.as_deref().unwrap_or("head")))
+    {
         return Action::new(
             "run-check",
             None,
             Some(Target::Command(format!("stapel check {}", f.key))),
         );
     }
+    // The close needs a current pass at `head` or `full` (AC-16), whatever the points.
+    let need_head = || {
+        (h.check_configured && pass_rank.is_none_or(|r| r < 1)).then(|| {
+            Action::new(
+                "run-check",
+                None,
+                Some(Target::Command(format!(
+                    "stapel check {} --level head",
+                    f.key
+                ))),
+            )
+        })
+    };
     let merge_review = || {
         h.merge_review.as_ref().map(|_| {
             Action::new(
@@ -355,10 +384,13 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
         })
     };
     for (id, name) in [("review", "code-review"), ("summary", "write-summary")] {
-        if id == "summary"
-            && let Some(action) = merge_review()
-        {
-            return action;
+        if id == "summary" {
+            if let Some(action) = need_head() {
+                return action;
+            }
+            if let Some(action) = merge_review() {
+                return action;
+            }
         }
         if let Some(def) = f.config.section(id)
             && !written(f.sections, &def.title)
@@ -371,6 +403,9 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
             };
             return Action::new(name, None, Some(target));
         }
+    }
+    if let Some(action) = need_head() {
+        return action;
     }
     if let Some(action) = merge_review() {
         return action;

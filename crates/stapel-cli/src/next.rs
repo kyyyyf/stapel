@@ -161,7 +161,11 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         .collect();
     let line = checkstate::current(root, config, &ticket.dir);
     let check_configured = line != CheckLine::NotConfigured;
-    let check_pass = matches!(line, CheckLine::Pass(_));
+    let check_pass = matches!(line, CheckLine::Pass(..));
+    let check_level = match &line {
+        CheckLine::Pass(_, level) => Some(level.clone()),
+        _ => None,
+    };
     let check_fail = match line {
         CheckLine::Fail(sha) => Some(sha),
         _ => None,
@@ -181,6 +185,7 @@ fn gather(root: &Path, config: &Config, ticket: &Ticket) -> Result<History, Fail
         check_fail,
         check_configured,
         check_pass,
+        check_level,
         open_red: open_red_label,
         dirty,
         brief: None,
