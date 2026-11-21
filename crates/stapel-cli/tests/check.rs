@@ -412,11 +412,31 @@ fn list_matches_golden() {
 fn add_test(dir: &Path, file: &str, name: &str, body: &str) {
     let rel = format!("crates/tiny/tests/{file}.rs");
     let old = std::fs::read_to_string(dir.join(&rel)).unwrap_or_default();
+    let marker = fake_marker(body);
     write(
         dir,
         &rel,
-        &format!("{old}\n#[test]\nfn {name}() {{\n    {body}\n}}\n"),
+        &format!("{old}\n#[test]\nfn {name}() {{\n    {marker}{body}\n}}\n"),
     );
+}
+
+/// The `// fake:` comment (see `common/fake_cargo.sh`) for the library calls that the fixtures
+/// of this file get wrong at first, so that the fake cargo fails the same tests as the real
+/// one: `triple` is `x * 2` until it is `x * 3`; `half`, `quarter` and `one` do not exist.
+fn fake_marker(body: &str) -> String {
+    if body.contains("assert!(false)") || body.contains("tiny::add(1, 1), 3") {
+        "// fake: needs a text that no source has\n    ".to_string()
+    } else if body.contains("tiny::triple(2), 6") {
+        "// fake: needs x * 3\n    ".to_string()
+    } else if body.contains("tiny::half(") {
+        "// fake: item pub fn half\n    ".to_string()
+    } else if body.contains("tiny::quarter(") {
+        "// fake: item pub fn quarter\n    ".to_string()
+    } else if body.contains("tiny::one(") {
+        "// fake: item pub fn one\n    ".to_string()
+    } else {
+        String::new()
+    }
 }
 
 /// Replaces text in a file.
@@ -430,24 +450,95 @@ fn edit(dir: &Path, rel: &str, from: &str, to: &str) {
 /// at once exhaust the machine's memory.
 static CARGO: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn full_check(dir: &Path) -> std::process::Output {
-    let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
-    stapel(dir)
-        .args(["check", "ABC-1"])
-        .env("CARGO_BUILD_JOBS", "2")
-        .output()
-        .unwrap()
+/// The cargo a `stapel check` run finds first (STP-35 AC-2): the fake cargo of `common` compiles
+/// nothing; the real one builds the fixture.
+#[derive(Clone, Copy, PartialEq)]
+enum Cargo {
+    Fake,
+    Real,
 }
 
-/// `stapel check ABC-1`: exit code and output.
-fn check(dir: &Path) -> (i32, String) {
-    let out = full_check(dir);
+/// The tests that run `stapel check` with the real cargo: the tests of the cargo boundary (the
+/// program, its environment, the build inputs, the real build). Every other test of this file
+/// runs the fake cargo. `check::real_cargo_only_at_the_boundary` keeps the list exact.
+const REAL_CARGO: &[&str] = &[
+    "cargo_error_is_not_a_red",
+    "cargo_runs_see_every_allowed_variable_and_one_cargo",
+    "cargo_runs_with_the_allow_list_only",
+    "child_output_cannot_fake_a_result",
+    "closed_ticket_is_checked_at_its_last_commit",
+    "config_planted_during_a_run_is_seen",
+    "detached_grandchild_does_not_hang_the_check",
+    "fake_cargo_matches_real_cargo",
+    "no_run_after_a_build_input_hit",
+    "outcome_pass_with_assert_and_compile_reds",
+    "outcome_removed_or_ignored_at_head",
+    "outcome_unverified_on_ignored_or_unmatched_test",
+    "outcome_unverified_on_timeout_and_stale_lock",
+    "worktree_is_outside_the_repository",
+];
+
+/// A folder with the fake cargo, made once; the process ends it with the temporary folder.
+fn fake_cargo_dir() -> &'static Path {
+    static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = tempfile::tempdir().unwrap().keep();
+        common::fake_cargo(&dir);
+        dir
+    })
+}
+
+/// The path of the fake cargo, for a stand-in script that runs a cargo after its own work.
+fn fake_cargo_program() -> String {
+    fake_cargo_dir().join("cargo").to_string_lossy().into_owned()
+}
+
+/// The one command that runs `stapel check ABC-1`, with two build jobs. With `Cargo::Fake` the fake
+/// cargo comes first in `PATH`, so a `[check] cargo` key, if set, still wins.
+fn check_command(dir: &Path, cargo: Cargo) -> assert_cmd::Command {
+    let mut cmd = stapel(dir);
+    cmd.args(["check", "ABC-1"]).env("CARGO_BUILD_JOBS", "2");
+    if cargo == Cargo::Fake {
+        let path = std::env::var_os("PATH").unwrap();
+        let mut paths = vec![fake_cargo_dir().to_path_buf()];
+        paths.extend(std::env::split_paths(&path));
+        cmd.env("PATH", std::env::join_paths(paths).unwrap());
+    }
+    cmd
+}
+
+/// Runs `stapel check ABC-1` with extra environment variables. Real runs go one at a time: every
+/// run builds with cargo, and many at once exhaust the machine's memory.
+fn run_check(dir: &Path, cargo: Cargo, envs: &[(&str, &Path)]) -> std::process::Output {
+    let _one = (cargo == Cargo::Real).then(|| CARGO.lock().unwrap_or_else(|e| e.into_inner()));
+    let mut cmd = check_command(dir, cargo);
+    for (n, v) in envs {
+        cmd.env(n, v);
+    }
+    cmd.output().unwrap()
+}
+
+fn report(out: &std::process::Output) -> (i32, String) {
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
     (out.status.code().unwrap_or(-1), text)
+}
+
+fn full_check(dir: &Path) -> std::process::Output {
+    run_check(dir, Cargo::Fake, &[])
+}
+
+/// `stapel check ABC-1` with the fake cargo: exit code and output.
+fn check(dir: &Path) -> (i32, String) {
+    report(&full_check(dir))
+}
+
+/// `stapel check ABC-1` with the given cargo: exit code and output.
+fn check_with(dir: &Path, cargo: Cargo) -> (i32, String) {
+    report(&run_check(dir, cargo, &[]))
 }
 
 /// The outcome printed for a label: the word after `<label>: `.
@@ -973,7 +1064,7 @@ fn outcome_pass_with_assert_and_compile_reds() {
         &format!("{lib}\npub fn half(x: u32) -> u32 {{\n    x / 2\n}}\n"),
     );
     commit(dir, "ABC-1 step 2 GREEN: half");
-    let (code, text) = check(dir);
+    let (code, text) = check_with(dir, Cargo::Real);
     assert_eq!(code, 0, "{text}");
     assert_eq!(outcome(&text, "step 1"), "pass", "{text}");
     assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
@@ -1088,7 +1179,7 @@ fn outcome_removed_or_ignored_at_head() {
         &format!("{lib}\npub fn quarter(x: u32) -> u32 {{\n    x / 4\n}}\n"),
     );
     commit(dir, "ABC-1 step 3 GREEN: code");
-    let (code, text) = check(dir);
+    let (code, text) = check_with(dir, Cargo::Real);
     assert_eq!(code, 1, "{text}");
     assert_eq!(outcome(&text, "step 1"), "removed", "{text}");
     assert_eq!(outcome(&text, "step 2"), "removed", "{text}");
@@ -1124,7 +1215,7 @@ fn outcome_unverified_on_timeout_and_stale_lock() {
     commit(dir, "ABC-1 step 2 RED: a test");
     commit(dir, "ABC-1 step 2 GREEN: code");
     let started = std::time::Instant::now();
-    let (code, text) = check(dir);
+    let (code, text) = check_with(dir, Cargo::Real);
     assert_eq!(code, 1, "{text}");
     assert!(
         started.elapsed() < std::time::Duration::from_secs(110),
@@ -1177,7 +1268,7 @@ fn outcome_unverified_on_ignored_or_unmatched_test() {
     );
     commit(dir, "ABC-1 step 2 RED: a test that is not compiled");
     commit(dir, "ABC-1 step 2 GREEN: code");
-    let (code, text) = check(dir);
+    let (code, text) = check_with(dir, Cargo::Real);
     assert_eq!(code, 1, "{text}");
     assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
     assert!(
@@ -1201,7 +1292,7 @@ fn cargo_error_is_not_a_red() {
     );
     write(dir, "crates/tiny/src/lib.rs", LIB);
     commit(dir, "ABC-1 step 1 GREEN: the library builds");
-    let (code, text) = check(dir);
+    let (code, text) = check_with(dir, Cargo::Real);
     assert_eq!(code, 1, "{text}");
     assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
 }
@@ -1218,7 +1309,7 @@ fn child_output_cannot_fake_a_result() {
     );
     commit(dir, "ABC-1 step 1 RED: a test that prints a result line");
     commit(dir, "ABC-1 step 1 GREEN: code");
-    let (code, text) = check(dir);
+    let (code, text) = check_with(dir, Cargo::Real);
     assert_eq!(code, 1, "{text}");
     assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
 }
@@ -1553,9 +1644,7 @@ fn detached_grandchild_does_not_hang_the_check() {
     // The check is stopped after 90 s, so a hang fails this test instead of blocking it.
     let out = {
         let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
-        stapel(dir)
-            .args(["check", "ABC-1"])
-            .env("CARGO_BUILD_JOBS", "2")
+        check_command(dir, Cargo::Real)
             .timeout(std::time::Duration::from_secs(90))
             .output()
     };
@@ -2140,9 +2229,7 @@ fn cargo_runs_with_the_allow_list_only() {
     set_cargo_key(dir, &fake);
     let out = {
         let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
-        stapel(dir)
-            .args(["check", "ABC-1"])
-            .env("CARGO_BUILD_JOBS", "2")
+        check_command(dir, Cargo::Real)
             .env("RUSTC_WRAPPER", "/nonexistent")
             .env("RUSTFLAGS", "--cfg=fake")
             .env("RUSTC", "/nonexistent")
@@ -2244,9 +2331,8 @@ fn cargo_runs_see_every_allowed_variable_and_one_cargo() {
     sent.push(("CARGO_BUILD_JOBS", "2".into()));
     let out = {
         let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
-        let mut cmd = stapel(dir);
-        cmd.args(["check", "ABC-1"])
-            .env("RUSTC_WRAPPER", "/nonexistent")
+        let mut cmd = check_command(dir, Cargo::Real);
+        cmd.env("RUSTC_WRAPPER", "/nonexistent")
             .env("RUSTFLAGS", "--cfg=fake")
             .env("RUSTC", "/nonexistent")
             .env("CARGO_ALIAS_TEST", "x")
@@ -2308,12 +2394,80 @@ fn cargo_runs_see_every_allowed_variable_and_one_cargo() {
     assert_eq!(tests, seen - 1, "test runs of {seen} runs");
 }
 
+// ---- STP-35 AC-1: the fake cargo ----
+
+/// A ticket of three steps, a passing one, one with no RED and one that is not green. Each test
+/// has a `// fake: needs` marker for the fake cargo; the real cargo reads the code.
+fn fake_fixture(dir: &Path) {
+    let lib = format!(
+        "{LIB}\npub fn triple(x: u32) -> u32 {{\n    x + x\n}}\n\npub fn quad(x: u32) -> u32 {{\n    x * 3\n}}\n"
+    );
+    write(dir, "crates/tiny/src/lib.rs", &lib);
+    commit(dir, "ABC-1: library functions to fix");
+    add_test(
+        dir,
+        "basic",
+        "triples",
+        "// fake: needs x + x + x\n    assert_eq!(tiny::triple(2), 6);",
+    );
+    commit(dir, "ABC-1 step 1 RED: triple is wrong");
+    edit(dir, "crates/tiny/src/lib.rs", "x + x", "x + x + x");
+    commit(dir, "ABC-1 step 1 GREEN: triple fixed");
+    add_test(
+        dir,
+        "basic",
+        "already_true",
+        "assert_eq!(tiny::add(1, 1), 2);",
+    );
+    commit(dir, "ABC-1 step 2 RED: passes from the start");
+    commit(dir, "ABC-1 step 2 GREEN: nothing");
+    add_test(
+        dir,
+        "basic",
+        "quads",
+        "// fake: needs x * 4\n    assert_eq!(tiny::quad(2), 8);",
+    );
+    commit(dir, "ABC-1 step 3 RED: quad is wrong");
+    edit(dir, "crates/tiny/src/lib.rs", "x * 3", "x * 5");
+    commit(dir, "ABC-1 step 3 GREEN: still wrong");
+}
+
+#[test]
+fn fake_cargo_matches_real_cargo() {
+    let real = cargo_repo();
+    fake_fixture(real.path());
+    let (real_code, real_text) = check_with(real.path(), Cargo::Real);
+
+    let scripts = tempfile::tempdir().unwrap();
+    let fake_repo = cargo_repo();
+    set_cargo_key(fake_repo.path(), &common::fake_cargo(scripts.path()));
+    fake_fixture(fake_repo.path());
+    let (fake_code, fake_text) = check(fake_repo.path());
+
+    // The fixture is not vacuous: every case shows in the real report.
+    assert_eq!(outcome(&real_text, "step 1"), "pass", "{real_text}");
+    assert_eq!(outcome(&real_text, "step 2"), "no-red", "{real_text}");
+    assert_eq!(outcome(&real_text, "step 3"), "not-green", "{real_text}");
+    assert_eq!(real_code, 1, "{real_text}");
+
+    assert_eq!(fake_code, real_code, "{fake_text}");
+    assert!(
+        cargo_line(&fake_text).ends_with("(cargo 0.0.0 (fake))"),
+        "{fake_text}"
+    );
+    assert_eq!(
+        without_cargo_line(&without_ids(&fake_text)),
+        without_cargo_line(&without_ids(&real_text)),
+        "fake:\n{fake_text}\nreal:\n{real_text}"
+    );
+}
+
 #[test]
 fn cargo_path_and_version_are_reported() {
     let repo = passing_repo();
     let dir = repo.path();
     let scripts = tempfile::tempdir().unwrap();
-    let real = real_cargo();
+    let real = fake_cargo_program();
     let versioned = |print: &str| {
         script(
             scripts.path(),
@@ -2425,14 +2579,10 @@ fn refuses_without_a_working_cargo() {
     let only_git = scripts.path().join("only-git");
     std::fs::create_dir(&only_git).unwrap();
     std::os::unix::fs::symlink(git_bin.join("git"), only_git.join("git")).unwrap();
-    let out = {
-        let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
-        stapel(dir)
-            .args(["check", "ABC-1"])
-            .env("PATH", format!("bin:{}", only_git.display()))
-            .output()
-            .unwrap()
-    };
+    let out = check_command(dir, Cargo::Fake)
+        .env("PATH", format!("bin:{}", only_git.display()))
+        .output()
+        .unwrap();
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -2502,21 +2652,21 @@ fn path_cargo_must_be_executable() {
     let repo = passing_repo();
     let dir = repo.path();
     let scripts = tempfile::tempdir().unwrap();
-    let real = real_cargo();
-    // A `cargo` that is not executable comes first in `PATH`; the real one comes later.
+    let real = fake_cargo_program();
+    // A `cargo` that is not executable comes first in `PATH`; the working one comes later.
     let plain = scripts.path().join("plain");
     std::fs::create_dir(&plain).unwrap();
     std::fs::write(plain.join("cargo"), "not a program\n").unwrap();
-    let path = format!("{}:{}", plain.display(), std::env::var("PATH").unwrap());
-    let out = {
-        let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
-        stapel(dir)
-            .args(["check", "ABC-1"])
-            .env("CARGO_BUILD_JOBS", "2")
-            .env("PATH", path)
-            .output()
-            .unwrap()
-    };
+    let path = format!(
+        "{}:{}:{}",
+        plain.display(),
+        fake_cargo_dir().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let out = check_command(dir, Cargo::Fake)
+        .env("PATH", path)
+        .output()
+        .unwrap();
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -2531,23 +2681,21 @@ fn path_cargo_must_be_executable() {
 
 /// `stapel check ABC-1` with extra environment variables: exit code and output.
 fn check_env(dir: &Path, envs: &[(&str, &Path)]) -> (i32, String) {
-    let _one = CARGO.lock().unwrap_or_else(|e| e.into_inner());
-    let mut cmd = stapel(dir);
-    cmd.args(["check", "ABC-1"]).env("CARGO_BUILD_JOBS", "2");
-    for (n, v) in envs {
-        cmd.env(n, v);
-    }
-    let out = cmd.output().unwrap();
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    (out.status.code().unwrap_or(-1), text)
+    report(&run_check(dir, Cargo::Fake, envs))
 }
 
-/// A cargo that records the folder of every run in `dumps`, then runs the real cargo.
+/// `check_env` with the given cargo.
+fn check_env_with(dir: &Path, cargo: Cargo, envs: &[(&str, &Path)]) -> (i32, String) {
+    report(&run_check(dir, cargo, envs))
+}
+
+/// A cargo that records the folder of every run in `dumps`, then runs the fake cargo.
 fn recording_cargo(scripts: &Path, dumps: &Path) -> String {
+    recording_cargo_of(scripts, dumps, &fake_cargo_program())
+}
+
+/// A cargo that records the folder of every run in `dumps`, then runs `program`.
+fn recording_cargo_of(scripts: &Path, dumps: &Path, program: &str) -> String {
     std::fs::create_dir_all(dumps).unwrap();
     script(
         scripts,
@@ -2555,7 +2703,7 @@ fn recording_cargo(scripts: &Path, dumps: &Path) -> String {
         &format!(
             "pwd -P > {d}/pwd.$$\nexec {r} \"$@\"",
             d = dumps.display(),
-            r = real_cargo()
+            r = program
         ),
     )
 }
@@ -2566,12 +2714,12 @@ fn worktree_is_outside_the_repository() {
     let dir = repo.path();
     let scripts = tempfile::tempdir().unwrap();
     let dumps = scripts.path().join("dumps");
-    let fake = recording_cargo(scripts.path(), &dumps);
+    let fake = recording_cargo_of(scripts.path(), &dumps, &real_cargo());
     set_cargo_key(dir, &fake);
     let tmp = tempfile::tempdir().unwrap();
     let tmp_real = tmp.path().canonicalize().unwrap();
     let repo_real = dir.canonicalize().unwrap();
-    let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
+    let (code, text) = check_env_with(dir, Cargo::Real, &[("TMPDIR", tmp.path())]);
     assert_eq!(code, 0, "{text}");
     let mut seen = 0;
     let mut folders = std::collections::BTreeSet::new();
@@ -2592,7 +2740,7 @@ fn worktree_is_outside_the_repository() {
     assert_eq!(git(dir, &["worktree", "list"]).lines().count(), 1);
     // A leftover folder of an earlier run stays; the next check does not break on it.
     std::fs::create_dir(tmp.path().join("stapel-check-leftover")).unwrap();
-    let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
+    let (code, text) = check_env_with(dir, Cargo::Real, &[("TMPDIR", tmp.path())]);
     assert_eq!(code, 0, "{text}");
     assert!(tmp.path().join("stapel-check-leftover").is_dir());
 }
@@ -3079,9 +3227,9 @@ fn unchanged_build_inputs_are_named() {
     write(dir, "notes/xrust-toolchain", "x\n");
     write(dir, "notes/golden/g.txt", "g\n");
     commit(dir, "ABC-1: changes that are no build inputs");
-    // Real cargo again: the report must show the line and the steps keep their outcomes.
-    let real = real_cargo();
-    set_cargo_key(dir, &real);
+    // The plain cargo again: the report must show the line and the steps keep their outcomes.
+    let plain = fake_cargo_program();
+    set_cargo_key(dir, &plain);
     let (code, text) = check_env(dir, &[]);
     assert_eq!(code, 0, "{text}");
     let want = "build inputs: .cargo/config.toml, crates/tiny/build.rs, crates/tiny/rust-toolchain.toml, latest";
@@ -4667,7 +4815,7 @@ fn closed_ticket_is_checked_at_its_last_commit() {
 
     let (repo, end) = history(true);
     let dir = repo.path();
-    let (code, text) = check(dir);
+    let (code, text) = check_with(dir, Cargo::Real);
     assert_eq!(code, 0, "{text}");
     assert_eq!(
         text.lines().next().unwrap(),
@@ -4685,7 +4833,7 @@ fn closed_ticket_is_checked_at_its_last_commit() {
 
     let (repo, _) = history(false);
     let dir = repo.path();
-    let (code, text) = check(dir);
+    let (code, text) = check_with(dir, Cargo::Real);
     assert_eq!(code, 1, "{text}");
     assert_eq!(
         text.lines().next().unwrap(),
@@ -4802,24 +4950,22 @@ fn closed_ticket_build_inputs_are_read_at_its_end() {
              exec {r} \"$@\"",
             m = mark.display(),
             d = dir.display(),
-            r = real_cargo()
+            r = fake_cargo_program()
         ),
     );
     let text = read(dir, ".stapel/stapel.toml");
     let text: String = text
         .lines()
         .filter(|l| !l.starts_with("cargo = "))
-        .map(|l| format!("{l}\n"))
+        .map(|l| {
+            if l.starts_with("timeout_secs = ") {
+                format!("{l}\ncargo = \"{mover}\"\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
         .collect();
-    write(
-        dir,
-        ".stapel/stapel.toml",
-        &text.replacen(
-            "timeout_secs = 900\n",
-            &format!("timeout_secs = 900\ncargo = \"{mover}\"\n"),
-            1,
-        ),
-    );
+    write(dir, ".stapel/stapel.toml", &text);
     commit(dir, "XYZ-4: the cargo key");
     let (code, text) = check_env(dir, &[]);
     assert_eq!(code, 0, "{text}");
@@ -4923,7 +5069,7 @@ fn config_planted_during_a_run_is_seen() {
         .canonicalize()
         .unwrap()
         .join(".cargo/config.toml");
-    let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
+    let (code, text) = check_env_with(dir, Cargo::Real, &[("TMPDIR", tmp.path())]);
     assert_eq!(code, 1, "{text}");
     let want = format!("unverified: build-input-outside: {}", held.display());
     for line in [
@@ -5124,7 +5270,7 @@ fn no_run_after_a_build_input_hit() {
         ),
     );
     set_cargo_key(dir, &fake);
-    let (code, text) = check_env(dir, &[("TMPDIR", tmp.path())]);
+    let (code, text) = check_env_with(dir, Cargo::Real, &[("TMPDIR", tmp.path())]);
     assert_eq!(code, 1, "{text}");
     let want = format!("unverified: build-input-outside: {}", held.display());
     assert!(
@@ -6029,4 +6175,53 @@ fn docs_commits_keep_a_check_current() {
     let line = status_line(dir);
     assert!(line.starts_with("check: stale"), "{line}");
     assert!(line.contains("crates/tiny/src/x.rs"), "{line}");
+}
+
+// ---- STP-35 AC-2: real cargo only at the boundary ----
+
+/// The names of the test functions of this file and the text of each body.
+fn test_bodies() -> Vec<(String, String)> {
+    let source = include_str!("check.rs");
+    let mut out = Vec::new();
+    let mut parts = source.split("#[test]\nfn ");
+    parts.next();
+    for part in parts {
+        let name = part.split('(').next().unwrap().to_string();
+        let body = part.split("\n}\n").next().unwrap().to_string();
+        out.push((name, body));
+    }
+    out
+}
+
+#[test]
+fn real_cargo_only_at_the_boundary() {
+    let real = ["Cargo", "::Real"].concat();
+    let direct = ["\"check\", ", "\"ABC-1\"]"].concat();
+    let tests = test_bodies();
+    let mut found: Vec<&str> = tests
+        .iter()
+        .filter(|(name, body)| name != "real_cargo_only_at_the_boundary" && body.contains(&real))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    found.sort_unstable();
+    let mut listed = REAL_CARGO.to_vec();
+    listed.sort_unstable();
+    assert_eq!(
+        found, listed,
+        "the tests that pass the real cargo are not the list REAL_CARGO"
+    );
+    assert!(REAL_CARGO.len() <= 30, "{} boundary tests", REAL_CARGO.len());
+    for name in REAL_CARGO {
+        assert!(
+            tests.iter().any(|(n, _)| n == name),
+            "{name} in REAL_CARGO is not a test"
+        );
+    }
+    // No test starts a check on its own: every run goes through `check_command`.
+    let own: Vec<&str> = tests
+        .iter()
+        .filter(|(name, body)| name != "real_cargo_only_at_the_boundary" && body.contains(&direct))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert!(own.is_empty(), "tests that bypass check_command: {own:?}");
 }

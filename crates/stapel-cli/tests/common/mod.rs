@@ -52,6 +52,16 @@ pub fn stapel(dir: &Path) -> Command {
     cmd
 }
 
+/// The fake cargo (`fake_cargo.sh`) written as an executable `cargo` into `dir`; returns its path.
+/// It compiles nothing; see the markers in the script.
+pub fn fake_cargo(dir: &Path) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("cargo");
+    std::fs::write(&path, include_str!("fake_cargo.sh")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
 pub fn read(dir: &Path, rel: &str) -> String {
     std::fs::read_to_string(dir.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
 }
