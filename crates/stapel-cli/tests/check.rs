@@ -4957,17 +4957,15 @@ fn closed_ticket_build_inputs_are_read_at_its_end() {
     let text: String = text
         .lines()
         .filter(|l| !l.starts_with("cargo = "))
-        .map(|l| format!("{l}\n"))
+        .map(|l| {
+            if l.starts_with("timeout_secs = ") {
+                format!("{l}\ncargo = \"{mover}\"\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
         .collect();
-    write(
-        dir,
-        ".stapel/stapel.toml",
-        &text.replacen(
-            "timeout_secs = 900\n",
-            &format!("timeout_secs = 900\ncargo = \"{mover}\"\n"),
-            1,
-        ),
-    );
+    write(dir, ".stapel/stapel.toml", &text);
     commit(dir, "XYZ-4: the cargo key");
     let (code, text) = check_env(dir, &[]);
     assert_eq!(code, 0, "{text}");
