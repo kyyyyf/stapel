@@ -94,7 +94,7 @@ Terms:
 | AC-3 | IF `check.timeout_secs` runs out while a program of the check runs THEN the check kills that program and every process it started, nested process groups included and its own group excluded, prints every step not yet judged and not cached and the suite as `unverified: the time limit of <n> s for the check ran out`, writes its record with result `fail` and exits 1 within `<n>` + 10 seconds of its start; the range of the key stays 10 to 86400, and the default that `stapel init` writes becomes 3600. | `check::time_limit_bounds_the_whole_check`, `check::time_limit_kills_nested_groups` |
 | AC-4 | WHEN a step is a cached step and the level is not `full` THE check runs none of its tests at RED and GREEN, prints `<label>: cached from <record id>`, and records the outcome `cached` and `from`: the id of the record that ran the step, passed on unchanged when the source step was itself cached. | `check_cache::reuses_a_passing_step` |
 | AC-5 | IF one part of the step key differs, the record failed, the step there was neither `pass` nor `cached`, or the record lacks a key field THEN the step is not cached and runs at RED, GREEN and HEAD. | `check_cache::a_changed_key_runs_the_step` |
-| AC-6 | WHEN a check writes its record THE record has `level`, `lock`, `toolchain`, `plan_hash` and `suite_exclude` (the entries left out, or `[]`), and each step has `tests_hash`. | `check_cache::record_fields` |
+| AC-6 | WHEN a check writes its record THE record has `level`, `lock`, `toolchain`, `plan_hash` and `suite_exclude` (the configured entries below level `full`, `[]` at `full`), and each step has `tests_hash`. | `check_cache::record_fields` |
 | AC-7 | IF `[check] level` is not `steps`, `head` or `full` THEN loading `stapel.toml` fails with `check.level must be steps, head or full: <value>`; IF `--level` is another word THEN `stapel check` exits 2 with `stapel: --level must be steps, head or full: <value>` and runs no cargo; IF `--level` comes with `--list` or `--history` THEN it exits 2 with `stapel: --level does not go with --list or --history`. | `check_levels::refuses_an_unknown_level` |
 | AC-8 | WHEN the level is `steps` THE check runs the steps that are not cached at RED, GREEN and HEAD, runs nothing of a cached step, runs no suite, prints `suite: skipped: level steps`, records the suite outcome `skipped`, and its result is `pass` when every step passes or is cached. | `check_levels::steps_level` |
 | AC-9 | WHEN the level is `head` THE check does what `steps` does, runs the tests of each cached step at HEAD, and runs the suite. | `check_levels::head_level` |
@@ -104,7 +104,7 @@ Terms:
 | AC-13 | WHEN `[check] points` is absent THE points are `step`, `review` and `close`; IF it lacks `close` or holds a word other than `step`, `review` and `close` THEN loading `stapel.toml` fails with `check.points must hold close and only step, review, close`. | `check_levels::points_need_close` |
 | AC-14 | WHEN `step` is a point, the tree is clean, the newest step commit is a GREEN, a later Plan step is open and the check is not a current pass THE `stapel next` prints `run-check` with `stapel check <KEY> --level steps` in place of `build-step`; WHEN the tree is dirty THE next prints `commit` first; WHEN `step` is no point THE next prints `build-step`. | `next_points::step_point`, `next_points::without_the_step_point` |
 | AC-15 | WHEN every Plan step is done and `review` is a point THE `stapel next` prints `run-check` with `stapel check <KEY>` (no flag) before `code-review` unless the current check passes at the level of `[check] level` (default `head`) or higher; a pass below that level, made with a lower `--level`, does not count; WHEN `review` is no point THE next prints `code-review` without a check. | `next_points::review_point` |
-| AC-16 | WHEN no current check passes at level `head` or `full` (none, a fail, stale, or a `steps` pass) THE `stapel next` before `write-summary` prints `run-check` with `stapel check <KEY> --level head`, whatever the other points; `status` prints `check: pass at <sha> (level steps)` for a `steps` pass and the other lines as today; `stapel close` refuses a `steps` pass with `stapel: the close needs a check of level head or full; run stapel check <KEY> --level head` and exit 1. | `next_points::close_needs_head_or_full` |
+| AC-16 | WHEN no current check passes at level `head` or `full` (none, stale, or a `steps` pass) THE `stapel next` before `write-summary` and before `close` prints `run-check` with `stapel check <KEY> --level head`, whatever the other points; a failing check keeps the action `fix-check`; `status` prints `check: pass at <sha> (level steps)` for a `steps` pass and the other lines as today; `stapel close` refuses a `steps` pass with `stapel: the close needs a check of level head or full; run stapel check <KEY> --level head` and exit 1. | `next_points::close_needs_head_or_full` |
 | AC-17 | WHEN the only changes since the checked commit are under `.stapel/tickets/<KEY>/` of this ticket and the hash of its Plan section equals the record's `plan_hash` THE check stays current for `status`, `next` and `close`; a changed Plan section, a change of another ticket's folder, of a path that a junit test or input glob matches, or of another path outside `docs/` and the machine files still makes it stale. | `check::tickets_folder_keeps_the_check` |
 | AC-18 | WHEN `stapel init` writes the CI workflow THE check line is `stapel check --level full "$BRANCH"`, for the cargo and the junit runner. | `init_workflow::workflow_lines`, `init_workflow::writes_the_workflow` |
 
@@ -220,7 +220,46 @@ that is not a GREEN (no check demanded; not tested).
 
 ### Decisions (as built)
 
-TODO
+- Steps 1 and 2 (the fake cargo and the move) are on main as `086bcaf` and `2f94673`; the ticket branch
+  merges main (`149a980`), and the word commits `e5b7f20` and `13be572` close the two steps (ledger
+  2026-11-20, the human: a test helper changed by a non-RED commit of the range blocks every later step).
+- The fake cargo is `tests/common/fake_cargo.sh` (sh and awk). A test body marker `// fake: needs <text>`
+  makes the test pass only when a file under `crates/*/src` holds the text; `// fake: item <text>` makes
+  the test target compile only when the text is there; `this does not compile` in a source breaks the
+  library. `tests/check.rs` runs every check through `check_command(dir, Cargo)`; `add_test` adds a marker
+  from the assertion. `REAL_CARGO` holds 14 tests: ignored tests, compile errors, child output, time
+  limits, planted configuration, `include_str!`, the target folder and the environment.
+- 2026-11-20, agent: the default of an absent `timeout_secs` is 3600 too, as the template; the check.rs
+  helpers rewrite any `timeout_secs = <n>` line; `outcome_unverified_on_timeout_and_stale_lock` asserts
+  the time-limit text for step 2 and keeps the stale-lock case in a second check without the hanging
+  step.
+- `runner.rs::kill_tree` reads `ps -A -o pid=,ppid=,pgid=`, kills the descendants and their groups except
+  stapel's own, in up to 5 passes; `Runner` keeps the deadline and gives each run the time left, at the
+  four run sites (cargo step, cargo suite, junit file, junit suite).
+- `check.rs::cached_from` reads `runs.jsonl` and takes the newest passing record of the ticket with the
+  same `lock`, `toolchain` and `tool` whose step is `pass` or `cached` with the same `red`, `green` and
+  `tests_hash`; malformed and keyless records are skipped. At `head` a cached step still runs at HEAD and
+  runs whole when it fails there; at `steps` it runs nothing. `outcomes::passing` accepts `cached`.
+- `lock` under cargo is the SHA-256 of `Cargo.lock` at the checked commit; `plan_hash` is the
+  `section_hash` of the Plan (`sha256:` prefix) or `none`. At `steps` the record's `suite_exclude` holds
+  the configured entries although no suite ran.
+- `level:` is printed under junit too. The golden reports `check_report.txt` and
+  `check_report_build_inputs.txt` carry the line (step 7's RED was rebuilt to hold them).
+- `checkstate::current` drops paths under `.stapel/tickets/<KEY>/` when the Plan hash equals the record's
+  `plan_hash`; a record without it drops nothing. 2026-11-21, agent: the existing test
+  `machine_files_keep_a_check_current` now expects `pass` for a file of the ticket's own folder and
+  `stale` for another ticket's folder.
+- `CheckLine::Pass` carries the level. 2026-11-21, agent: `stapel next` demands the `head` check before
+  the final `close` action too, so it never prints `close` while the gate refuses. 2026-11-21, agent
+  (spec change of AC-16): a failing check keeps the earlier `fix-check` action, which names
+  `runs.jsonl`, instead of `run-check --level head`.
+- DR-1: the CI workflow of this repository installs stapel at `221c0e0` (the step 12 GREEN), which has
+  `--level`; the orchestrator built that commit in a clean copy with `STAPEL_BUILD_COMMIT` and ran its
+  `init` (`7e7512a`). CI can install it once the branch is pushed.
+- Pre-existing failures on this Mac with the default TMPDIR, at the base `e0da738` too: five
+  `check_junit::absolute_script_*`, `status::refuses_ambiguous_case_variant_keys` and
+  `next::refuses_a_wrong_call`.
+- This repository's `timeout_secs` is 5400 (`eb4d589`).
 
 ## Proof
 
