@@ -526,3 +526,42 @@ fn files_without_base() {
         "{text}"
     );
 }
+
+// AC-4: the limit used up before the first command: a `{files}` command with no changed file says
+// `unverified: time limit`, not `skipped`; the result is `fail`.
+#[test]
+fn the_limit_comes_before_the_skip() {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let marker = marker_dir.path().join("ran");
+    let command = format!("touch {} {{files}}", marker.display());
+    let (repo, _scripts) = project_repo(
+        &format!("project = ['{command}']"),
+        10,
+        "case \"$*\" in *--workspace*) sleep 60 ;; esac",
+    );
+    let dir = repo.path();
+    set_base_here(dir);
+    write(
+        dir,
+        "crates/tiny/tests/two.rs",
+        "#[test]\nfn needs_three() {\n    // fake: needs pub fn three\n}\n",
+    );
+    commit(dir, "ABC-1 step 2 RED: three is missing");
+    write(dir, "crates/tiny/src/three.rs", "pub fn three() {}\n");
+    commit(dir, "ABC-1 step 2 GREEN: three");
+    std::fs::remove_file(dir.join("crates/tiny/tests/two.rs")).unwrap();
+    std::fs::remove_file(dir.join("crates/tiny/src/three.rs")).unwrap();
+    commit(dir, "ABC-1: delete\n\nspec change: step 2 is not needed");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.trim() == format!("project: {command}: unverified: time limit")),
+        "{text}"
+    );
+    assert!(!text.contains("skipped: no changed files"), "{text}");
+    assert!(!marker.exists(), "{text}");
+    assert!(text.contains("result: fail"), "{text}");
+    let record = last_record(dir);
+    assert_eq!(record["project"][0]["outcome"], "unverified", "{record}");
+}
