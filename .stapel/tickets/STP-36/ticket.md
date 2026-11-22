@@ -292,9 +292,8 @@ Route: full (tags `guard`, `interface`), auto.
    guard denies every edit of the file): the GREEN adds `Decision::AskEdit` and the result computation,
    and asks only for the main agent in a dialog mode with a result that loads; every other case keeps
    today's denial until step 8. Must not change: the other machine files.
-8. stapel.toml refusals (AC-9; test `hook::stapel_toml_edit_refusals`, which fails at the RED because the
-   refusals have the old text): the GREEN adds the subagent, mode, no-apply and load refusals. Must not
-   change: the answer of AC-8.
+8. Refusals (AC-9; test `hook::stapel_toml_edit_refusals`, red on the old texts): the four refusals.
+   Must not change: AC-8.
 9. Worktree setup (AC-10, AC-11; tests `new_branch::runs_the_setup`,
    `new_branch::failed_setup_keeps_the_worktree`, which fail at the RED because the key is unknown): the
    GREEN adds `[worktree] setup` and runs it in `new.rs`. Must not change: `stapel new` without the key.
