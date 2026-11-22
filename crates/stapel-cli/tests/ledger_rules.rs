@@ -117,3 +117,41 @@ fn counts_per_rule_and_ticket() {
          r         1      1      1      1      1      7\n"
     );
 }
+
+#[test]
+fn bad_lines_and_last() {
+    fn words(text: &str) -> Vec<Vec<String>> {
+        text.lines()
+            .map(|l| l.split_whitespace().map(String::from).collect())
+            .collect()
+    }
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let file = ".stapel/tickets/ABC-1/findings.jsonl";
+
+    // No ticket with findings.
+    assert_eq!(rules_output(dir), "rules: no findings\n");
+
+    // A broken line is skipped, with one notice.
+    let mut text = lines(&[finding("ABC-1", "F-1", "HIGH", json!({"rule": "r"}))]);
+    text.push_str("{not json\n");
+    put(dir, file, &text);
+    let out = stapel(dir).args(["ledger", "rules"]).assert().success();
+    let out = out.get_output();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "notice: 1 lines of findings.jsonl skipped\n"
+    );
+    assert_eq!(
+        words(&String::from_utf8_lossy(&out.stdout))[1],
+        ["r", "1", "1"]
+    );
+
+    // `--last` that is not a whole number of 1 or more.
+    for bad in ["0", "x", "-1", "1.5", ""] {
+        stapel(dir)
+            .args(["ledger", "rules", "--last", bad])
+            .assert()
+            .code(2);
+    }
+}
