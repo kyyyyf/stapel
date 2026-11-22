@@ -1468,19 +1468,14 @@ impl Runner<'_> {
     fn project(&self, commands: &[String]) -> Vec<(String, &'static str)> {
         let mut done: Vec<(String, &'static str)> = Vec::new();
         let mut stop: Option<String> = None;
-        let prepared = self.wt.checkout(self.head).and_then(|()| {
-            if self.junit.is_some() {
-                self.link_modules()
-            } else {
-                Ok(())
-            }
-        });
-        if let Err(e) = prepared {
-            stop = Some(e);
-        }
+        let mut prepared = false;
         let mut files: Option<Result<Vec<String>, String>> = None;
         for command in commands {
             let mut command_run = command.clone();
+            // The limit comes first: before the checkout and before the `{files}` skip.
+            if stop.is_none() && self.left().is_err() {
+                stop = Some("time limit".to_string());
+            }
             if stop.is_none() && has_files_word(command) {
                 let list = files.get_or_insert_with(|| self.changed_files());
                 match list {
@@ -1491,6 +1486,19 @@ impl Runner<'_> {
                     }
                     Ok(list) => command_run = replace_files_word(command, list),
                     Err(e) => stop = Some(e.clone()),
+                }
+            }
+            if stop.is_none() && !prepared {
+                let result = self.wt.checkout(self.head).and_then(|()| {
+                    if self.junit.is_some() {
+                        self.link_modules()
+                    } else {
+                        Ok(())
+                    }
+                });
+                match result {
+                    Ok(()) => prepared = true,
+                    Err(e) => stop = Some(e),
                 }
             }
             if stop.is_none() && self.left().is_err() {
