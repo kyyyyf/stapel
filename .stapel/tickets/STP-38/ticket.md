@@ -35,7 +35,7 @@ lines outside the block); the Review of closed tickets; the removal of the empty
    Summary section and one line per deferred finding not marked false; it is rewritten on every export.
 4. Rule counts: `stapel ledger rules` reads `findings.jsonl` of every ticket and prints, per `rule` value
    and per ticket, the HIGH and MEDIUM findings inside the promise (severity after triage, not marked
-   false, newest fate not `no-change`), as the close ledger of STP-37 counts them; a finding
+   false, newest fate not `no-change`; the findings STP-37 counts); a finding
    without `rule` counts as `none`; a rule that caught nothing in the newest three tickets with findings
    is marked. It writes nothing.
 5. Returns: `stapel tokens measure` and the ticket report of `stapel tokens` print the returns to the
