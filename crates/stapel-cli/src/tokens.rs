@@ -866,7 +866,7 @@ pub fn measure(file: &Path) -> Result<(), crate::fail::Fail> {
 }
 
 /// Ticket folders in key order, read without their `state.json`.
-fn ticket_folders(root: &Path) -> Vec<(String, std::path::PathBuf)> {
+pub(crate) fn ticket_folders(root: &Path) -> Vec<(String, std::path::PathBuf)> {
     let mut out: Vec<_> = std::fs::read_dir(tickets_dir(root))
         .into_iter()
         .flatten()
