@@ -26,8 +26,11 @@ pub fn starter_toml(prefix: &str, cargo: bool) -> String {
             "# [check]\n# runner = \"junit\"\n# command = \"npx jest {file} --ci --reporters=jest-junit\"\n# report = \"junit.xml\"\n# tests = [\"**/*.test.*\"]\n",
         );
     }
+    text.push_str(PROCESS_COMMENT);
     text
 }
+
+const PROCESS_COMMENT: &str = "\n# [process]\n# dialogs = \"all\"   # \"close\": a light ticket asks for one stapel ok before the close, after the first\n\n# [worktree]\n# setup = \"...\"   # a shell command that `stapel new` runs in the new worktree\n";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {

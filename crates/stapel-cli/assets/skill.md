@@ -22,6 +22,11 @@ the file to use; the facts that block an action come first. Do not re-read the w
 - `run-check`: `stapel check KEY`; no other cargo or test run while it runs.
 - Start a new session for each ticket; during the build do not read briefs or reviewer reports yourself
   beyond their findings.
+- `[worktree] setup` runs after `stapel new` in the new worktree; the files it makes belong in the
+  project's `.gitignore`.
+- At the session start, `open:` lines name open tickets of other worktrees. When the person's message names
+  none of them and asks for no new ticket, continue the named or the only one with `EnterWorktree`, then
+  run `stapel next`.
 - Parallel tickets: `stapel new` makes a branch and a worktree for each ticket. SessionStart does not
   fire after `EnterWorktree`, so run `stapel next` after `EnterWorktree` before anything else. Commands without KEY take the ticket of the
   current branch and refuse a foreign KEY. Agents run cargo only through `stapel cargo`; the cargo lock
@@ -104,7 +109,9 @@ list must not only grow.
    criterion's meaning, which stops the build until it is confirmed; the builder keeps the planned test
    names, so the lint demands nothing. Spec changes inside the promise found during the build go to the
    notes and into the ticket once, confirmed by the ok before code review. The fix steps added after a code
-   review round are confirmed by one ok before their build. A GREEN commit that changes a criterion's meaning says spec change: AC-<n>, <reason> in its message;
+   review round with a patch finding build without a stapel ok; the ok confirms them before the close.
+   With `[process] dialogs = "close"` on a light ticket, after the first stapel ok the changes of Spec,
+   Design, Proof and Plan build on a provisional permit and wait for the ok before the close. A GREEN commit that changes a criterion's meaning says spec change: AC-<n>, <reason> in its message;
    stapel check reads it.
 6. **During the build.** Keep Design "as built" as notes and move them into the ticket once, before code
    review; an uncommitted edit of `ticket.md` makes its confirmation stale. A drift review runs once on a
