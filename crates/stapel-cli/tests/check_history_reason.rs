@@ -720,3 +720,93 @@ fn a_cached_step_runs_its_red_again() {
     let second = run(dir);
     assert_eq!(outcome(&second, "step 1"), "no-red", "{second}");
 }
+
+// AC-10 (review round 1, XR1-3): a test file shared with a later step's test: the RED run takes only
+// the step's own tests from the history commit, so the later test that needs later code stays out.
+#[test]
+fn later_tests_stay_out_of_the_red_run() {
+    let repo = common::git_repo();
+    let dir = repo.path();
+    write(
+        dir,
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/tiny\"]\nresolver = \"2\"\n",
+    );
+    write(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write(dir, "crates/tiny/src/lib.rs", "pub fn one() {}\n");
+    write(
+        dir,
+        "Cargo.lock",
+        "version = 3\n\n[[package]]\nname = \"tiny\"\nversion = \"0.1.0\"\n",
+    );
+    write(dir, ".gitignore", "/target\n");
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    stapel(dir).args(["new", "First"]).assert().success();
+    let scripts = TempDir::new().unwrap();
+    let fake = common::fake_cargo(scripts.path());
+    let toml: String = read(dir, ".stapel/stapel.toml")
+        .lines()
+        .map(|l| {
+            if l.starts_with("timeout_secs = ") {
+                format!("timeout_secs = 3600\ncargo = \"{fake}\"\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    write(dir, ".stapel/stapel.toml", &toml);
+    commit(dir, "initial");
+
+    let test = |name: &str, marker: &str, extra: &str| {
+        format!("#[test]\nfn {name}() {{\n    // fake: {marker}\n{extra}}}\n")
+    };
+    let add = |dir: &Path, text: &str| {
+        let lib = read(dir, "crates/tiny/src/lib.rs");
+        write(dir, "crates/tiny/src/lib.rs", &format!("{lib}{text}\n"));
+    };
+    let file = "crates/tiny/tests/shared.rs";
+    let first = test("a", "needs pub fn two", "");
+    // Step 1.
+    write(dir, file, &first);
+    commit(dir, "ABC-1 step 1 RED: two is missing");
+    add(dir, "pub fn two() {}");
+    commit(dir, "ABC-1 step 1 GREEN: two");
+    // Step 2: its test, in the same file, needs code that the RED of step 1 lacks.
+    write(
+        dir,
+        file,
+        &format!("{first}\n{}", test("b", "item pub fn later", "")),
+    );
+    commit(dir, "ABC-1 step 2 RED: later is missing");
+    add(dir, "pub fn later() {}");
+    commit(dir, "ABC-1 step 2 GREEN: later");
+    // A history commit weakens the test of step 1 only.
+    write(
+        dir,
+        file,
+        &format!(
+            "{}\n{}",
+            test("a", "needs pub fn one", "    let _weaker = 1;\n"),
+            test("b", "item pub fn later", "")
+        ),
+    );
+    commit(
+        dir,
+        "ABC-1 fix: weaker test of step 1\n\nhistory: the first check was too strict",
+    );
+
+    let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(outcome(&text, "step 1"), "no-red", "{text}");
+}
