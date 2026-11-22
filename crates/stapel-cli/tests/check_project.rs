@@ -565,3 +565,43 @@ fn the_limit_comes_before_the_skip() {
     let record = last_record(dir);
     assert_eq!(record["project"][0]["outcome"], "unverified", "{record}");
 }
+
+// AC-2, XR1-5: under the cargo runner a project command gets the environment of the cargo runs.
+#[test]
+fn cargo_commands_share_the_target() {
+    let log_dir = tempfile::tempdir().unwrap();
+    let log = log_dir.path().join("env");
+    let command = format!(
+        "printf '%s|%s' \"$CARGO_TARGET_DIR\" \"$CARGO_TERM_COLOR\" > {}",
+        log.display()
+    );
+    let toml = serde_json::to_string(&command).unwrap();
+    let (repo, _scripts) = project_repo(&format!("project = [{toml}]"), 3600, "");
+    let (code, text) = run(repo.path(), &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    let got = std::fs::read_to_string(&log).unwrap();
+    let (target, color) = got.split_once('|').expect(&got);
+    assert!(target.ends_with("/stapel/check-target"), "{got}");
+    assert_eq!(color, "never", "{got}");
+}
+
+// AC-2, XR1-7: control characters of a command and of its output print as spaces.
+#[test]
+fn control_characters_are_replaced() {
+    let command = "printf 'o\\001p\\r\\033[1mq\\n'; exit 4 # a\u{1}b\u{7}c";
+    let toml = serde_json::to_string(command).unwrap();
+    let (repo, _scripts) = project_repo(&format!("project = [{toml}]"), 3600, "");
+    let (code, text) = run(repo.path(), &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    let shown = "printf 'o\\001p\\r\\033[1mq\\n'; exit 4 # a b c";
+    assert!(
+        text.lines()
+            .any(|l| l.trim() == format!("project: {shown}: fail (exit 4)")),
+        "{text:?}"
+    );
+    assert!(text.lines().any(|l| l.trim() == "o p  [1mq"), "{text:?}");
+    assert!(
+        !text.chars().any(|c| c.is_control() && c != '\n'),
+        "{text:?}"
+    );
+}
