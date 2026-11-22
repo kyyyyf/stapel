@@ -136,7 +136,7 @@ before each GREEN also `--test ticket_drift`.
 | Level close | a light ticket, `dialogs = "close"`, Spec and Plan changed after the first ok: a hook Write allowed, `build: provisional STP-1`, `build-step`, the fact naming `spec, design, proof, plan`, none beside `confirm` at AC-4; every section fresh: no fact. Stops: a deleted Spec heading; the Description changed; a confirmed Plan with `Route: full`, also when the current Plan says `light`; no `Route:` line; a section never confirmed; a waiting custom section of `[build] requires`; level `all` | `next_provisional::light_ticket_at_level_close` |
 | Level key | absent; `all`; `close`; `Close`; `none`; `""` | `cli_config::process_dialogs` |
 | toml ask | Edit, MultiEdit (two edits, the second on the text of the first) and Write of `.stapel/stapel.toml` in modes `default`, `acceptEdits` and `auto`; the paths `.STAPEL/Stapel.toml`, `./.stapel/stapel.toml`, `crates/../.stapel/stapel.toml`, the absolute path and a symlink to it; the answer `ask` with the tool input unchanged | `hook::stapel_toml_edit_asks` |
-| toml refusals | `agent_id` set; mode `bypassPermissions` and no mode; `old_string` absent and found twice; a result with `[process] dialogs = "x"`; a result that is not TOML; on a case-sensitive file system a case variant that is another file, and a missing `.stapel/stapel.toml`: today's denial; Write of `process-ledger.jsonl` and `.claude/settings.json` | `hook::stapel_toml_edit_refusals` |
+| toml refusals | `agent_id` set; mode `bypassPermissions` and no mode; `old_string` absent and found twice; a result with `[process] dialogs = "x"`; a result that is not TOML; on a case-sensitive file system a case variant that is another file: today's denial (without `.stapel/stapel.toml` there is no stapel repository, so its answer is today's too); Write of `process-ledger.jsonl` and `.claude/settings.json` | `hook::stapel_toml_edit_refusals` |
 | Setup | `touch setup-ran` runs in the worktree, `setup: ok`, exit 0; no key: the output of today; `""` and `"  "`: load error | `new_branch::runs_the_setup` |
 | Output rule | no stream call or print macro outside `out.rs` | `closed_pipe::no_direct_stream_calls`, `closed_pipe::no_print_macros_outside_out` |
 | Setup fails | `exit 3` (`exit 3`); a command that is not found (`exit 127`); `kill -KILL $$` (`signal 9`); the worktree, branch and `ticket.md` exist after | `new_branch::failed_setup_keeps_the_worktree` |
@@ -223,8 +223,8 @@ without a dialog.
 - The patch round is a new fact of `next::Facts` computed from `review::finding_round` and the findings of
   that round (fate `patch`, verdict not `false`); the existing `patch_finding` (round 1 only) stays for
   `review::next_round`.
-- One function `stage::provisional(config, sections, state, facts)` returns the provisional sections of
-  AC-2 and AC-6; `next::decide`, `stage::build_permit` and `status` read it (`close` reads `stage::close_refusal`), so the three
+- One function `stage::provisional(config, sections, state, facts)` says whether the waiting sections are
+  provisional by AC-2 or AC-6; `next::decide`, `stage::build_permit` and `status` read it (`close` reads `stage::close_refusal`), so the three
   cannot disagree. `Permit` gets a third case `Provisional(key)`.
 - `next::decide` drops the confirmation facts of provisional sections and adds the `provisional:` fact;
   `after_the_steps` returns `confirm` or `write-page` in place of `write-summary` and `close` while a
@@ -235,7 +235,7 @@ without a dialog.
 - `[worktree] setup` runs with `std::process::Command::new("sh").arg("-c")`, the worktree as its working
   folder, stdout and stderr to stapel's stderr.
 - The `open:` lines come from `stapel next` itself, so the hook and the command print the same; the next
-  action of another worktree is `next::text_at(worktree)`'s action word.
+  action of another worktree is the last line of `next::text_at(worktree)` without `next: `.
 - Assumption (2026-11-22, agent): the hook input of a subagent's tool call has `agent_id`; the main
   agent's has none. The builder checks this against the Claude Code hook documentation and stops with an
   `intent_gap` if it is wrong.
@@ -288,8 +288,23 @@ without a dialog.
 - 2026-11-22, agent: Plan step 8 was shortened, same meaning, because AC-9 grew its brief past 1600 tokens;
   confirmed by `stapel ok`.
 - Step 12: `next::decide` collects the waiting sections and prints the fact line only when the permit is
-  provisional and one waits. Step 13: `level_close` needs every section other than Spec, Design, Proof and
-  Plan fresh; those four need one confirmation.
+  provisional and one waits, and not beside `confirm` or `write-page` (step 16). Step 13: `level_close`
+  needs every section other than Spec, Design, Proof and Plan fresh; those four need one confirmation and,
+  since step 16, wait only by `Changed` or `DependencyChanged` (a missing or doubled heading gives no
+  provisional permit).
+- Step 14: `out::stderr_duplicate` gives `run_setup` its stderr handle; the RED added an assertion to the
+  two `closed_pipe` rule tests, because an empty or comment-only RED counts as no test.
+- Step 15: `review::pack_round` moved from the cli to the core; `review::patch_round(records, pack_round)`
+  takes the newest round as the higher of the finding and pack rounds and needs that round's pack;
+  `stage::dir_patch_round` (the guard) calls the same function. `appended_plan` needs the first added line
+  to be a step line (`is_step_line`).
+- Step 17: `close_refusal` returns no refusal when `state.confirmations` is empty.
+- Step 18: `toml_edit_ask` compares the device and inode of the target with the repository's
+  `.stapel/stapel.toml`; another file or a missing one falls to `decide_write`. 2026-11-22, agent: the RED
+  changed `hook::stapel_toml_edit_asks` (on a case-sensitive file system a symlinked `.STAPEL` stands for
+  the same file, and `.stapel/Stapel.toml`, another file, gets no dialog) and
+  `hook::denies_settings_and_case_variants` (the machine-file text on a case-sensitive file system).
+- Step 19: the skill says one open ticket is continued and with several the person is asked.
 - 2026-11-22, agent: the builders of steps 3 and 12 edited files with short Python scripts instead of the
   Edit tool while the build was allowed; no guard was bypassed; the diffs are in their commits.
 - Pre-existing failures on this Mac with the default TMPDIR: `next::refuses_a_wrong_call`,
