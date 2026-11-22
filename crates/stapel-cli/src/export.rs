@@ -61,7 +61,99 @@ pub fn run(key: Option<&str>, onto: Option<&str>) -> Result<(), Fail> {
     if let Some(remote) = &done.push_remote {
         say!("push: git push {remote} export/{key}:{key}");
     }
+    if let Some(path) = write_merge_request(&cwd, &key).map_err(Fail::failed)? {
+        say!("merge request: {path}");
+    }
     Ok(())
+}
+
+/// STP-38 AC-7: writes `.stapel/tickets/<key>/merge-request.md` in the work tree at `top`; `None`
+/// when the work tree holds no folder of the ticket (an export from the base checkout).
+fn write_merge_request(top: &Path, key: &str) -> Result<Option<String>, String> {
+    use stapel_core::journal::{self, Entry};
+    let rel = format!(".stapel/tickets/{key}");
+    let folder = top.join(&rel);
+    let state_path = folder.join("state.json");
+    if !state_path.is_file() {
+        return Ok(None);
+    }
+    let title = match stapel_core::state::load(&state_path) {
+        stapel_core::state::Loaded::State(state) => state.title,
+        stapel_core::state::Loaded::Legacy(value) => value
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
+        stapel_core::state::Loaded::Unreadable(reason) => return Err(reason),
+    };
+    let summary = match std::fs::symlink_metadata(folder.join("ticket.md")) {
+        Ok(_) => {
+            let text = stapel_core::ticket::read(&folder.join("ticket.md"))?;
+            let sections = stapel_core::ticket::parse(&text);
+            stapel_core::ticket::find(&sections, "Summary")
+                .found()
+                .unwrap_or("")
+                .to_string()
+        }
+        Err(_) => String::new(),
+    };
+    let records: Vec<_> = journal::read(&folder.join("findings.jsonl"))?
+        .into_iter()
+        .filter_map(|(_, e)| match e {
+            Entry::V1(m) | Entry::Legacy(m) => Some(m),
+            Entry::Problem(_) => None,
+        })
+        .collect();
+    let field = |m: &serde_json::Map<String, serde_json::Value>, name: &str| {
+        m.get(name)
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .unwrap_or_default()
+    };
+    let mut seen: Vec<String> = Vec::new();
+    let mut items = String::new();
+    for m in records.iter().filter(|m| !m.contains_key("kind")) {
+        let Some(id) = m.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if seen.iter().any(|s| s == id) {
+            continue;
+        }
+        seen.push(id.to_string());
+        let state = stapel_core::triage::state_of(&records, id);
+        let Some(finding) = state.finding.as_ref() else {
+            continue;
+        };
+        if state.fate.as_deref() != Some("defer") || state.verdict.as_deref() == Some("false") {
+            continue;
+        }
+        items.push_str(&format!(
+            "- {id} {} {} round {}: {}\n",
+            state.severity.as_deref().unwrap_or(""),
+            field(finding, "stage"),
+            field(finding, "round"),
+            field(finding, "claim").replace('\n', " "),
+        ));
+    }
+    if items.is_empty() {
+        items.push_str("none\n");
+    }
+    let body = summary.trim_matches('\n');
+    let text = format!(
+        "# {key} \u{2014} {title}\n\n{body}\n\n## Deferred findings\n\n{items}",
+        body = body.trim_end()
+    );
+    let path = folder.join("merge-request.md");
+    let temp = folder.join(format!(".merge-request.md.{}.tmp", std::process::id()));
+    std::fs::write(&temp, text)
+        .and_then(|()| std::fs::rename(&temp, &path))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&temp);
+            format!("{}: {e}", path.display())
+        })?;
+    Ok(Some(format!("{rel}/merge-request.md")))
 }
 
 /// What an export wrote.

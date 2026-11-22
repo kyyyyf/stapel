@@ -6,7 +6,8 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// Files of a ticket that tools write; their changes do not make a tree dirty or a check stale.
-pub const MACHINE_FILES: [&str; 5] = [
+pub const MACHINE_FILES: [&str; 6] = [
+    "merge-request.md",
     "state.json",
     "decisions.jsonl",
     "findings.jsonl",
