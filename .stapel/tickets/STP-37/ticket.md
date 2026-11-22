@@ -387,8 +387,60 @@ Route: full (tags `interface`, `data`), auto.
 
 ## Review
 
-TODO
+Reviewers: spec review two rounds before the build (SR1, SR2: one HIGH, fixed); dependency reviews against
+STP-36 in three rounds (DP, DP2, DP3: the same two merge dependencies, lowered by the person's decision to
+build steps 1 to 10 first); a step drift review (DR) before code review; code review rounds 1, 2 and 3, each
+with stapel-reviewer (claude-sonnet-5-5), an external stapel-reviewer (claude-fable-5-1) and stapel-drift on
+the whole ticket. Round 3 ran on the binary of this branch, installed by the person (2026-11-22), because the
+binary of main refused `--round 3`. No screen promise, so no local stand.
+
+- Step drift: 2 LOW (DR-1 recorded in Design, DR-2 no change).
+- Round 1: 1 HIGH, 8 MEDIUM, 14 LOW. XR1-1 and CR1-1 (the step cache skipped the history RED run) fixed by
+  step 13; XR1-3 by step 14; XR1-2 by 15; XR1-6, CR1-7, DR1-2 by 16; XR1-5, XR1-7 by 17; CR1-3, DR1-1 by the
+  AC-14 text; CR1-2, CR1-4, CR1-5, CR1-8, XR1-4 by coverage steps 18 and 19; XR1-8 no change; XR1-9,
+  XR1-10, XR1-11, XR1-12, CR1-6, CR1-9 deferred.
+- Round 2: no HIGH, 3 MEDIUM inside and 1 outside, 13 LOW. XR2-1 and CR2-1 (a helper added by the history
+  commit) fixed by step 20; XR2-2 by Design "as built"; XR2-3, XR2-4 by coverage step 21; XR2-7 by a
+  Decision line; CR2-3, DR2-1 to DR2-3 no change; the other LOW deferred.
+- Round 3: no HIGH, 4 MEDIUM, 5 LOW. CR3-1 and XR3-3 (the junit branch of step 20 untested) closed by
+  coverage step 22; CR3-4, XR3-4 by Design "as built"; XR3-1, XR3-2 deferred as deliberate circumvention
+  outside the threat model; CR3-2, CR3-3, XR3-5 deferred.
+- Last check: at aa92e61, 22 steps pass, suite 1100 passed, 0 failed.
 
 ## Summary
 
-TODO
+Done: plan item 3b-3 (3.5, 3.6, 3.7b). `[check] project` runs the project's own commands after the suite at
+levels `head` and `full`, with `{files}` as the ticket's changed files; a failure fails the check and the
+close. Under junit the check compares the `.nvmrc` or `.node-version` pin with `node --version` and refuses a
+mismatch. A `history: <reason>` line lets a non-RED commit change its step's test or a build input; the
+step's RED run takes the new test text and must still fail, the cache follows that text, and the report and
+record list the history commits. `stapel review start --round N` takes any N of 1 or more after round N-1.
+`stapel close` appends one `catches` record and one `finding` record per deferred finding to the process
+ledger. The skill and the starter `stapel.toml` name all of it.
+
+For the person to overrule (agent decisions, in Decisions and Design):
+- The Plan has 22 steps, past the 12 of the Size: steps 13 to 22 are the fix steps of three review rounds
+  (XR2-7, CR3-3).
+- Record flags `project_truncated` and `history_truncated`; commands and reasons cut by characters; the
+  printed `history:` line is cut to 200 characters too.
+- The round refusal keeps the full path `.stapel/tickets/<KEY>/findings.jsonl`.
+- A history commit that also changes the test file outside its test functions excuses nothing there.
+- Step 2's RED was rebuilt once before any review (a test depended on the TMPDIR length).
+
+Open for the person (deferred findings, in findings.jsonl and the ledger at the close):
+- XR3-1, XR3-2 (MEDIUM): a deliberate history commit can still weaken a test through a new test function,
+  a common module or an earlier history commit, because a compile failure counts as a failing RED. Proposal:
+  a RED run with history text must fail by an assert, not by a compile failure.
+- XR1-9: nothing mechanical stops round 3 while a HIGH finding of round 2 is open; the skill rule stays.
+- XR1-11 (outside): every close now appends to the tracked ledger (`.gitattributes` has `merge=union`).
+- XR1-10, CR1-9: a `catches` line over 64 KiB refuses the close; a deferred finding without severity.
+- XR1-12: `{files}` inside the command's own quotes breaks the quoting.
+- CR1-6: the skill says a failed close writes nothing; a failed save after the append is not promised.
+- CR2-2, XR2-8: node refusals and `unverified: <why>` lines print raw text.
+- CR2-4: the output tail is stdout then stderr.
+- CR2-5, CR3-2: no unit tests of the test splice; the source-file case is shown by construction.
+- CR2-6: project commands get the allow-listed environment only (no `CI`, `NODE_OPTIONS`, proxies).
+- XR2-5, XR2-6: a misplaced doc line; node pin edges (non-UTF-8 pin, nightly versions).
+- CR3-4, XR3-5: `no_checkout_after_the_limit` uses a 10 s limit; `a_source_file_test_and_the_cargo_note`
+  runs a nested real cargo.
+- From STP-35: XR2-7 (skill and starter now name `project`; `level`, `points`, `suite_exclude` still not).
