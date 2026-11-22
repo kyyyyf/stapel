@@ -193,8 +193,9 @@ fn level_close(config: &Config, sections: &[Section], state: &State) -> bool {
         .iter()
         .filter(|s| s.owner != "generated")
         .all(|s| {
+            let covered = matches!(s.id.as_str(), "spec" | "design" | "proof" | "plan");
             latest(state, &s.id).is_some()
-                && (s.id != "description" || is_fresh(config, sections, state, &s.id))
+                && (covered || is_fresh(config, sections, state, &s.id))
         })
 }
 
