@@ -506,3 +506,23 @@ fn no_changed_files_skips() {
     assert_eq!(record["project"][0]["outcome"], "skipped", "{record}");
     assert_eq!(record["project"][1]["outcome"], "pass", "{record}");
 }
+
+// AC-3: a ticket without `base`: `{files}` holds only the files of the ticket's range, which starts at
+// its oldest commit with the key; the files before it are not listed.
+#[test]
+fn files_without_base() {
+    let log_dir = tempfile::tempdir().unwrap();
+    let log = log_dir.path().join("files");
+    let command = format!("printf \"%s\\n\" {{files}} >> {}", log.display());
+    let (repo, _scripts) = project_repo(&format!("project = ['{command}']"), 3600, "");
+    let dir = repo.path();
+    write(dir, "later.ts", "later\n");
+    commit(dir, "ABC-1: later file");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    let got = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(
+        got, "crates/tiny/src/lib.rs\ncrates/tiny/tests/basic.rs\nlater.ts\n",
+        "{text}"
+    );
+}
