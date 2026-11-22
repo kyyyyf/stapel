@@ -292,3 +292,89 @@ fn an_empty_reason_counts_as_none() {
         "{out}"
     );
 }
+
+// AC-10: the RED run of a step whose test a history commit changed takes the test file of the newest
+// history commit on the RED commit's code.
+#[test]
+fn a_weakened_test_is_no_red() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = common::git_repo();
+    let dir = repo.path();
+    write(
+        dir,
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/tiny\"]\nresolver = \"2\"\n",
+    );
+    write(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write(dir, "crates/tiny/src/lib.rs", "pub fn one() {}\n");
+    write(
+        dir,
+        "Cargo.lock",
+        "version = 3\n\n[[package]]\nname = \"tiny\"\nversion = \"0.1.0\"\n",
+    );
+    write(dir, ".gitignore", "/target\n");
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    stapel(dir).args(["new", "First"]).assert().success();
+    let scripts = TempDir::new().unwrap();
+    let fake = common::fake_cargo(scripts.path());
+    assert!(std::fs::metadata(&fake).unwrap().permissions().mode() & 0o100 != 0);
+    let toml: String = read(dir, ".stapel/stapel.toml")
+        .lines()
+        .map(|l| {
+            if l.starts_with("timeout_secs = ") {
+                format!("timeout_secs = 3600\ncargo = \"{fake}\"\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    write(dir, ".stapel/stapel.toml", &toml);
+    commit(dir, "initial");
+
+    let test = |marker: &str, extra: &str| {
+        format!("#[test]\nfn t() {{\n    // fake: {marker}\n{extra}}}\n")
+    };
+    let add = |dir: &Path, text: &str| {
+        let lib = read(dir, "crates/tiny/src/lib.rs");
+        write(dir, "crates/tiny/src/lib.rs", &format!("{lib}{text}\n"));
+    };
+    // Step 1: the history GREEN weakens the test: it passes on the RED code.
+    write(dir, "crates/tiny/tests/s1.rs", &test("needs pub fn two", ""));
+    commit(dir, "ABC-1 step 1 RED: two is missing");
+    add(dir, "pub fn two() {}");
+    write(dir, "crates/tiny/tests/s1.rs", &test("needs pub fn one", "    let _weaker = 1;\n"));
+    commit(dir, "ABC-1 step 1 GREEN: two\n\nhistory: the first check was too strict");
+    // Step 2: the history GREEN fixes a typo of the test; the test still fails on the RED code.
+    write(dir, "crates/tiny/tests/s2.rs", &test("needs pub fn three", ""));
+    commit(dir, "ABC-1 step 2 RED: three is missing");
+    add(dir, "pub fn three() {}");
+    write(
+        dir,
+        "crates/tiny/tests/s2.rs",
+        &test("needs pub fn three", "    let _fixed = 1;\n"),
+    );
+    commit(dir, "ABC-1 step 2 GREEN: three\n\nhistory: a typo in a comment");
+    // Step 3: the history GREEN's test does not compile on the RED code.
+    write(dir, "crates/tiny/tests/s3.rs", &test("needs pub fn four", ""));
+    commit(dir, "ABC-1 step 3 RED: four is missing");
+    add(dir, "pub fn four() {}");
+    write(dir, "crates/tiny/tests/s3.rs", &test("item pub fn four", "    let _item = 1;\n"));
+    commit(dir, "ABC-1 step 3 GREEN: four\n\nhistory: the test names the item");
+
+    let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(outcome(&text, "step 1"), "no-red", "{text}");
+    assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
+    assert_eq!(outcome(&text, "step 3"), "pass", "{text}");
+}
