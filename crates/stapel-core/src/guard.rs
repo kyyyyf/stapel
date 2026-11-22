@@ -6,6 +6,7 @@
 
 use crate::config::Config;
 use serde::Deserialize;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 /// The part of a Claude Code PreToolUse payload the guard looks at.
@@ -94,6 +95,13 @@ fn toml_edit_ask(input: &HookInput, target: &Path) -> Option<Decision> {
         .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
         .collect();
     if parts != [".stapel", "stapel.toml"] {
+        return None;
+    }
+    // The same file, not only the same name without case: a case variant is another file on a
+    // case-sensitive file system.
+    let own = std::fs::metadata(root.join(".stapel/stapel.toml")).ok()?;
+    let named = std::fs::metadata(target).ok()?;
+    if (own.dev(), own.ino()) != (named.dev(), named.ino()) {
         return None;
     }
     if input.agent_id.as_deref().is_some_and(|id| !id.is_empty()) {
