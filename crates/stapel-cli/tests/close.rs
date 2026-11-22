@@ -147,6 +147,18 @@ fn refuses_waiting_sections() {
         .code(1)
         .stderr(contains("spec").and(contains("wait for stapel ok ABC-1")));
     assert!(state_json(dir, "ABC-1").get("closed").is_none());
+    // A ticket with no confirmation at all (dropped before its first ok) closes as before.
+    let fresh = repo_with_ticket();
+    let fdir = fresh.path();
+    let (reason, replaced) = ask(fdir, "stapel close --reason dropped");
+    assert!(reason.contains("ABC-1"), "{reason}");
+    assert!(replaced.contains("--grant "), "{replaced}");
+    stapel(fdir)
+        .args(["close", "ABC-1", "--reason", "dropped"])
+        .assert()
+        .success()
+        .stdout(contains("closed: ABC-1"));
+    assert!(state_json(fdir, "ABC-1").get("closed").is_some());
 }
 
 #[test]
