@@ -287,8 +287,11 @@ without a dialog.
   `parallel::can_go_on_notice` (the `open: ABC-2` line between the notice and `next: new-ticket`).
 - 2026-11-22, agent: Plan step 8 was shortened, same meaning, because AC-9 grew its brief past 1600 tokens;
   confirmed by `stapel ok`.
-- 2026-11-22, agent: the step 3 builder edited three source files with a Python script instead of the Edit
-  tool while the build was allowed; no guard was bypassed; later builders used Edit and Write only.
+- Step 12: `next::decide` collects the waiting sections and prints the fact line only when the permit is
+  provisional and one waits. Step 13: `level_close` needs every section other than Spec, Design, Proof and
+  Plan fresh; those four need one confirmation.
+- 2026-11-22, agent: the builders of steps 3 and 12 edited files with short Python scripts instead of the
+  Edit tool while the build was allowed; no guard was bypassed; the diffs are in their commits.
 - Pre-existing failures on this Mac with the default TMPDIR: `next::refuses_a_wrong_call`,
   `status::refuses_ambiguous_case_variant_keys`, `records::dialog_refuses_an_unreadable_config`,
   `records::import_refuses_bad_input_path` (case-insensitive and `/private/var` paths); every check ran
