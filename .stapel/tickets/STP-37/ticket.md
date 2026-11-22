@@ -405,7 +405,10 @@ binary of main refused `--round 3`. No screen promise, so no local stand.
 - Round 3: no HIGH, 4 MEDIUM, 5 LOW. CR3-1 and XR3-3 (the junit branch of step 20 untested) closed by
   coverage step 22; CR3-4, XR3-4 by Design "as built"; XR3-1, XR3-2 deferred as deliberate circumvention
   outside the threat model; CR3-2, CR3-3, XR3-5 deferred.
-- Last check: at aa92e61, 22 steps pass, suite 1100 passed, 0 failed.
+- Merge review (STP-36 merged at 74200d1): no HIGH, no MEDIUM, 6 LOW; XM-4 fixed in this section, the
+  others deferred.
+- Last check: at aa92e61, the 18 steps with a RED and a GREEN pass (steps 18, 19, 21 and 22 are coverage
+  commits), suite 1100 passed, 0 failed.
 
 ## Summary
 
@@ -443,4 +446,7 @@ Open for the person (deferred findings, in findings.jsonl and the ledger at the 
 - XR2-5, XR2-6: a misplaced doc line; node pin edges (non-UTF-8 pin, nightly versions).
 - CR3-4, XR3-5: `no_checkout_after_the_limit` uses a 10 s limit; `a_source_file_test_and_the_cargo_note`
   runs a nested real cargo.
+- Merge review: XM-2 (the skill's code-review line still says "before round 2"), XM-3 (doc comments name
+  rounds 1 and 2), XM-1 (no provisional-permit test for round 3), XM-5 (outside: the close-record refusals
+  come after the dialog), MR-1 (STP-36's close reads `ticket.md` unbounded).
 - From STP-35: XR2-7 (skill and starter now name `project`; `level`, `points`, `suite_exclude` still not).
