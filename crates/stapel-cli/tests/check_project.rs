@@ -331,3 +331,178 @@ fn steps_level_skips() {
     assert!(!text.contains(&format!("project: {one}")), "{text}");
     assert!(!marker.exists(), "{text}");
 }
+
+// ---- AC-3: `{files}` ----
+
+/// Sets the `base` of ABC-1 to the current head and commits the state.
+fn set_base_here(dir: &Path) {
+    let head = {
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    let mut state = common::state_json(dir, "ABC-1");
+    state["base"] = serde_json::json!(head);
+    write(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+    );
+    commit(dir, "ABC-1: base");
+}
+
+// AC-3: the word `{files}` becomes the changed files of the range after the base, quoted, sorted and
+// unique; other words with the text stay as written.
+#[test]
+fn files_are_the_changed_files() {
+    let log_dir = tempfile::tempdir().unwrap();
+    let (l1, l2, l3) = (
+        log_dir.path().join("one"),
+        log_dir.path().join("two"),
+        log_dir.path().join("three"),
+    );
+    let c1 = format!("printf \"%s\\n\" {{files}} >> {}", l1.display());
+    let c2 = format!("printf \"%s\\n\" {{files}} {{files}} >> {}", l2.display());
+    let c3 = format!(
+        "echo --x={{files}} >> {}; echo \"{{files}}\" >> {}",
+        l3.display(),
+        l3.display()
+    );
+    let extra = format!("project = ['{c1}', '{c2}', '{c3}']");
+    let (repo, _scripts) = project_repo(&extra, 3600, "");
+    let dir = repo.path();
+    // Before the base: not changed files, and a name that a bare glob would match.
+    write(dir, "old.ts", "old\n");
+    write(dir, "gx.ts", "gx\n");
+    commit(dir, "ABC-1: old files");
+    set_base_here(dir);
+    let branch = {
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    // A side branch whose file comes only by the merge.
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write(dir, "side.ts", "side\n");
+    commit(dir, "a side commit");
+    git(dir, &["checkout", "-q", &branch]);
+    write(dir, "a.ts", "a\n");
+    write(dir, "with space.ts", "s\n");
+    write(dir, "é.ts", "e\n");
+    write(dir, "-x.ts", "x\n");
+    write(dir, "g*.ts", "g\n");
+    write(dir, "b[1].ts", "b\n");
+    write(dir, "gone.ts", "gone\n");
+    write(dir, "before.ts", "before\n");
+    write(dir, ".stapel/note.md", "note\n");
+    commit(dir, "ABC-1: files");
+    write(
+        dir,
+        "crates/tiny/tests/two.rs",
+        "#[test]\nfn needs_three() {\n    // fake: needs pub fn three\n}\n",
+    );
+    commit(dir, "ABC-1 step 2 RED: three is missing");
+    write(dir, "crates/tiny/src/three.rs", "pub fn three() {}\n");
+    commit(dir, "ABC-1 step 2 GREEN: three");
+    write(dir, "a.ts", "a2\n");
+    std::fs::remove_file(dir.join("gone.ts")).unwrap();
+    git(dir, &["mv", "before.ts", "new_name.ts"]);
+    commit(dir, "ABC-1: change, delete, rename");
+    git(
+        dir,
+        &[
+            "-c",
+            "user.name=test-user",
+            "-c",
+            "user.email=test-user.invalid",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "merge side",
+            "side",
+        ],
+    );
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    let names = [
+        "./-x.ts",
+        "a.ts",
+        "b[1].ts",
+        "crates/tiny/src/three.rs",
+        "crates/tiny/tests/two.rs",
+        "g*.ts",
+        "new_name.ts",
+        "with space.ts",
+        "é.ts",
+    ];
+    let got = |p: &Path| std::fs::read_to_string(p).unwrap();
+    let want: String = names.iter().map(|n| format!("{n}\n")).collect();
+    assert_eq!(got(&l1), want, "{text}");
+    assert_eq!(got(&l2), format!("{want}{want}"), "{text}");
+    assert_eq!(got(&l3), "--x={files}\n{files}\n", "{text}");
+    for c in [&c1, &c2, &c3] {
+        assert!(
+            text.lines().any(|l| l.trim() == format!("project: {c}: pass")),
+            "{text}"
+        );
+    }
+}
+
+// AC-3: no changed file outside `.stapel/` skips the command; it counts as passing; a command without
+// `{files}` still runs.
+#[test]
+fn no_changed_files_skips() {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let (m1, m2) = (
+        marker_dir.path().join("with-files"),
+        marker_dir.path().join("without"),
+    );
+    let c1 = format!("touch {} {{files}}", m1.display());
+    let c2 = format!("touch {}", m2.display());
+    let (repo, _scripts) = project_repo(&format!("project = ['{c1}', '{c2}']"), 3600, "");
+    let dir = repo.path();
+    write(dir, "old.ts", "old\n");
+    commit(dir, "ABC-1: old file");
+    set_base_here(dir);
+    // After the base: a file under `.stapel/`, and files that are added and then deleted, the files
+    // of a step 2 among them (its test is retired by a spec change).
+    write(dir, ".stapel/note.md", "note\n");
+    write(dir, "tmp.ts", "tmp\n");
+    commit(dir, "ABC-1: files");
+    write(
+        dir,
+        "crates/tiny/tests/two.rs",
+        "#[test]\nfn needs_three() {\n    // fake: needs pub fn three\n}\n",
+    );
+    commit(dir, "ABC-1 step 2 RED: three is missing");
+    write(dir, "crates/tiny/src/three.rs", "pub fn three() {}\n");
+    commit(dir, "ABC-1 step 2 GREEN: three");
+    std::fs::remove_file(dir.join("tmp.ts")).unwrap();
+    std::fs::remove_file(dir.join("crates/tiny/tests/two.rs")).unwrap();
+    std::fs::remove_file(dir.join("crates/tiny/src/three.rs")).unwrap();
+    commit(dir, "ABC-1: delete\n\nspec change: step 2 is not needed");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.trim() == format!("project: {c1}: skipped: no changed files")),
+        "{text}"
+    );
+    assert!(
+        text.lines().any(|l| l.trim() == format!("project: {c2}: pass")),
+        "{text}"
+    );
+    assert!(!m1.exists(), "{text}");
+    assert!(m2.exists(), "{text}");
+    assert!(text.contains("result: pass"), "{text}");
+    let record = last_record(dir);
+    assert_eq!(record["project"][0]["outcome"], "skipped", "{record}");
+    assert_eq!(record["project"][1]["outcome"], "pass", "{record}");
+}
