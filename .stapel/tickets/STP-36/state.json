@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "key": "STP-36",
+  "title": "The dialogs and the returns to the person",
+  "base": "e0da81a474cb3da0245eaec55d9ed591e3077aeb",
+  "base_branch": "main",
+  "confirmations": []
+}
