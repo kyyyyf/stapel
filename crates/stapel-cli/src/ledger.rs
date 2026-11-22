@@ -116,6 +116,13 @@ pub fn rules(last: Option<&str>) -> Result<(), Fail> {
         row.extend(shown.iter().map(|(_, c)| cell(c).to_string()));
         let total: u64 = tickets.iter().map(|(_, c)| cell(c)).sum();
         row.push(total.to_string());
+        // Quiet: no count in any of the newest three columns (needs three columns).
+        if shown.len() >= 3
+            && rule != "none"
+            && shown[shown.len() - 3..].iter().all(|(_, c)| cell(c) == 0)
+        {
+            row.push("quiet".to_string());
+        }
         rows.push(row);
     }
     let widths: Vec<usize> = (0..rows[0].len())
@@ -127,6 +134,9 @@ pub fn rules(last: Option<&str>) -> Result<(), Fail> {
             r.iter()
                 .enumerate()
                 .map(|(i, c)| {
+                    if i >= widths.len() {
+                        return c.clone();
+                    }
                     let pad = " ".repeat(widths[i] - c.chars().count());
                     if i == 0 {
                         format!("{c}{pad}")
