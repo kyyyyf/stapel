@@ -62,9 +62,30 @@ fn finding(id: &str, round: u32, fate: &str) -> String {
     )
 }
 
-/// A confirmed ticket with a one-step Plan, step 1 built, and the findings file `findings`.
+/// A `pack.md` of `round`, with the folder ignored as `review start` leaves it.
+fn pack_file(dir: &Path, round: u32) {
+    let review = dir.join(".stapel/scratch/review");
+    std::fs::create_dir_all(review.join(format!("ABC-1-r{round}"))).unwrap();
+    std::fs::write(review.join(".gitignore"), "*\n").unwrap();
+    std::fs::write(review.join(format!("ABC-1-r{round}/pack.md")), "pack\n").unwrap();
+}
+
+/// A confirmed ticket with a one-step Plan, step 1 built, the findings file `findings` and the
+/// review pack of each round that `findings` names.
 fn ticket(findings: &str) -> tempfile::TempDir {
+    let rounds: Vec<u32> = [1, 2]
+        .into_iter()
+        .filter(|r| findings.contains(&format!("\"round\":{r},")))
+        .collect();
+    ticket_with_packs(findings, &rounds)
+}
+
+/// The same with the review packs of `rounds` only.
+fn ticket_with_packs(findings: &str, rounds: &[u32]) -> tempfile::TempDir {
     let repo = repo_with_ticket();
+    for r in rounds {
+        pack_file(repo.path(), *r);
+    }
     let dir = repo.path();
     set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem.");
     set_section(
@@ -209,6 +230,24 @@ fn fix_steps_build_without_a_dialog() {
     stop(
         case(&round_two_clean, PLAN_TWO, None).1,
         "round 2 without a patch finding",
+    );
+    // A round 2 pack with no finding makes round 2 the newest: no patch round.
+    let repo = ticket_with_packs(&patch_one, &[1, 2]);
+    set_section(repo.path(), "ABC-1", "Plan", PLAN_TWO);
+    stop(action(repo.path()), "a round 2 pack with no finding");
+    // A patch finding with no review pack.
+    let repo = ticket_with_packs(&patch_one, &[]);
+    set_section(repo.path(), "ABC-1", "Plan", PLAN_TWO);
+    stop(action(repo.path()), "a patch finding with no review pack");
+    // An appended line that is no step.
+    stop(
+        case(
+            &patch_one,
+            "Route: full, auto.\n\n1. One (AC-1).\n   an indented line.",
+            None,
+        )
+        .1,
+        "an appended indented line",
     );
     stop(
         case(&finding("R1-1", 1, "defer"), PLAN_TWO, None).1,
