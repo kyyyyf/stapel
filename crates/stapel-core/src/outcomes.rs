@@ -731,6 +731,21 @@ pub fn analyse_in(
                         });
                         current = value;
                     }
+                    // STP-37 AC-9: a history commit may change a protected test; its text is the
+                    // protected text from here on.
+                    _ if matches!(unit, Unit::Test(_))
+                        && crate::steps::history_reason(&message).is_some() =>
+                    {
+                        let note = Note {
+                            kind: "history by",
+                            by: label,
+                            what: crate::steps::history_reason(&message).unwrap_or_default(),
+                        };
+                        if !a.notes.contains(&note) {
+                            a.notes.push(note);
+                        }
+                        current = value;
+                    }
                     _ => {
                         if at_head.is_some() {
                             changed_units.push(unit.name());
