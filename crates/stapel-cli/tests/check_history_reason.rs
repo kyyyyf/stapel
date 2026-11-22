@@ -926,3 +926,62 @@ fn a_history_helper_is_tests_changed() {
     let out = history(dir);
     assert_eq!(outcome(&out, "step 1"), "tests-changed", "{out}");
 }
+
+// AC-9 (XR2-3): a test inside a source file is judged as today, with or without a `history:` line;
+// the cargo `history by` note shows in a full check, not only in --history mode.
+#[test]
+fn a_source_file_test_and_the_cargo_note() {
+    // A test inside a source file is no step test and no protected unit: a later commit that changes
+    // it leaves the step as it is, and a `history:` line adds no note and changes nothing.
+    let outcome_of = |message: &str| {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        red(dir, "step 1", "one");
+        code(dir, "one");
+        let lib = read(dir, "crates/tiny/src/lib.rs");
+        let inline = |tail: &str| {
+            format!(
+                "{lib}\n#[cfg(test)]\nmod t {{\n    #[test]\n    fn inline() {{\n        assert_eq!(super::add(1, 1), 2{tail});\n    }}\n}}\n"
+            )
+        };
+        write(dir, "crates/tiny/src/lib.rs", &inline(""));
+        commit(dir, "ABC-1 step 1 GREEN: one");
+        write(dir, "crates/tiny/src/lib.rs", &inline(" + 0"));
+        commit(dir, &format!("ABC-1: change the inline test{message}"));
+        let out = history(dir);
+        (
+            outcome(&out, "step 1").to_string(),
+            notes(&out, "step 1").is_empty(),
+            out,
+        )
+    };
+    let (plain, plain_notes, out) = outcome_of("");
+    let (with, with_notes, out2) = outcome_of("\n\nhistory: a reworded assert");
+    assert_ne!(plain, "tests-changed", "{out}");
+    assert_eq!(plain, with, "{out}\n{out2}");
+    assert!(plain_notes && with_notes, "{out}\n{out2}");
+
+    // The cargo note in a full check.
+    let repo = cargo_repo();
+    let dir = repo.path();
+    write(
+        dir,
+        "Cargo.lock",
+        "version = 3\n\n[[package]]\nname = \"tiny\"\nversion = \"0.1.0\"\n",
+    );
+    commit(dir, "ABC-1: the lock file");
+    red(dir, "step 1", "one");
+    green_editing(dir, "step 1", "one", "\n\nhistory: the first assert was too strict");
+    let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    let full = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(outcome(&full, "step 1"), "pass", "{full}");
+    assert_eq!(
+        notes(&full, "step 1"),
+        ["history by step 1: the first assert was too strict"],
+        "{full}"
+    );
+}

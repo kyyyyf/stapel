@@ -566,6 +566,58 @@ fn the_limit_comes_before_the_skip() {
     assert_eq!(record["project"][0]["outcome"], "unverified", "{record}");
 }
 
+// AC-4 (XR2-4): no checkout of the copy runs after the limit ran out. A post-checkout hook leaves a
+// mark when it runs after the suite began its last run; a control with room in the limit shows the
+// hook does fire for a project command's checkout.
+#[test]
+fn no_checkout_after_the_limit() {
+    use std::os::unix::fs::PermissionsExt;
+    let hook_after = |wrap_tail: &str, timeout: u32| -> (bool, bool) {
+        let marks = tempfile::tempdir().unwrap();
+        let started = marks.path().join("suite-started");
+        let late = marks.path().join("late-checkout");
+        let ran = marks.path().join("ran");
+        let command = format!("touch {}", ran.display());
+        let wrap = format!(
+            "case \"$*\" in *--workspace*) touch {}; {wrap_tail} ;; esac",
+            started.display()
+        );
+        let (repo, _scripts) = project_repo(&format!("project = ['{command}']"), timeout, &wrap);
+        let hooks = std::process::Command::new("git")
+            .args(["rev-parse", "--git-common-dir"])
+            .current_dir(repo.path())
+            .output()
+            .unwrap();
+        let common = String::from_utf8(hooks.stdout).unwrap();
+        let common = repo.path().join(common.trim());
+        std::fs::create_dir_all(common.join("hooks")).unwrap();
+        let hook = common.join("hooks/post-checkout");
+        std::fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\nif [ -e {} ]; then touch {}; fi\n",
+                started.display(),
+                late.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let (_code, text) = run(repo.path(), &["--level", "head"]);
+        assert!(started.exists(), "the suite did not run: {text}");
+        (late.exists(), ran.exists())
+    };
+
+    // Control: with room in the limit the command runs after a checkout, and the hook fires.
+    let (late, ran) = hook_after("true", 3600);
+    assert!(late, "the hook did not fire for the project checkout");
+    assert!(ran);
+
+    // The suite uses the whole limit: no checkout and no command.
+    let (late, ran) = hook_after("sleep 60", 10);
+    assert!(!late, "a checkout ran after the limit");
+    assert!(!ran);
+}
+
 // AC-2, XR1-5: under the cargo runner a project command gets the environment of the cargo runs.
 #[test]
 fn cargo_commands_share_the_target() {
