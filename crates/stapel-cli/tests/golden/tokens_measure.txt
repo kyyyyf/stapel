@@ -4,5 +4,7 @@ main          claude-haiku-4-5-20251001          11       22          33        
 main          claude-sonnet-5-5                   4       ≥8          12           16
 subagents     claude-haiku-4-5-20251001        1000     2000        3000         4000
 subagents     claude-sonnet-5-5                 110      220         330          440
-attention: 2 dialogs, 2 questions, 1 messages; 1 min attention, 1 min waited (0 over 10 min)
+returns: 4 (2 dialogs, 1 question dialogs, 1 messages)
+interaction: 1 min
+waits: 1 min in all, 0 over 10 min
 wall time: 1 min
