@@ -2034,6 +2034,17 @@ fn names_dialogs_and_setup() {
         !skill.contains("are confirmed by one ok before their build"),
         "the skill keeps the old fix step text"
     );
+    assert!(
+        !skill.contains("continue the named or the only one"),
+        "the skill keeps the self-contradicting open-ticket sentence"
+    );
+    let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+    for want in [
+        "continue the only open ticket",
+        "with several, ask the person which one",
+    ] {
+        assert!(flat.contains(want), "the skill lacks {want}");
+    }
     let starter = read(repo.path(), ".stapel/stapel.toml");
     for want in ["# [process]", "# dialogs = \"all\"", "# [worktree]", "# setup = "] {
         assert!(
