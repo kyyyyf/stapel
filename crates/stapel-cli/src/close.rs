@@ -43,6 +43,16 @@ pub fn run(key: Option<&str>, reason: &str, grant: Option<&str>) -> Result<(), S
         }
         Status::Unreadable(r) => return Err(r),
     };
+    let text = std::fs::read_to_string(ticket.dir.join("ticket.md"))
+        .map_err(|e| format!("{}: ticket.md: {e}", ticket.key))?;
+    if let Some(r) = stapel_core::stage::close_refusal(
+        &config,
+        &stapel_core::ticket::parse(&text),
+        &state,
+        &ticket.key,
+    ) {
+        return Err(r);
+    }
     if let Some(base) = stapel_core::parallel::merge_main_needed(&root) {
         return Err(format!(
             "close needs {base} merged: run git merge {base} and stapel check {} first",

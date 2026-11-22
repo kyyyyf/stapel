@@ -99,6 +99,28 @@ pub fn waiting_for<'a>(
         .find(|s| !is_fresh(config, sections, state, &s.id))
 }
 
+/// The refusal of a close while a section waits for its confirmation (STP-36 AC-5): `None`
+/// when every section whose owner is not `generated` is fresh.
+pub fn close_refusal(
+    config: &Config,
+    sections: &[Section],
+    state: &State,
+    key: &str,
+) -> Option<String> {
+    let ids: Vec<&str> = config
+        .sections
+        .iter()
+        .filter(|s| s.owner != "generated")
+        .filter(|s| !is_fresh(config, sections, state, &s.id))
+        .map(|s| s.id.as_str())
+        .collect();
+    if ids.is_empty() {
+        None
+    } else {
+        Some(format!("{} wait for stapel ok {key}", ids.join(", ")))
+    }
+}
+
 /// Whether this open ticket's required sections are all freshly confirmed.
 pub fn ticket_permits(config: &Config, sections: &[Section], state: &State) -> bool {
     config
