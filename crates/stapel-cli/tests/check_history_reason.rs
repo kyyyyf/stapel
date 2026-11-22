@@ -723,6 +723,100 @@ fn a_cached_step_runs_its_red_again() {
 
 // AC-10 (review round 1, XR1-3): a test file shared with a later step's test: the RED run takes only
 // the step's own tests from the history commit, so the later test that needs later code stays out.
+// AC-9 (CR1-5): the note `history by <label>: <reason>` shows in a full check and under junit; a
+// history commit that deletes a test is judged as today; a history commit that weakens the test of
+// step 1 in a file shared with step 2 splices only that test into the RED run, so step 1 is `no-red`.
+#[test]
+fn the_note_in_full_and_junit() {
+    let report = |dir: &Path| {
+        let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+
+    // The note in a full check, junit.
+    let repo = common::junit_repo();
+    let dir = repo.dir();
+    write(
+        dir,
+        "__tests__/one.test.ts",
+        "it(\"one\", () => { /* needs src/one.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/one.ts", "export const v = 1;\n");
+    write(
+        dir,
+        "__tests__/one.test.ts",
+        "it(\"one\", () => { /* note needs src/one.ts */ });\n",
+    );
+    commit(
+        dir,
+        "ABC-1 step 1 GREEN: one\n\nhistory: the comment was reworded",
+    );
+    let full = report(dir);
+    assert_eq!(outcome(&full, "step 1"), "pass", "{full}");
+    assert_eq!(
+        notes(&full, "step 1"),
+        ["history by step 1: the comment was reworded"],
+        "{full}"
+    );
+    let out = history(dir);
+    assert_eq!(
+        notes(&out, "step 1"),
+        ["history by step 1: the comment was reworded"],
+        "{out}"
+    );
+
+    // A history commit that deletes a test is judged as today: no note.
+    let repo = common::junit_repo();
+    let dir = repo.dir();
+    write(
+        dir,
+        "__tests__/two.test.ts",
+        "it(\"two\", () => { /* needs src/two.ts */ });\nit(\"extra\", () => {});\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: two");
+    write(dir, "src/two.ts", "export const v = 2;\n");
+    commit(dir, "ABC-1 step 1 GREEN: two");
+    write(
+        dir,
+        "__tests__/two.test.ts",
+        "it(\"two\", () => { /* needs src/two.ts */ });\n",
+    );
+    commit(dir, "ABC-1: drop a test\n\nhistory: the extra test was noise");
+    let out = history(dir);
+    assert!(notes(&out, "step 1").is_empty(), "{out}");
+    let full = report(dir);
+    assert!(notes(&full, "step 1").is_empty(), "{full}");
+    assert!(!full.contains("history by "), "{full}");
+
+    // A shared test file with two tests of two steps: the history commit weakens step 1's test.
+    let repo = common::junit_repo();
+    let dir = repo.dir();
+    let file = "__tests__/shared.test.ts";
+    let first = "it(\"a\", () => { /* needs src/one.ts */ });\n";
+    let second = "it(\"b\", () => { /* needs src/two.ts */ });\n";
+    write(dir, file, first);
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/one.ts", "export const v = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: one");
+    write(dir, file, &format!("{first}{second}"));
+    commit(dir, "ABC-1 step 2 RED: two");
+    write(dir, "src/two.ts", "export const v = 2;\n");
+    commit(dir, "ABC-1 step 2 GREEN: two");
+    write(dir, file, &format!("it(\"a\", () => {{}});\n{second}"));
+    commit(
+        dir,
+        "ABC-1 fix: weaker test of step 1\n\nhistory: the first check was too strict",
+    );
+    let full = report(dir);
+    assert_eq!(outcome(&full, "step 1"), "no-red", "{full}");
+    assert_ne!(outcome(&full, "step 2"), "no-red", "{full}");
+}
+
 #[test]
 fn later_tests_stay_out_of_the_red_run() {
     let repo = common::git_repo();

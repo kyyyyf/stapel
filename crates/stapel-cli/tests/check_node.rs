@@ -300,3 +300,34 @@ fn a_mismatch_refuses() {
     assert_eq!(code, 2, "{text}");
     assert!(repo.runs().is_empty(), "{:?}", repo.runs());
 }
+
+// AC-6 (CR1-4): a `node` that hangs ends at the time limit of the check; the check is refused with
+// exit 2 and no test runs.
+#[test]
+fn a_hanging_node_ends_at_the_limit() {
+    let bad = tempfile::tempdir().unwrap();
+    let path = bad.path().join("node");
+    std::fs::write(&path, "#!/bin/sh\nexec sleep 60\n").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let repo = pinned(&[(".nvmrc", "20\n")]);
+    let dir = repo.dir();
+    let toml = read(dir, ".stapel/stapel.toml");
+    assert!(toml.contains("timeout_secs = 60"), "{toml}");
+    write(
+        dir,
+        ".stapel/stapel.toml",
+        &toml.replace("timeout_secs = 60", "timeout_secs = 10"),
+    );
+    commit(dir, "ABC-1: a short limit");
+    let started = std::time::Instant::now();
+    let (code, text) = run(dir, bad.path(), &[]);
+    assert!(started.elapsed().as_secs() < 50, "{:?}", started.elapsed());
+    assert_eq!(code, 2, "{text}");
+    assert!(
+        text.lines().any(|l| l
+            == "stapel: node --version failed: the time limit of 10 s for the check ran out"),
+        "{text}"
+    );
+    assert!(!text.contains("step 1:"), "no test ran: {text}");
+    assert!(repo.runs().is_empty(), "{:?}", repo.runs());
+}
