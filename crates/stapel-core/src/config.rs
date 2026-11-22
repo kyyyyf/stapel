@@ -95,6 +95,9 @@ pub struct Check {
     /// The cargo runner (STP-35 AC-12): `--skip` filters for the local suite below `full`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suite_exclude: Option<Vec<String>>,
+    /// Project commands (STP-37 AC-1): shell commands run in the check copy after the suite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<Vec<String>>,
 }
 
 pub const DEFAULT_TEST_GLOBS: [&str; 3] = ["**/*.test.*", "**/*.spec.*", "**/__tests__/**"];
@@ -436,6 +439,11 @@ impl Config {
                 }
                 if exclude.iter().any(|e| e.trim().is_empty()) {
                     return Err("check.suite_exclude has an empty entry".into());
+                }
+            }
+            if let Some(project) = &check.project {
+                if project.iter().any(|c| c.trim().is_empty()) {
+                    return Err("check.project entries must not be empty".into());
                 }
             }
             if !TIMEOUT_RANGE.contains(&check.timeout_secs) {
