@@ -390,7 +390,28 @@ Route: full (tags `guard`, `interface`), auto.
 
 ## Review
 
-TODO
+Reviewers: spec review two rounds (SR1: 1 HIGH, 9 MEDIUM; SR2: 2 MEDIUM) before the build; a step drift
+review (D1) after step 11; code review rounds 1 and 2, each with stapel-reviewer (claude-sonnet-5-5), an
+external stapel-reviewer (claude-fable-5-1) and stapel-drift on the whole ticket.
+
+- Step drift D1: 1 MEDIUM, 2 LOW, all patched (steps 12 and 13, the AC-10 text).
+- Round 1: no HIGH, 6 MEDIUM, 15 LOW. Patched by steps 15 to 19 (XR1-1, XR1-2, XR1-10 the patch round and
+  the appended step line; XR1-3, XR1-5, XR1-6 level close; XR1-4 the dropped ticket; R1-1, XR1-11 the same
+  file; XR1-9 the skill sentence) and by Spec text (R1-3, R1-4, R1-6, XR1-7, XR1-8, DR1-1, DR1-2); R1-2,
+  R1-5, R1-7 no change; XR1-12 deferred.
+- Round 2: no HIGH, 3 MEDIUM, 11 LOW. XR2-1 no change: the three `stapel.toml` guard tests pass on the
+  default case-insensitive TMPDIR of this Mac, so their case-insensitive branches ran (2026-11-22). XR2-2
+  no change: the guard and `stapel next` call the same `review::patch_round` and `review::pack_round`.
+  XR2-4 and XR2-6(4) patched in Design and the Test plan; the rest deferred (Summary).
+- No round 3: `stapel next` asks for this section after round 2; the person decides at the close.
+- Step 14 came from the first full check: the suite found `run_setup` calling `std::io::stderr()` outside
+  `out.rs` (`closed_pipe`), which the step 9 builder had not run.
+- Checks on this Mac, all with a case-sensitive TMPDIR: `steps` checks after every builder commit; `head`
+  checks with the whole suite (1063 tests) passed at `fc31dd9` (before round 1) and at `b1af9a5` (before
+  round 2), every earlier step `cached`. Three full checks failed on the way: the first suite run
+  (`closed_pipe`), and two on step 14's RED (empty, then comment-only).
+- Branch rebuilds: twice for the close fixtures on main (`0fc7a9a`, `1d3ef6e`), once for step 14's RED,
+  once for step 18's RED (an existing test that passed at RED).
 
 ## Summary
 
