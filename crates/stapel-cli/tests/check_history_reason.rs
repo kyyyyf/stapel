@@ -904,3 +904,25 @@ fn later_tests_stay_out_of_the_red_run() {
     );
     assert_eq!(outcome(&text, "step 1"), "no-red", "{text}");
 }
+
+// AC-9: a history commit that also changes its test file outside the step's tests (a helper it adds)
+// excuses nothing in that file: the step is `tests-changed`.
+#[test]
+fn a_history_helper_is_tests_changed() {
+    let repo = cargo_repo();
+    let dir = repo.path();
+    red(dir, "step 1", "one");
+    code(dir, "one");
+    write(
+        dir,
+        "crates/tiny/tests/one.rs",
+        "#[test]\nfn one() {\n    assert!(always_true());\n}\n\nfn always_true() -> bool {\n    true\n}\n",
+    );
+    commit(
+        dir,
+        "ABC-1 step 1 GREEN: one\n\nhistory: the assert moves into a helper",
+    );
+
+    let out = history(dir);
+    assert_eq!(outcome(&out, "step 1"), "tests-changed", "{out}");
+}
