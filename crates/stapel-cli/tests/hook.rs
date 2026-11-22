@@ -2050,3 +2050,84 @@ fn held_mark_forms() {
             .stderr(contains(CARGO_TEXT));
     }
 }
+
+// STP-36 AC-8: the main agent's edit of `.stapel/stapel.toml` gets the permission dialog.
+#[test]
+fn stapel_toml_edit_asks() {
+    let repo = initialized_repo();
+    let root = repo.path();
+    let original = std::fs::read_to_string(root.join(".stapel/stapel.toml")).unwrap();
+    let old = "always_writable = [\".stapel/\", \"docs/\"]";
+    assert!(original.contains(old));
+    let new = "always_writable = [\".stapel/\", \"scripts/\"]";
+    let newer = "always_writable = [\".stapel/\", \"tools/\"]";
+    let absolute = root.join(".stapel/stapel.toml").display().to_string();
+    std::os::unix::fs::symlink(root.join(".stapel/stapel.toml"), root.join("link.toml")).unwrap();
+    let paths = [
+        ".STAPEL/Stapel.toml".to_string(),
+        "./.stapel/stapel.toml".to_string(),
+        "crates/../.stapel/stapel.toml".to_string(),
+        absolute,
+        "link.toml".to_string(),
+    ];
+    for mode in ["default", "acceptEdits", "auto"] {
+        for path in &paths {
+            let calls = [
+                (
+                    "Edit",
+                    json!({ "file_path": path, "old_string": old, "new_string": new }),
+                ),
+                (
+                    "MultiEdit",
+                    json!({ "file_path": path, "edits": [
+                        { "old_string": old, "new_string": new },
+                        { "old_string": new, "new_string": newer },
+                    ] }),
+                ),
+                (
+                    "Write",
+                    json!({ "file_path": path, "content": original.replace(old, new) }),
+                ),
+            ];
+            for (tool, input) in calls {
+                let payload = json!({
+                    "session_id": "test",
+                    "hook_event_name": "PreToolUse",
+                    "cwd": root,
+                    "permission_mode": mode,
+                    "tool_name": tool,
+                    "tool_input": input,
+                });
+                let out = stapel(root)
+                    .args(["hook", "pre-tool-use"])
+                    .write_stdin(payload.to_string())
+                    .assert()
+                    .success()
+                    .get_output()
+                    .stdout
+                    .clone();
+                let what = format!("{tool} {path} in {mode}");
+                let v: serde_json::Value = serde_json::from_slice(&out)
+                    .unwrap_or_else(|e| panic!("no JSON answer for {what}: {e}"));
+                let h = &v["hookSpecificOutput"];
+                assert_eq!(h["hookEventName"], "PreToolUse", "{what}");
+                assert_eq!(h["permissionDecision"], "ask", "{what}");
+                assert_eq!(
+                    h["permissionDecisionReason"],
+                    "an edit of .stapel/stapel.toml: the person confirms it in this dialog",
+                    "{what}"
+                );
+                // The tool input stays as it came: no `updatedInput`, or the same one.
+                assert!(
+                    h.get("updatedInput").is_none() || h["updatedInput"] == input,
+                    "{what}: {v}"
+                );
+            }
+        }
+    }
+    // The ask changes nothing on disk.
+    assert_eq!(
+        std::fs::read_to_string(root.join(".stapel/stapel.toml")).unwrap(),
+        original
+    );
+}
