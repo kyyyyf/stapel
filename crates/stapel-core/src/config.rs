@@ -21,14 +21,18 @@ pub fn starter_toml(prefix: &str, cargo: bool) -> String {
     text.push_str(CHECK_COMMENT);
     if cargo {
         text.push_str("[check]\nrunner = \"cargo\"\ntimeout_secs = 3600\n");
+        text.push_str(PROJECT_COMMENT);
     } else {
         text.push_str(
             "# [check]\n# runner = \"junit\"\n# command = \"npx jest {file} --ci --reporters=jest-junit\"\n# report = \"junit.xml\"\n# tests = [\"**/*.test.*\"]\n",
         );
+        text.push_str(PROJECT_COMMENT);
     }
     text.push_str(PROCESS_COMMENT);
     text
 }
+
+const PROJECT_COMMENT: &str = "# project = [\"npx prettier --check {files}\"]   # shell commands run after the suite; {files} is the ticket's changed files\n";
 
 const PROCESS_COMMENT: &str = "\n# [process]\n# dialogs = \"all\"   # \"close\": a light ticket asks for one stapel ok before the close, after the first\n\n# [worktree]\n# setup = \"...\"   # a shell command that `stapel new` runs in the new worktree\n";
 
