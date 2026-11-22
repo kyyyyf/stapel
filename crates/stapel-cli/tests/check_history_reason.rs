@@ -378,3 +378,167 @@ fn a_weakened_test_is_no_red() {
     assert_eq!(outcome(&text, "step 2"), "pass", "{text}");
     assert_eq!(outcome(&text, "step 3"), "pass", "{text}");
 }
+
+// AC-11 (cargo): a history commit that changes a build input blocks no step; a later commit without
+// the line still blocks, and the text of the history commit is what a later change is compared with.
+#[test]
+fn build_input_with_a_reason() {
+    let helper = |text: &str| format!("pub fn shared() -> u32 {{\n    {text}\n}}\n");
+    let outcomes = |tail: &dyn Fn(&Path)| {
+        let repo = cargo_repo();
+        let dir = repo.path();
+        red(dir, "step 1", "one");
+        code(dir, "one");
+        commit(dir, "ABC-1 step 1 GREEN: one");
+        write(dir, "crates/tiny/tests/common/mod.rs", &helper("1"));
+        commit(dir, "ABC-1: a shared helper\n\nhistory: the tests share one helper");
+        red(dir, "step 2", "two");
+        code(dir, "two");
+        commit(dir, "ABC-1 step 2 GREEN: two");
+        tail(dir);
+        let text = history(dir);
+        (text, git(dir, &["rev-parse", "--short=7", "HEAD"]))
+    };
+    // Only the history commit: both steps wait for a run.
+    let (text, _) = outcomes(&|_| {});
+    assert_eq!(outcome(&text, "step 1"), "needs-run", "{text}");
+    assert_eq!(outcome(&text, "step 2"), "needs-run", "{text}");
+    // A later commit without the line changes a manifest: it blocks, and it is the one named.
+    let (text, sha) = outcomes(&|dir| {
+        let manifest = read(dir, "crates/tiny/Cargo.toml");
+        write(
+            dir,
+            "crates/tiny/Cargo.toml",
+            &format!("{manifest}\n[lib]\nname = \"tiny\"\n"),
+        );
+        commit(dir, "ABC-1: a lib table");
+    });
+    for label in ["step 1", "step 2"] {
+        assert_eq!(outcome(&text, label), "unverified", "{label}\n{text}");
+        assert!(
+            text.contains(&format!(
+                "{label}: unverified: build-input-changed: crates/tiny/Cargo.toml at {}",
+                sha.trim()
+            )),
+            "{label}\n{text}"
+        );
+    }
+    // A later commit without the line changes the helper again: it blocks.
+    let (text, sha) = outcomes(&|dir| {
+        write(dir, "crates/tiny/tests/common/mod.rs", &helper("2"));
+        commit(dir, "ABC-1: the helper changes again");
+    });
+    assert_eq!(outcome(&text, "step 2"), "unverified", "{text}");
+    assert!(
+        text.contains(&format!(
+            "step 2: unverified: build-input-changed: crates/tiny/tests/common/mod.rs at {}",
+            sha.trim()
+        )),
+        "{text}"
+    );
+}
+
+// AC-11 (junit): history commits that change an input, the configuration and the command's script
+// block no step and no run, in both modes; a later commit without the line still blocks.
+#[test]
+fn junit_input_with_a_reason() {
+    use std::os::unix::fs::PermissionsExt;
+    let setup = || {
+        let repo = common::junit_repo();
+        let dir = repo.dir();
+        let toml = read(dir, ".stapel/stapel.toml");
+        let stand_in = toml
+            .lines()
+            .find(|l| l.starts_with("command = "))
+            .unwrap()
+            .trim_start_matches("command = \"sh ")
+            .trim_end_matches(" {file}\"")
+            .to_string();
+        write(dir, "run.sh", &format!("exec sh '{stand_in}' \"$1\"\n"));
+        std::fs::set_permissions(dir.join("run.sh"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        let toml: String = toml
+            .lines()
+            .map(|l| {
+                if l.starts_with("command = ") {
+                    "command = \"./run.sh {file}\"\ninputs = [\"jest.config.js\"]\n".to_string()
+                } else {
+                    format!("{l}\n")
+                }
+            })
+            .collect();
+        write(dir, ".stapel/stapel.toml", &toml);
+        commit(dir, "setup: a repository script and an input");
+        repo
+    };
+    let step = |dir: &Path, n: u32, name: &str, between: &dyn Fn(&Path)| {
+        write(
+            dir,
+            &format!("__tests__/{name}.test.ts"),
+            &format!("it(\"{name}\", () => {{ /* needs src/{name}.ts */ }});\n"),
+        );
+        commit(dir, &format!("ABC-1 step {n} RED: {name}"));
+        between(dir);
+        write(dir, &format!("src/{name}.ts"), "export const v = 1;\n");
+        commit(dir, &format!("ABC-1 step {n} GREEN: {name}"));
+    };
+    let say = "\n\nhistory: this change was meant";
+    let both = |text: &str| {
+        for label in ["step 1", "step 2"] {
+            assert_ne!(outcome(text, label), "unverified", "{label}\n{text}");
+            assert!(!text.contains("build-input-changed"), "{text}");
+        }
+    };
+
+    // History commits: an input, the configuration and the script. No step is blocked.
+    let repo = setup();
+    let dir = repo.dir();
+    step(dir, 1, "one", &|dir| {
+        write(dir, "jest.config.js", "module.exports = {};\n");
+        commit(dir, &format!("ABC-1: a jest config{say}"));
+        let toml = read(dir, ".stapel/stapel.toml");
+        write(
+            dir,
+            ".stapel/stapel.toml",
+            &toml.replace("timeout_secs = 60", "timeout_secs = 61"),
+        );
+        commit(dir, &format!("ABC-1: a longer timeout{say}"));
+    });
+    step(dir, 2, "two", &|dir| {
+        let script = read(dir, "run.sh");
+        write(dir, "run.sh", &format!("# the same call\n{script}"));
+        commit(dir, &format!("ABC-1: a comment in the script{say}"));
+    });
+    let out = history(dir);
+    both(&out);
+    assert_eq!(outcome(&out, "step 1"), "needs-run", "{out}");
+    assert_eq!(outcome(&out, "step 2"), "needs-run", "{out}");
+    let full = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+    let full = format!(
+        "{}{}",
+        String::from_utf8_lossy(&full.stdout),
+        String::from_utf8_lossy(&full.stderr)
+    );
+    both(&full);
+    assert_eq!(outcome(&full, "step 1"), "pass", "{full}");
+    assert_eq!(outcome(&full, "step 2"), "pass", "{full}");
+
+    // A later commit without the line changes the input again before the GREEN: it blocks.
+    let repo = setup();
+    let dir = repo.dir();
+    step(dir, 1, "one", &|dir| {
+        write(dir, "jest.config.js", "module.exports = {};\n");
+        commit(dir, &format!("ABC-1: a jest config{say}"));
+        write(dir, "jest.config.js", "module.exports = { bail: 1 };\n");
+        commit(dir, "ABC-1: a stricter jest config");
+    });
+    let sha = git(dir, &["log", "--format=%h", "-n", "1", "--grep", "stricter"]);
+    let out = history(dir);
+    assert!(
+        out.contains(&format!(
+            "step 1: unverified: build-input-changed: jest.config.js at {}",
+            &sha.trim()[..7]
+        )),
+        "{out}"
+    );
+}
