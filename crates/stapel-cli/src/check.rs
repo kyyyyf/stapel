@@ -610,6 +610,14 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         }
         say_step(a, &outcome, &reason);
     }
+    // The history commits of the range, before the suite line (STP-37 AC-13).
+    let history = match build_inputs::history_commits(&root, &ticket.key, &at, bounds) {
+        Ok(h) => h,
+        Err(e) => return refuse(e),
+    };
+    for line in history_lines(&history) {
+        say!("{line}");
+    }
     // The entries left out of the local suite; at `full` nothing is left out (AC-12).
     let excluded: Vec<String> = if level_now == "full" {
         Vec::new()
@@ -637,7 +645,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
             for (command, outcome) in runner.project(project_commands) {
                 ok &= outcome == "pass" || outcome == "skipped";
                 project_json.push(serde_json::json!({
-                    "command": cut(&command, MAX_COMMAND),
+                    "command": cut_chars(&command, MAX_COMMAND),
                     "outcome": outcome,
                 }));
             }
@@ -679,6 +687,13 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
             record["project_truncated"] = serde_json::json!(true);
         }
         record["project"] = serde_json::json!(project_json);
+    }
+    if !history.is_empty() {
+        let (entries, truncated) = history_json(&history);
+        record["history"] = serde_json::json!(entries);
+        if truncated {
+            record["history_truncated"] = serde_json::json!(true);
+        }
     }
     if let Some(end) = &end {
         record["end"] = serde_json::json!(end);
@@ -726,7 +741,8 @@ struct Suite {
 const MAX_STEPS: usize = 200;
 const MAX_LABEL: usize = 200;
 const MAX_REASON: usize = 1024;
-/// A project command is cut to this many bytes in a record, and at most this many are listed.
+/// A project command or a history reason is cut to this many characters in a record, and at most
+/// `MAX_PROJECT` entries of each are listed.
 const MAX_COMMAND: usize = 200;
 const MAX_PROJECT: usize = 20;
 /// A failing project command prints this many lines of its output.
@@ -821,6 +837,39 @@ fn replace_files_word(command: &str, list: &[String]) -> String {
     }
     flush(&mut word, &mut out);
     out
+}
+
+/// The first `max` characters of `text`.
+fn cut_chars(text: &str, max: usize) -> String {
+    text.chars().take(max).collect()
+}
+
+/// The history lines of a report (STP-37 AC-13): `history: <short id> <reason>`, control
+/// characters of the reason each replaced by a space, the reason cut to `MAX_COMMAND` characters.
+fn history_lines(history: &[(String, String)]) -> Vec<String> {
+    history
+        .iter()
+        .map(|(sha, reason)| {
+            let shown: String = cut_chars(reason, MAX_COMMAND)
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            format!("history: {} {shown}", short(sha))
+        })
+        .collect()
+}
+
+/// The `history` entries of a check record (STP-37 AC-14): `{commit, reason}`, at most
+/// `MAX_PROJECT` of them; the flag says whether the rest were left out.
+fn history_json(history: &[(String, String)]) -> (Vec<serde_json::Value>, bool) {
+    let entries = history
+        .iter()
+        .take(MAX_PROJECT)
+        .map(|(sha, reason)| {
+            serde_json::json!({"commit": sha, "reason": cut_chars(reason, MAX_COMMAND)})
+        })
+        .collect();
+    (entries, history.len() > MAX_PROJECT)
 }
 
 fn cut(text: &str, max: usize) -> String {
@@ -1651,6 +1700,8 @@ pub(crate) struct HistoryStep {
 pub(crate) struct HistoryReport {
     pub inputs: BuildInputs,
     pub steps: Vec<HistoryStep>,
+    /// STP-37 AC-13: the history commits of the range as (full id, reason), oldest first.
+    pub history: Vec<(String, String)>,
 }
 
 pub(crate) fn history_report(
@@ -1691,7 +1742,12 @@ pub(crate) fn history_report(
             }
         })
         .collect();
-    Ok(HistoryReport { inputs, steps })
+    let history = build_inputs::history_commits(root, key, at, bounds)?;
+    Ok(HistoryReport {
+        inputs,
+        steps,
+        history,
+    })
 }
 
 /// `stapel check --history`: the full check's lines for the history outcomes, `needs-run` for the
@@ -1726,6 +1782,9 @@ fn print_history(
             }
             None => say_step(&s.analysis, "needs-run", ""),
         }
+    }
+    for line in history_lines(&report.history) {
+        say!("{line}");
     }
     if ok {
         say!("result: no history faults");

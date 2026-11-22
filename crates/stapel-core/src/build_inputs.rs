@@ -132,12 +132,31 @@ pub fn range(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Vec<S
 /// STP-37 AC-11: whether `sha` is a history commit: a non-RED commit of the ticket whose message has
 /// a history line. Its build input changes block nothing; the next commit is compared with its text.
 fn history_commit(root: &Path, key: &str, sha: &str) -> bool {
-    let Ok(message) = crate::steps::git_text(root, &["log", "-1", "--format=%B", sha]) else {
-        return false;
-    };
+    history_reason_of(root, key, sha).is_some()
+}
+
+/// The reason of `sha` when it is a history commit (a non-RED commit with a history line).
+fn history_reason_of(root: &Path, key: &str, sha: &str) -> Option<String> {
+    let message = crate::steps::git_text(root, &["log", "-1", "--format=%B", sha]).ok()?;
     let subject = message.lines().next().unwrap_or("");
     let red = matches!(parse_subject(key, subject), Some((_, Marker::Red)));
-    !red && history_reason(&message).is_some()
+    if red {
+        return None;
+    }
+    history_reason(&message)
+}
+
+/// STP-37 AC-13: the history commits of the ticket's range as (full id, reason), oldest first.
+pub fn history_commits(
+    root: &Path,
+    key: &str,
+    head: &str,
+    bounds: Bounds,
+) -> Result<Vec<(String, String)>, String> {
+    Ok(range(root, key, head, bounds)?
+        .into_iter()
+        .filter_map(|sha| history_reason_of(root, key, &sha).map(|r| (sha, r)))
+        .collect())
 }
 
 /// The second parent of a merge commit of the Walk that merged the base branch: a second parent
