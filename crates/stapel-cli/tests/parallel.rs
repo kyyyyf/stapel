@@ -859,14 +859,16 @@ fn can_go_on_notice() {
     let said = next(main, None);
     assert!(!said.contains("can go on"), "{said}");
 
-    // After the merge of the earlier ticket's closed branch: the notice, then `new-ticket`.
+    // After the merge of the earlier ticket's closed branch: the notice, the `open:` line of the
+    // later ticket (STP-36 AC-12), then `new-ticket`.
     close_uncommitted(&pair.a, "ABC-1");
     commit_ticket(&pair.a, "ABC-1");
     git_in(main, &["merge", "-q", "--no-ff", "--no-edit", "ABC-1"]);
     let said = next(main, None);
     let lines: Vec<&str> = said.lines().collect();
     assert_eq!(lines[0], notice, "{said}");
-    assert!(lines[1].starts_with("next: new-ticket"), "{said}");
+    assert!(lines[1].starts_with("open: ABC-2 — "), "{said}");
+    assert!(lines[2].starts_with("next: new-ticket"), "{said}");
 
     // Inside the worktree of the later ticket there is no notice.
     let said = next(&pair.b, None);
@@ -1368,4 +1370,120 @@ fn notice_edges() {
     git_in(main, &["checkout", "-q", "--detach"]);
     let said = next(main, None);
     assert!(!said.contains("can go on"), "{said}");
+}
+
+/// STP-36 AC-12: the `open:` lines of `stapel next` where no ticket of the branch is open.
+#[test]
+fn names_open_tickets_of_other_worktrees() {
+    let pair = two_ticket_worktrees();
+    let main = pair.repo.path();
+    let new_ticket = "next: new-ticket — stapel new \"<title>\"";
+    // The action of a ticket worktree: the last line of its own `stapel next`.
+    let action_of = |dir: &Path| {
+        let said = next(dir, None);
+        let last = said.lines().last().unwrap().to_string();
+        last.strip_prefix("next: ").unwrap().to_string()
+    };
+    // The `open:` lines and the rest of the output.
+    let split = |said: &str| {
+        let open: Vec<String> = said
+            .lines()
+            .filter(|l| l.starts_with("open: "))
+            .map(String::from)
+            .collect();
+        let rest: Vec<String> = said
+            .lines()
+            .filter(|l| !l.starts_with("open: "))
+            .map(String::from)
+            .collect();
+        (open, rest)
+    };
+    // The fields of `open: <KEY> — <title> — <path> — next: <action>`.
+    let fields = |line: &str| -> Vec<String> {
+        line.strip_prefix("open: ")
+            .unwrap()
+            .splitn(4, " — ")
+            .map(String::from)
+            .collect()
+    };
+    let same = |a: &str, b: &Path| {
+        Path::new(a).canonicalize().unwrap() == b.canonicalize().unwrap()
+    };
+
+    // From main: one line per ticket, sorted by key, before `next:`.
+    let said = next(main, None);
+    let (open, rest) = split(&said);
+    assert_eq!(rest, vec![new_ticket.to_string()], "{said}");
+    assert!(said.ends_with(&format!("{new_ticket}\n")), "{said}");
+    assert_eq!(open.len(), 2, "{said}");
+    for (line, key, title, dir) in [
+        (&open[0], "ABC-1", "First", &pair.a),
+        (&open[1], "ABC-2", "Second", &pair.b),
+    ] {
+        let f = fields(line);
+        assert_eq!(f[0], key, "{line}");
+        assert_eq!(f[1], title, "{line}");
+        assert!(same(&f[2], dir), "{line}");
+        assert_eq!(f[3], format!("next: {}", action_of(dir)), "{line}");
+    }
+
+    // A closed ticket is left out.
+    stapel(main).args(["new", "Third"]).assert().success();
+    let third = main.join(".claude/worktrees/ABC-3");
+    let mut state = common::state_json(&third, "ABC-3");
+    state["closed"] =
+        serde_json::json!({"by": "test-user", "at": "2026-10-19T10:00:00Z", "reason": "done"});
+    std::fs::write(
+        third.join(".stapel/tickets/ABC-3/state.json"),
+        format!("{state}\n"),
+    )
+    .unwrap();
+    let (open, _) = split(&next(main, None));
+    assert_eq!(open.len(), 2, "{open:?}");
+
+    // From a worktree of a branch without a ticket and of a detached HEAD: the same lines; the
+    // worktree itself has none.
+    let side = main.join(".claude/worktrees/side");
+    git_in(
+        main,
+        &["worktree", "add", "-q", "-b", "side", side.to_str().unwrap()],
+    );
+    let loose = main.join(".claude/worktrees/loose");
+    git_in(
+        main,
+        &["worktree", "add", "-q", "--detach", loose.to_str().unwrap()],
+    );
+    let (open_main, _) = split(&next(main, None));
+    assert_eq!(open_main.len(), 2, "{open_main:?}");
+    for dir in [&side, &loose] {
+        let said = next(dir, None);
+        let (open, rest) = split(&said);
+        assert_eq!(rest, vec![new_ticket.to_string()], "{said}");
+        assert_eq!(open.len(), 2, "{said}");
+        assert!(open[0].starts_with("open: ABC-1 — First — "), "{said}");
+        assert!(open[1].starts_with("open: ABC-2 — Second — "), "{said}");
+    }
+
+    // A state that cannot be read: the line of the branch; `next:` still follows.
+    let broken = pair.b.join(".stapel/tickets/ABC-2/state.json");
+    let good = std::fs::read_to_string(&broken).unwrap();
+    std::fs::write(&broken, "{ not json").unwrap();
+    let said = next(main, None);
+    let (open, rest) = split(&said);
+    assert_eq!(rest, vec![new_ticket.to_string()], "{said}");
+    assert_eq!(open.len(), 2, "{said}");
+    let line = open[1].strip_prefix("open: ").unwrap();
+    let parts: Vec<&str> = line.splitn(3, " — ").collect();
+    assert_eq!(parts[0], "ABC-2", "{line}");
+    assert!(same(parts[1], &pair.b), "{line}");
+    assert_eq!(parts[2], "next: unreadable", "{line}");
+    std::fs::write(&broken, good).unwrap();
+
+    // A worktree whose folder is gone is skipped.
+    std::fs::remove_dir_all(&pair.b).unwrap();
+    let said = next(main, None);
+    let (open, rest) = split(&said);
+    assert_eq!(rest, vec![new_ticket.to_string()], "{said}");
+    assert_eq!(open.len(), 1, "{said}");
+    assert!(open[0].starts_with("open: ABC-1 — First — "), "{said}");
 }
