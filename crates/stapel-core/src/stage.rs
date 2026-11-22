@@ -169,6 +169,37 @@ pub fn provisional(
     state: &State,
     patch_round: bool,
 ) -> bool {
+    level_close(config, sections, state) || fix_steps(config, sections, state, patch_round)
+}
+
+/// Whether the level is `close` and the ticket is light (STP-36 AC-6, AC-7): the Plan text of the
+/// Plan's last confirmation says `Route: light`, every section was confirmed once and the
+/// Description is fresh.
+fn level_close(config: &Config, sections: &[Section], state: &State) -> bool {
+    if config.process.as_ref().map(|p| p.dialogs.as_str()) != Some("close") {
+        return false;
+    }
+    let Some(plan) = config.section("plan") else {
+        return false;
+    };
+    let Some(confirmed) = latest(state, &plan.id).and_then(|c| c.text.as_deref()) else {
+        return false;
+    };
+    if !crate::next::is_light(confirmed) {
+        return false;
+    }
+    config
+        .sections
+        .iter()
+        .filter(|s| s.owner != "generated")
+        .all(|s| {
+            latest(state, &s.id).is_some()
+                && (s.id != "description" || is_fresh(config, sections, state, &s.id))
+        })
+}
+
+/// The fix steps of the newest code review round (STP-36 AC-2).
+fn fix_steps(config: &Config, sections: &[Section], state: &State, patch_round: bool) -> bool {
     if !patch_round {
         return false;
     }
