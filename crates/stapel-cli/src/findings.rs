@@ -20,12 +20,24 @@ fn sync_stops(root: &Path, key: &str) {
     }
 }
 
+/// The generated block of the Review section after the records changed (STP-38 AC-1). A block
+/// that cannot be written is reported; the records stay.
+fn write_block(plan_target: &Path) {
+    let Some(dir) = plan_target.parent() else {
+        return;
+    };
+    if let Err(e) = stapel_core::review_block::write(dir) {
+        warn!("stapel: review block not updated: {e}");
+    }
+}
+
 pub fn import(file: &str, key: Option<&str>) -> Result<(), Fail> {
     let (root, _config) = repo::open().map_err(Fail::failed)?;
     let user = user_name(&root).map_err(Fail::failed)?;
     let importer = importer_json(in_agent_shell(), &user);
     let plan = plan_findings(&root, Path::new(""), file, key, &importer).map_err(Fail::refused)?;
     append_all(&plan.target, &plan.findings.lines).map_err(Fail::refused)?;
+    write_block(&plan.target);
     sync_stops(&root, &plan.key);
     say!(
         "imported: {} findings into {}",
@@ -42,6 +54,7 @@ pub fn triage(file: &str, key: Option<&str>) -> Result<(), Fail> {
     let importer = importer_json(in_agent_shell(), &user);
     let plan = plan_triage(&root, Path::new(""), file, key, &importer).map_err(Fail::refused)?;
     append_all(&plan.target, &plan.findings.lines).map_err(Fail::refused)?;
+    write_block(&plan.target);
     sync_stops(&root, &plan.key);
     say!(
         "triaged: {} findings of {}",

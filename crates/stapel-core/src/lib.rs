@@ -21,6 +21,7 @@ pub mod parallel;
 pub mod privacy;
 pub mod records;
 pub mod review;
+pub mod review_block;
 pub mod runner;
 pub mod rust_tests;
 pub mod stage;
