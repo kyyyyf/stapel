@@ -4,7 +4,6 @@ use crate::fail::Fail;
 use crate::repo;
 use stapel_core::state::{State, save};
 use stapel_core::tickets::{key_number, next_key, tickets_dir};
-use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
 
 pub fn run(title: &str, tracker: Option<&str>) -> Result<(), Fail> {
@@ -125,9 +124,7 @@ fn run_setup(command: &str, worktree: &Path) -> Result<(), Refusal> {
             worktree.display()
         ))
     };
-    let stderr = std::io::stderr()
-        .as_fd()
-        .try_clone_to_owned()
+    let stderr = crate::out::stderr_duplicate()
         .map_err(|e| failed(format!("could not start: {e}")))?;
     let stdout = stderr
         .try_clone()
