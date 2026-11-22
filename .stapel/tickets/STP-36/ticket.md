@@ -7,19 +7,14 @@ of the first cut grouped into four tickets).
 
 ### Frame
 
-**Problem.** The process turns to the person more often than the decisions need. A grant lives 30 minutes,
-so an answer after a pause costs a second dialog. Each code review round with a fix step costs one more
-`stapel ok` before the fix is built, although the fix only follows a finding inside the promise. A light
-ticket has the same dialogs as a full one. An agent may not edit `.stapel/stapel.toml` at all, so the
-person types the change. `stapel new` gives a worktree without the project's setup (the pilot linked
-`node_modules` by hand), and a session that starts on the base branch says `new-ticket` while open tickets
-wait in their worktrees, so the person types which ticket to continue.
+**Problem.** The process turns to the person more often than the decisions need: a 30-minute grant, a
+`stapel ok` per fix round, the full dialogs on a light ticket, a denied `.stapel/stapel.toml`, a worktree
+without the project's setup, and `new-ticket` at a session start while tickets wait in worktrees.
 
 **Plan item:** 3b-2 (3.3, 3.4, 3.7a, 3.8).
 
-**Risk tags:** `guard` (the build permit, the guard's answer for `.stapel/stapel.toml`), `interface` (the
-keys `[process] dialogs` and `[worktree] setup`, the actions and lines of `stapel next`, the output of
-`stapel new`).
+**Risk tags:** `guard` (the build permit, `.stapel/stapel.toml`), `interface` (`[process] dialogs`,
+`[worktree] setup`, `stapel next`, `stapel new`).
 
 **Non-goals.** Writes of `.stapel/stapel.toml` through Bash; dialogs in a permission mode that offers none;
 other machine files (`process-ledger.jsonl`, `.claude/settings.json`); a time limit of the setup command;
@@ -28,38 +23,28 @@ removing a worktree whose setup failed; items 3.5 to 3.10; the removal of the em
 **Promise (closed list).**
 
 1. Grant lifetime: a grant stays valid 24 hours after its dialog appears.
-2. Fix steps: when the newest code review round has a finding with the fate `patch`, and the only change
-   since the last confirmations is new text after the end of the confirmed Plan, `stapel next` hands out
-   the new steps for the build without a `stapel ok`; the Plan waits for the `stapel ok` before the Summary
-   and the close. A change of any other section or of the confirmed Plan text stops the build until
-   `stapel ok`, as today.
-3. Dialog level: `[process] dialogs` is `all` (the default, as today) or `close`. With `close` on a ticket
-   whose Plan said `Route: light` at its last confirmation, the first `stapel ok` stays; after it a change of Spec, Design, Proof or
-   Plan keeps the build going on a provisional permit and waits for one `stapel ok` before the close, and a
-   change of the Description stops the build until `stapel ok`. A full ticket keeps every dialog but those of
-   item 2.
-4. `.stapel/stapel.toml`: an Edit or Write of it by the main agent gets the Claude Code permission dialog
-   instead of a denial, when the resulting file loads; it is denied as today in a mode without a dialog, for
-   a subagent, and when the result does not load (with the load error).
-5. The close: `stapel close` refuses while a section waits for its confirmation.
-6. Worktree setup: `[worktree] setup` is a shell command that `stapel new` runs in the new worktree after
-   it writes the ticket and prints the worktree, with no input and its output on stderr; its failure keeps
-   the worktree and the ticket, names the failure and exits 1.
-7. Open tickets at the session start: `stapel next` where no ticket of the current branch is open (the base
-   branch or another branch without a ticket), and so the SessionStart hook, prints
-   one line per open ticket of another worktree, with its key, title, worktree path and next action, before
-   `new-ticket`.
+2. Fix steps: after a code review round with a `patch` finding, steps appended to the confirmed Plan
+   build without a `stapel ok` and wait for the one before the close; any other change stops the build.
+3. Dialog level: `[process] dialogs` is `all` (default) or `close`. With `close` on a ticket confirmed as
+   `Route: light`, after the first `stapel ok` changes of Spec, Design, Proof and Plan build provisionally
+   until the ok before the close; a Description change stops the build.
+4. `.stapel/stapel.toml`: the main agent's Edit or Write of it gets the permission dialog when the result
+   loads; denied for a subagent, without a dialog mode, or when the result does not load.
+5. The close: `stapel close` refuses while a section waits for its confirmation, unless the ticket has no
+   confirmation at all (a ticket dropped before its first `stapel ok`).
+6. Worktree setup: `stapel new` runs `[worktree] setup` in the new worktree; a failure keeps the worktree
+   and exits 1.
+7. Open tickets: `stapel next` in a checkout with no open ticket, and so the SessionStart hook, names the
+   open tickets of other worktrees before `new-ticket`.
 8. The skill and the starter `stapel.toml` of `stapel init` name items 2, 3, 6 and 7.
 
 Not promised: worktrees whose folder is gone (skipped); a setup command that never ends; files the setup
 makes that the project does not ignore (they show as uncommitted, as any file).
 
-**Prior art.** STP-2 (grants and the dialog), STP-13 and later (the build permit, `[build] requires`),
-STP-28 (parallel tickets, `parallel::worktrees`), STP-32 (the page and the `stapel ok` summary).
+**Prior art.** STP-2 (grants), STP-13 (the permit), STP-28 (worktrees), STP-32 (the page).
 
-**Size.** About 400 source lines (`grant.rs`, `next.rs` of core and cli, `stage.rs`, `guard.rs`,
-`hook.rs`, `config.rs`, `new.rs`, the skill and the starter `stapel.toml`), about 500 test lines. 13 Plan
-steps after the drift fixes (Decisions). Route: full, auto.
+**Size.** About 400 source and 500 test lines; 19 Plan steps after the review fixes (Decisions). Route:
+full, auto.
 
 ### Decisions
 
@@ -80,17 +65,28 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
 - 2026-11-22: Decision (agent): the drift fixes D1-1 and D1-2 are Plan steps 12 and 13, so the Plan has
   13 steps, one past the limit of `docs/PLAN.md`; one combined step had a brief of 2031 tokens. Rejected:
   a follow-up ticket for two fixes of this ticket's own criteria.
+- 2026-11-22: Decision (agent): step 14 (the output rule) and the code review round 1 fix steps 15 to 19
+  make 19 steps. The Frame was shortened, same promise, so that every step's brief stays under 1600 tokens.
+- 2026-11-22: Decision (agent, XR1-4): a ticket with no confirmation at all closes as before; the close
+  refusal needs one confirmation. Rejected: a separate `--drop` flag (new interface).
+- 2026-11-22: Decision (agent, XR1-1, XR1-2): the patch round needs the review pack of its round, so a
+  finding imported before any review gives no patch round. Rejected: a dialog for `findings import`.
+- 2026-11-22: Decision (agent, XR1-9): with several open tickets and none named, the orchestrator asks the
+  person which one (a question at the session start). Rejected: continuing the newest.
 
 ## Spec
 
 Terms:
 
 - **Waiting section**: a section (owner not `generated`) whose latest confirmation is stale, or that has none.
-- **Patch round**: the newest whole round of stage `code-review` in `findings.jsonl` (`review::finding_round`),
-  when it has a finding whose current fate is `patch` and whose verdict is not `false`.
+- **Patch round**: the newest code review round N, the highest of the review packs
+  `.stapel/scratch/review/<KEY>-r<N>/pack.md` and of the whole rounds of stage `code-review` in
+  `findings.jsonl`, when the pack of round N exists and a finding of round N has the current fate `patch`
+  and a verdict other than `false`.
 - **Appended Plan**: a current Plan whose normal form, split into lines, begins with every line of the
   normal form of the Plan text of its last confirmation, each line equal and in order, and has at least one
-  line more; a confirmed line that was extended is a changed line.
+  line more, the first of them a Plan step line (`<n>. ` or `<n><letter>. `); a confirmed line that was
+  extended is a changed line.
 - **Provisional section**: a waiting section that does not stop the build: under AC-2 the Plan, under AC-6
   Spec, Design, Proof and Plan. It waits for the `stapel ok` before `write-summary` and `close`.
 - **Provisional permit**: the build permit of a ticket that has a waiting required section (`[build]
@@ -102,17 +98,17 @@ Terms:
 |---|---|---|
 | AC-1 | WHEN the guard issues a grant for a dialog THE grant expires 86400 seconds after it is issued; a grant used before then is accepted and one used after is refused with `stapel: the grant expired; ask the agent to run the command again`, as today. | `ok::grant_lives_24_hours` |
 | AC-2 | WHEN the ticket has a patch round, the Plan is its only waiting section and it is an appended Plan THE `stapel next` prints the action its history gives (such as `build-step`) instead of `write-page` or `confirm`, with the fact line `provisional: <ids joined by ", "> wait for stapel ok <KEY> before the close`, printed only while one waits; when the Plan is in `[build] requires` the guard allows code writes and `stapel status` prints `build: provisional <KEY>`. | `next_provisional::fix_steps_build_without_a_dialog` |
-| AC-3 | IF in the state of AC-2 another section also waits, or a line of the confirmed Plan changed (the Plan is not an appended Plan), or the newest round has no patch finding (round 2 without one included), or the Plan was never confirmed THEN `stapel next` prints `write-page` or `confirm` as today. | `next_provisional::fix_steps_build_without_a_dialog` |
-| AC-4 | WHEN a provisional section waits and the history gives `write-summary` or `close` THE `stapel next` prints `write-page` or `confirm` with the confirmation facts instead. | `next_provisional::close_waits_for_the_ok` |
-| AC-5 | IF a section whose owner is not `generated` waits when `stapel close` runs THEN it exits 1 with `stapel: <ids joined by ", "> wait for stapel ok <KEY>` and writes nothing, and the guard refuses the close dialog with the same text before it issues a grant; WHEN no such section waits THE close is as today. | `close::refuses_waiting_sections` |
-| AC-6 | WHEN `[process] dialogs` is `close`, the Plan text of the Plan's last confirmation says `Route: light`, every section was confirmed once and the Description is fresh THE waiting Spec, Design, Proof and Plan are provisional: the guard allows code writes, `stapel status` prints `build: provisional <KEY>`, and `stapel next` goes on by its history, with the fact line of AC-2, until AC-4. | `next_provisional::light_ticket_at_level_close` |
+| AC-3 | IF in the state of AC-2 another section also waits, or a line of the confirmed Plan changed (the Plan is not an appended Plan), or the newest round has no patch finding (a round 2 with no finding at all included) or no review pack, or the Plan was never confirmed THEN `stapel next` prints `write-page` or `confirm` as today. | `next_provisional::fix_steps_build_without_a_dialog` |
+| AC-4 | WHEN a provisional section waits and the history gives `write-summary` or `close` THE `stapel next` prints `write-page` or `confirm` with the confirmation facts instead, and without the fact line of AC-2. | `next_provisional::close_waits_for_the_ok` |
+| AC-5 | IF a section whose owner is not `generated` waits when `stapel close` runs and the ticket has at least one confirmation THEN it exits 1 with `stapel: <ids joined by ", "> wait for stapel ok <KEY>` and writes nothing, and the guard refuses the close dialog with the same text before it issues a grant; WHEN no such section waits, or the ticket has no confirmation at all, THE close is as today. | `close::refuses_waiting_sections` |
+| AC-6 | WHEN `[process] dialogs` is `close`, the Plan text of the Plan's last confirmation says `Route: light`, every section was confirmed once and the Description is fresh THE Spec, Design, Proof and Plan that wait because a text changed (theirs or one they depend on; not a missing or doubled heading) are provisional: the guard allows code writes, `stapel status` prints `build: provisional <KEY>`, and `stapel next` goes on by its history, with the fact line of AC-2, until AC-4. | `next_provisional::light_ticket_at_level_close` |
 | AC-7 | IF the key is `close` and the Description waits, or the confirmed Plan text does not say `Route: light` (a current Plan changed to `light` included), or a section was never confirmed, or a section other than Spec, Design, Proof and Plan waits THEN the permit and `stapel next` are as with `all`; WHEN `[process] dialogs` is absent THE level is `all`; IF it is another word THEN loading `stapel.toml` fails with `process.dialogs must be all or close: <value>`. | `next_provisional::light_ticket_at_level_close`, `cli_config::process_dialogs` |
-| AC-8 | WHEN the main agent's Edit, MultiEdit or Write of `.stapel/stapel.toml` comes (the path resolved as the guard resolves every path, so `./`, `..`, an absolute path and a symlink to it count, and compared without case) in a dialog mode and the file it would leave loads THE guard answers `ask` with the reason `an edit of .stapel/stapel.toml: the person confirms it in this dialog` and leaves the tool input unchanged. | `hook::stapel_toml_edit_asks` |
-| AC-9 | IF that edit comes from a subagent (the refusals are judged in this order: subagent, mode, apply, load) (the hook input has `agent_id`) THEN the guard denies with `only the main agent edits .stapel/stapel.toml, through the person's dialog`; IF the mode is not a dialog mode THEN it denies with `an edit of .stapel/stapel.toml needs the permission dialog, which Claude Code does not show in permission mode "<mode>"`; IF an Edit's `old_string` is not found exactly once (or once with `replace_all`) THEN it denies with `the edit of .stapel/stapel.toml does not apply`; IF the result does not load THEN it denies with `.stapel/stapel.toml would not load: <error>`; `process-ledger.jsonl` and `.claude/settings.json` stay denied. | `hook::stapel_toml_edit_refusals` |
+| AC-8 | WHEN the main agent's Edit, MultiEdit or Write of `.stapel/stapel.toml` comes (the path resolved as the guard resolves every path, so `./`, `..`, an absolute path and a symlink to it count, and compared without case), names the same file as the repository's `.stapel/stapel.toml` (same device and inode), comes in a dialog mode and the file it would leave loads THE guard answers `ask` with the reason `an edit of .stapel/stapel.toml: the person confirms it in this dialog` and leaves the tool input unchanged. | `hook::stapel_toml_edit_asks` |
+| AC-9 | IF that edit comes from a subagent (the refusals are judged in this order: subagent, mode, apply, load) (the hook input has `agent_id`) THEN the guard denies with `only the main agent edits .stapel/stapel.toml, through the person's dialog`; IF the mode is not a dialog mode THEN it denies with `an edit of .stapel/stapel.toml needs the permission dialog, which Claude Code does not show in permission mode "<mode>"`; IF an Edit's `old_string` is not found exactly once (or once with `replace_all`) THEN it denies with `the edit of .stapel/stapel.toml does not apply`; IF the result does not load THEN it denies with `.stapel/stapel.toml would not load: <error>`; `process-ledger.jsonl` and `.claude/settings.json` stay denied; a path that names another file (a case variant on a case-sensitive file system) or no file keeps today's denial. | `hook::stapel_toml_edit_refusals` |
 | AC-10 | WHEN `[worktree] setup` holds a command and `stapel new` makes a worktree THE `stapel new` prints its `worktree:` line, then runs the command through `sh -c` in the new worktree with an empty input and its output (stdout and stderr) on stderr, then prints `setup: ok` and exits 0; WHEN the key is absent THE output is as today; IF it is empty or only whitespace THEN loading `stapel.toml` fails with `worktree.setup is empty: name a shell command`; the setup's streams come from `out.rs`, as every output of stapel. | `new_branch::runs_the_setup`, `closed_pipe::no_direct_stream_calls`, `closed_pipe::no_print_macros_outside_out` |
 | AC-11 | IF the setup command exits with a status other than 0 or cannot start THEN `stapel new` keeps the worktree, the branch and the ticket, prints `stapel: the setup command failed (<status>); the worktree is kept: <path>`, where `<status>` is `exit <n>`, `signal <n>` or `could not start: <error>`, and exits 1. | `new_branch::failed_setup_keeps_the_worktree` |
-| AC-12 | WHEN `stapel next` or the SessionStart hook runs where no ticket of the current branch is open THE output has, before the `next:` line, one line `open: <KEY> — <title> — <worktree path> — next: <action>` per open ticket on the branch of another worktree, sorted by key; the current worktree, a closed ticket and a worktree whose folder is gone are left out; IF the ticket or the next action of another worktree cannot be read THEN its line is `open: <branch> — <worktree path> — next: unreadable` and the rest of the output is as without it; with none the output is as today. | `parallel::names_open_tickets_of_other_worktrees`, `hook_session::names_open_tickets` |
-| AC-13 | WHEN `stapel init` writes the skill and the starter `stapel.toml` THE skill names the provisional sections of AC-2 and AC-6, `[process] dialogs`, `[worktree] setup` and the `open:` lines of AC-12, and the starter `stapel.toml` has the keys `dialogs` and `setup` as comments. | `init_process::names_dialogs_and_setup` |
+| AC-12 | WHEN `stapel next` (text output; `--json` prints none) or the SessionStart hook runs where this checkout holds no open ticket THE output has, before the `next:` line, one line `open: <KEY> — <title> — <worktree path> — next: <action>`, `<action>` being that worktree's own `next:` line without `next: `, per open ticket on the branch of another worktree, sorted by key; the current worktree, a closed ticket and a worktree whose folder is gone are left out; IF the ticket of another worktree cannot be read THEN its line is `open: <branch> — <worktree path> — next: unreadable`, and IF only its next action cannot be read THEN `open: <KEY> — <worktree path> — next: unreadable`, and the rest of the output is as without it; with none the output is as today. | `parallel::names_open_tickets_of_other_worktrees`, `hook_session::names_open_tickets` |
+| AC-13 | WHEN `stapel init` writes the skill and the starter `stapel.toml` THE skill names the provisional sections of AC-2 and AC-6, `[process] dialogs`, `[worktree] setup` and the `open:` lines of AC-12 (one open ticket is continued; with several and none named, the person is asked which), and the starter `stapel.toml` has the keys `dialogs` and `setup` as comments. | `init_process::names_dialogs_and_setup` |
 
 ### Guarantees
 
@@ -121,7 +117,8 @@ Terms:
   ticket without a patch round at level `all`; the `stapel ok` dialog and its grant other than the lifetime;
   the guard for every other path; `stapel new` without the key.
 - **Not promised:** the Frame's list; a dialog for a Bash write of `.stapel/stapel.toml` (it stays
-  unguarded, as today); an Edit whose file changed between the hook and the tool.
+  unguarded, as today); an Edit whose file changed between the hook and the tool; the Edit tool's quote
+  normalisation (the guard matches `old_string` exactly).
 
 ## Test plan
 
@@ -133,18 +130,18 @@ before each GREEN also `--test ticket_drift`.
 | Category | Cases | Tests |
 |---|---|---|
 | Grant lifetime | the `expires_at` of a grant the hook issues is the test's clock plus 86400 s, within 5 s; the grant is accepted at once | `ok::grant_lives_24_hours` |
-| Fix steps | a patch round 1, a step appended to the Plan (also with the last confirmed line extended, which stops): `build-step` of the new step and the fact `provisional: plan wait for stapel ok STP-1 before the close`, absent once the Plan is confirmed; the same with the patch finding in round 2; the Plan in `[build] requires`: a hook Write of `src/x.rs` allowed and `build: provisional STP-1`. Stops: Spec changed too; Design changed; an old step's test name changed; the `Route:` line changed; a round 2 with no patch finding after a patch round 1; the finding's fate `defer` only; before any confirmation | `next_provisional::fix_steps_build_without_a_dialog` |
+| Fix steps | a patch round 1, a step appended to the Plan (stops: the last confirmed line extended; an appended indented line that is no step; a round 2 pack with no finding; a patch finding with no review pack): `build-step` of the new step and the fact `provisional: plan wait for stapel ok STP-1 before the close`, absent once the Plan is confirmed; the same with the patch finding in round 2; the Plan in `[build] requires`: a hook Write of `src/x.rs` allowed and `build: provisional STP-1`. Stops: Spec changed too; Design changed; an old step's test name changed; the `Route:` line changed; a round 2 with no patch finding after a patch round 1; the finding's fate `defer` only; before any confirmation | `next_provisional::fix_steps_build_without_a_dialog` |
 | Close waits | all steps built and the review written, the Plan waiting: `confirm` (or `write-page`) instead of `write-summary`; with the Summary written: instead of `close` | `next_provisional::close_waits_for_the_ok` |
-| Close refuses | `stapel close` with the Plan waiting; with Spec waiting; the hook dialog of `stapel close` refuses the same before a grant file exists; every section fresh: closes as today | `close::refuses_waiting_sections` |
-| Level close | a light ticket, `dialogs = "close"`, Spec and Plan changed after the first ok: a hook Write allowed, `build: provisional STP-1`, `build-step`, the fact naming `spec, plan`; every section fresh: no fact. Stops: the Description changed; a confirmed Plan with `Route: full`, also when the current Plan says `light`; no `Route:` line; a section never confirmed; a waiting custom section of `[build] requires`; level `all` | `next_provisional::light_ticket_at_level_close` |
+| Close refuses | `stapel close` with the Plan waiting; with Spec waiting; the hook dialog of `stapel close` refuses the same before a grant file exists; every section fresh: closes as today; a ticket with no confirmation at all closes | `close::refuses_waiting_sections` |
+| Level close | a light ticket, `dialogs = "close"`, Spec and Plan changed after the first ok: a hook Write allowed, `build: provisional STP-1`, `build-step`, the fact naming `spec, design, proof, plan`, none beside `confirm` at AC-4; every section fresh: no fact. Stops: a deleted Spec heading; the Description changed; a confirmed Plan with `Route: full`, also when the current Plan says `light`; no `Route:` line; a section never confirmed; a waiting custom section of `[build] requires`; level `all` | `next_provisional::light_ticket_at_level_close` |
 | Level key | absent; `all`; `close`; `Close`; `none`; `""` | `cli_config::process_dialogs` |
 | toml ask | Edit, MultiEdit (two edits, the second on the text of the first) and Write of `.stapel/stapel.toml` in modes `default`, `acceptEdits` and `auto`; the paths `.STAPEL/Stapel.toml`, `./.stapel/stapel.toml`, `crates/../.stapel/stapel.toml`, the absolute path and a symlink to it; the answer `ask` with the tool input unchanged | `hook::stapel_toml_edit_asks` |
-| toml refusals | `agent_id` set; mode `bypassPermissions` and no mode; `old_string` absent and found twice; a result with `[process] dialogs = "x"`; a result that is not TOML; Write of `process-ledger.jsonl` and `.claude/settings.json` | `hook::stapel_toml_edit_refusals` |
+| toml refusals | `agent_id` set; mode `bypassPermissions` and no mode; `old_string` absent and found twice; a result with `[process] dialogs = "x"`; a result that is not TOML; on a case-sensitive file system a case variant that is another file, and a missing `.stapel/stapel.toml`: today's denial; Write of `process-ledger.jsonl` and `.claude/settings.json` | `hook::stapel_toml_edit_refusals` |
 | Setup | `touch setup-ran` runs in the worktree, `setup: ok`, exit 0; no key: the output of today; `""` and `"  "`: load error | `new_branch::runs_the_setup` |
 | Output rule | no stream call or print macro outside `out.rs` | `closed_pipe::no_direct_stream_calls`, `closed_pipe::no_print_macros_outside_out` |
 | Setup fails | `exit 3` (`exit 3`); a command that is not found (`exit 127`); `kill -KILL $$` (`signal 9`); the worktree, branch and `ticket.md` exist after | `new_branch::failed_setup_keeps_the_worktree` |
 | Open tickets | a ticket worktree with a corrupt `state.json` (`next: unreadable`, and the `next:` line still follows); two ticket worktrees, one closed, one whose folder was removed: one `open:` line with the next action of that worktree; run from main and from a worktree of a non-ticket branch; no open ticket: as today | `parallel::names_open_tickets_of_other_worktrees`, `hook_session::names_open_tickets` |
-| Init | the skill and the starter `stapel.toml` that `stapel init` writes | `init_process::names_dialogs_and_setup` |
+| Init | the skill and the starter `stapel.toml` that `stapel init` writes; the skill's sentence for one and for several open tickets | `init_process::names_dialogs_and_setup` |
 
 ### Inputs
 
@@ -165,14 +162,15 @@ before each GREEN also `--test ticket_drift`.
 | claude-code | environment of hook processes, transcripts, tool success | not read by this ticket | — |
 | git | linked worktrees, including ones whose folder is gone | an `open:` line per live worktree; a gone folder is skipped | `parallel::names_open_tickets_of_other_worktrees` |
 | git | detached HEAD in another worktree | no ticket branch: no line | `parallel::names_open_tickets_of_other_worktrees` |
-| git | paths with spaces in the worktree path | the setup runs with the worktree as its working folder, not in the command text | `new_branch::runs_the_setup` |
+| git | paths with spaces in the worktree path | the setup runs with the worktree as its working folder, not in the command text; not tested | — |
 | git | history shape, object format, submodules, other dimensions | unchanged by this ticket | — |
 | os | case-insensitive file systems | the path of `.stapel/stapel.toml` matches in any case | `hook::stapel_toml_edit_asks` |
 | os | processes: a setup command that waits for input or never ends | not promised (Frame) | — |
 | os | time: clock skew | the grant uses wall-clock seconds, as today; not promised | — |
 | cargo | every dimension | not read by this ticket | — |
 
-**Review Focus:** a setup start failure (`could not start:`) is not tested, since `sh` is always there; two sessions that issue grants for the same ticket within 24 hours (each grant is bound to
+**Review Focus:** untested (XR1-8): `replace_all` with several matches, a MultiEdit that does not apply, mode
+`plan` for AC-8, the `unknown status` arm of the setup; a setup start failure (`could not start:`) is not tested, since `sh` is always there; two sessions that issue grants for the same ticket within 24 hours (each grant is bound to
 its facts; not tested); a MultiEdit whose second edit depends on the first (applied in order, as the tool
 does; tested once); a patch round whose fix step also edits the Proof table (stops the build by AC-3; the
 review judges whether that is too strict); the SessionStart hook in a repository with many worktrees (one
@@ -190,6 +188,7 @@ review judges whether that is too strict); the SessionStart hook in a repository
 | writes the path as `.STAPEL/stapel.TOML`, `./.stapel/stapel.toml` or through a symlink | the same dialog | `hook::stapel_toml_edit_asks` |
 | sets `[process] dialogs = "close"` for itself | the edit goes through the person's dialog | `hook::stapel_toml_edit_asks` |
 | writes `Route: light` into the Plan of a full ticket at level `close` | the route comes from the confirmed Plan text; the build stops | `next_provisional::light_ticket_at_level_close` |
+| imports a code-review finding with fate `patch` before any review, to build appended steps without a dialog | no review pack of that round: no patch round, the build stops | `next_provisional::fix_steps_build_without_a_dialog` |
 | appends to `.stapel/stapel.toml` through Bash | not guarded, as today (Non-goals) | — |
 
 **Author self-check (item 7).** Done on 2026-11-22: each row of the Abuse table maps to a promise item or
@@ -225,7 +224,7 @@ without a dialog.
   that round (fate `patch`, verdict not `false`); the existing `patch_finding` (round 1 only) stays for
   `review::next_round`.
 - One function `stage::provisional(config, sections, state, facts)` returns the provisional sections of
-  AC-2 and AC-6; `next::decide`, `stage::build_permit`, `status` and `close` all read it, so the four
+  AC-2 and AC-6; `next::decide`, `stage::build_permit` and `status` read it (`close` reads `stage::close_refusal`), so the three
   cannot disagree. `Permit` gets a third case `Provisional(key)`.
 - `next::decide` drops the confirmation facts of provisional sections and adds the `provisional:` fact;
   `after_the_steps` returns `confirm` or `write-page` in place of `write-summary` and `close` while a
@@ -361,6 +360,18 @@ Route: full (tags `guard`, `interface`), auto.
 14. Output rule (AC-10; tests `closed_pipe::no_direct_stream_calls`,
     `closed_pipe::no_print_macros_outside_out`, red since step 9, so the RED is an empty commit): `out.rs`
     gives `run_setup` its stderr handle. Must not change: the setup's output.
+15. Patch round (XR1-1; AC-2, AC-3; test `next_provisional::fix_steps_build_without_a_dialog`,
+    red on a round 2 pack with no finding): the round with its pack; appended text starts with a step.
+    Must not change: AC-6.
+16. Level close (XR1-3; AC-4, AC-6; test `next_provisional::light_ticket_at_level_close`,
+    red on the fact beside `confirm`): no fact at AC-4; a missing heading is no provisional wait.
+    Must not change: AC-2.
+17. Dropped ticket (XR1-4; AC-5; test `close::refuses_waiting_sections`, red on a ticket with no
+    confirmation): the refusal needs one confirmation. Must not change: the other close gates.
+18. Same file (R1-1; AC-8, AC-9; test `hook::stapel_toml_edit_refusals`, red on a case variant
+    that is another file): ask only for the same file. Must not change: the refusal order.
+19. Skill sentence (XR1-9; AC-13; test `init_process::names_dialogs_and_setup`, red on the old sentence):
+    one open ticket is continued, several are asked about. Must not change: the other assets.
 
 ## Review
 
