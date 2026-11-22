@@ -3,7 +3,7 @@
 //! `decide` is a pure function over facts the command gathered: it reads no file and runs no git.
 
 use crate::config::Config;
-use crate::stage::{freshness, latest};
+use crate::stage::{freshness, latest, provisional};
 use crate::state::State;
 use crate::ticket::{Lookup, Section, find};
 use crate::triage::Blocking;
@@ -127,6 +127,8 @@ pub struct Facts<'a> {
     pub review_round: u64,
     /// Whether a patch finding of round 1 exists (STP-24).
     pub patch_finding: bool,
+    /// Whether the newest code review round has a patch finding (STP-36).
+    pub patch_round: bool,
     /// Whether the page of the waiting sections is fresh (STP-32 AC-9).
     pub page_fresh: bool,
     /// The history facts; `None` until the caller has read the history.
@@ -470,7 +472,9 @@ pub fn decide(f: &Facts) -> Decision {
             }
         }
     }
-    let unconfirmed = !confirm_facts.is_empty();
+    let provisional = provisional(f.config, f.sections, f.state, f.patch_round);
+    let unconfirmed = !confirm_facts.is_empty() && !provisional;
+    let provisional_fact = format!("provisional: plan waits for stapel ok {} before the close", f.key);
 
     let plan = f
         .config
@@ -478,6 +482,7 @@ pub fn decide(f: &Facts) -> Decision {
         .and_then(|def| find(f.sections, &def.title).found());
     let plan_is_light = plan.is_some_and(is_light);
     let mut needs_history = false;
+    let mut notes: Vec<String> = Vec::new();
     let action = if !written(f.sections, "Description")
         || !find(f.sections, "Description")
             .found()
@@ -525,14 +530,17 @@ pub fn decide(f: &Facts) -> Decision {
             )
         }
     } else if let Some(h) = f.history {
-        history_action(f, h, plan, &mut facts)
+        let action = history_action(f, h, plan, &mut facts);
+        notes.extend(provisional.then(|| provisional_fact.clone()));
+        action
     } else {
         // The rules that read history come next; the caller reads it and decides again.
         needs_history = true;
         let first = plan.and_then(|plan| plan_steps(plan).into_iter().next());
         Action::new("build-step", first, Some(Target::Path(path)))
     };
-    let facts = facts.into_iter().map(|s| format!("blocked: {s}")).collect();
+    let mut facts: Vec<String> = facts.into_iter().map(|s| format!("blocked: {s}")).collect();
+    facts.extend(notes);
     Decision {
         facts,
         action,

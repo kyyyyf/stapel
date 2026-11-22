@@ -123,7 +123,69 @@ pub fn diff(confirmed: &str, current: &str) -> String {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Permit {
     Computed(String),
+    /// The Plan waits for its `stapel ok` but only grew by fix steps (STP-36).
+    Provisional(String),
     ByHand(String),
+}
+
+/// Whether `current` is an appended Plan of the confirmed text `confirmed`: every normal-form line
+/// of the confirmed text, each equal and in order, and at least one line more.
+pub fn appended_plan(confirmed: &str, current: &str) -> bool {
+    let old = normal_form(confirmed);
+    let new = normal_form(current);
+    let old: Vec<&str> = old.lines().collect();
+    let new: Vec<&str> = new.lines().collect();
+    new.len() > old.len() && new[..old.len()] == old[..]
+}
+
+/// Whether the build goes on without a `stapel ok` of the Plan (STP-36): the newest code review
+/// round has a patch finding (`patch_round`), the Plan is the only waiting section and it is an
+/// appended Plan.
+pub fn provisional(
+    config: &Config,
+    sections: &[Section],
+    state: &State,
+    patch_round: bool,
+) -> bool {
+    if !patch_round {
+        return false;
+    }
+    let Some(plan) = config.section("plan") else {
+        return false;
+    };
+    let waiting: Vec<&SectionDef> = config
+        .sections
+        .iter()
+        .filter(|s| s.owner != "generated")
+        .filter(|s| !is_fresh(config, sections, state, &s.id))
+        .collect();
+    if waiting.len() != 1 || waiting[0].id != plan.id {
+        return false;
+    }
+    let Some(c) = latest(state, &plan.id) else {
+        return false;
+    };
+    let (Some(confirmed), Lookup::Found(current)) = (c.text.as_deref(), find(sections, &plan.title))
+    else {
+        return false;
+    };
+    freshness(config, sections, c) == [Reason::Changed] && appended_plan(confirmed, current)
+}
+
+/// Whether the newest code review round of the ticket in `dir` has a patch finding.
+fn dir_patch_round(dir: &Path) -> bool {
+    use crate::journal::Entry;
+    let Ok(entries) = crate::journal::read(&dir.join("findings.jsonl")) else {
+        return false;
+    };
+    let records: Vec<_> = entries
+        .into_iter()
+        .filter_map(|(_, e)| match e {
+            Entry::V1(m) | Entry::Legacy(m) => Some(m),
+            Entry::Problem(_) => None,
+        })
+        .collect();
+    crate::review::patch_round(&records)
 }
 
 /// Reads a regular file of at most 4 MiB, or nothing.
@@ -178,6 +240,7 @@ pub fn permit_report(root: &Path, config: &Config) -> String {
 /// first ticket without a `closed` fact that carries the phase-0 hand flag.
 pub fn build_permit(root: &Path, config: Option<&Config>) -> Option<Permit> {
     let dir = crate::tickets::tickets_dir(root);
+    let mut provisional_key = None;
     if let Some(config) = config {
         for ticket in permit_candidates(root) {
             let Status::Open(state) = &ticket.status else {
@@ -197,10 +260,19 @@ pub fn build_permit(root: &Path, config: Option<&Config>) -> Option<Permit> {
             let Some(text) = read_bounded(&ticket.dir.join("ticket.md")) else {
                 continue;
             };
-            if ticket_permits(config, &parse(&text), state) {
+            let sections = parse(&text);
+            if ticket_permits(config, &sections, state) {
                 return Some(Permit::Computed(ticket.key));
             }
+            if provisional_key.is_none()
+                && provisional(config, &sections, state, dir_patch_round(&ticket.dir))
+            {
+                provisional_key = Some(ticket.key);
+            }
         }
+    }
+    if let Some(key) = provisional_key {
+        return Some(Permit::Provisional(key));
     }
     let mut names: Vec<_> = std::fs::read_dir(&dir)
         .into_iter()

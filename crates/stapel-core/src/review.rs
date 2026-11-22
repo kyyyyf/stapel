@@ -69,6 +69,35 @@ pub fn finding_round(records: &[Map<String, Value>]) -> u64 {
         .unwrap_or(0)
 }
 
+/// Whether the newest whole round of stage `code-review` has a finding whose current fate is
+/// `patch` and whose verdict is not `false` (STP-36: a patch round).
+pub fn patch_round(records: &[Map<String, Value>]) -> bool {
+    let round = finding_round(records);
+    if round == 0 {
+        return false;
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for m in records.iter().filter(|m| !m.contains_key("kind")) {
+        let Some(id) = text(m, "id") else { continue };
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        let state = state_of(records, id);
+        let Some(finding) = &state.finding else {
+            continue;
+        };
+        if text(finding, "stage") == Some("code-review")
+            && finding.get("round").and_then(whole_round) == Some(round)
+            && state.fate.as_deref() == Some("patch")
+            && state.verdict.as_deref() != Some("false")
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// The round that `next` names for a code review: 1 before any round, 2 after round 1 when a patch
 /// finding exists, else none.
 pub fn next_round(round: u64, patch_finding: bool) -> Option<u64> {

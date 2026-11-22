@@ -12,7 +12,7 @@ use stapel_core::page::page_text;
 use stapel_core::journal::{self, Entry};
 use stapel_core::next::{Action, Facts, Fault, History, Target, decide};
 use stapel_core::outcomes::{open_red, passing};
-use stapel_core::review::{finding_round, patch_findings};
+use stapel_core::review::{finding_round, patch_findings, patch_round};
 use stapel_core::steps::{Marker, git_text, step_commits, steps, walk_range};
 use stapel_core::ticket::{parse, read};
 use stapel_core::tickets::{Status, Ticket, list, resolve};
@@ -380,6 +380,7 @@ fn lines_inner(
 
     let review_round = finding_round(&records).max(pack_round(&root, &ticket.key));
     let patch_finding = !patch_findings(&records).is_empty();
+    let patch_round = patch_round(&records);
 
     let mut facts = Facts {
         key: &ticket.key,
@@ -390,6 +391,7 @@ fn lines_inner(
         blocking: &blocking,
         review_round,
         patch_finding,
+        patch_round,
         page_fresh: page_fresh(&root, &config, &ticket.key),
         history: None,
     };
