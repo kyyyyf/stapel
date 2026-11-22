@@ -97,15 +97,28 @@ fn toml_edit_ask(input: &HookInput, target: &Path) -> Option<Decision> {
         return None;
     }
     if input.agent_id.as_deref().is_some_and(|id| !id.is_empty()) {
-        return None;
+        return Some(Decision::Deny(
+            "only the main agent edits .stapel/stapel.toml, through the person's dialog".into(),
+        ));
     }
     let mode = input.permission_mode.as_deref().unwrap_or("");
     if !crate::dialog::DIALOG_MODES.contains(&mode) {
-        return None;
+        return Some(Decision::Deny(format!(
+            "an edit of .stapel/stapel.toml needs the permission dialog, which Claude Code \
+             does not show in permission mode \"{mode}\""
+        )));
     }
     let current = std::fs::read_to_string(root.join(".stapel/stapel.toml")).ok()?;
-    let result = edited_text(&input.tool_name, &input.tool_input, &current)?;
-    Config::parse_at(&result, &root).ok()?;
+    let Some(result) = edited_text(&input.tool_name, &input.tool_input, &current) else {
+        return Some(Decision::Deny(
+            "the edit of .stapel/stapel.toml does not apply".into(),
+        ));
+    };
+    if let Err(error) = Config::parse_at(&result, &root) {
+        return Some(Decision::Deny(format!(
+            ".stapel/stapel.toml would not load: {error}"
+        )));
+    }
     Some(Decision::AskEdit(TOML_ASK_REASON.into()))
 }
 
