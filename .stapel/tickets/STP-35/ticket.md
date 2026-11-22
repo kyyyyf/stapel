@@ -348,7 +348,23 @@ Route: full (tags `interface`, `data`), auto.
 
 ## Review
 
-TODO
+Reviewers: spec review two rounds (SR1, SR2) before the build; round 1 is stapel-drift on the whole
+ticket before code review (DR); round 2 is stapel-reviewer (claude-sonnet-5-5), an external
+stapel-reviewer (claude-fable-5-1) and stapel-drift on the whole ticket.
+
+- Round 1 (drift): 1 MEDIUM, 5 LOW. DR-1 (the CI pin without `--level`) and DR-2 (AC-6 text) patched;
+  DR-4, DR-5 no change; DR-3, DR-6 deferred.
+- Round 2: no HIGH, 4 MEDIUM (all external), 6 LOW. stapel-reviewer and stapel-drift: no HIGH or MEDIUM.
+  XR2-1 fixed by step 13 and XR2-2 by step 14 (coverage tests, they passed at once, no code change);
+  XR2-4 fixed by step 15 (RED `45b4b0f`, GREEN `86c0a17`: no checkout after the limit); XR2-3 deferred
+  (the person decides at the close).
+- No round 3: `stapel next` asks for this section after round 2; the person decides at the close.
+- Checks on this Mac (case-sensitive TMPDIR, the binary built at `6b59ae1`): a full `head` check of steps
+  3 to 12 passed at `52581b6` (48 min wall); after steps 13 to 15 a `head` check at `a55f826` passed
+  with steps 3 to 12 `cached` and step 15 run (1050 suite tests). Its CPU time was 1356 s against 1580 s
+  of the uncached check; its wall time (4 h 6 min, overnight) is not a measure, the machine-wide cargo
+  lock and the load of other sessions are in it.
+- `tests/check.rs`: 664.79 s before step 1, 127.29 s after step 2.
 
 ## Summary
 
