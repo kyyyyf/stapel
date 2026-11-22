@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "key": "STP-37",
+  "title": "The close and the history",
+  "base": "0fc7a9a67b9d79385acd421759e62401733d46c1",
+  "base_branch": "main",
+  "confirmations": []
+}
