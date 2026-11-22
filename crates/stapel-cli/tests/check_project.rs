@@ -605,3 +605,94 @@ fn control_characters_are_replaced() {
         "{text:?}"
     );
 }
+
+// AC-14, CR1-2: a command of 300 non-ASCII characters is cut to 200 characters, not at a byte.
+#[test]
+fn a_non_ascii_command_is_cut() {
+    let command = format!(": {}", "ж".repeat(298));
+    assert_eq!(command.chars().count(), 300);
+    let toml = serde_json::to_string(&command).unwrap();
+    let (repo, _scripts) = project_repo(&format!("project = [{toml}]"), 3600, "");
+    let (code, text) = run(repo.path(), &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    let record = last_record(repo.path());
+    let cut = record["project"][0]["command"].as_str().expect("command");
+    assert_eq!(cut.chars().count(), 200, "{record}");
+    assert_eq!(cut, command.chars().take(200).collect::<String>(), "{record}");
+    assert_eq!(record["project"][0]["outcome"], "pass", "{record}");
+}
+
+// AC-2, XR1-4, CR1-8: project commands at level `full`, and under the junit runner with a matching
+// Node pin: the command runs in the check copy with `node_modules` linked.
+#[test]
+fn junit_and_full_run_the_commands() {
+    use std::os::unix::fs::PermissionsExt;
+    // Level full under the cargo runner.
+    let (repo, _scripts) = project_repo("project = ['echo at-full']", 3600, "");
+    let (code, text) = run(repo.path(), &["--level", "full"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(text.lines().any(|l| l.trim() == "level: full"), "{text}");
+    assert!(
+        text.lines().any(|l| l.trim() == "project: echo at-full: pass"),
+        "{text}"
+    );
+    assert_eq!(last_record(repo.path())["project"][0]["outcome"], "pass");
+
+    // Under junit, with a pin that matches the fake node.
+    let bin = tempfile::tempdir().unwrap();
+    let node = bin.path().join("node");
+    std::fs::write(&node, "#!/bin/sh\necho v20.11.1\n").unwrap();
+    std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let junit = common::junit_repo();
+    let dir = junit.dir();
+    let log_dir = tempfile::tempdir().unwrap();
+    let log = log_dir.path().join("seen");
+    let command = format!(
+        "test -L node_modules && test -e node_modules/marker && pwd > {}",
+        log.display()
+    );
+    let toml = read(dir, ".stapel/stapel.toml");
+    write(
+        dir,
+        ".stapel/stapel.toml",
+        &format!("{toml}project = [{}]\n", serde_json::to_string(&command).unwrap()),
+    );
+    write(dir, ".nvmrc", "20\n");
+    commit(dir, "setup: project and pin");
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/ok.ts", "export const ok = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: one");
+    let old = std::env::var("PATH").unwrap_or_default();
+    for level in ["head", "full"] {
+        let _ = std::fs::remove_file(&log);
+        let out = stapel(dir)
+            .env("PATH", format!("{}:{old}", bin.path().display()))
+            .args(["check", "ABC-1", "--level", level])
+            .output()
+            .unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(0), "{level}: {text}");
+        assert!(text.contains("node: v20.11.1 (pin 20 in .nvmrc)"), "{text}");
+        assert!(
+            text.lines().any(|l| l.trim() == format!("project: {command}: pass")),
+            "{level}: {text}"
+        );
+        let seen = std::fs::read_to_string(&log).expect(&text);
+        assert_ne!(
+            Path::new(seen.trim()),
+            std::fs::canonicalize(dir).unwrap(),
+            "{seen}"
+        );
+        let record = last_record(dir);
+        assert_eq!(record["project"][0]["outcome"], "pass", "{record}");
+    }
+}
