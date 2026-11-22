@@ -178,6 +178,101 @@ fn a_matching_pin_runs() {
     assert!(!text.contains("node:") && !text.contains("not a version"), "{text}");
 }
 
+// AC-8: a pin that is not a version, two pins that disagree, and a `node` that fails refuse the check
+// with exit 2 and no test runs.
+#[test]
+fn refuses_a_bad_pin() {
+    let bin = fake_node();
+    let refused = |files: &[(&str, &str)], bin: &Path, want: &str| {
+        let repo = pinned(files);
+        let (code, text) = run(repo.dir(), bin, &[]);
+        assert_eq!(code, 2, "{files:?}: {text}");
+        assert!(
+            text.lines().any(|l| l.starts_with(want)),
+            "{files:?} wants {want:?}: {text}"
+        );
+        assert!(!text.contains("step 1:"), "no test ran: {text}");
+        assert!(repo.runs().is_empty(), "{:?}", repo.runs());
+    };
+    for (pin, shown) in [
+        ("lts/*\n", "lts/*"),
+        ("\n", ""),
+        ("20.x\n", "20.x"),
+        ("20.1.2.3\n", "20.1.2.3"),
+    ] {
+        refused(
+            &[(".nvmrc", pin)],
+            bin.path(),
+            &format!("stapel: .nvmrc: not a version: {shown}"),
+        );
+    }
+    refused(
+        &[(".node-version", "lts/*\n")],
+        bin.path(),
+        "stapel: .node-version: not a version: lts/*",
+    );
+    refused(
+        &[(".nvmrc", "20\n18\n")],
+        bin.path(),
+        "stapel: .nvmrc: not a version: ",
+    );
+    refused(
+        &[(".nvmrc", "20\n"), (".node-version", "18\n")],
+        bin.path(),
+        "stapel: .nvmrc and .node-version disagree: 20, 18",
+    );
+    // The alias is named, not the disagreement.
+    refused(
+        &[(".nvmrc", "lts/*\n"), (".node-version", "18\n")],
+        bin.path(),
+        "stapel: .nvmrc: not a version: lts/*",
+    );
+
+    // A `node` that exits 1 and a `node` that prints no version.
+    for body in ["#!/bin/sh\nexit 1\n", "#!/bin/sh\necho hello\n"] {
+        let bad = tempfile::tempdir().unwrap();
+        let path = bad.path().join("node");
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        refused(
+            &[(".nvmrc", "20\n")],
+            bad.path(),
+            "stapel: node --version failed: ",
+        );
+    }
+
+    // No `node` on `PATH`: a folder with `git` only, then the system folders.
+    let git = String::from_utf8(
+        std::process::Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let only = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(git.trim(), only.path().join("git")).unwrap();
+    let repo = pinned(&[(".nvmrc", "20\n")]);
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    let out = stapel(repo.dir())
+        .env("PATH", format!("{}:/usr/bin:/bin", only.path().display()))
+        .args(["check", "ABC-1"])
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with("stapel: node --version failed: ")),
+        "{text}"
+    );
+    assert!(!text.contains("step 1:"), "no test ran: {text}");
+}
+
 // AC-7: a pin that does not match refuses the check with exit 2 and no test runs.
 #[test]
 fn a_mismatch_refuses() {
