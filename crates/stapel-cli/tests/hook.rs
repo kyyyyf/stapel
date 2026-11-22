@@ -529,7 +529,12 @@ fn denies_settings_and_case_variants() {
         ".stapel/STAPEL.toml",
     ] {
         // STP-36 AC-9: `.stapel/stapel.toml` is refused for the missing dialog mode.
-        let text = if rel == ".stapel/STAPEL.toml" {
+        // On a case-sensitive file system that is another file: the machine-file denial.
+        let probe = root.join("CaseProbe.tmp");
+        std::fs::write(&probe, "x").unwrap();
+        let case_sensitive = !root.join("caseprobe.tmp").exists();
+        std::fs::remove_file(&probe).unwrap();
+        let text = if rel == ".stapel/STAPEL.toml" && !case_sensitive {
             "needs the permission dialog"
         } else {
             "only stapel"
@@ -2075,8 +2080,20 @@ fn stapel_toml_edit_asks() {
     let newer = "always_writable = [\".stapel/\", \"tools/\"]";
     let absolute = root.join(".stapel/stapel.toml").display().to_string();
     std::os::unix::fs::symlink(root.join(".stapel/stapel.toml"), root.join("link.toml")).unwrap();
+    // A case variant is the same file on a case-insensitive file system; on a case-sensitive one
+    // a symlinked directory with a case-variant name stands for it.
+    let probe = root.join("CaseProbe.tmp");
+    std::fs::write(&probe, "x").unwrap();
+    let case_sensitive = !root.join("caseprobe.tmp").exists();
+    std::fs::remove_file(&probe).unwrap();
+    let variant = if case_sensitive {
+        std::os::unix::fs::symlink(root.join(".stapel"), root.join(".STAPEL")).unwrap();
+        ".STAPEL/stapel.toml"
+    } else {
+        ".STAPEL/Stapel.toml"
+    };
     let paths = [
-        ".STAPEL/Stapel.toml".to_string(),
+        variant.to_string(),
         "./.stapel/stapel.toml".to_string(),
         "crates/../.stapel/stapel.toml".to_string(),
         absolute,
@@ -2136,6 +2153,23 @@ fn stapel_toml_edit_asks() {
                 );
             }
         }
+    }
+    // AC-8 asks only for the same file: on a case-sensitive file system `.stapel/Stapel.toml` is
+    // another file and gets no dialog.
+    if case_sensitive {
+        let payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "cwd": root,
+            "permission_mode": "default",
+            "tool_name": "Write",
+            "tool_input": { "file_path": ".stapel/Stapel.toml", "content": original.replace(old, new) },
+        });
+        stapel(root)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+            .code(2);
     }
     // The ask changes nothing on disk.
     assert_eq!(
@@ -2243,6 +2277,25 @@ fn stapel_toml_edit_refusals() {
         )
         .code(DENY)
         .stderr(contains("only stapel or the human writes"));
+    }
+
+    // On a case-sensitive file system a case variant is another file: today's denial, no dialog.
+    let probe = root.join("CaseProbe.tmp");
+    std::fs::write(&probe, "x").unwrap();
+    let case_sensitive = !root.join("caseprobe.tmp").exists();
+    std::fs::remove_file(&probe).unwrap();
+    if case_sensitive {
+        assert!(!root.join(".STAPEL/Stapel.toml").exists());
+        for tool_input in [
+            json!({ "file_path": ".STAPEL/Stapel.toml", "content": original.replace(old, new) }),
+            json!({ "file_path": ".stapel/Stapel.toml", "content": original.replace(old, new) }),
+        ] {
+            call("Write", tool_input, Some("default"), None)
+                .code(DENY)
+                .stderr(contains("only stapel or the human writes"));
+        }
+    } else {
+        println!("skipped: the file system is case-insensitive, a case variant is the same file");
     }
 
     // Nothing changed on disk.
