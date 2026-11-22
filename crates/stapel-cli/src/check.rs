@@ -237,6 +237,24 @@ fn tests_hash(tests: &[TestId]) -> String {
     sha256_hex(&[&text])
 }
 
+/// The cache key of a step: its test hash; with history commits the hash of the history text of its
+/// RED run (path, history commit and text hash) joins it (STP-37 AC-10). A step without history
+/// commits keeps the plain test hash.
+fn step_key(root: &Path, a: &Analysis) -> String {
+    let base = tests_hash(&a.tests);
+    if a.red_files.is_empty() {
+        return base;
+    }
+    let mut files: Vec<&(String, String)> = a.red_files.iter().collect();
+    files.sort();
+    let mut text = format!("{base}\n");
+    for (path, commit) in files {
+        let body = stapel_core::steps::show(root, commit, path).unwrap_or_default();
+        text.push_str(&format!("{path} {commit} {}\n", sha256_hex(&[&body])));
+    }
+    sha256_hex(&[&text])
+}
+
 /// The lock hash at `commit`: SHA-256 of `Cargo.lock` under cargo, of every `package-lock.json`,
 /// `yarn.lock` and `pnpm-lock.yaml` under junit; the word `none` when there is none.
 fn lock_hash(root: &Path, commit: &str, junit: bool) -> String {
@@ -575,7 +593,15 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
                 let source = if level_now == "full" {
                     None
                 } else {
-                    cached_from(&ticket.dir, &ticket.key, a, &lock_now, &toolchain_now, &tool_now)
+                    cached_from(
+                        &ticket.dir,
+                        &ticket.key,
+                        a,
+                        &step_key(&root, a),
+                        &lock_now,
+                        &toolchain_now,
+                        &tool_now,
+                    )
                 };
                 match source {
                     // At the level `steps` a cached step runs nothing (AC-8).
@@ -599,7 +625,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
                 "outcome": outcome,
                 "reason": cut(&reason, MAX_REASON),
                 "tests": a.tests.len(),
-                "tests_hash": tests_hash(&a.tests),
+                "tests_hash": step_key(&root, a),
                 "names": names_of(&outcome, &reason),
             });
             if let Some(from) = &from {
@@ -918,12 +944,12 @@ fn cached_from(
     dir: &Path,
     ticket: &str,
     a: &Analysis,
+    want_tests: &str,
     lock: &str,
     toolchain: &str,
     tool: &str,
 ) -> Option<String> {
     let (red, green) = (a.red.as_ref()?, a.green.as_ref()?);
-    let want_tests = tests_hash(&a.tests);
     let text = std::fs::read_to_string(dir.join("runs.jsonl")).ok()?;
     let mut found = None;
     for line in text.lines() {
@@ -949,7 +975,7 @@ fn cached_from(
             if matches!(outcome, "pass" | "cached")
                 && s["red"].as_str() == Some(red.sha.as_str())
                 && s["green"].as_str() == Some(green.sha.as_str())
-                && s["tests_hash"].as_str() == Some(want_tests.as_str())
+                && s["tests_hash"].as_str() == Some(want_tests)
             {
                 let from = if outcome == "cached" {
                     s["from"].as_str().unwrap_or(id)
