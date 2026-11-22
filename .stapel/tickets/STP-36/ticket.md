@@ -415,4 +415,37 @@ external stapel-reviewer (claude-fable-5-1) and stapel-drift on the whole ticket
 
 ## Summary
 
-TODO
+Done: plan items 3.3, 3.4, 3.7a and 3.8. A grant lives 24 hours. Steps appended to the confirmed Plan after
+a code review round with a `patch` finding build without a `stapel ok` and wait for the ok before the
+close. `[process] dialogs = "close"` lets a light ticket build on a provisional permit after its first ok.
+`stapel close` refuses while a section waits, unless the ticket has no confirmation. The main agent's
+Edit or Write of `.stapel/stapel.toml` gets the permission dialog. `stapel new` runs `[worktree] setup`.
+`stapel next` and the SessionStart hook name the open tickets of other worktrees. The skill and the
+starter `stapel.toml` name all of it.
+
+For the person to overrule (agent decisions, in Decisions and Design):
+- The Plan has 19 steps, past the limit of 12: drift fixes 12 and 13, the output rule 14, round 1 fixes 15
+  to 19; the Frame was shortened, same promise, so that every brief fits.
+- A ticket with no confirmation at all closes as before (XR1-4).
+- A patch round needs the review pack of its round (XR1-1, XR1-2).
+- With several open tickets and none named, the orchestrator asks the person which one (XR1-9).
+- 35 old tests in 14 files closed tickets with unconfirmed sections; their fixtures now confirm first, by
+  two test-only commits on main; `decisions::ok_and_close_append_a_decision` expects five decisions.
+- Three REDs changed existing tests to the new behaviour (`hook.rs` twice, `parallel::can_go_on_notice`).
+
+Open for the person (deferred findings, in findings.jsonl):
+- XR2-3 (MEDIUM, outside): a ticket dropped after its first ok cannot be closed until its unwritten
+  sections are confirmed.
+- XR2-7: in the normal flow the ok for fix steps comes at the start of round 2, when its pack has no
+  finding yet, not before the close as Promise item 2 and the skill say.
+- XR2-9 (outside): the review pack that opens a patch round is a file that `stapel review start` writes
+  with no dialog.
+- XR2-10 (outside): the setup runs outside the cargo lock; a provisionally stale Spec makes a later
+  parallel ticket wait until the close ok; a closed stderr makes the setup fail as `could not start`.
+- XR2-8 and R2-1: `open:` lines run each other worktree's `stapel next` (trial merges write stop files),
+  sort as text (STP-10 before STP-9); a title with ` — ` makes the line ambiguous.
+- XR2-5, R2-2, DR2-1: an Edit whose `old_string` equals `new_string` is asked, then the tool refuses it.
+- XR2-6: untested: an appended `<n><letter>. ` step, the `open: <KEY> … unreadable` line, a doubled
+  heading at level close. XR1-12: a rerun command for a failed setup, a time limit for SessionStart.
+  SR1-14: show waiting provisional sections in `stapel status`.
+- The installed `stapel` is older than this branch; STP-37 (3b-3) waits for this ticket's merge into main.
