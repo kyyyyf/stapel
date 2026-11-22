@@ -17,3 +17,4 @@
 {"v":1,"id":"d-84c284e5bfc7","at":"2026-11-21T20:07:48Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:a04fb9edee81e8801d3a84e5fb4154f669ef13e98e47f7440b5355e4273d5de8","via":"grant"}
 {"v":1,"id":"d-346becf60337","at":"2026-11-21T20:07:48Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:67de4577e95e93c96319e032743508de8ca5bbaeab1af08f6bf0596d32ad707d","via":"grant"}
 {"v":1,"id":"d-6373aabb194b","at":"2026-11-21T20:07:48Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:70305c2d06c73e80687faf82d987500221b470771d75cc4a6932848d86fd5e6f","via":"grant"}
+{"v":1,"id":"d-dec18792b4e4","at":"2026-11-22T10:15:29Z","by":"kyyyyf","action":"close","reason":"The check runs logic tests on a fake cargo, bounds the whole run by one time limit, and has levels, points and a step cache; the head check passes and every finding has a fate."}
