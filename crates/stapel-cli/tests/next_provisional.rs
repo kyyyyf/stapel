@@ -245,3 +245,106 @@ fn close_waits_for_the_ok() {
     commit(dir, &[], "the summary");
     assert_eq!(action(dir), waits, "instead of close");
 }
+
+const SPEC_CHANGED: &str = "| № | Criterion | Test |\n|---|---|---|\n\
+     | AC-1 | WHEN a thing happens THE command does it, changed. | `next::t_one` |";
+const LIGHT_ONE: &str = "Route: light, auto.\n\n1. One (AC-1).";
+const LIGHT_TWO: &str = "Route: light, auto.\n\n1. One (AC-1).\n2. Two (AC-1).";
+
+/// A ticket with a Description section, every section confirmed once with the Plan `plan`
+/// (`skip` names a section left unconfirmed), step 1 built, and `dialogs` as the level if any.
+fn level_ticket(plan: &str, dialogs: Option<&str>, skip: Option<&str>) -> tempfile::TempDir {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let toml = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    let entry = "[[sections]]\nid = \"spec\"";
+    assert!(text.contains(entry), "no spec section in: {text}");
+    let mut text = text.replacen(
+        entry,
+        &format!(
+            "[[sections]]\nid = \"description\"\ntitle = \"Description\"\nowner = \"product\"\n\n{entry}"
+        ),
+        1,
+    );
+    text = text.replacen("[\"spec\", \"design\"", "[\"description\", \"spec\", \"design\"", 1);
+    if let Some(level) = dialogs {
+        text.push_str(&format!("\n[process]\ndialogs = \"{level}\"\n"));
+    }
+    std::fs::write(&toml, text).unwrap();
+    set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem.");
+    set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n\
+         | AC-1 | WHEN a thing happens THE command does it. | `next::t_one` |",
+    );
+    set_section(dir, "ABC-1", "Plan", plan);
+    for s in ["description", "spec", "design", "proof", "plan"] {
+        if skip != Some(s) {
+            stapel(dir).args(["ok", s]).assert().success();
+        }
+    }
+    commit(dir, &[], "initial");
+    commit(
+        dir,
+        &[("crates/tiny/tests/t1.rs", "#[test]\nfn t() {\n    assert!(true);\n}\n")],
+        "ABC-1 step 1 RED: test",
+    );
+    commit(dir, &[("crates/tiny/src/lib.rs", "// one\n")], "ABC-1 step 1 GREEN: code");
+    repo
+}
+
+// AC-6, AC-7
+#[test]
+fn light_ticket_at_level_close() {
+    let waits = "next: write-page — stapel page ABC-1";
+
+    // A light ticket at the level `close`: Spec and Plan changed after the first ok.
+    let repo = level_ticket(LIGHT_ONE, Some("close"), None);
+    let dir = repo.path();
+    assert!(write_allowed(dir), "fresh: write allowed");
+    set_section(dir, "ABC-1", "Spec", SPEC_CHANGED);
+    set_section(dir, "ABC-1", "Plan", LIGHT_TWO);
+    assert!(write_allowed(dir), "provisional: write allowed");
+    assert_eq!(status_build_line(dir), "build: provisional ABC-1");
+    assert_eq!(action(dir), BUILD_TWO);
+
+    // Stops: the Description changed too.
+    set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem, changed.");
+    assert_eq!(action(dir), waits, "Description changed");
+    assert_ne!(status_build_line(dir), "build: provisional ABC-1");
+
+    // Stops: the confirmed Plan says full, also when the current Plan says light.
+    let repo = level_ticket(PLAN_ONE, Some("close"), None);
+    set_section(repo.path(), "ABC-1", "Spec", "The spec, changed.");
+    set_section(repo.path(), "ABC-1", "Plan", LIGHT_TWO);
+    assert_eq!(action(repo.path()), waits, "confirmed full, current light");
+    assert_ne!(status_build_line(repo.path()), "build: provisional ABC-1");
+    let repo = level_ticket(PLAN_ONE, Some("close"), None);
+    set_section(repo.path(), "ABC-1", "Spec", "The spec, changed.");
+    set_section(repo.path(), "ABC-1", "Plan", PLAN_TWO);
+    assert_eq!(action(repo.path()), waits, "confirmed full");
+
+    // Stops: the confirmed Plan has no Route line.
+    let repo = level_ticket("1. One (AC-1).", Some("close"), None);
+    set_section(repo.path(), "ABC-1", "Spec", "The spec, changed.");
+    set_section(repo.path(), "ABC-1", "Plan", LIGHT_TWO);
+    assert_eq!(action(repo.path()), waits, "no Route line");
+
+    // Stops: a section never confirmed.
+    let repo = level_ticket(LIGHT_ONE, Some("close"), Some("proof"));
+    set_section(repo.path(), "ABC-1", "Spec", "The spec, changed.");
+    set_section(repo.path(), "ABC-1", "Plan", LIGHT_TWO);
+    assert_eq!(action(repo.path()), waits, "proof never confirmed");
+
+    // Stops: the level `all`, and no key.
+    for level in [Some("all"), None] {
+        let repo = level_ticket(LIGHT_ONE, level, None);
+        set_section(repo.path(), "ABC-1", "Spec", "The spec, changed.");
+        set_section(repo.path(), "ABC-1", "Plan", LIGHT_TWO);
+        assert_eq!(action(repo.path()), waits, "level {level:?}");
+        assert_ne!(status_build_line(repo.path()), "build: provisional ABC-1");
+    }
+}
