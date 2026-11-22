@@ -104,7 +104,7 @@ Terms:
 | AC-6 | WHEN the runner is junit and the checked commit has a pin that is a version THE check, at every level, runs `node --version` in the check copy under its time limit before any test, prints `node: <version> (pin <pin> in <file>)` after the `level:` line, and goes on when the pin matches; under the cargo runner and in `--history` mode the pin files are not read. | `check_node::a_matching_pin_runs`, `check_node::a_hanging_node_ends_at_the_limit` |
 | AC-7 | IF the pin does not match THEN the check exits 2 with `stapel: node <version> does not match the pin <pin> in <file>` and runs no test. | `check_node::a_mismatch_refuses` |
 | AC-8 | IF a pin is not a version (`.nvmrc` judged first), `.nvmrc` and `.node-version` disagree, or `node --version` cannot run or prints no version THEN the check exits 2 with `stapel: <file>: not a version: <text>`, `stapel: .nvmrc and .node-version disagree: <a>, <b>` or `stapel: node --version failed: <reason>`, and runs no test. | `check_node::refuses_a_bad_pin` |
-| AC-9 | WHEN a history commit changes a protected test in a test file of a step THE step is not `tests-changed`: the test text of that commit is the protected text for later commits, and the note `history by <label>: <reason>` follows the step's line, in both modes; a test inside a source file and a deleted test are judged as today; IF the history commit also changes that test file outside the step's own tests (a helper, an import) THEN it excuses nothing in that file and the step is judged as today. | `check_history_reason::green_may_change_its_test`, `check_history_reason::the_note_in_full_and_junit`, `check_history_reason::a_history_helper_is_tests_changed`, `check_history_reason::a_source_file_test_and_the_cargo_note` |
+| AC-9 | WHEN a history commit changes a protected test in a test file of a step THE step is not `tests-changed`: the test text of that commit is the protected text for later commits, and the note `history by <label>: <reason>` follows the step's line, in both modes; a test inside a source file and a deleted test are judged as today; IF the history commit also changes that test file outside the step's own tests (a helper, an import) THEN it excuses nothing in that file and the step is judged as today. | `check_history_reason::green_may_change_its_test`, `check_history_reason::the_note_in_full_and_junit`, `check_history_reason::a_history_helper_is_tests_changed`, `check_history_reason::a_source_file_test_and_the_cargo_note`, `check_history_reason::a_junit_history_helper_is_tests_changed` |
 | AC-10 | IF a step's test was changed by a history commit THEN its RED run takes the RED commit's test file with the step's own tests replaced by their text at the newest such commit (the other tests of the file as at the RED commit), on the RED commit's code, and the step is `no-red` unless that run fails as a RED is judged today, a compile failure included; a cached step whose history text changed runs its RED again. | `check_history_reason::a_weakened_test_is_no_red`, `check_history_reason::a_cached_step_runs_its_red_again`, `check_history_reason::later_tests_stay_out_of_the_red_run` |
 | AC-11 | WHEN a history commit changes a build input under the cargo runner, or an input, a configuration file or the command's script under the junit runner THE change blocks no step and no run, in both modes; a later non-RED commit without a history line still blocks, as today, and the text of the history commit is the baseline it is compared with. | `check_history_reason::build_input_with_a_reason`, `check_history_reason::junit_input_with_a_reason` |
 | AC-12 | IF a commit has `history:` with an empty or whitespace reason, or the history line is in a RED commit THEN the commit is judged as one without a history line. | `check_history_reason::an_empty_reason_counts_as_none` |
@@ -152,6 +152,7 @@ stapel-cli --test <file> -- --test-threads=4`; before each GREEN also `--test ti
 | Review round 1 fixes | a passing check, then a history commit that weakens step 1's test: the next `head` check runs step 1's RED again (`no-red`); a shared test file whose later step's test needs later code, with step 1's test weakened by a history commit: `no-red`; a ticket without `base`: `{files}` holds only the ticket's files; the limit used up before the first command, with a `{files}` command and no changed file: `unverified: time limit` and no checkout; a cargo-runner command that prints `CARGO_TARGET_DIR`; a command and an output with a control character | `check_history_reason::a_cached_step_runs_its_red_again`, `check_history_reason::later_tests_stay_out_of_the_red_run`, `check_project::files_without_base`, `check_project::the_limit_comes_before_the_skip`, `check_project::cargo_commands_share_the_target`, `check_project::control_characters_are_replaced` |
 | Review round 1 coverage | a command of 300 `ж`: cut to 200 characters; project commands at level `full`, and under junit with a matching pin (`node_modules` linked); a `node` that sleeps past the limit; the history note in a full check and under junit, a history commit that deletes a test, a test inside a source file | `check_project::a_non_ascii_command_is_cut`, `check_project::junit_and_full_run_the_commands`, `check_node::a_hanging_node_ends_at_the_limit`, `check_history_reason::the_note_in_full_and_junit` |
 | Review round 2 | a history commit that weakens step 1's test through a helper it adds to the same file: `tests-changed`; a test inside a source file changed by a history commit (as today); the cargo `history by` note in a full check; a post-checkout hook that would leave a mark shows no checkout after the limit | `check_history_reason::a_history_helper_is_tests_changed`, `check_history_reason::a_source_file_test_and_the_cargo_note`, `check_project::no_checkout_after_the_limit` |
+| Review round 3 | under junit a history commit that rewrites a step's test to call a helper it adds to the same file, and one that adds an import: `tests-changed`, in a full check and in `--history` | `check_history_reason::a_junit_history_helper_is_tests_changed` |
 | Process files | the starter `stapel.toml` and the skill | `init_process::starter_names_project_and_history` |
 
 ### Inputs
@@ -263,6 +264,10 @@ All dated 2026-11-22, mark `agent`; the person may overrule them at the close.
   `CARGO_TERM_COLOR=never`; under junit the allow-listed environment of the runs, nothing more (step 17).
   `printable` turns control characters of `project:` lines and output tails into spaces; the record keeps
   the raw command (step 17).
+- A history commit that also changes a step's test file outside its test functions (`helper_text` under
+  cargo; the rest of the file without blank space and `;` under junit) excuses nothing in that file
+  (`outcomes.rs::changes_file_outside_tests`, step 20, XR2-1). It compares the text outside all test
+  functions, so a test function the weakened test calls is not caught (XR3-1, deferred).
 - A history commit's build-input changes are still recorded as touched but set no `changed`
   (`build_inputs.rs::history_commit`); `history_commits` lists them for the report and record.
 - The round refusal keeps round 2's text with the full path; AC-15 quotes it. The pack heading is
@@ -287,7 +292,7 @@ All dated 2026-11-22, mark `agent`; the person may overrule them at the close.
 | AC-6 | `check_node::a_matching_pin_runs`, `check_node::a_hanging_node_ends_at_the_limit` |
 | AC-7 | `check_node::a_mismatch_refuses` |
 | AC-8 | `check_node::refuses_a_bad_pin` |
-| AC-9 | `check_history_reason::green_may_change_its_test`, `check_history_reason::the_note_in_full_and_junit`, `check_history_reason::a_history_helper_is_tests_changed`, `check_history_reason::a_source_file_test_and_the_cargo_note` |
+| AC-9 | `check_history_reason::green_may_change_its_test`, `check_history_reason::the_note_in_full_and_junit`, `check_history_reason::a_history_helper_is_tests_changed`, `check_history_reason::a_source_file_test_and_the_cargo_note`, `check_history_reason::a_junit_history_helper_is_tests_changed` |
 | AC-10 | `check_history_reason::a_weakened_test_is_no_red`, `check_history_reason::a_cached_step_runs_its_red_again`, `check_history_reason::later_tests_stay_out_of_the_red_run` |
 | AC-11 | `check_history_reason::build_input_with_a_reason`, `check_history_reason::junit_input_with_a_reason` |
 | AC-12 | `check_history_reason::an_empty_reason_counts_as_none` |
@@ -375,6 +380,10 @@ Route: full (tags `interface`, `data`), auto.
 21. Round 2 coverage (XR2-3, XR2-4, AC-4, AC-9; tests `check_history_reason::a_source_file_test_and_the_cargo_note`, `check_project::no_checkout_after_the_limit`):
     a coverage commit `STP-37 step 21 tests: ...`. If a test fails, it becomes a RED and the GREEN fixes
     the code. Must not change: any source file.
+22. Junit helper coverage (CR3-1, XR3-3, AC-9; test `check_history_reason::a_junit_history_helper_is_tests_changed`): a coverage commit
+    `STP-37 step 22 tests: ...`: under junit a history commit that adds a helper or an import to the step's
+    test file gives `tests-changed`, in a full check and in `--history`. If the test fails, it becomes a RED
+    and the GREEN fixes the code. Must not change: any source file.
 
 ## Review
 
