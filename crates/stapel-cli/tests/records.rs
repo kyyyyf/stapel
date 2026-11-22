@@ -755,6 +755,7 @@ fn closed_ticket_by_key_only() {
     // A closed ticket by key: both commands write as for an open one, in any case.
     let repo = repo_with_ticket();
     let dir = repo.path();
+    common::confirm_sections(dir, "ABC-1");
     stapel(dir)
         .args(["close", "--reason", "done"])
         .assert()
@@ -1012,6 +1013,7 @@ fn agent(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
 }
 
 fn close_ticket(dir: &Path, key: &str) {
+    common::confirm_sections(dir, key);
     stapel(dir)
         .args(["close", key, "--reason", "done"])
         .assert()

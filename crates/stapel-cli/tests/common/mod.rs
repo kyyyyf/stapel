@@ -149,6 +149,14 @@ pub fn repo_with_ticket() -> TempDir {
     repo
 }
 
+/// Confirms every section of `key` whose owner is not `generated` with `stapel ok`, as a real
+/// ticket is before its close (STP-36: a close waits for these confirmations).
+pub fn confirm_sections(dir: &Path, key: &str) {
+    for section in ["spec", "design", "proof", "plan"] {
+        stapel(dir).args(["ok", key, section]).assert().success();
+    }
+}
+
 /// Runs the PreToolUse hook on a Bash command with the given permission mode.
 pub fn hook_bash(dir: &Path, command: &str, mode: &str) -> assert_cmd::assert::Assert {
     let payload = serde_json::json!({
