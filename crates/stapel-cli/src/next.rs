@@ -286,6 +286,48 @@ fn lines_parts(
     (out, None)
 }
 
+/// One line `open: <KEY> — <title> — <worktree path> — next: <action>` per open ticket on the branch
+/// of another live worktree, sorted by key (STP-36 AC-12). A ticket or action that cannot be read
+/// gives `open: <branch> — <path> — next: unreadable`.
+fn open_lines(root: &Path) -> Vec<String> {
+    let here = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut found: Vec<(String, String)> = Vec::new();
+    for wt in stapel_core::parallel::worktrees(root) {
+        if wt.prunable || !wt.path.is_dir() {
+            continue;
+        }
+        if wt.path.canonicalize().unwrap_or_else(|_| wt.path.clone()) == here {
+            continue;
+        }
+        let Some(ticket) = stapel_core::tickets::branch_ticket(&wt.path) else {
+            continue;
+        };
+        let path = wt.path.display();
+        let line = match &ticket.status {
+            Status::Closed(_) => continue,
+            Status::Open(state) => {
+                let action = text_at(&wt.path)
+                    .ok()
+                    .and_then(|lines| lines.last()?.strip_prefix("next: ").map(String::from));
+                match action {
+                    Some(action) => {
+                        format!("open: {} — {} — {path} — next: {action}", ticket.key, state.title)
+                    }
+                    None => format!("open: {} — {path} — next: unreadable", ticket.key),
+                }
+            }
+            Status::Legacy(_) | Status::Unreadable(_) => {
+                let branch = stapel_core::parallel::current_branch(&wt.path)
+                    .unwrap_or_else(|| ticket.key.clone());
+                format!("open: {branch} — {path} — next: unreadable")
+            }
+        };
+        found.push((ticket.key.to_lowercase(), line));
+    }
+    found.sort();
+    found.into_iter().map(|(_, line)| line).collect()
+}
+
 fn lines_inner(
     root: &Path,
     config: &Config,
@@ -344,6 +386,9 @@ fn lines_inner(
             subject: None,
             target: Some(Target::Command("stapel new \"<title>\"".to_string())),
         };
+        if !json {
+            out.extend(open_lines(&root));
+        }
         out.push(if json {
             json_line(None, &action, &[])
         } else {
