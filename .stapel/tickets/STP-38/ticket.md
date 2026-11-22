@@ -35,7 +35,7 @@ lines outside the block); the Review of closed tickets; the removal of the empty
    Summary section and one line per deferred finding not marked false; it is rewritten on every export.
 4. Rule counts: `stapel ledger rules` reads `findings.jsonl` of every ticket and prints, per `rule` value
    and per ticket, the HIGH and MEDIUM findings inside the promise (severity after triage, not marked
-   false), as rule 7 counts them; a finding
+   false, newest fate not `no-change`), as the close ledger of STP-37 counts them; a finding
    without `rule` counts as `none`; a rule that caught nothing in the newest three tickets with findings
    is marked. It writes nothing.
 5. Returns: `stapel tokens measure` and the ticket report of `stapel tokens` print the returns to the
@@ -68,6 +68,9 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
 - 2026-11-22: Decision (returns, the human, recommended): returns are permission dialogs, question dialogs
   (`AskUserQuestion` calls) and typed messages, as in the measure of `docs/PLAN.md`. Rejected: dialogs
   and questions only.
+- 2026-11-22: Decision (dependency on STP-37, the human, recommended): steps 1 and 5 to 8 build now;
+  steps 2 to 4 and 9 build after main holds STP-37 and is merged into STP-38 (DP-2, DP-3). Rejected:
+  waiting for the close of STP-37; finishing STP-37 first.
 
 ## Spec
 
@@ -80,8 +83,9 @@ Terms:
   verdict). A **false finding** has the newest verdict `false`.
 - **Block writers**: `stapel findings import`, `stapel findings triage`, `stapel review start` and a
   `stapel check` run that appends a record to `runs.jsonl`.
-- **Counted finding** (rule counts): a finding not false, with the promise `inside` and the severity after
-  triage HIGH or MEDIUM.
+- **Counted finding** (rule counts): a finding not false, whose newest fate is not `no-change`, with the
+  promise `inside` and the severity after triage HIGH or MEDIUM (the same rule as the `catches` record of
+  STP-37).
 
 | № | Criterion | Test |
 |---|---|---|
@@ -126,7 +130,7 @@ also `--test ticket_drift`.
 | Broken markers | two Review sections; a begin marker alone; an end marker alone; two blocks; for each, exit 2 and `findings.jsonl` unchanged; `review start` writes no pack; `stapel check` refuses before a run (no new record); no Review section, and no `ticket.md`: the import goes on, the notice, `ticket.md` unchanged | `review_block::broken_markers_refuse` |
 | Clean tree | HEAD without a block, its Review section ending in two empty lines before `## Summary`: the round trip; a CRLF `ticket.md`; after an import `stapel check` runs and `stapel next` names no uncommitted change with `ticket.md` uncommitted; a hand change of the Spec makes it refuse; an untracked `merge-request.md` does not | `review_block::block_only_change_is_clean` |
 | Merge request | an export with a Summary and two deferred findings (one false: left out, one regraded); with none: `none`; a second export rewrites; the guard denies a Write of `merge-request.md` | `export::writes_the_merge_request` |
-| Rule counts | three tickets: rules `none` (absent, empty and a number), `rule 3`, ` rule 3 ` (trimmed, one rule); LOW, outside and false findings not counted; a HIGH regraded `low` not counted; a LOW regraded `high` counted; seven tickets: five columns and `total` | `ledger_rules::counts_per_rule_and_ticket` |
+| Rule counts | three tickets: rules `none` (absent, empty and a number), `rule 3`, ` rule 3 ` (trimmed, one rule); LOW, outside, false and `no-change` findings not counted; a HIGH regraded `low` not counted; a LOW regraded `high` counted; seven tickets: five columns and `total` | `ledger_rules::counts_per_rule_and_ticket` |
 | Quiet rules | a rule counted only in the oldest of four tickets: `quiet`; a rule with only LOW findings: a row of zeros, `quiet`; a rule counted in one of the newest three: no mark; `none` with no count: no mark; two tickets: no mark; `--last 2`: no mark | `ledger_rules::marks_quiet_rules` |
 | Bad input | a broken line in one `findings.jsonl`; `--last 0`, `--last x`; no ticket with findings | `ledger_rules::bad_lines_and_last` |
 | Returns | the golden transcript: two dialogs, one `AskUserQuestion` call with two questions, one message: `returns: 4 (2 dialogs, 1 question dialogs, 1 messages)` | `attention::measure_prints_tokens_and_attention` |
