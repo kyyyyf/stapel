@@ -578,7 +578,11 @@ pub fn decide(f: &Facts) -> Decision {
     } else if let Some(h) = f.history {
         let wait: &[String] = if provisional { &confirm_facts } else { &[] };
         let action = history_action(f, h, plan, wait, &mut facts);
-        notes.extend((provisional && !waiting.is_empty()).then(|| provisional_fact.clone()));
+        // At the close point the action asks for the confirmation: no provisional fact (AC-4).
+        let builds = !matches!(action.name, "write-page" | "confirm");
+        notes.extend(
+            (provisional && builds && !waiting.is_empty()).then(|| provisional_fact.clone()),
+        );
         action
     } else {
         // The rules that read history come next; the caller reads it and decides again.

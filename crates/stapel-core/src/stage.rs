@@ -210,8 +210,19 @@ fn level_close(config: &Config, sections: &[Section], state: &State) -> bool {
         .filter(|s| s.owner != "generated")
         .all(|s| {
             let covered = matches!(s.id.as_str(), "spec" | "design" | "proof" | "plan");
-            latest(state, &s.id).is_some()
-                && (covered || is_fresh(config, sections, state, &s.id))
+            let Some(c) = latest(state, &s.id) else {
+                return false;
+            };
+            // A covered section may wait only because a text changed, not for a missing or
+            // doubled heading.
+            let reasons = freshness(config, sections, c);
+            if covered {
+                reasons
+                    .iter()
+                    .all(|r| matches!(r, Reason::Changed | Reason::DependencyChanged(_)))
+            } else {
+                reasons.is_empty()
+            }
         })
 }
 
