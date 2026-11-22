@@ -150,6 +150,7 @@ fn add_warns_on_unconfigured_role() {
 fn add_accepts_closed_ticket() {
     let repo = repo_with_ticket();
     let dir = repo.path();
+    common::confirm_sections(dir, "ABC-1");
     stapel(dir)
         .args(["close", "--reason", "done"])
         .assert()

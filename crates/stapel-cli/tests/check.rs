@@ -1836,6 +1836,7 @@ fn unknown_head_is_stale() {
 fn close_needs_a_current_passing_check() {
     let repo = passing_repo();
     let dir = repo.path();
+    common::confirm_these(dir, "ABC-1", &["description", "spec", "design", "proof", "plan"]);
     stapel(dir)
         .args(["close", "ABC-1", "--reason", "done"])
         .assert()
@@ -1866,6 +1867,7 @@ fn close_needs_a_current_passing_check() {
 fn close_dialog_shows_the_check() {
     let repo = passing_repo();
     let dir = repo.path();
+    common::confirm_these(dir, "ABC-1", &["description", "spec", "design", "proof", "plan"]);
     let (code, text) = check(dir);
     assert_eq!(code, 0, "{text}");
     let (reason, _) = common::ask(dir, "stapel close ABC-1 --reason done");
@@ -1877,6 +1879,7 @@ fn close_dialog_shows_the_check() {
     let plain = common::stapel_repo();
     let pdir = plain.path();
     stapel(pdir).args(["new", "Plain"]).assert().success();
+    common::confirm_sections(pdir, "ABC-1");
     let (reason, _) = common::ask(pdir, "stapel close ABC-1 --reason done");
     assert!(reason.contains("check: not configured"), "{reason}");
 }
@@ -1942,6 +1945,7 @@ fn a_record_needs_a_full_commit_id() {
 fn close_refuses_a_failing_check() {
     let repo = passing_repo();
     let dir = repo.path();
+    common::confirm_these(dir, "ABC-1", &["description", "spec", "design", "proof", "plan"]);
     add_test(dir, "other", "fails", "assert!(false);");
     commit(dir, "ABC-1: a failing test outside the steps");
     let (code, text) = check(dir);

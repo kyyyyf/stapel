@@ -867,6 +867,7 @@ fn triage_on_a_closed_ticket() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     seed(dir, &[finding("F-1")]);
+    common::confirm_sections(dir, "ABC-1");
     stapel(dir)
         .args(["close", "--reason", "done"])
         .assert()

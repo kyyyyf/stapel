@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{repo_with_ticket, stapel, state_json};
+use common::{confirm_these, repo_with_ticket, stapel, state_json};
 use predicates::str::contains;
 use std::path::Path;
 
@@ -20,13 +20,17 @@ fn ok_and_close_append_a_decision() {
     let repo = repo_with_ticket();
     let dir = repo.path();
     stapel(dir).args(["ok", "spec"]).assert().success();
+    // The close needs every section confirmed (STP-36 AC-5); each ok is a decision of its own.
+    confirm_these(dir, "ABC-1", &["design", "proof", "plan"]);
     stapel(dir)
         .args(["close", "--reason", "merged"])
         .assert()
         .success();
 
-    let d = decisions(dir);
-    assert_eq!(d.len(), 2);
+    let all = decisions(dir);
+    assert_eq!(all.len(), 5);
+    assert!(all[1..4].iter().all(|x| x["action"] == "ok"), "{all:?}");
+    let d = [all[0].clone(), all[4].clone()];
     assert_eq!(d[0]["v"], 1);
     assert_eq!(d[0]["action"], "ok");
     assert_eq!(d[0]["section"], "spec");

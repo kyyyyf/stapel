@@ -808,6 +808,7 @@ fn denies_code_write_after_spec_edit() {
 fn closed_ticket_gives_no_permit() {
     let repo = confirmed_repo();
     let dir = repo.path();
+    common::confirm_these(dir, "ABC-1", &["plan"]);
     stapel(dir)
         .args(["close", "--reason", "merged"])
         .assert()
@@ -1331,6 +1332,7 @@ fn replaced_command_runs_installed_stapel() {
 #[test]
 fn close_reason_with_dash_round_trips() {
     let repo = repo_with_ticket();
+    common::confirm_sections(repo.path(), "ABC-1");
     let (_, replaced) = ask(repo.path(), "stapel close --reason=-x");
     assert!(replaced.contains("--reason=-x"), "{replaced}");
 }
@@ -1396,6 +1398,9 @@ fn allow_rule_prefix_needs_word_boundary() {
             json!({"permissions": {"allow": [rule]}}).to_string(),
         )
         .unwrap();
+        if command.starts_with("stapel close") {
+            common::confirm_sections(dir, "ABC-1");
+        }
         if denied {
             hook_bash(dir, command, "auto")
                 .code(DENY)

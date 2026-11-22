@@ -733,6 +733,7 @@ fn closed_ticket_by_key_only() {
     // A closed ticket by key: written as for an open one, in any case.
     let repo = repo_with_ticket();
     let dir = repo.path();
+    common::confirm_sections(dir, "ABC-1");
     stapel(dir)
         .args(["close", "--reason", "done"])
         .assert()
@@ -1201,6 +1202,7 @@ fn dialog_for_import() {
     );
 
     // A closed ticket by its key: the reason says so.
+    common::confirm_sections(dir, "ABC-1");
     stapel(dir)
         .args(["close", "ABC-1", "--reason", "done"])
         .assert()
@@ -1757,6 +1759,7 @@ fn dialog_text_edges() {
 fn grants_of_other_commands_do_not_cross() {
     let repo = repo_with_ticket();
     let dir = repo.path();
+    common::confirm_sections(dir, "ABC-1");
     put(dir, "in.jsonl", &many(1));
     let token = |command: &str| common::token_of(&common::ask(dir, command).1);
     let state = || std::fs::read_to_string(dir.join(".stapel/tickets/ABC-1/state.json")).unwrap();
