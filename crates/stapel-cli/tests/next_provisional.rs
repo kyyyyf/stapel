@@ -355,8 +355,47 @@ fn light_ticket_at_level_close() {
     assert!(write_allowed(dir), "provisional: write allowed");
     assert_eq!(status_build_line(dir), "build: provisional ABC-1");
     assert_eq!(action(dir), BUILD_TWO);
+    // The fact names every waiting section: a changed Spec makes Design, Proof and Plan wait.
+    let text = next(dir);
+    let level_fact = "provisional: spec, design, proof, plan wait for stapel ok ABC-1 before the close";
+    assert!(text.lines().any(|l| l == level_fact), "no level fact in: {text}");
+    assert_eq!(text.matches("provisional:").count(), 1, "one fact in: {text}");
+
+    // At the close point `next` gives write-page, with no provisional fact.
+    set_section(dir, "ABC-1", "Review", "Reviewed: nothing.");
+    commit(dir, &[], "the step and the review");
+    commit(
+        dir,
+        &[("crates/tiny/tests/t2.rs", "#[test]\nfn t() {\n    assert!(true);\n}\n")],
+        "ABC-1 step 2 RED: test",
+    );
+    commit(dir, &[("crates/tiny/src/lib.rs", "// two\n")], "ABC-1 step 2 GREEN: code");
+    let text = next(dir);
+    assert_eq!(action(dir), waits, "at the close point");
+    assert!(!text.contains("provisional:"), "fact at the close point: {text}");
+
+    // Every section fresh: no fact.
+    let repo = level_ticket(LIGHT_ONE, Some("close"), None);
+    let text = next(repo.path());
+    assert!(!text.contains("provisional:"), "fact with every section fresh: {text}");
+
+    // Stops: a missing Spec heading is no provisional wait.
+    let repo = level_ticket(LIGHT_ONE, Some("close"), None);
+    let dir = repo.path();
+    let ticket = dir.join(".stapel/tickets/ABC-1/ticket.md");
+    let md = std::fs::read_to_string(&ticket).unwrap();
+    let from = md.find("## Spec\n").expect("no Spec heading");
+    let to = from + md[from..].find("\n## Design").expect("no Design heading") + 1;
+    std::fs::write(&ticket, format!("{}{}", &md[..from], &md[to..])).unwrap();
+    set_section(dir, "ABC-1", "Plan", LIGHT_TWO);
+    assert_ne!(status_build_line(dir), "build: provisional ABC-1", "missing Spec heading");
+    assert!(!write_allowed(dir), "missing Spec heading: write denied");
 
     // Stops: the Description changed too.
+    let repo = level_ticket(LIGHT_ONE, Some("close"), None);
+    let dir = repo.path();
+    set_section(dir, "ABC-1", "Spec", SPEC_CHANGED);
+    set_section(dir, "ABC-1", "Plan", LIGHT_TWO);
     set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem, changed.");
     assert_eq!(action(dir), waits, "Description changed");
     assert_ne!(status_build_line(dir), "build: provisional ABC-1");
