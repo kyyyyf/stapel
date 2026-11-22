@@ -668,6 +668,8 @@ fn no_print_macros_outside_out() {
     rust_files(&src, &mut files);
     files.sort();
     assert!(!files.is_empty());
+    // STP-36 AC-10: the file that runs the `[worktree] setup` command is read too.
+    assert!(files.iter().any(|f| f.ends_with("new.rs")), "{files:?}");
     let mut hits = Vec::new();
     for file in files {
         if file.file_name().is_some_and(|n| n == "out.rs") {
@@ -884,6 +886,8 @@ fn no_direct_stream_calls() {
     }
     files.sort();
     assert!(!files.is_empty());
+    // STP-36 AC-10: the file that runs the `[worktree] setup` command is read too.
+    assert!(files.iter().any(|f| f.ends_with("new.rs")), "{files:?}");
     let mut hits = Vec::new();
     for file in files {
         if file.file_name().is_some_and(|n| n == "out.rs") {
