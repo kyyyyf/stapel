@@ -2009,3 +2009,36 @@ fn this_repository_has_the_workflow() {
         assert!(install.contains(want), "docs/install.md lacks {want}");
     }
 }
+
+/// STP-36 AC-13: the skill and the starter `stapel.toml` name the dialog level, the worktree setup,
+/// the provisional sections and the `open:` lines.
+#[test]
+fn names_dialogs_and_setup() {
+    let repo = git_repo();
+    stapel(repo.path())
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let skill = read(repo.path(), SKILL);
+    for want in [
+        "dialogs = \"close\"",
+        "[worktree] setup",
+        "provisional",
+        "open:",
+        "EnterWorktree",
+        ".gitignore",
+    ] {
+        assert!(skill.contains(want), "the skill lacks {want}");
+    }
+    assert!(
+        !skill.contains("are confirmed by one ok before their build"),
+        "the skill keeps the old fix step text"
+    );
+    let starter = read(repo.path(), ".stapel/stapel.toml");
+    for want in ["# [process]", "# dialogs = \"all\"", "# [worktree]", "# setup = "] {
+        assert!(
+            starter.lines().any(|l| l.starts_with(want)),
+            "the starter lacks {want}"
+        );
+    }
+}
