@@ -510,6 +510,36 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
     // The level follows the `cargo:` line (AC-11).
     let level_now = level.or(check.level.as_deref()).unwrap_or("head").to_string();
     say!("level: {level_now}");
+    // Under junit a Node pin of the checked commit is compared with `node --version` (STP-37 AC-6, AC-7).
+    if junit && let Some((file, pin, numbers)) = node_pin(&root, &at) {
+        let run = runner.left().and_then(|left| {
+            run_program(
+                Path::new("node"),
+                &wt.path,
+                &["--version".to_string()],
+                &[],
+                left,
+            )
+        });
+        let version = match run {
+            Ok(run) if run.timed_out => Err(runner.limit_reason()),
+            Ok(run) if run.exit == Some(0) => node_version_of(&run.output)
+                .ok_or_else(|| format!("no version in the output: {}", run.output.trim())),
+            Ok(run) => Err(format!("exit {:?}: {}", run.exit, run.output.trim())),
+            Err(e) => Err(e),
+        };
+        match version {
+            Err(e) => return refuse(format!("node --version failed: {e}")),
+            Ok((version, have)) => {
+                if have[..numbers.len()] != numbers[..] {
+                    return refuse(format!(
+                        "node {version} does not match the pin {pin} in {file}"
+                    ));
+                }
+                say!("node: {version} (pin {pin} in {file})");
+            }
+        }
+    }
     if !inputs.unchanged.is_empty() {
         say!("build inputs: {}", named(&inputs.unchanged));
     }
@@ -695,6 +725,47 @@ const MAX_PROJECT: usize = 20;
 const PROJECT_TAIL: usize = 20;
 /// A record stays below the journal's 64 KiB line limit with room to spare.
 const MAX_RECORD: usize = 60 * 1024;
+
+/// The numbers of a version: one to three dot-separated numbers with an optional leading `v`.
+fn version_numbers(text: &str) -> Option<Vec<u64>> {
+    let text = text.strip_prefix('v').unwrap_or(text);
+    let parts: Vec<&str> = text.split('.').collect();
+    if parts.len() > 3 {
+        return None;
+    }
+    parts
+        .iter()
+        .map(|p| {
+            if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) {
+                p.parse().ok()
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// The Node pin at a commit: the file, the trimmed text and its numbers, for the first of `.nvmrc`
+/// and `.node-version` whose text is one line that is a version (STP-37 AC-6).
+fn node_pin(root: &Path, at: &str) -> Option<(&'static str, String, Vec<u64>)> {
+    [".nvmrc", ".node-version"].into_iter().find_map(|file| {
+        let text = stapel_core::steps::show(root, at, file)?;
+        let text = text.trim();
+        if text.contains('\n') {
+            return None;
+        }
+        let numbers = version_numbers(text)?;
+        Some((file, text.to_string(), numbers))
+    })
+}
+
+/// The first `v<n>.<n>.<n>` word of the output of `node --version`: the word and its numbers.
+fn node_version_of(output: &str) -> Option<(String, Vec<u64>)> {
+    output.split_whitespace().find_map(|w| {
+        let numbers = version_numbers(w)?;
+        (w.starts_with('v') && numbers.len() == 3).then(|| (w.to_string(), numbers))
+    })
+}
 
 /// One path as one shell word: single-quoted, with `./` before a path that starts with `-`.
 fn shell_word(path: &str) -> String {
