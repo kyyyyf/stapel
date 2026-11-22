@@ -41,6 +41,17 @@ pub fn pre_tool_use() -> ExitCode {
             say!("{answer}");
             ExitCode::SUCCESS
         }
+        Ok(Decision::AskEdit(reason)) => {
+            let answer = serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": reason,
+                }
+            });
+            say!("{answer}");
+            ExitCode::SUCCESS
+        }
         Ok(Decision::Deny(reason)) => deny(&reason),
         Err(_) => deny("internal error in the check; the call is denied"),
     }
