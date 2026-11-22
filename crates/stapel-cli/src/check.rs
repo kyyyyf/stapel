@@ -513,7 +513,8 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         timeout,
         deadline,
         head: &at,
-        base: bounds.base,
+        key: &ticket.key,
+        bounds,
         outside: std::cell::RefCell::new(blocked),
         junit: junit_run,
     };
@@ -928,8 +929,9 @@ struct Runner<'a> {
     /// The end of the time limit of the whole check.
     deadline: std::time::Instant,
     head: &'a str,
-    /// The `base` of the ticket, the start of the range that `{files}` reads.
-    base: Option<&'a str>,
+    /// The ticket key and the bounds of its range, which `{files}` reads.
+    key: &'a str,
+    bounds: Bounds<'a>,
     /// Set when a build input lies above the worktree: no cargo runs, and every step and the suite
     /// read `unverified: build-input-outside: <path>`.
     outside: std::cell::RefCell<Option<String>>,
@@ -1545,11 +1547,15 @@ impl Runner<'_> {
     /// range that exist at the checked commit and do not lie under `.stapel/`; sorted, unique, each
     /// one shell-quoted word (STP-37 AC-3).
     fn changed_files(&self) -> Result<Vec<String>, String> {
-        let walk = stapel_core::steps::walk_range(self.base, self.head);
-        let commits = git_text(
-            self.root,
-            &["rev-list", "--first-parent", "--no-merges", &walk],
-        )?;
+        let commits = build_inputs::range(self.root, self.key, self.head, self.bounds)?;
+        let mut kept = Vec::new();
+        for sha in commits {
+            let parents = git_text(self.root, &["rev-list", "--parents", "-n", "1", &sha])?;
+            if parents.split_whitespace().count() <= 2 {
+                kept.push(sha);
+            }
+        }
+        let commits = kept.join("\n");
         let existing = git_text(self.root, &["ls-tree", "-r", "-z", "--name-only", self.head])?;
         let existing: std::collections::BTreeSet<&str> =
             existing.split('\0').filter(|p| !p.is_empty()).collect();
