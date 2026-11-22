@@ -1,7 +1,7 @@
 ---
 name: stapel
 description: "Carries a development ticket from description to merge with the stapel process."
-# stapel: 0.1.0 sha256:e21d685f24e4612a642e6391b6f73f50a6d8aebd6836fb6e36d60edadf622e40
+# stapel: 0.1.0 sha256:76dc645c044ba8a0352a930300615f0d5253c92254ac4c693423e9a1ca257fa6
 ---
 # The stapel process
 
@@ -30,8 +30,8 @@ the file to use; the facts that block an action come first. Do not re-read the w
 - `[worktree] setup` runs after `stapel new` in the new worktree; the files it makes belong in the
   project's `.gitignore`.
 - At the session start, `open:` lines name open tickets of other worktrees. When the person's message names
-  none of them and asks for no new ticket, continue the named or the only one with `EnterWorktree`, then
-  run `stapel next`.
+  one of them, continue it. When it names none and asks for no new ticket, continue the only open ticket;
+  with several, ask the person which one. In each case use `EnterWorktree`, then run `stapel next`.
 - Parallel tickets: `stapel new` makes a branch and a worktree for each ticket. SessionStart does not
   fire after `EnterWorktree`, so run `stapel next` after `EnterWorktree` before anything else. Commands without KEY take the ticket of the
   current branch and refuse a foreign KEY. Agents run cargo only through `stapel cargo`; the cargo lock
