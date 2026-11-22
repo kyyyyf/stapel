@@ -381,6 +381,9 @@ stapel's own group; the absent `timeout_secs` default is 3600; `time_limit_kills
 own sleeps (step 3 RED amended); a failing check keeps `fix-check` (AC-16); `next` demands the head check
 before the final close action too.
 
+The person at the close (2026-11-22): XR2-3 stays, a later plan item narrows it; the close goes without
+the jest measure; the close runs with the branch's binary installed.
+
 Open for the person:
 - XR2-3 (MEDIUM, deferred): under the cargo runner the suite can read the ticket's folder (here
   `ticket_drift`), so an edit of the Spec or Proof after a pass can break the suite while the check stays
