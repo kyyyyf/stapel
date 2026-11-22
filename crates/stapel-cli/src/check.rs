@@ -511,7 +511,15 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
     let level_now = level.or(check.level.as_deref()).unwrap_or("head").to_string();
     say!("level: {level_now}");
     // Under junit a Node pin of the checked commit is compared with `node --version` (STP-37 AC-6, AC-7).
-    if junit && let Some((file, pin, numbers)) = node_pin(&root, &at) {
+    let pin = if junit {
+        match node_pin(&root, &at) {
+            Ok(pin) => pin,
+            Err(e) => return refuse(e),
+        }
+    } else {
+        None
+    };
+    if let Some((file, pin, numbers)) = pin {
         let run = runner.left().and_then(|left| {
             run_program(
                 Path::new("node"),
@@ -747,16 +755,28 @@ fn version_numbers(text: &str) -> Option<Vec<u64>> {
 
 /// The Node pin at a commit: the file, the trimmed text and its numbers, for the first of `.nvmrc`
 /// and `.node-version` whose text is one line that is a version (STP-37 AC-6).
-fn node_pin(root: &Path, at: &str) -> Option<(&'static str, String, Vec<u64>)> {
-    [".nvmrc", ".node-version"].into_iter().find_map(|file| {
-        let text = stapel_core::steps::show(root, at, file)?;
+/// A pin that is not a version, or two pins that disagree, is an error (STP-37 AC-8).
+type Pin = (&'static str, String, Vec<u64>);
+fn node_pin(root: &Path, at: &str) -> Result<Option<Pin>, String> {
+    let mut pins: Vec<Pin> = Vec::new();
+    for file in [".nvmrc", ".node-version"] {
+        let Some(text) = stapel_core::steps::show(root, at, file) else {
+            continue;
+        };
         let text = text.trim();
-        if text.contains('\n') {
-            return None;
-        }
-        let numbers = version_numbers(text)?;
-        Some((file, text.to_string(), numbers))
-    })
+        let numbers = if text.contains('\n') { None } else { version_numbers(text) };
+        let Some(numbers) = numbers else {
+            return Err(format!("{file}: not a version: {text}"));
+        };
+        pins.push((file, text.to_string(), numbers));
+    }
+    if pins.len() == 2 && pins[0].2 != pins[1].2 {
+        return Err(format!(
+            ".nvmrc and .node-version disagree: {}, {}",
+            pins[0].1, pins[1].1
+        ));
+    }
+    Ok(pins.into_iter().next())
 }
 
 /// The first `v<n>.<n>.<n>` word of the output of `node --version`: the word and its numbers.
