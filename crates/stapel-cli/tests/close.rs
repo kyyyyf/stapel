@@ -2,13 +2,14 @@
 
 mod common;
 
-use common::{repo_with_ticket, stapel, state_json};
+use common::{confirm_sections, repo_with_ticket, stapel, state_json};
 use predicates::str::contains;
 
 #[test]
 fn records_closed_fact() {
     let repo = repo_with_ticket();
     let dir = repo.path();
+    confirm_sections(dir, "ABC-1");
     stapel(dir)
         .args(["close", "abc-1", "--reason", "merged"])
         .assert()
@@ -29,6 +30,7 @@ fn records_closed_fact() {
 fn drops_hand_build_flag() {
     let repo = repo_with_ticket();
     let dir = repo.path();
+    confirm_sections(dir, "ABC-1");
     let mut state = state_json(dir, "ABC-1");
     state["build"] = serde_json::json!({"allowed": true, "by": "human"});
     std::fs::write(
@@ -48,6 +50,7 @@ fn drops_hand_build_flag() {
 fn refuses_twice_and_without_reason() {
     let repo = repo_with_ticket();
     let dir = repo.path();
+    confirm_sections(dir, "ABC-1");
     for empty in ["", "   "] {
         stapel(dir)
             .args(["close", "--reason", empty])
@@ -90,6 +93,7 @@ use common::{ask, token_of};
 fn accepts_valid_grant_once() {
     let repo = repo_with_ticket();
     let dir = repo.path();
+    confirm_sections(dir, "ABC-1");
     let (reason, replaced) = ask(dir, "stapel close --reason merged");
     assert!(
         reason.contains("ABC-1") && reason.contains("merged"),
