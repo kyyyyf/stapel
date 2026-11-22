@@ -45,6 +45,22 @@ pub struct Config {
     /// `[repository]` (STP-31 AC-4); absent means the shared mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<Repository>,
+    /// `[process]` (STP-36 AC-7); absent means the level `all`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<Process>,
+}
+
+/// `[process]`: how often the process turns to the person.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Process {
+    /// The dialog level: `all` (the default) or `close`.
+    #[serde(default = "default_dialogs")]
+    pub dialogs: String,
+}
+
+fn default_dialogs() -> String {
+    "all".to_string()
 }
 
 /// `[repository]`: where the process files live in git history.
@@ -311,6 +327,14 @@ impl Config {
 
     /// Checks that sections, dependencies, the key pattern and `build.requires` fit together.
     fn validate(&self) -> Result<(), String> {
+        if let Some(process) = &self.process {
+            if process.dialogs != "all" && process.dialogs != "close" {
+                return Err(format!(
+                    "process.dialogs must be all or close: {}",
+                    process.dialogs
+                ));
+            }
+        }
         if !self.tickets.key.contains("{n}") {
             return Err(format!(
                 "tickets.key \"{}\" has no {{n}} for the ticket number",
