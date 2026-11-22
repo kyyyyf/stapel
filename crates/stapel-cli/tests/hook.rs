@@ -300,10 +300,16 @@ fn denies_machine_file_writes_even_with_build() {
         ".stapel/tickets/ABC-1/runs.jsonl",
         ".stapel/tickets/ABC-1/tokens.jsonl",
     ] {
+        // STP-36 AC-9: `.stapel/stapel.toml` is refused for the missing dialog mode.
+        let text = if rel == ".stapel/stapel.toml" {
+            "needs the permission dialog"
+        } else {
+            "only stapel"
+        };
         for tool in WRITE_TOOLS {
             write_call(root, tool, &root.join(rel).display().to_string())
                 .code(DENY)
-                .stderr(contains("only stapel"));
+                .stderr(contains(text));
         }
     }
     for rel in [".stapel/tickets/ABC-1/ticket.md", ".stapel/allowlist.toml"] {
@@ -522,9 +528,20 @@ fn denies_settings_and_case_variants() {
         ".stapel/tickets/ABC-1/STATE.json",
         ".stapel/STAPEL.toml",
     ] {
+        // STP-36 AC-9: `.stapel/stapel.toml` is refused for the missing dialog mode.
+        // On a case-sensitive file system that is another file: the machine-file denial.
+        let probe = root.join("CaseProbe.tmp");
+        std::fs::write(&probe, "x").unwrap();
+        let case_sensitive = !root.join("caseprobe.tmp").exists();
+        std::fs::remove_file(&probe).unwrap();
+        let text = if rel == ".stapel/STAPEL.toml" && !case_sensitive {
+            "needs the permission dialog"
+        } else {
+            "only stapel"
+        };
         write_call(root, "Write", &root.join(rel).display().to_string())
             .code(DENY)
-            .stderr(contains("only stapel"));
+            .stderr(contains(text));
     }
 }
 
@@ -808,6 +825,7 @@ fn denies_code_write_after_spec_edit() {
 fn closed_ticket_gives_no_permit() {
     let repo = confirmed_repo();
     let dir = repo.path();
+    common::confirm_these(dir, "ABC-1", &["plan"]);
     stapel(dir)
         .args(["close", "--reason", "merged"])
         .assert()
@@ -1331,6 +1349,7 @@ fn replaced_command_runs_installed_stapel() {
 #[test]
 fn close_reason_with_dash_round_trips() {
     let repo = repo_with_ticket();
+    common::confirm_sections(repo.path(), "ABC-1");
     let (_, replaced) = ask(repo.path(), "stapel close --reason=-x");
     assert!(replaced.contains("--reason=-x"), "{replaced}");
 }
@@ -1396,6 +1415,9 @@ fn allow_rule_prefix_needs_word_boundary() {
             json!({"permissions": {"allow": [rule]}}).to_string(),
         )
         .unwrap();
+        if command.starts_with("stapel close") {
+            common::confirm_sections(dir, "ABC-1");
+        }
         if denied {
             hook_bash(dir, command, "auto")
                 .code(DENY)
@@ -2044,4 +2066,241 @@ fn held_mark_forms() {
             .code(DENY)
             .stderr(contains(CARGO_TEXT));
     }
+}
+
+// STP-36 AC-8: the main agent's edit of `.stapel/stapel.toml` gets the permission dialog.
+#[test]
+fn stapel_toml_edit_asks() {
+    let repo = initialized_repo();
+    let root = repo.path();
+    let original = std::fs::read_to_string(root.join(".stapel/stapel.toml")).unwrap();
+    let old = "always_writable = [\".stapel/\", \"docs/\"]";
+    assert!(original.contains(old));
+    let new = "always_writable = [\".stapel/\", \"scripts/\"]";
+    let newer = "always_writable = [\".stapel/\", \"tools/\"]";
+    let absolute = root.join(".stapel/stapel.toml").display().to_string();
+    std::os::unix::fs::symlink(root.join(".stapel/stapel.toml"), root.join("link.toml")).unwrap();
+    // A case variant is the same file on a case-insensitive file system; on a case-sensitive one
+    // a symlinked directory with a case-variant name stands for it.
+    let probe = root.join("CaseProbe.tmp");
+    std::fs::write(&probe, "x").unwrap();
+    let case_sensitive = !root.join("caseprobe.tmp").exists();
+    std::fs::remove_file(&probe).unwrap();
+    let variant = if case_sensitive {
+        std::os::unix::fs::symlink(root.join(".stapel"), root.join(".STAPEL")).unwrap();
+        ".STAPEL/stapel.toml"
+    } else {
+        ".STAPEL/Stapel.toml"
+    };
+    let paths = [
+        variant.to_string(),
+        "./.stapel/stapel.toml".to_string(),
+        "crates/../.stapel/stapel.toml".to_string(),
+        absolute,
+        "link.toml".to_string(),
+    ];
+    for mode in ["default", "acceptEdits", "auto"] {
+        for path in &paths {
+            let calls = [
+                (
+                    "Edit",
+                    json!({ "file_path": path, "old_string": old, "new_string": new }),
+                ),
+                (
+                    "MultiEdit",
+                    json!({ "file_path": path, "edits": [
+                        { "old_string": old, "new_string": new },
+                        { "old_string": new, "new_string": newer },
+                    ] }),
+                ),
+                (
+                    "Write",
+                    json!({ "file_path": path, "content": original.replace(old, new) }),
+                ),
+            ];
+            for (tool, input) in calls {
+                let payload = json!({
+                    "session_id": "test",
+                    "hook_event_name": "PreToolUse",
+                    "cwd": root,
+                    "permission_mode": mode,
+                    "tool_name": tool,
+                    "tool_input": input,
+                });
+                let out = stapel(root)
+                    .args(["hook", "pre-tool-use"])
+                    .write_stdin(payload.to_string())
+                    .assert()
+                    .success()
+                    .get_output()
+                    .stdout
+                    .clone();
+                let what = format!("{tool} {path} in {mode}");
+                let v: serde_json::Value = serde_json::from_slice(&out)
+                    .unwrap_or_else(|e| panic!("no JSON answer for {what}: {e}"));
+                let h = &v["hookSpecificOutput"];
+                assert_eq!(h["hookEventName"], "PreToolUse", "{what}");
+                assert_eq!(h["permissionDecision"], "ask", "{what}");
+                assert_eq!(
+                    h["permissionDecisionReason"],
+                    "an edit of .stapel/stapel.toml: the person confirms it in this dialog",
+                    "{what}"
+                );
+                // The tool input stays as it came: no `updatedInput`, or the same one.
+                assert!(
+                    h.get("updatedInput").is_none() || h["updatedInput"] == input,
+                    "{what}: {v}"
+                );
+            }
+        }
+    }
+    // AC-8 asks only for the same file: on a case-sensitive file system `.stapel/Stapel.toml` is
+    // another file and gets no dialog.
+    if case_sensitive {
+        let payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "cwd": root,
+            "permission_mode": "default",
+            "tool_name": "Write",
+            "tool_input": { "file_path": ".stapel/Stapel.toml", "content": original.replace(old, new) },
+        });
+        stapel(root)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+            .code(2);
+    }
+    // The ask changes nothing on disk.
+    assert_eq!(
+        std::fs::read_to_string(root.join(".stapel/stapel.toml")).unwrap(),
+        original
+    );
+}
+
+// STP-36 AC-9: the refusals of an edit of `.stapel/stapel.toml`, in the order subagent, mode,
+// apply, load.
+#[test]
+fn stapel_toml_edit_refusals() {
+    let repo = initialized_repo();
+    let root = repo.path();
+    let original = std::fs::read_to_string(root.join(".stapel/stapel.toml")).unwrap();
+    let old = "always_writable = [\".stapel/\", \"docs/\"]";
+    assert!(original.contains(old));
+    let new = "always_writable = [\".stapel/\", \"scripts/\"]";
+    let call = |tool: &str,
+                input: serde_json::Value,
+                mode: Option<&str>,
+                agent: Option<&str>| {
+        let mut payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "cwd": root,
+            "tool_name": tool,
+            "tool_input": input,
+        });
+        if let Some(mode) = mode {
+            payload["permission_mode"] = json!(mode);
+        }
+        if let Some(agent) = agent {
+            payload["agent_id"] = json!(agent);
+        }
+        stapel(root)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+    };
+    let path = ".stapel/stapel.toml";
+    let good = json!({ "file_path": path, "old_string": old, "new_string": new });
+    let absent = json!({ "file_path": path, "old_string": "no such text", "new_string": new });
+
+    // A subagent is denied, in every mode, before any other refusal.
+    let subagent = "only the main agent edits .stapel/stapel.toml, through the person's dialog";
+    for mode in [Some("default"), Some("bypassPermissions"), None] {
+        for input in [&good, &absent] {
+            call("Edit", input.clone(), mode, Some("agent-1"))
+                .code(DENY)
+                .stderr(contains(subagent));
+        }
+    }
+
+    // A mode without a dialog is denied, before the apply and load checks.
+    for (mode, shown) in [(Some("bypassPermissions"), "bypassPermissions"), (None, "")] {
+        let text = format!(
+            "an edit of .stapel/stapel.toml needs the permission dialog, which Claude Code \
+             does not show in permission mode \"{shown}\""
+        );
+        for input in [&good, &absent] {
+            call("Edit", input.clone(), mode, None)
+                .code(DENY)
+                .stderr(contains(&text));
+        }
+    }
+
+    // An Edit whose `old_string` is found zero times or twice does not apply.
+    let twice = json!({ "file_path": path, "old_string": "\"", "new_string": "'" });
+    for input in [&absent, &twice] {
+        call("Edit", input.clone(), Some("default"), None)
+            .code(DENY)
+            .stderr(contains("the edit of .stapel/stapel.toml does not apply"));
+    }
+
+    // A result that does not load is denied with the load error.
+    let loads_not = "would not load: ";
+    let bad_dialogs = original.replace("[guard]", "[process]\ndialogs = \"x\"\n\n[guard]");
+    assert_ne!(bad_dialogs, original);
+    for input in [
+        json!({ "file_path": path, "content": bad_dialogs }),
+        json!({ "file_path": path, "content": "this is [not toml" }),
+    ] {
+        call("Write", input, Some("default"), None)
+            .code(DENY)
+            .stderr(contains(".stapel/stapel.toml would not load: "))
+            .stderr(contains(loads_not));
+    }
+    call(
+        "Write",
+        json!({ "file_path": path, "content": bad_dialogs }),
+        Some("default"),
+        None,
+    )
+    .code(DENY)
+    .stderr(contains("dialogs"));
+
+    // The other machine files stay denied.
+    for file in [".stapel/process-ledger.jsonl", ".claude/settings.json"] {
+        call(
+            "Write",
+            json!({ "file_path": file, "content": "x" }),
+            Some("default"),
+            None,
+        )
+        .code(DENY)
+        .stderr(contains("only stapel or the human writes"));
+    }
+
+    // On a case-sensitive file system a case variant is another file: today's denial, no dialog.
+    let probe = root.join("CaseProbe.tmp");
+    std::fs::write(&probe, "x").unwrap();
+    let case_sensitive = !root.join("caseprobe.tmp").exists();
+    std::fs::remove_file(&probe).unwrap();
+    if case_sensitive {
+        assert!(!root.join(".STAPEL/Stapel.toml").exists());
+        for tool_input in [
+            json!({ "file_path": ".STAPEL/Stapel.toml", "content": original.replace(old, new) }),
+            json!({ "file_path": ".stapel/Stapel.toml", "content": original.replace(old, new) }),
+        ] {
+            call("Write", tool_input, Some("default"), None)
+                .code(DENY)
+                .stderr(contains("only stapel or the human writes"));
+        }
+    } else {
+        println!("skipped: the file system is case-insensitive, a case variant is the same file");
+    }
+
+    // Nothing changed on disk.
+    assert_eq!(
+        std::fs::read_to_string(root.join(path)).unwrap(),
+        original
+    );
 }

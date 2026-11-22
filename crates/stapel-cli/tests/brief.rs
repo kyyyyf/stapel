@@ -353,6 +353,7 @@ fn writes_nothing() {
 fn closed_ticket() {
     let repo = fixture();
     let dir = repo.path();
+    common::confirm_sections(dir, "ABC-1");
     stapel(dir)
         .args(["close", "ABC-1", "--reason", "done"])
         .assert()

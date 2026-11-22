@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// Seconds a grant stays valid after the dialog appears.
-pub const LIFETIME: u64 = 30 * 60;
+pub const LIFETIME: u64 = 24 * 60 * 60;
 
 /// What the person is asked to approve.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -157,6 +157,20 @@ pub fn confirm_sections(dir: &Path, key: &str) {
     }
 }
 
+/// `repo_with_ticket` with the sections of ABC-1 confirmed, so that `stapel close` runs.
+pub fn confirmed_repo_with_ticket() -> TempDir {
+    let repo = repo_with_ticket();
+    confirm_sections(repo.path(), "ABC-1");
+    repo
+}
+
+/// Confirms the named sections of `key` with `stapel ok`.
+pub fn confirm_these(dir: &Path, key: &str, sections: &[&str]) {
+    for section in sections {
+        stapel(dir).args(["ok", key, section]).assert().success();
+    }
+}
+
 /// Runs the PreToolUse hook on a Bash command with the given permission mode.
 pub fn hook_bash(dir: &Path, command: &str, mode: &str) -> assert_cmd::assert::Assert {
     let payload = serde_json::json!({

@@ -3,6 +3,7 @@
 mod common;
 
 use common::{stapel, stapel_repo, state_json};
+use predicates::prelude::*;
 use predicates::str::contains;
 use std::path::Path;
 
@@ -325,6 +326,7 @@ fn key_must_match_the_branch() {
     stapel(dir).args(["ok", "ABC-1", "spec"]).assert().success();
     let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
     assert!(!String::from_utf8_lossy(&out.stderr).contains("is not the ticket of branch"));
+    common::confirm_these(dir, "ABC-1", &["design", "proof", "plan"]);
     stapel(dir)
         .args(["close", "ABC-1", "--reason", "done"])
         .assert()
@@ -463,6 +465,7 @@ fn commands_on_a_branch() {
     assert!(!all.contains("--grant"), "{all}");
 
     // `close` without KEY closes the branch ticket only.
+    common::confirm_sections(dir, "ABC-2");
     stapel(dir)
         .args(["close", "--reason", "done"])
         .assert()
@@ -526,4 +529,85 @@ fn review_start_on_a_branch() {
     assert!(b.join(".stapel/scratch/review/ABC-2-r1/pack.md").is_file());
     assert!(!pair.a.join(".stapel/scratch/review").exists());
     assert!(!b.join(".stapel/scratch/review/ABC-1-r1").exists());
+}
+
+fn with_setup(dir: &Path, setup: &str) {
+    let path = dir.join(".stapel/stapel.toml");
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.push_str(&format!("\n[worktree]\nsetup = {setup:?}\n"));
+    std::fs::write(&path, text).unwrap();
+    commit_all(dir);
+}
+
+// STP-36 AC-10: the setup runs in the new worktree after the `worktree:` line.
+#[test]
+fn runs_the_setup() {
+    let repo = stapel_repo();
+    let dir = repo.path();
+    git(dir, &["branch", "-m", "main"]);
+    with_setup(dir, "pwd > setup-ran; echo to-stdout; echo to-stderr >&2; cat > got-input");
+    let out = stapel(dir).args(["new", "First ticket"]).output().unwrap();
+    let said = String::from_utf8_lossy(&out.stdout);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    let wt = dir.join(".claude/worktrees/ABC-1");
+    let ran = std::fs::read_to_string(wt.join("setup-ran")).unwrap();
+    assert!(ran.trim().ends_with(".claude/worktrees/ABC-1"), "{ran}");
+    assert_eq!(std::fs::read_to_string(wt.join("got-input")).unwrap(), "");
+    let (worktree_at, ok_at) = (said.find("worktree: "), said.find("setup: ok"));
+    assert!(worktree_at.is_some() && ok_at > worktree_at, "{said}");
+    assert!(err.contains("to-stderr") && err.contains("to-stdout"), "{err}");
+    assert!(!said.contains("to-stdout"), "{said}");
+
+    // No key: the output of today.
+    let repo = stapel_repo();
+    let dir = repo.path();
+    commit_all(dir);
+    stapel(dir)
+        .args(["new", "Plain"])
+        .assert()
+        .success()
+        .stdout(contains("setup:").not());
+
+    // An empty or blank command fails the load.
+    for blank in ["", "  "] {
+        let repo = stapel_repo();
+        let dir = repo.path();
+        with_setup(dir, blank);
+        stapel(dir)
+            .args(["new", "Blank"])
+            .assert()
+            .failure()
+            .stderr(contains("worktree.setup is empty"));
+    }
+}
+
+// STP-36 AC-11: a failed setup keeps the worktree, the branch and the ticket.
+#[test]
+fn failed_setup_keeps_the_worktree() {
+    let cases = [
+        ("exit 3", "exit 3"),
+        ("stapel-no-such-command-xyz", "exit 127"),
+        ("kill -KILL $$", "signal 9"),
+    ];
+    for (command, status) in cases {
+        let repo = stapel_repo();
+        let dir = repo.path();
+        git(dir, &["branch", "-m", "main"]);
+        with_setup(dir, command);
+        let out = stapel(dir).args(["new", "First ticket"]).output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{command}: {err}");
+        let wt = dir.join(".claude/worktrees/ABC-1");
+        assert!(
+            err.contains(&format!(
+                "stapel: the setup command failed ({status}); the worktree is kept: {}",
+                wt.display()
+            )),
+            "{command}: {err}"
+        );
+        assert!(wt.join(".stapel/tickets/ABC-1/ticket.md").is_file());
+        git(dir, &["rev-parse", "--verify", "ABC-1"]);
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("setup: ok"));
+    }
 }

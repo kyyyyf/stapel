@@ -347,7 +347,7 @@ fn stdout_closed_keeps_exit_code() {
     cases.push((case("status stale", &["status"]), stale_repo()));
     cases.push((
         case("close", &["close", "--reason", "done"]),
-        common::repo_with_ticket(),
+        common::confirmed_repo_with_ticket(),
     ));
 
     let r = common::repo_with_ticket();
@@ -506,7 +506,7 @@ fn closed_output_keeps_every_write() {
     cases.push((case("ok", &["ok", "spec"]), common::repo_with_ticket()));
     cases.push((
         case("close", &["close", "--reason", "done"]),
-        common::repo_with_ticket(),
+        common::confirmed_repo_with_ticket(),
     ));
     cases.push((case("tokens add", &add), common::repo_with_ticket()));
     cases.push((
@@ -668,6 +668,8 @@ fn no_print_macros_outside_out() {
     rust_files(&src, &mut files);
     files.sort();
     assert!(!files.is_empty());
+    // STP-36 AC-10: the file that runs the `[worktree] setup` command is read too.
+    assert!(files.iter().any(|f| f.ends_with("new.rs")), "{files:?}");
     let mut hits = Vec::new();
     for file in files {
         if file.file_name().is_some_and(|n| n == "out.rs") {
@@ -765,7 +767,7 @@ fn open_runs_print_to_the_closed_stream() {
     ));
     cases.push((
         case("close", &["close", "--reason", "done"]),
-        common::repo_with_ticket(),
+        common::confirmed_repo_with_ticket(),
         &out_only,
     ));
     cases.push((
@@ -884,6 +886,8 @@ fn no_direct_stream_calls() {
     }
     files.sort();
     assert!(!files.is_empty());
+    // STP-36 AC-10: the file that runs the `[worktree] setup` command is read too.
+    assert!(files.iter().any(|f| f.ends_with("new.rs")), "{files:?}");
     let mut hits = Vec::new();
     for file in files {
         if file.file_name().is_some_and(|n| n == "out.rs") {

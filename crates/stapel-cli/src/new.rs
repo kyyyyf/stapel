@@ -105,10 +105,46 @@ fn create(title: &str, tracker: Option<&str>) -> Result<(), Refusal> {
         let short = git(&root, &["rev-parse", "--short", "HEAD"])?;
         say!("branch: {key} from {base_branch} at {short}");
         say!("worktree: .claude/worktrees/{key}");
+        if let Some(setup) = config.worktree.as_ref().and_then(|w| w.setup.as_ref()) {
+            run_setup(setup, &dest)?;
+            say!("setup: ok");
+        }
     } else if base.is_none() {
         say!("note: no commit yet; the ticket stays in this checkout");
     }
     Ok(())
+}
+
+/// Runs `[worktree] setup` through `sh -c` in the worktree: no input, all output on stderr.
+fn run_setup(command: &str, worktree: &Path) -> Result<(), Refusal> {
+    use std::os::unix::process::ExitStatusExt;
+    let failed = |status: String| {
+        Refusal::Failed(format!(
+            "the setup command failed ({status}); the worktree is kept: {}",
+            worktree.display()
+        ))
+    };
+    let stderr = crate::out::stderr_duplicate()
+        .map_err(|e| failed(format!("could not start: {e}")))?;
+    let stdout = stderr
+        .try_clone()
+        .map_err(|e| failed(format!("could not start: {e}")))?;
+    let status = std::process::Command::new("sh")
+        .args(["-c", command])
+        .current_dir(worktree)
+        .stdin(std::process::Stdio::null())
+        .stdout(stdout)
+        .stderr(stderr)
+        .status()
+        .map_err(|e| failed(format!("could not start: {e}")))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err(failed(match (status.code(), status.signal()) {
+        (Some(n), _) => format!("exit {n}"),
+        (None, Some(n)) => format!("signal {n}"),
+        _ => "unknown status".to_string(),
+    }))
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {

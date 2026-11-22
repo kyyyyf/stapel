@@ -213,6 +213,7 @@ fn new_ticket(dir: &Path, title: &str) {
 
 /// Closes `key`, then sets the time of the close.
 fn close_at(dir: &Path, key: &str, at: &str) {
+    common::confirm_sections(dir, key);
     stapel(dir)
         .args(["close", key, "--reason", "merged"])
         .assert()
@@ -750,6 +751,7 @@ fn unreadable_transcript_gives_a_gap_record() {
 
     // No open ticket: nothing is written, not even to a closed ticket.
     let closed = repo_with_ticket();
+    common::confirm_sections(closed.path(), "ABC-1");
     stapel(closed.path())
         .args(["close", "ABC-1", "--reason", "merged"])
         .assert()

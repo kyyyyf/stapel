@@ -6,6 +6,7 @@
 
 use crate::config::Config;
 use serde::Deserialize;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 /// The part of a Claude Code PreToolUse payload the guard looks at.
@@ -32,6 +33,101 @@ pub enum Decision {
         reason: String,
         command: String,
     },
+    /// Show the person the permission dialog with `reason`; the tool input stays as it came.
+    AskEdit(String),
+}
+
+const TOML_ASK_REASON: &str =
+    "an edit of .stapel/stapel.toml: the person confirms it in this dialog";
+
+/// The text `.stapel/stapel.toml` would have after the tool call, or `None` when the call does
+/// not apply (an Edit whose `old_string` is not found once, or once with `replace_all`).
+fn edited_text(tool: &str, input: &serde_json::Value, current: &str) -> Option<String> {
+    fn replace(
+        text: &str,
+        old: &serde_json::Value,
+        new: &serde_json::Value,
+        all: &serde_json::Value,
+    ) -> Option<String> {
+        let (old, new) = (old.as_str()?, new.as_str()?);
+        let found = if old.is_empty() {
+            0
+        } else {
+            text.matches(old).count()
+        };
+        let all = all.as_bool().unwrap_or(false);
+        if found == 0 || (found > 1 && !all) {
+            return None;
+        }
+        Some(text.replace(old, new))
+    }
+    match tool {
+        "Write" => input["content"].as_str().map(str::to_string),
+        "Edit" => replace(
+            current,
+            &input["old_string"],
+            &input["new_string"],
+            &input["replace_all"],
+        ),
+        "MultiEdit" => {
+            let mut text = current.to_string();
+            for edit in input["edits"].as_array()? {
+                text = replace(
+                    &text,
+                    &edit["old_string"],
+                    &edit["new_string"],
+                    &edit["replace_all"],
+                )?;
+            }
+            Some(text)
+        }
+        _ => None,
+    }
+}
+
+/// The dialog for an edit of `.stapel/stapel.toml` by the main agent in a dialog mode, when the
+/// file it would leave loads. Every other case is `None`: the denial stands.
+fn toml_edit_ask(input: &HookInput, target: &Path) -> Option<Decision> {
+    let root = stapel_root(target)?;
+    let rel = target.strip_prefix(&root).ok()?;
+    let parts: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+        .collect();
+    if parts != [".stapel", "stapel.toml"] {
+        return None;
+    }
+    // The same file, not only the same name without case: a case variant is another file on a
+    // case-sensitive file system.
+    let own = std::fs::metadata(root.join(".stapel/stapel.toml")).ok()?;
+    let named = std::fs::metadata(target).ok()?;
+    if (own.dev(), own.ino()) != (named.dev(), named.ino()) {
+        return None;
+    }
+    if input.agent_id.as_deref().is_some_and(|id| !id.is_empty()) {
+        return Some(Decision::Deny(
+            "only the main agent edits .stapel/stapel.toml, through the person's dialog".into(),
+        ));
+    }
+    let mode = input.permission_mode.as_deref().unwrap_or("");
+    if !crate::dialog::DIALOG_MODES.contains(&mode) {
+        return Some(Decision::Deny(format!(
+            "an edit of .stapel/stapel.toml needs the permission dialog, which Claude Code \
+             does not show in permission mode \"{mode}\""
+        )));
+    }
+    let current = std::fs::read_to_string(root.join(".stapel/stapel.toml")).ok()?;
+    let Some(result) = edited_text(&input.tool_name, &input.tool_input, &current) else {
+        return Some(Decision::Deny(
+            "the edit of .stapel/stapel.toml does not apply".into(),
+        ));
+    };
+    if let Err(error) = Config::parse_at(&result, &root) {
+        return Some(Decision::Deny(format!(
+            ".stapel/stapel.toml would not load: {error}"
+        )));
+    }
+    Some(Decision::AskEdit(TOML_ASK_REASON.into()))
 }
 
 impl HookInput {
@@ -160,6 +256,9 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
                         target.display()
                     ));
                 }
+            }
+            if let Some(ask) = toml_edit_ask(input, &target) {
+                return ask;
             }
             decide_write(&target)
         }

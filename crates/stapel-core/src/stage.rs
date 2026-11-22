@@ -99,6 +99,32 @@ pub fn waiting_for<'a>(
         .find(|s| !is_fresh(config, sections, state, &s.id))
 }
 
+/// The refusal of a close while a section waits for its confirmation (STP-36 AC-5): `None`
+/// when every section whose owner is not `generated` is fresh, or when the ticket has no
+/// confirmation at all (dropped before its first `stapel ok`).
+pub fn close_refusal(
+    config: &Config,
+    sections: &[Section],
+    state: &State,
+    key: &str,
+) -> Option<String> {
+    if state.confirmations.is_empty() {
+        return None;
+    }
+    let ids: Vec<&str> = config
+        .sections
+        .iter()
+        .filter(|s| s.owner != "generated")
+        .filter(|s| !is_fresh(config, sections, state, &s.id))
+        .map(|s| s.id.as_str())
+        .collect();
+    if ids.is_empty() {
+        None
+    } else {
+        Some(format!("{} wait for stapel ok {key}", ids.join(", ")))
+    }
+}
+
 /// Whether this open ticket's required sections are all freshly confirmed.
 pub fn ticket_permits(config: &Config, sections: &[Section], state: &State) -> bool {
     config
@@ -123,7 +149,128 @@ pub fn diff(confirmed: &str, current: &str) -> String {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Permit {
     Computed(String),
+    /// The build goes on without a `stapel ok` of the waiting sections until the one before the
+    /// close (STP-36): the Plan grew by fix steps after a patch round, or the level is `close` on
+    /// a light ticket.
+    Provisional(String),
     ByHand(String),
+}
+
+/// Whether `current` is an appended Plan of the confirmed text `confirmed`: every normal-form line
+/// of the confirmed text, each equal and in order, and at least one line more, the first of them
+/// a Plan step line (`<n>. ` or `<n><letter>. `).
+pub fn appended_plan(confirmed: &str, current: &str) -> bool {
+    let old = normal_form(confirmed);
+    let new = normal_form(current);
+    let old: Vec<&str> = old.lines().collect();
+    let new: Vec<&str> = new.lines().collect();
+    new.len() > old.len() && new[..old.len()] == old[..] && is_step_line(new[old.len()])
+}
+
+/// Whether `line` starts with `<n>. ` or `<n><letter>. `.
+fn is_step_line(line: &str) -> bool {
+    let rest = line.trim_start_matches(|c: char| c.is_ascii_digit());
+    if rest.len() == line.len() {
+        return false;
+    }
+    let rest = match rest.chars().next() {
+        Some(c) if c.is_ascii_alphabetic() => &rest[c.len_utf8()..],
+        _ => rest,
+    };
+    rest.starts_with(". ")
+}
+
+/// Whether the build goes on without a `stapel ok` of the Plan (STP-36): the newest code review
+/// round has a patch finding (`patch_round`), the Plan is the only waiting section and it is an
+/// appended Plan.
+pub fn provisional(
+    config: &Config,
+    sections: &[Section],
+    state: &State,
+    patch_round: bool,
+) -> bool {
+    level_close(config, sections, state) || fix_steps(config, sections, state, patch_round)
+}
+
+/// Whether the level is `close` and the ticket is light (STP-36 AC-6, AC-7): the Plan text of the
+/// Plan's last confirmation says `Route: light`, every section was confirmed once and the
+/// Description is fresh.
+fn level_close(config: &Config, sections: &[Section], state: &State) -> bool {
+    if config.process.as_ref().map(|p| p.dialogs.as_str()) != Some("close") {
+        return false;
+    }
+    let Some(plan) = config.section("plan") else {
+        return false;
+    };
+    let Some(confirmed) = latest(state, &plan.id).and_then(|c| c.text.as_deref()) else {
+        return false;
+    };
+    if !crate::next::is_light(confirmed) {
+        return false;
+    }
+    config
+        .sections
+        .iter()
+        .filter(|s| s.owner != "generated")
+        .all(|s| {
+            let covered = matches!(s.id.as_str(), "spec" | "design" | "proof" | "plan");
+            let Some(c) = latest(state, &s.id) else {
+                return false;
+            };
+            // A covered section may wait only because a text changed, not for a missing or
+            // doubled heading.
+            let reasons = freshness(config, sections, c);
+            if covered {
+                reasons
+                    .iter()
+                    .all(|r| matches!(r, Reason::Changed | Reason::DependencyChanged(_)))
+            } else {
+                reasons.is_empty()
+            }
+        })
+}
+
+/// The fix steps of the newest code review round (STP-36 AC-2).
+fn fix_steps(config: &Config, sections: &[Section], state: &State, patch_round: bool) -> bool {
+    if !patch_round {
+        return false;
+    }
+    let Some(plan) = config.section("plan") else {
+        return false;
+    };
+    let waiting: Vec<&SectionDef> = config
+        .sections
+        .iter()
+        .filter(|s| s.owner != "generated")
+        .filter(|s| !is_fresh(config, sections, state, &s.id))
+        .collect();
+    if waiting.len() != 1 || waiting[0].id != plan.id {
+        return false;
+    }
+    let Some(c) = latest(state, &plan.id) else {
+        return false;
+    };
+    let (Some(confirmed), Lookup::Found(current)) = (c.text.as_deref(), find(sections, &plan.title))
+    else {
+        return false;
+    };
+    freshness(config, sections, c) == [Reason::Changed] && appended_plan(confirmed, current)
+}
+
+/// Whether the newest code review round of the ticket in `dir` is a patch round.
+fn dir_patch_round(root: &Path, dir: &Path, key: &str) -> bool {
+    use crate::journal::Entry;
+    let Ok(entries) = crate::journal::read(&dir.join("findings.jsonl")) else {
+        return false;
+    };
+    let records: Vec<_> = entries
+        .into_iter()
+        .filter_map(|(_, e)| match e {
+            Entry::V1(m) | Entry::Legacy(m) => Some(m),
+            Entry::Problem(_) => None,
+        })
+        .collect();
+    crate::review::patch_round(&records, crate::review::pack_round(root, key))
 }
 
 /// Reads a regular file of at most 4 MiB, or nothing.
@@ -178,6 +325,7 @@ pub fn permit_report(root: &Path, config: &Config) -> String {
 /// first ticket without a `closed` fact that carries the phase-0 hand flag.
 pub fn build_permit(root: &Path, config: Option<&Config>) -> Option<Permit> {
     let dir = crate::tickets::tickets_dir(root);
+    let mut provisional_key = None;
     if let Some(config) = config {
         for ticket in permit_candidates(root) {
             let Status::Open(state) = &ticket.status else {
@@ -197,10 +345,19 @@ pub fn build_permit(root: &Path, config: Option<&Config>) -> Option<Permit> {
             let Some(text) = read_bounded(&ticket.dir.join("ticket.md")) else {
                 continue;
             };
-            if ticket_permits(config, &parse(&text), state) {
+            let sections = parse(&text);
+            if ticket_permits(config, &sections, state) {
                 return Some(Permit::Computed(ticket.key));
             }
+            if provisional_key.is_none()
+                && provisional(config, &sections, state, dir_patch_round(root, &ticket.dir, &ticket.key))
+            {
+                provisional_key = Some(ticket.key);
+            }
         }
+    }
+    if let Some(key) = provisional_key {
+        return Some(Permit::Provisional(key));
     }
     let mut names: Vec<_> = std::fs::read_dir(&dir)
         .into_iter()
