@@ -495,6 +495,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         timeout,
         deadline,
         head: &at,
+        base: bounds.base,
         outside: std::cell::RefCell::new(blocked),
         junit: junit_run,
     };
@@ -596,7 +597,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
             say!("project: skipped: level steps");
         } else {
             for (command, outcome) in runner.project(project_commands) {
-                ok &= outcome == "pass";
+                ok &= outcome == "pass" || outcome == "skipped";
                 project_json.push(serde_json::json!({
                     "command": cut(&command, MAX_COMMAND),
                     "outcome": outcome,
@@ -695,6 +696,42 @@ const PROJECT_TAIL: usize = 20;
 /// A record stays below the journal's 64 KiB line limit with room to spare.
 const MAX_RECORD: usize = 60 * 1024;
 
+/// One path as one shell word: single-quoted, with `./` before a path that starts with `-`.
+fn shell_word(path: &str) -> String {
+    let path = if path.starts_with('-') { format!("./{path}") } else { path.to_string() };
+    format!("'{}'", path.replace('\'', "'\\''"))
+}
+
+/// Whether a whitespace-separated word of the command is exactly `{files}`.
+fn has_files_word(command: &str) -> bool {
+    command.split_whitespace().any(|w| w == "{files}")
+}
+
+/// The command with each whole word `{files}` replaced by `list`, joined by spaces.
+fn replace_files_word(command: &str, list: &[String]) -> String {
+    let joined = list.join(" ");
+    let mut out = String::new();
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        if word == "{files}" {
+            out.push_str(&joined);
+        } else {
+            out.push_str(word);
+        }
+        word.clear();
+    };
+    for c in command.chars() {
+        if c.is_whitespace() {
+            flush(&mut word, &mut out);
+            out.push(c);
+        } else {
+            word.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
+}
+
 fn cut(text: &str, max: usize) -> String {
     let mut end = text.len().min(max);
     while !text.is_char_boundary(end) {
@@ -725,6 +762,8 @@ struct Runner<'a> {
     /// The end of the time limit of the whole check.
     deadline: std::time::Instant,
     head: &'a str,
+    /// The `base` of the ticket, the start of the range that `{files}` reads.
+    base: Option<&'a str>,
     /// Set when a build input lies above the worktree: no cargo runs, and every step and the suite
     /// read `unverified: build-input-outside: <path>`.
     outside: std::cell::RefCell<Option<String>>,
@@ -1252,7 +1291,21 @@ impl Runner<'_> {
         if let Err(e) = prepared {
             stop = Some(e);
         }
+        let mut files: Option<Result<Vec<String>, String>> = None;
         for command in commands {
+            let mut command_run = command.clone();
+            if stop.is_none() && has_files_word(command) {
+                let list = files.get_or_insert_with(|| self.changed_files());
+                match list {
+                    Ok(list) if list.is_empty() => {
+                        say!("project: {command}: skipped: no changed files");
+                        done.push((command.clone(), "skipped"));
+                        continue;
+                    }
+                    Ok(list) => command_run = replace_files_word(command, list),
+                    Err(e) => stop = Some(e.clone()),
+                }
+            }
             if stop.is_none() && self.left().is_err() {
                 stop = Some("time limit".to_string());
             }
@@ -1265,7 +1318,7 @@ impl Runner<'_> {
             let run = run_program(
                 Path::new("/bin/sh"),
                 &self.wt.path,
-                &["-c".to_string(), command.clone()],
+                &["-c".to_string(), command_run],
                 &[],
                 left,
             );
@@ -1301,6 +1354,34 @@ impl Runner<'_> {
             }
         }
         done
+    }
+
+    /// The changed files of the ticket: the paths of each non-merge commit of the first-parent
+    /// range that exist at the checked commit and do not lie under `.stapel/`; sorted, unique, each
+    /// one shell-quoted word (STP-37 AC-3).
+    fn changed_files(&self) -> Result<Vec<String>, String> {
+        let walk = stapel_core::steps::walk_range(self.base, self.head);
+        let commits = git_text(
+            self.root,
+            &["rev-list", "--first-parent", "--no-merges", &walk],
+        )?;
+        let existing = git_text(self.root, &["ls-tree", "-r", "-z", "--name-only", self.head])?;
+        let existing: std::collections::BTreeSet<&str> =
+            existing.split('\0').filter(|p| !p.is_empty()).collect();
+        let mut files: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for sha in commits.lines() {
+            let out = git_text(
+                self.root,
+                &["diff-tree", "-z", "--no-renames", "--name-only", "-r", "--root", sha],
+            )?;
+            // With a commit argument, the first item is the commit id.
+            for path in out.split('\0').filter(|p| !p.is_empty() && *p != sha) {
+                if existing.contains(path) && !path.starts_with(".stapel/") {
+                    files.insert(path.to_string());
+                }
+            }
+        }
+        Ok(files.iter().map(|p| shell_word(p)).collect())
     }
 
     /// The whole suite at HEAD.
