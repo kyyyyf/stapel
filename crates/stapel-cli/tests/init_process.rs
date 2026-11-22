@@ -2053,3 +2053,32 @@ fn names_dialogs_and_setup() {
         );
     }
 }
+
+/// STP-37 AC-18: the starter names `[check] project` with `{files}`; the skill names the history
+/// line, the round numbers and the ledger records of the close.
+#[test]
+fn starter_names_project_and_history() {
+    let repo = git_repo();
+    stapel(repo.path())
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let starter = read(repo.path(), ".stapel/stapel.toml");
+    assert!(
+        starter
+            .lines()
+            .any(|l| l.starts_with('#') && l.contains("project = ") && l.contains("{files}")),
+        "the starter lacks a commented project key with {{files}}"
+    );
+    let skill = read(repo.path(), SKILL);
+    let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+    for want in [
+        "history: <reason>",
+        "--round 3",
+        "stapel close appends",
+        "`catches`",
+        "`finding`",
+    ] {
+        assert!(flat.contains(want), "the skill lacks {want}");
+    }
+}
