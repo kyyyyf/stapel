@@ -100,13 +100,17 @@ pub fn waiting_for<'a>(
 }
 
 /// The refusal of a close while a section waits for its confirmation (STP-36 AC-5): `None`
-/// when every section whose owner is not `generated` is fresh.
+/// when every section whose owner is not `generated` is fresh, or when the ticket has no
+/// confirmation at all (dropped before its first `stapel ok`).
 pub fn close_refusal(
     config: &Config,
     sections: &[Section],
     state: &State,
     key: &str,
 ) -> Option<String> {
+    if state.confirmations.is_empty() {
+        return None;
+    }
     let ids: Vec<&str> = config
         .sections
         .iter()
