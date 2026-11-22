@@ -542,3 +542,104 @@ fn junit_input_with_a_reason() {
         "{out}"
     );
 }
+
+// AC-13, AC-14: the report lists the history commits oldest first, before the suite line (after the
+// steps in `--history` mode); the record has `history` with full ids, reasons cut to 200 characters
+// (not bytes), control bytes replaced in the printed line, and past 20 entries `history_truncated`.
+#[test]
+fn the_record_lists_the_reasons() {
+    let repo = common::junit_repo();
+    let dir = repo.dir();
+    write(dir, "__tests__/one.test.ts", "it(\"one\", () => { /* needs src/one.ts */ });\n");
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/one.ts", "export const v = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: one\n\nhistory: the first reason");
+    let first = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let long: String = "ж".repeat(300);
+    commit(dir, &format!("ABC-1: a long note\n\nhistory: {long}"));
+    let second = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    commit(dir, "ABC-1: a plain note without a reason");
+    commit(dir, "ABC-1: control bytes\n\nhistory: bad\x1b[31m text");
+    let third = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let ids = [&first, &second, &third];
+    let lines_of = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|l| l.starts_with("history: "))
+            .map(String::from)
+            .collect()
+    };
+    let position = |text: &str, prefix: &str| {
+        text.lines()
+            .position(|l| l.starts_with(prefix))
+            .unwrap_or_else(|| panic!("no {prefix}\n{text}"))
+    };
+    let check = |args: &[&str]| {
+        let out = stapel(dir).args(args).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let expected = |long_chars: usize| -> Vec<String> {
+        vec![
+            format!("history: {} the first reason", &first[..7]),
+            format!("history: {} {}", &second[..7], "ж".repeat(long_chars)),
+            format!("history: {} bad [31m text", &third[..7]),
+        ]
+    };
+    let same = |text: &str| {
+        assert!(!text.contains('\x1b'), "{text:?}");
+        let got = lines_of(text);
+        assert_eq!(got.len(), 3, "{text}");
+        assert_eq!(got[0], expected(0)[0], "{text}");
+        assert!(got[1].starts_with(&expected(200)[1]), "{text}");
+        assert_eq!(got[2], expected(0)[2], "{text}");
+    };
+
+    // The full check: after the step lines, before the suite line.
+    let full = check(&["check", "ABC-1"]);
+    same(&full);
+    let (step, hist, suite) = (
+        position(&full, "step 1: "),
+        position(&full, "history: "),
+        position(&full, "suite: "),
+    );
+    assert!(step < hist && hist < suite, "{full}");
+    // `--history`: after the step lines, before the result line.
+    let only = check(&["check", "ABC-1", "--history"]);
+    same(&only);
+    let (step, hist, result) = (
+        position(&only, "step 1: "),
+        position(&only, "history: "),
+        position(&only, "result: "),
+    );
+    assert!(step < hist && hist < result, "{only}");
+
+    let last = |dir: &Path| -> serde_json::Value {
+        let text = read(dir, ".stapel/tickets/ABC-1/runs.jsonl");
+        let line = text
+            .lines()
+            .rfind(|l| l.contains("\"kind\":\"check\""))
+            .unwrap();
+        serde_json::from_str(line).unwrap()
+    };
+    let record = last(dir);
+    let entries = record["history"].as_array().expect("history in the record");
+    assert_eq!(entries.len(), 3, "{record}");
+    for (entry, id) in entries.iter().zip(ids) {
+        assert_eq!(entry["commit"], id.as_str(), "{record}");
+        assert_eq!(entry.as_object().unwrap().len(), 2, "{record}");
+    }
+    assert_eq!(entries[0]["reason"], "the first reason", "{record}");
+    assert_eq!(entries[1]["reason"], "ж".repeat(200).as_str(), "{record}");
+    assert!(record.get("history_truncated").is_none(), "{record}");
+
+    // Past 20 entries the rest are left out.
+    for n in 0..18 {
+        commit(dir, &format!("ABC-1: note {n}\n\nhistory: reason {n}"));
+    }
+    check(&["check", "ABC-1"]);
+    let record = last(dir);
+    let entries = record["history"].as_array().expect("history in the record");
+    assert_eq!(entries.len(), 20, "{record}");
+    assert_eq!(entries[0]["commit"], first.as_str(), "{record}");
+    assert_eq!(record["history_truncated"], true, "{record}");
+}
