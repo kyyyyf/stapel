@@ -6,7 +6,7 @@ use common::{repo_with_ticket, set_section, stapel};
 use std::path::Path;
 
 const BUILD_TWO: &str = "next: build-step step 2 — stapel brief ABC-1 2";
-const FACT: &str = "provisional: plan waits for stapel ok ABC-1 before the close";
+const FACT: &str = "provisional: plan wait for stapel ok ABC-1 before the close";
 
 const PLAN_ONE: &str = "Route: full, auto.\n\n1. One (AC-1).";
 const PLAN_TWO: &str = "Route: full, auto.\n\n1. One (AC-1).\n2. Two (AC-1).";
@@ -141,6 +141,12 @@ fn fix_steps_build_without_a_dialog() {
         text.lines().any(|l| l == FACT),
         "no provisional fact in: {text}"
     );
+    assert_eq!(text.matches("provisional:").count(), 1, "one fact in: {text}");
+
+    // Absent once the Plan is confirmed.
+    stapel(repo.path()).args(["ok", "plan"]).assert().success();
+    let text = next(repo.path());
+    assert!(!text.contains("provisional:"), "fact after the ok: {text}");
 
     // The same with the patch finding in round 2.
     let both = format!("{patch_one}{}", finding("R2-1", 2, "patch"));
