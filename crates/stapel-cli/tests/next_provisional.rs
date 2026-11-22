@@ -220,3 +220,28 @@ fn fix_steps_build_without_a_dialog() {
     assert!(!text.contains("build-step"), "built before any ok: {text}");
     assert!(!text.contains("provisional:"), "{text}");
 }
+
+// AC-4
+#[test]
+fn close_waits_for_the_ok() {
+    let repo = ticket(&finding("R1-1", 1, "patch"));
+    let dir = repo.path();
+    let waits = "next: write-page — stapel page ABC-1";
+
+    // Both steps built, the review written, the Plan waiting.
+    set_section(dir, "ABC-1", "Plan", PLAN_TWO);
+    set_section(dir, "ABC-1", "Review", "Reviewed: one fix.");
+    commit(dir, &[], "the fix step and the review");
+    commit(
+        dir,
+        &[("crates/tiny/tests/t2.rs", "#[test]\nfn t() {\n    assert!(true);\n}\n")],
+        "ABC-1 step 2 RED: test",
+    );
+    commit(dir, &[("crates/tiny/src/lib.rs", "// two\n")], "ABC-1 step 2 GREEN: code");
+    assert_eq!(action(dir), waits, "instead of write-summary");
+
+    // With the Summary written: instead of close.
+    set_section(dir, "ABC-1", "Summary", "Done.");
+    commit(dir, &[], "the summary");
+    assert_eq!(action(dir), waits, "instead of close");
+}
