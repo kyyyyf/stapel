@@ -83,6 +83,7 @@ pub fn run(key: Option<&str>) -> Result<ExitCode, String> {
     }
     match build_permit(&root, Some(&config)) {
         Some(Permit::Computed(k)) => say!("build: allowed (by {k})"),
+        Some(Permit::Provisional(k)) => say!("build: provisional {k}"),
         Some(Permit::ByHand(k)) => say!("build: allowed by hand (phase 0, {k})"),
         None => say!("build: not allowed"),
     }

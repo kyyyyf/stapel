@@ -12,7 +12,7 @@ use stapel_core::page::page_text;
 use stapel_core::journal::{self, Entry};
 use stapel_core::next::{Action, Facts, Fault, History, Target, decide};
 use stapel_core::outcomes::{open_red, passing};
-use stapel_core::review::{finding_round, patch_findings};
+use stapel_core::review::{finding_round, pack_round, patch_findings, patch_round};
 use stapel_core::steps::{Marker, git_text, step_commits, steps, walk_range};
 use stapel_core::ticket::{parse, read};
 use stapel_core::tickets::{Status, Ticket, list, resolve};
@@ -42,23 +42,6 @@ fn json_line(ticket: Option<&str>, action: &Action, facts: &[String]) -> String 
         "facts": facts,
     })
     .to_string()
-}
-
-/// The highest round whose review folder holds `pack.md`; 0 when there is none.
-fn pack_round(root: &Path, key: &str) -> u64 {
-    let Ok(entries) = std::fs::read_dir(root.join(".stapel/scratch/review")) else {
-        return 0;
-    };
-    entries
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().into_string().ok()?;
-            let n = name.strip_prefix(key)?.strip_prefix("-r")?;
-            let round: u64 = n.parse().ok()?;
-            (round.to_string() == n && e.path().join("pack.md").is_file()).then_some(round)
-        })
-        .max()
-        .unwrap_or(0)
 }
 
 /// Whether `page.md` holds the bytes `stapel page` would write now. A refusal of the section
@@ -286,6 +269,48 @@ fn lines_parts(
     (out, None)
 }
 
+/// One line `open: <KEY> — <title> — <worktree path> — next: <action>` per open ticket on the branch
+/// of another live worktree, sorted by key (STP-36 AC-12). A ticket or action that cannot be read
+/// gives `open: <branch> — <path> — next: unreadable`.
+fn open_lines(root: &Path) -> Vec<String> {
+    let here = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut found: Vec<(String, String)> = Vec::new();
+    for wt in stapel_core::parallel::worktrees(root) {
+        if wt.prunable || !wt.path.is_dir() {
+            continue;
+        }
+        if wt.path.canonicalize().unwrap_or_else(|_| wt.path.clone()) == here {
+            continue;
+        }
+        let Some(ticket) = stapel_core::tickets::branch_ticket(&wt.path) else {
+            continue;
+        };
+        let path = wt.path.display();
+        let line = match &ticket.status {
+            Status::Closed(_) => continue,
+            Status::Open(state) => {
+                let action = text_at(&wt.path)
+                    .ok()
+                    .and_then(|lines| lines.last()?.strip_prefix("next: ").map(String::from));
+                match action {
+                    Some(action) => {
+                        format!("open: {} — {} — {path} — next: {action}", ticket.key, state.title)
+                    }
+                    None => format!("open: {} — {path} — next: unreadable", ticket.key),
+                }
+            }
+            Status::Legacy(_) | Status::Unreadable(_) => {
+                let branch = stapel_core::parallel::current_branch(&wt.path)
+                    .unwrap_or_else(|| ticket.key.clone());
+                format!("open: {branch} — {path} — next: unreadable")
+            }
+        };
+        found.push((ticket.key.to_lowercase(), line));
+    }
+    found.sort();
+    found.into_iter().map(|(_, line)| line).collect()
+}
+
 fn lines_inner(
     root: &Path,
     config: &Config,
@@ -344,6 +369,9 @@ fn lines_inner(
             subject: None,
             target: Some(Target::Command("stapel new \"<title>\"".to_string())),
         };
+        if !json {
+            out.extend(open_lines(&root));
+        }
         out.push(if json {
             json_line(None, &action, &[])
         } else {
@@ -378,8 +406,10 @@ fn lines_inner(
         .collect();
     let blocking = blocking_findings(&records);
 
-    let review_round = finding_round(&records).max(pack_round(&root, &ticket.key));
+    let packs = pack_round(&root, &ticket.key);
+    let review_round = finding_round(&records).max(packs);
     let patch_finding = !patch_findings(&records).is_empty();
+    let patch_round = patch_round(&records, packs);
 
     let mut facts = Facts {
         key: &ticket.key,
@@ -390,6 +420,7 @@ fn lines_inner(
         blocking: &blocking,
         review_round,
         patch_finding,
+        patch_round,
         page_fresh: page_fresh(&root, &config, &ticket.key),
         history: None,
     };

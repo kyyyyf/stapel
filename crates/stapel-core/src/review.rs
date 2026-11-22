@@ -69,6 +69,53 @@ pub fn finding_round(records: &[Map<String, Value>]) -> u64 {
         .unwrap_or(0)
 }
 
+/// The highest round whose review folder holds `pack.md`; 0 when there is none.
+pub fn pack_round(root: &std::path::Path, key: &str) -> u64 {
+    let Ok(entries) = std::fs::read_dir(root.join(".stapel/scratch/review")) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let n = name.strip_prefix(key)?.strip_prefix("-r")?;
+            let round: u64 = n.parse().ok()?;
+            (round.to_string() == n && e.path().join("pack.md").is_file()).then_some(round)
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// Whether the newest round, the highest of the review packs (`pack_round`) and of the whole
+/// rounds of stage `code-review`, has a pack and a finding whose current fate is `patch` and
+/// whose verdict is not `false` (STP-36: a patch round).
+pub fn patch_round(records: &[Map<String, Value>], pack_round: u64) -> bool {
+    let round = finding_round(records).max(pack_round);
+    if round == 0 || pack_round != round {
+        return false;
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for m in records.iter().filter(|m| !m.contains_key("kind")) {
+        let Some(id) = text(m, "id") else { continue };
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        let state = state_of(records, id);
+        let Some(finding) = &state.finding else {
+            continue;
+        };
+        if text(finding, "stage") == Some("code-review")
+            && finding.get("round").and_then(whole_round) == Some(round)
+            && state.fate.as_deref() == Some("patch")
+            && state.verdict.as_deref() != Some("false")
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// The round that `next` names for a code review: 1 before any round, 2 after round 1 when a patch
 /// finding exists, else none.
 pub fn next_round(round: u64, patch_finding: bool) -> Option<u64> {

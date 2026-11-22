@@ -32,6 +32,12 @@ pub fn stderr(args: std::fmt::Arguments<'_>) {
     finish(result, "stderr");
 }
 
+/// An owned duplicate of the standard error descriptor, for a child process.
+pub fn stderr_duplicate() -> std::io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::AsFd;
+    std::io::stderr().as_fd().try_clone_to_owned()
+}
+
 /// Flushes standard output: a closed pipe is not an error, any other error is returned.
 pub fn flush() -> std::io::Result<()> {
     match std::io::stdout().flush() {

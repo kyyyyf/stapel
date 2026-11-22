@@ -3,7 +3,7 @@
 //! `decide` is a pure function over facts the command gathered: it reads no file and runs no git.
 
 use crate::config::Config;
-use crate::stage::{freshness, latest};
+use crate::stage::{freshness, latest, provisional};
 use crate::state::State;
 use crate::ticket::{Lookup, Section, find};
 use crate::triage::Blocking;
@@ -127,6 +127,8 @@ pub struct Facts<'a> {
     pub review_round: u64,
     /// Whether a patch finding of round 1 exists (STP-24).
     pub patch_finding: bool,
+    /// Whether the newest code review round has a patch finding (STP-36).
+    pub patch_round: bool,
     /// Whether the page of the waiting sections is fresh (STP-32 AC-9).
     pub page_fresh: bool,
     /// The history facts; `None` until the caller has read the history.
@@ -201,7 +203,13 @@ fn plan_faults(plan: &str) -> Vec<String> {
 /// The history facts of AC-11 to AC-13 and the action of AC-11 to AC-20.
 ///
 /// `plan` is `None` when no section of id `plan` is configured: no Plan step is read (AC-21).
-fn history_action(f: &Facts, h: &History, plan: Option<&str>, facts: &mut Vec<String>) -> Action {
+fn history_action(
+    f: &Facts,
+    h: &History,
+    plan: Option<&str>,
+    wait: &[String],
+    facts: &mut Vec<String>,
+) -> Action {
     let path = ticket_path(f.key);
     let labels = plan.map(plan_steps).unwrap_or_default();
     let outside: Vec<&String> = if plan.is_some() {
@@ -315,12 +323,17 @@ fn history_action(f: &Facts, h: &History, plan: Option<&str>, facts: &mut Vec<St
             }
             step_action("build-step", label, facts)
         }
-        None => after_the_steps(f, h, facts),
+        None => after_the_steps(f, h, wait, facts),
     }
 }
 
 /// The rules once every Plan step is done (STP-20 AC-16 to AC-20).
-fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
+fn after_the_steps(
+    f: &Facts,
+    h: &History,
+    wait: &[String],
+    facts: &mut Vec<String>,
+) -> Action {
     if !h.dirty.is_empty() {
         let first: Vec<&str> = h.dirty.iter().take(5).map(String::as_str).collect();
         facts.push(format!("uncommitted changes: {}", first.join(", ")));
@@ -383,6 +396,23 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
             )
         })
     };
+    // A provisional section waits for the `stapel ok` before the Summary and the close (STP-36 AC-4).
+    let confirmation = |facts: &mut Vec<String>| {
+        facts.extend(wait.iter().cloned());
+        if f.page_fresh {
+            Action::new(
+                "confirm",
+                None,
+                Some(Target::Command(format!("stapel ok {}", f.key))),
+            )
+        } else {
+            Action::new(
+                "write-page",
+                None,
+                Some(Target::Command(format!("stapel page {}", f.key))),
+            )
+        }
+    };
     for (id, name) in [("review", "code-review"), ("summary", "write-summary")] {
         if id == "summary" {
             if let Some(action) = need_head() {
@@ -390,6 +420,9 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
             }
             if let Some(action) = merge_review() {
                 return action;
+            }
+            if !wait.is_empty() {
+                return confirmation(facts);
             }
         }
         if let Some(def) = f.config.section(id)
@@ -409,6 +442,9 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
     }
     if let Some(action) = merge_review() {
         return action;
+    }
+    if !wait.is_empty() {
+        return confirmation(facts);
     }
     Action::new(
         "close",
@@ -470,7 +506,21 @@ pub fn decide(f: &Facts) -> Decision {
             }
         }
     }
-    let unconfirmed = !confirm_facts.is_empty();
+    let provisional = provisional(f.config, f.sections, f.state, f.patch_round);
+    let unconfirmed = !confirm_facts.is_empty() && !provisional;
+    let waiting: Vec<&str> = confirmed
+        .iter()
+        .filter(|def| match latest(f.state, &def.id) {
+            None => true,
+            Some(c) => !freshness(f.config, f.sections, c).is_empty(),
+        })
+        .map(|def| def.id.as_str())
+        .collect();
+    let provisional_fact = format!(
+        "provisional: {} wait for stapel ok {} before the close",
+        waiting.join(", "),
+        f.key
+    );
 
     let plan = f
         .config
@@ -478,6 +528,7 @@ pub fn decide(f: &Facts) -> Decision {
         .and_then(|def| find(f.sections, &def.title).found());
     let plan_is_light = plan.is_some_and(is_light);
     let mut needs_history = false;
+    let mut notes: Vec<String> = Vec::new();
     let action = if !written(f.sections, "Description")
         || !find(f.sections, "Description")
             .found()
@@ -525,14 +576,22 @@ pub fn decide(f: &Facts) -> Decision {
             )
         }
     } else if let Some(h) = f.history {
-        history_action(f, h, plan, &mut facts)
+        let wait: &[String] = if provisional { &confirm_facts } else { &[] };
+        let action = history_action(f, h, plan, wait, &mut facts);
+        // At the close point the action asks for the confirmation: no provisional fact (AC-4).
+        let builds = !matches!(action.name, "write-page" | "confirm");
+        notes.extend(
+            (provisional && builds && !waiting.is_empty()).then(|| provisional_fact.clone()),
+        );
+        action
     } else {
         // The rules that read history come next; the caller reads it and decides again.
         needs_history = true;
         let first = plan.and_then(|plan| plan_steps(plan).into_iter().next());
         Action::new("build-step", first, Some(Target::Path(path)))
     };
-    let facts = facts.into_iter().map(|s| format!("blocked: {s}")).collect();
+    let mut facts: Vec<String> = facts.into_iter().map(|s| format!("blocked: {s}")).collect();
+    facts.extend(notes);
     Decision {
         facts,
         action,

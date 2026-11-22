@@ -52,6 +52,31 @@ fn prints_the_skill_line_and_next() {
     assert_eq!(String::from_utf8(out).unwrap(), expected);
 }
 
+// STP-36 AC-12: the hook prints the `open:` lines before `next:`.
+#[test]
+fn names_open_tickets() {
+    let pair = common::two_ticket_worktrees();
+    let main = pair.repo.path();
+    let next = next_text(main);
+    let first = next.lines().next().unwrap();
+    assert!(first.starts_with("open: ABC-1 — First — "), "{next}");
+    assert_eq!(next.lines().count(), 3, "{next}");
+    assert!(
+        next.lines().nth(1).unwrap().starts_with("open: ABC-2 — Second — "),
+        "{next}"
+    );
+    let out = stapel(main)
+        .args(["hook", "session-start"])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(out).unwrap();
+    assert_eq!(out, format!("{LINE}stapel next:\n{next}"));
+    assert!(out.ends_with("next: new-ticket — stapel new \"<title>\"\n"), "{out}");
+}
+
 // AC-13, when `next` fails
 #[test]
 fn next_fails() {

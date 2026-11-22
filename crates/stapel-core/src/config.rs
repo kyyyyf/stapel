@@ -26,8 +26,11 @@ pub fn starter_toml(prefix: &str, cargo: bool) -> String {
             "# [check]\n# runner = \"junit\"\n# command = \"npx jest {file} --ci --reporters=jest-junit\"\n# report = \"junit.xml\"\n# tests = [\"**/*.test.*\"]\n",
         );
     }
+    text.push_str(PROCESS_COMMENT);
     text
 }
+
+const PROCESS_COMMENT: &str = "\n# [process]\n# dialogs = \"all\"   # \"close\": a light ticket asks for one stapel ok before the close, after the first\n\n# [worktree]\n# setup = \"...\"   # a shell command that `stapel new` runs in the new worktree\n";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
@@ -45,6 +48,34 @@ pub struct Config {
     /// `[repository]` (STP-31 AC-4); absent means the shared mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<Repository>,
+    /// `[process]` (STP-36 AC-7); absent means the level `all`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<Process>,
+    /// `[worktree]` (STP-36 AC-10); absent means no setup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<Worktree>,
+}
+
+/// `[worktree]`: what `stapel new` does in a new worktree.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Worktree {
+    /// A shell command run in the new worktree; absent means none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<String>,
+}
+
+/// `[process]`: how often the process turns to the person.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Process {
+    /// The dialog level: `all` (the default) or `close`.
+    #[serde(default = "default_dialogs")]
+    pub dialogs: String,
+}
+
+fn default_dialogs() -> String {
+    "all".to_string()
 }
 
 /// `[repository]`: where the process files live in git history.
@@ -311,6 +342,19 @@ impl Config {
 
     /// Checks that sections, dependencies, the key pattern and `build.requires` fit together.
     fn validate(&self) -> Result<(), String> {
+        if let Some(process) = &self.process {
+            if process.dialogs != "all" && process.dialogs != "close" {
+                return Err(format!(
+                    "process.dialogs must be all or close: {}",
+                    process.dialogs
+                ));
+            }
+        }
+        if let Some(setup) = self.worktree.as_ref().and_then(|w| w.setup.as_ref()) {
+            if setup.trim().is_empty() {
+                return Err("worktree.setup is empty: name a shell command".into());
+            }
+        }
         if !self.tickets.key.contains("{n}") {
             return Err(format!(
                 "tickets.key \"{}\" has no {{n}} for the ticket number",

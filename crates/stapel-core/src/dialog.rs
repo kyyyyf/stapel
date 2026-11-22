@@ -191,6 +191,15 @@ fn prepare_ask(inv: &Invocation, cwd: &Path, mode: Option<&str>) -> Result<Decis
         if !matches!(ticket.status, Status::Open(_)) {
             return Err(format!("ticket {} is not open", ticket.key));
         }
+        if let Status::Open(state) = &ticket.status {
+            let text = std::fs::read_to_string(ticket.dir.join("ticket.md"))
+                .map_err(|e| format!("{}: ticket.md: {e}", ticket.key))?;
+            if let Some(r) =
+                crate::stage::close_refusal(&config, &parse(&text), state, &ticket.key)
+            {
+                return Err(r);
+            }
+        }
         let check = crate::checkstate::current(&root, &config, &ticket.dir);
         let reason = format!(
             "stapel: close ticket {} with the reason \"{reason_text}\"; its confirmations stop \

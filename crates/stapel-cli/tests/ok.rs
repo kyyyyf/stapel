@@ -310,3 +310,30 @@ fn consuming_sweeps_expired_grants() {
     ok_with_grant(dir, &token_of(&replaced)).success();
     assert!(!grants_dir(dir).join("0000.json").exists());
 }
+
+// STP-36 AC-1: a grant lives 24 hours.
+#[test]
+fn grant_lives_24_hours() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let (_, replaced) = ask(dir, "stapel ok spec");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut expiries = Vec::new();
+    for entry in std::fs::read_dir(grants_dir(dir)).unwrap() {
+        let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        expiries.push(v["expires_at"].as_u64().unwrap());
+    }
+    assert_eq!(expiries.len(), 1);
+    let left = expiries[0].saturating_sub(now);
+    assert!(
+        (86400 - 5..=86400 + 5).contains(&left),
+        "grant lives {left} s, not 86400 s"
+    );
+    ok_with_grant(dir, &token_of(&replaced))
+        .success()
+        .stdout(contains("confirmed: ABC-1 spec"));
+}
