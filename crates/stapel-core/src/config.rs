@@ -48,6 +48,18 @@ pub struct Config {
     /// `[process]` (STP-36 AC-7); absent means the level `all`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<Process>,
+    /// `[worktree]` (STP-36 AC-10); absent means no setup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<Worktree>,
+}
+
+/// `[worktree]`: what `stapel new` does in a new worktree.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Worktree {
+    /// A shell command run in the new worktree; absent means none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<String>,
 }
 
 /// `[process]`: how often the process turns to the person.
@@ -333,6 +345,11 @@ impl Config {
                     "process.dialogs must be all or close: {}",
                     process.dialogs
                 ));
+            }
+        }
+        if let Some(setup) = self.worktree.as_ref().and_then(|w| w.setup.as_ref()) {
+            if setup.trim().is_empty() {
+                return Err("worktree.setup is empty: name a shell command".into());
             }
         }
         if !self.tickets.key.contains("{n}") {
