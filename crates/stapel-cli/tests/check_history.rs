@@ -901,6 +901,7 @@ fn does_not_count_for_close() {
         "{out}"
     );
     assert!(!dir.join(".stapel/tickets/ABC-1/runs.jsonl").exists());
+    common::confirm_these(dir, "ABC-1", &["description", "spec", "design", "proof", "plan"]);
     let out = stapel(dir)
         .args(["close", "ABC-1", "--reason", "done"])
         .output()

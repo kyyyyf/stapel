@@ -338,6 +338,7 @@ fn cursor_across_tickets() {
     for cursor in ["2026-01-01T11:00:20.000Z", "2026-01-01T11:00:50.000Z"] {
         let repo = repo_with_ticket();
         stapel(repo.path()).args(["new", "Second"]).assert().success();
+        common::confirm_sections(repo.path(), "ABC-1");
         let closed = tokens_path(repo.path(), "ABC-1");
         let noise = [
             // Not an attention cursor: a token record of the transcript, later than every event.
@@ -414,6 +415,7 @@ fn events_split_by_worktree() {
     let path = write(dir, "split.jsonl", &lines);
 
     stapel(repo.path()).args(["new", "Second"]).assert().success();
+    common::confirm_sections(repo.path(), "ABC-1");
     let closed = tokens_path(repo.path(), "ABC-1");
     std::fs::write(&closed, "").unwrap();
     stapel(repo.path()).args(["close", "ABC-1", "--reason", "merged"]).assert().success();

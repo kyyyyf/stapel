@@ -347,7 +347,7 @@ fn stdout_closed_keeps_exit_code() {
     cases.push((case("status stale", &["status"]), stale_repo()));
     cases.push((
         case("close", &["close", "--reason", "done"]),
-        common::repo_with_ticket(),
+        common::confirmed_repo_with_ticket(),
     ));
 
     let r = common::repo_with_ticket();
@@ -506,7 +506,7 @@ fn closed_output_keeps_every_write() {
     cases.push((case("ok", &["ok", "spec"]), common::repo_with_ticket()));
     cases.push((
         case("close", &["close", "--reason", "done"]),
-        common::repo_with_ticket(),
+        common::confirmed_repo_with_ticket(),
     ));
     cases.push((case("tokens add", &add), common::repo_with_ticket()));
     cases.push((
@@ -765,7 +765,7 @@ fn open_runs_print_to_the_closed_stream() {
     ));
     cases.push((
         case("close", &["close", "--reason", "done"]),
-        common::repo_with_ticket(),
+        common::confirmed_repo_with_ticket(),
         &out_only,
     ));
     cases.push((

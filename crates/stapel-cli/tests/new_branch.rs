@@ -325,6 +325,7 @@ fn key_must_match_the_branch() {
     stapel(dir).args(["ok", "ABC-1", "spec"]).assert().success();
     let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
     assert!(!String::from_utf8_lossy(&out.stderr).contains("is not the ticket of branch"));
+    common::confirm_these(dir, "ABC-1", &["design", "proof", "plan"]);
     stapel(dir)
         .args(["close", "ABC-1", "--reason", "done"])
         .assert()
@@ -463,6 +464,7 @@ fn commands_on_a_branch() {
     assert!(!all.contains("--grant"), "{all}");
 
     // `close` without KEY closes the branch ticket only.
+    common::confirm_sections(dir, "ABC-2");
     stapel(dir)
         .args(["close", "--reason", "done"])
         .assert()
