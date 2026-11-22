@@ -927,6 +927,51 @@ fn a_history_helper_is_tests_changed() {
     assert_eq!(outcome(&out, "step 1"), "tests-changed", "{out}");
 }
 
+// AC-9 (CR3-1, XR3-3): under junit a history commit that rewrites a step's test to call a helper it adds
+// to the same file, or that adds an import, is `tests-changed`, in a full check and in --history.
+#[test]
+fn a_junit_history_helper_is_tests_changed() {
+    let report = |dir: &Path| {
+        let out = stapel(dir).args(["check", "ABC-1"]).output().unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+    let cases = [
+        (
+            "a helper",
+            "const same = () => true;\nit(\"one\", () => { same(); /* needs src/one.ts */ });\n",
+        ),
+        (
+            "an import",
+            "import { v } from \"../src/one\";\nit(\"one\", () => { v; /* needs src/one.ts */ });\n",
+        ),
+    ];
+    for (what, text) in cases {
+        let repo = common::junit_repo();
+        let dir = repo.dir();
+        write(
+            dir,
+            "__tests__/one.test.ts",
+            "it(\"one\", () => { /* needs src/one.ts */ });\n",
+        );
+        commit(dir, "ABC-1 step 1 RED: one");
+        write(dir, "src/one.ts", "export const v = 1;\n");
+        write(dir, "__tests__/one.test.ts", text);
+        commit(
+            dir,
+            &format!("ABC-1 step 1 GREEN: one\n\nhistory: {what} in the test file"),
+        );
+
+        let out = history(dir);
+        assert_eq!(outcome(&out, "step 1"), "tests-changed", "{what}\n{out}");
+        let full = report(dir);
+        assert_eq!(outcome(&full, "step 1"), "tests-changed", "{what}\n{full}");
+    }
+}
+
 // AC-9 (XR2-3): a test inside a source file is judged as today, with or without a `history:` line;
 // the cargo `history by` note shows in a full check, not only in --history mode.
 #[test]
