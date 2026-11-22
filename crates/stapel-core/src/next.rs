@@ -203,7 +203,13 @@ fn plan_faults(plan: &str) -> Vec<String> {
 /// The history facts of AC-11 to AC-13 and the action of AC-11 to AC-20.
 ///
 /// `plan` is `None` when no section of id `plan` is configured: no Plan step is read (AC-21).
-fn history_action(f: &Facts, h: &History, plan: Option<&str>, facts: &mut Vec<String>) -> Action {
+fn history_action(
+    f: &Facts,
+    h: &History,
+    plan: Option<&str>,
+    wait: &[String],
+    facts: &mut Vec<String>,
+) -> Action {
     let path = ticket_path(f.key);
     let labels = plan.map(plan_steps).unwrap_or_default();
     let outside: Vec<&String> = if plan.is_some() {
@@ -317,12 +323,17 @@ fn history_action(f: &Facts, h: &History, plan: Option<&str>, facts: &mut Vec<St
             }
             step_action("build-step", label, facts)
         }
-        None => after_the_steps(f, h, facts),
+        None => after_the_steps(f, h, wait, facts),
     }
 }
 
 /// The rules once every Plan step is done (STP-20 AC-16 to AC-20).
-fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
+fn after_the_steps(
+    f: &Facts,
+    h: &History,
+    wait: &[String],
+    facts: &mut Vec<String>,
+) -> Action {
     if !h.dirty.is_empty() {
         let first: Vec<&str> = h.dirty.iter().take(5).map(String::as_str).collect();
         facts.push(format!("uncommitted changes: {}", first.join(", ")));
@@ -385,6 +396,23 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
             )
         })
     };
+    // A provisional section waits for the `stapel ok` before the Summary and the close (STP-36 AC-4).
+    let confirmation = |facts: &mut Vec<String>| {
+        facts.extend(wait.iter().cloned());
+        if f.page_fresh {
+            Action::new(
+                "confirm",
+                None,
+                Some(Target::Command(format!("stapel ok {}", f.key))),
+            )
+        } else {
+            Action::new(
+                "write-page",
+                None,
+                Some(Target::Command(format!("stapel page {}", f.key))),
+            )
+        }
+    };
     for (id, name) in [("review", "code-review"), ("summary", "write-summary")] {
         if id == "summary" {
             if let Some(action) = need_head() {
@@ -392,6 +420,9 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
             }
             if let Some(action) = merge_review() {
                 return action;
+            }
+            if !wait.is_empty() {
+                return confirmation(facts);
             }
         }
         if let Some(def) = f.config.section(id)
@@ -411,6 +442,9 @@ fn after_the_steps(f: &Facts, h: &History, facts: &mut Vec<String>) -> Action {
     }
     if let Some(action) = merge_review() {
         return action;
+    }
+    if !wait.is_empty() {
+        return confirmation(facts);
     }
     Action::new(
         "close",
@@ -530,7 +564,8 @@ pub fn decide(f: &Facts) -> Decision {
             )
         }
     } else if let Some(h) = f.history {
-        let action = history_action(f, h, plan, &mut facts);
+        let wait: &[String] = if provisional { &confirm_facts } else { &[] };
+        let action = history_action(f, h, plan, wait, &mut facts);
         notes.extend(provisional.then(|| provisional_fact.clone()));
         action
     } else {
