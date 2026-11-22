@@ -368,4 +368,28 @@ stapel-reviewer (claude-fable-5-1) and stapel-drift on the whole ticket.
 
 ## Summary
 
-TODO
+Done: plan items 3.2a and 3.2b. The logic tests of `tests/check.rs` run on a fake cargo (664.79 s to
+127.29 s); `timeout_secs` bounds the whole check and kills nested process groups, and no checkout runs
+after the limit; `[check] level` and `--level` (`steps`, `head`, `full`), `[check] points`, the step
+cache, `suite_exclude`; the ticket's own folder keeps a check current while the Plan is unchanged;
+`stapel next` demands the step and review checks at the points and a `head` or `full` pass before the
+summary and the close; CI runs `--level full`.
+
+For the person to overrule (agent decisions, in Design): no shared `CARGO_TARGET_DIR` (F-6); the default
+points are all three; only this ticket's folder keeps a check current; the kill reads `ps` and spares
+stapel's own group; the absent `timeout_secs` default is 3600; `time_limit_kills_nested_groups` reaps its
+own sleeps (step 3 RED amended); a failing check keeps `fix-check` (AC-16); `next` demands the head check
+before the final close action too.
+
+Open for the person:
+- XR2-3 (MEDIUM, deferred): under the cargo runner the suite can read the ticket's folder (here
+  `ticket_drift`), so an edit of the Spec or Proof after a pass can break the suite while the check stays
+  current. Options: keep it (CI runs `full`), narrow the exemption, or make it a key.
+- Not measured: the cache on a closed ticket of the pilot's jest repository (decision of 2026-11-20); the
+  pilot copy is not on this machine. Measured instead: CPU 1356 s cached against 1580 s uncached here.
+- Proposals outside the promise: SR1-15 (cache the passed steps of failing records), SR2-11 (a cheaper
+  trigger for the step point). LOW: DR-3 (`cargo --version` gets the whole limit), DR-6 and XR2-8
+  (`real_cargo_only_at_the_boundary` matches only `check ABC-1`), XR2-5 to XR2-7, XR2-9, XR2-10 (in
+  findings.jsonl; XR2-7: `skill.md` and the starter `stapel.toml` do not name the new keys yet).
+- The installed `stapel` is older than this branch: it does not keep a check current after an edit of
+  the ticket's folder, so `stapel close` with it needs a check after this section, or the branch's binary.
