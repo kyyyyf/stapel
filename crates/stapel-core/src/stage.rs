@@ -145,19 +145,35 @@ pub fn diff(confirmed: &str, current: &str) -> String {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Permit {
     Computed(String),
-    /// The Plan waits for its `stapel ok` but only grew by fix steps (STP-36).
+    /// The build goes on without a `stapel ok` of the waiting sections until the one before the
+    /// close (STP-36): the Plan grew by fix steps after a patch round, or the level is `close` on
+    /// a light ticket.
     Provisional(String),
     ByHand(String),
 }
 
 /// Whether `current` is an appended Plan of the confirmed text `confirmed`: every normal-form line
-/// of the confirmed text, each equal and in order, and at least one line more.
+/// of the confirmed text, each equal and in order, and at least one line more, the first of them
+/// a Plan step line (`<n>. ` or `<n><letter>. `).
 pub fn appended_plan(confirmed: &str, current: &str) -> bool {
     let old = normal_form(confirmed);
     let new = normal_form(current);
     let old: Vec<&str> = old.lines().collect();
     let new: Vec<&str> = new.lines().collect();
-    new.len() > old.len() && new[..old.len()] == old[..]
+    new.len() > old.len() && new[..old.len()] == old[..] && is_step_line(new[old.len()])
+}
+
+/// Whether `line` starts with `<n>. ` or `<n><letter>. `.
+fn is_step_line(line: &str) -> bool {
+    let rest = line.trim_start_matches(|c: char| c.is_ascii_digit());
+    if rest.len() == line.len() {
+        return false;
+    }
+    let rest = match rest.chars().next() {
+        Some(c) if c.is_ascii_alphabetic() => &rest[c.len_utf8()..],
+        _ => rest,
+    };
+    rest.starts_with(". ")
 }
 
 /// Whether the build goes on without a `stapel ok` of the Plan (STP-36): the newest code review
@@ -226,8 +242,8 @@ fn fix_steps(config: &Config, sections: &[Section], state: &State, patch_round: 
     freshness(config, sections, c) == [Reason::Changed] && appended_plan(confirmed, current)
 }
 
-/// Whether the newest code review round of the ticket in `dir` has a patch finding.
-fn dir_patch_round(dir: &Path) -> bool {
+/// Whether the newest code review round of the ticket in `dir` is a patch round.
+fn dir_patch_round(root: &Path, dir: &Path, key: &str) -> bool {
     use crate::journal::Entry;
     let Ok(entries) = crate::journal::read(&dir.join("findings.jsonl")) else {
         return false;
@@ -239,7 +255,7 @@ fn dir_patch_round(dir: &Path) -> bool {
             Entry::Problem(_) => None,
         })
         .collect();
-    crate::review::patch_round(&records)
+    crate::review::patch_round(&records, crate::review::pack_round(root, key))
 }
 
 /// Reads a regular file of at most 4 MiB, or nothing.
@@ -319,7 +335,7 @@ pub fn build_permit(root: &Path, config: Option<&Config>) -> Option<Permit> {
                 return Some(Permit::Computed(ticket.key));
             }
             if provisional_key.is_none()
-                && provisional(config, &sections, state, dir_patch_round(&ticket.dir))
+                && provisional(config, &sections, state, dir_patch_round(root, &ticket.dir, &ticket.key))
             {
                 provisional_key = Some(ticket.key);
             }
