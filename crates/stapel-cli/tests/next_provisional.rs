@@ -345,6 +345,36 @@ fn light_ticket_at_level_close() {
     set_section(repo.path(), "ABC-1", "Plan", LIGHT_TWO);
     assert_eq!(action(repo.path()), waits, "proof never confirmed");
 
+    // Stops: a custom section of `[build] requires` waits (confirmed once, then changed).
+    let repo = level_ticket(LIGHT_ONE, Some("close"), None);
+    let dir = repo.path();
+    let toml = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    let entry = "[[sections]]\nid = \"review\"";
+    assert!(text.contains(entry), "no review section in: {text}");
+    assert!(text.contains("\"proof\""), "no requires in: {text}");
+    let text = text
+        .replacen(
+            entry,
+            &format!("[[sections]]\nid = \"notes\"\ntitle = \"Notes\"\nowner = \"engineer\"\n\n{entry}"),
+            1,
+        )
+        .replacen("\"proof\"]", "\"proof\", \"notes\"]", 1);
+    std::fs::write(&toml, text).unwrap();
+    let ticket = dir.join(".stapel/tickets/ABC-1/ticket.md");
+    let md = std::fs::read_to_string(&ticket).unwrap();
+    assert!(md.contains("\n## Review\n"), "no Review heading in: {md}");
+    std::fs::write(&ticket, md.replacen("\n## Review\n", "\n## Notes\n\nFirst notes.\n\n## Review\n", 1))
+        .unwrap();
+    stapel(dir).args(["ok", "notes"]).assert().success();
+    commit(dir, &[], "custom section confirmed");
+    assert!(write_allowed(dir), "custom section fresh: write allowed");
+    set_section(dir, "ABC-1", "Notes", "Changed notes.");
+    set_section(dir, "ABC-1", "Spec", "The spec, changed.");
+    set_section(dir, "ABC-1", "Plan", LIGHT_TWO);
+    assert_eq!(action(dir), waits, "custom section waits");
+    assert_ne!(status_build_line(dir), "build: provisional ABC-1");
+
     // Stops: the level `all`, and no key.
     for level in [Some("all"), None] {
         let repo = level_ticket(LIGHT_ONE, level, None);
