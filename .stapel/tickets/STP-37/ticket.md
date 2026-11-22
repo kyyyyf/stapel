@@ -67,6 +67,9 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   line names the reason, and the Summary lists the commits (from the check report: `stapel export` writes
   no Summary before 3b-4). Rejected: a ledger decision per reason; the reason in the commit message only.
 - 2026-11-22: Assumption: STP-36 changes `close.rs` in parallel; `stapel depends` runs before the build.
+- 2026-11-22: Decision (build order, the human): steps 1 to 10 are built before STP-36 is on main; the
+  merge dependencies DP-1/DP-2 (and the same DP2-x, DP3-x of later rounds) are lowered to LOW, and steps
+  11 and 12 are built after main with STP-36 is merged into this branch (74200d1).
 
 ## Spec
 
@@ -104,7 +107,7 @@ Terms:
 | AC-12 | IF a commit has `history:` with an empty or whitespace reason, or the history line is in a RED commit THEN the commit is judged as one without a history line. | `check_history_reason::an_empty_reason_counts_as_none` |
 | AC-13 | WHEN the range has history commits THE report prints `history: <short id> <reason>` for each, oldest first, before the suite line (in `--history` mode after the step lines), and the check record has `history`. | `check_history_reason::the_record_lists_the_reasons` |
 | AC-14 | WHEN a check writes `project` or `history` into its record THE entries are `{command, outcome}` with the outcome `pass`, `fail`, `skipped` or `unverified`, and `{commit, reason}` with the full commit id; a command or reason is cut to 200 characters, and past 20 entries the rest are left out with `truncated: true`. | `check_history_reason::the_record_lists_the_reasons`, `check_project::runs_the_commands` |
-| AC-15 | WHEN `stapel review start --round N` gets a whole N of 3 or more and `findings.jsonl` has code review findings of round N−1 THE round starts as round 2 does, its pack carries the patch findings of round N−1; IF it has none THEN it refuses with `round <N> needs the code review findings of round <N-1> in findings.jsonl`; IF N is 0 or not a whole number THEN it refuses with `--round must be a whole number of 1 or more, or merge`; exit 2. | `review::any_round_number`, `review::a_round_needs_the_previous_round` |
+| AC-15 | WHEN `stapel review start --round N` gets a whole N of 3 or more and `findings.jsonl` has code review findings of round N−1 THE round starts as round 2 does, its pack carries the patch findings of round N−1; IF it has none THEN it refuses with `round <N> needs the code review findings of round <N-1> in .stapel/tickets/<KEY>/findings.jsonl`; IF N is 0 or not a whole number THEN it refuses with `--round must be a whole number of 1 or more, or merge`; exit 2. | `review::any_round_number`, `review::a_round_needs_the_previous_round` |
 | AC-16 | WHEN `stapel close` closes a ticket THE ledger gets, in one write before `state.json` is saved, one `catches` record with the note `At the close: counted findings: <stage>/<rule>=<n>; …` (sorted by stage, then rule; `;` and `=` in a rule written `_`), or `At the close: counted findings: none`, and one `finding` record per finding not marked false whose newest fate is `defer`, with the note `At the close, deferred: <id> <severity> <stage> round <n>: <claim>` (severity after triage, claim cut to 500 characters); the close prints `ledger: <n> records`. | `close_ledger::writes_catches_and_deferred`, `close_ledger::no_findings` |
 | AC-17 | IF `stapel close` refuses, `findings.jsonl` or the ledger has a malformed line, or the append fails THEN the ledger and `state.json` are unchanged, the close names the cause, and a later close after the fix writes the records; a failed append spends the grant, so the later close has its own dialog. | `close_ledger::a_refused_close_writes_nothing`, `close_ledger::bad_journals_refuse` |
 | AC-18 | WHEN `stapel init` writes the starter `stapel.toml` and the skill THE starter names `project` with `{files}` in a comment under `[check]`, and the skill names the history line, the round numbers and the ledger records of the close. | `init_process::starter_names_project_and_history` |
@@ -232,7 +235,29 @@ once; not tested).
 
 ### Decisions (as built)
 
-(empty until the build)
+All dated 2026-11-22, mark `agent`; the person may overrule them at the close.
+
+- AC-14's `truncated: true` is a top-level `project_truncated: true` and `history_truncated: true` in the
+  record, after the `steps_truncated` precedent. Commands and reasons are cut by characters (`cut_chars`).
+- The printed `history:` line is cut to 200 characters as the record is, and a control character in it
+  becomes a space; the record keeps the reason raw apart from the cut.
+- Besides the time limit, a project command reads `unverified: <reason>` when it cannot start or ends by a
+  signal, and when the changed files cannot be read from git (then every later command too); each fails the
+  check (DR-1).
+- The first `history: ` line of a message with a non-empty reason counts (`steps.rs::history_reason`).
+- The RED run of a step overwrites its test files with their text at the newest history commit
+  (`Analysis::red_files`); the GREEN and HEAD runs take the commit as it is.
+- A history commit's build-input changes are still recorded as touched but set no `changed`
+  (`build_inputs.rs::history_commit`); `history_commits` lists them for the report and record.
+- The round refusal keeps round 2's text with the full path; AC-15 quotes it. The pack heading is
+  `Findings of round <N-1> with the fate patch`; `--round` accepts hyphen values so `-1` gets the refusal.
+- The close builds its ledger lines (`stapel-core/src/close_ledger.rs`) after STP-36's `close_refusal`, the
+  main-merge, check and merge-review gates and before the grant is consumed, appends them in one write
+  after it and before `state.json` is saved, and prints `ledger: <n> records`. A finding without `rule`
+  counts under `none`. `records::closed_ticket_by_key_only` now counts the `catches` line.
+- The starter `stapel.toml` comment for `project` is a list: `# project = ["npx prettier --check {files}"]`.
+- Step 2's RED was rebuilt once (history rewrite before any review) because `runs_the_commands` depended on
+  the length of `TMPDIR`; the code did not change.
 
 ## Proof
 
