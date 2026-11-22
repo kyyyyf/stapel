@@ -831,6 +831,13 @@ fn node_version_of(output: &str) -> Option<(String, Vec<u64>)> {
 }
 
 /// One path as one shell word: single-quoted, with `./` before a path that starts with `-`.
+/// The text with each control character (a newline included) as a space (STP-37 AC-2).
+fn printable(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
 fn shell_word(path: &str) -> String {
     let path = if path.starts_with('-') { format!("./{path}") } else { path.to_string() };
     format!("'{}'", path.replace('\'', "'\\''"))
@@ -1472,6 +1479,7 @@ impl Runner<'_> {
         let mut files: Option<Result<Vec<String>, String>> = None;
         for command in commands {
             let mut command_run = command.clone();
+            let shown = printable(command);
             // The limit comes first: before the checkout and before the `{files}` skip.
             if stop.is_none() && self.left().is_err() {
                 stop = Some("time limit".to_string());
@@ -1480,7 +1488,7 @@ impl Runner<'_> {
                 let list = files.get_or_insert_with(|| self.changed_files());
                 match list {
                     Ok(list) if list.is_empty() => {
-                        say!("project: {command}: skipped: no changed files");
+                        say!("project: {shown}: skipped: no changed files");
                         done.push((command.clone(), "skipped"));
                         continue;
                     }
@@ -1505,44 +1513,51 @@ impl Runner<'_> {
                 stop = Some("time limit".to_string());
             }
             if let Some(why) = &stop {
-                say!("project: {command}: unverified: {why}");
+                say!("project: {shown}: unverified: {why}");
                 done.push((command.clone(), "unverified"));
                 continue;
             }
             let left = self.left().unwrap_or_default();
+            // Under the cargo runner the command gets the environment of the cargo runs.
+            let target = self.target.to_string_lossy().into_owned();
+            let env: Vec<(&str, &str)> = if self.junit.is_some() {
+                Vec::new()
+            } else {
+                vec![("CARGO_TARGET_DIR", &target), ("CARGO_TERM_COLOR", "never")]
+            };
             let run = run_program(
                 Path::new("/bin/sh"),
                 &self.wt.path,
                 &["-c".to_string(), command_run],
-                &[],
+                &env,
                 left,
             );
             match run {
                 Err(e) => {
-                    say!("project: {command}: unverified: {e}");
+                    say!("project: {shown}: unverified: {e}");
                     done.push((command.clone(), "unverified"));
                 }
                 Ok(run) if run.timed_out => {
                     stop = Some("time limit".to_string());
-                    say!("project: {command}: unverified: time limit");
+                    say!("project: {shown}: unverified: time limit");
                     done.push((command.clone(), "unverified"));
                 }
                 Ok(run) => match run.exit {
                     Some(0) => {
-                        say!("project: {command}: pass");
+                        say!("project: {shown}: pass");
                         done.push((command.clone(), "pass"));
                     }
                     Some(code) => {
-                        say!("project: {command}: fail (exit {code})");
+                        say!("project: {shown}: fail (exit {code})");
                         let text = run.output.trim_end();
                         let lines: Vec<&str> = text.lines().collect();
                         for l in &lines[lines.len().saturating_sub(PROJECT_TAIL)..] {
-                            say!("{l}");
+                            say!("{}", printable(l));
                         }
                         done.push((command.clone(), "fail"));
                     }
                     None => {
-                        say!("project: {command}: unverified: ended by a signal");
+                        say!("project: {shown}: unverified: ended by a signal");
                         done.push((command.clone(), "unverified"));
                     }
                 },
