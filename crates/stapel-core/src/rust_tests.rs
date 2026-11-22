@@ -17,6 +17,9 @@ enum Kind {
 struct Token {
     kind: Kind,
     text: String,
+    /// The character range of the token in the source.
+    start: usize,
+    end: usize,
 }
 
 fn lex(src: &str) -> Vec<Token> {
@@ -52,6 +55,8 @@ fn lex(src: &str) -> Vec<Token> {
             out.push(Token {
                 kind: Kind::Literal,
                 text: c[i..end].iter().collect(),
+                start: i,
+                end,
             });
             i = end;
         } else if ch == '"' || (ch == 'b' && c.get(i + 1) == Some(&'"')) {
@@ -64,6 +69,8 @@ fn lex(src: &str) -> Vec<Token> {
             out.push(Token {
                 kind: Kind::Literal,
                 text: c[start..i].iter().collect(),
+                start,
+                end: i,
             });
         } else if ch == '\'' {
             let start = i;
@@ -77,12 +84,16 @@ fn lex(src: &str) -> Vec<Token> {
                 out.push(Token {
                     kind: Kind::Literal,
                     text: c[start..i].iter().collect(),
+                    start,
+                    end: i,
                 });
             } else if c.get(i + 2) == Some(&'\'') {
                 i += 3;
                 out.push(Token {
                     kind: Kind::Literal,
                     text: c[start..i].iter().collect(),
+                    start,
+                    end: i,
                 });
             } else {
                 // A lifetime or a label.
@@ -93,6 +104,8 @@ fn lex(src: &str) -> Vec<Token> {
                 out.push(Token {
                     kind: Kind::Word,
                     text: c[start..i].iter().collect(),
+                    start,
+                    end: i,
                 });
             }
         } else if word(ch) {
@@ -103,11 +116,15 @@ fn lex(src: &str) -> Vec<Token> {
             out.push(Token {
                 kind: Kind::Word,
                 text: c[start..i].iter().collect(),
+                start,
+                end: i,
             });
         } else {
             out.push(Token {
                 kind: Kind::Punct(ch),
                 text: ch.to_string(),
+                start: i,
+                end: i + 1,
             });
             i += 1;
         }
@@ -306,6 +323,43 @@ pub fn test_functions(src: &str) -> Vec<(String, String)> {
         .into_iter()
         .map(|(name, a, b)| (name, join(&tokens[a..b])))
         .collect()
+}
+
+/// The source text and name of each test function, byte for byte, in file order.
+fn test_spans(src: &str) -> Vec<(String, String, usize, usize)> {
+    let c: Vec<char> = src.chars().collect();
+    let tokens = lex(src);
+    let mut ranges = Vec::new();
+    scan(&tokens, 0, tokens.len(), true, &mut ranges);
+    ranges
+        .into_iter()
+        .filter(|(_, a, b)| a < b)
+        .map(|(name, a, b)| {
+            let (s, e) = (tokens[a].start, tokens[b - 1].end);
+            (name, c[s..e].iter().collect(), s, e)
+        })
+        .collect()
+}
+
+/// `base` with the test functions named in `names` replaced by their text in `newer` (STP-37 AC-10).
+/// A named test missing in `newer` is left as it is in `base`.
+pub fn with_tests_from(base: &str, newer: &str, names: &[String]) -> String {
+    let c: Vec<char> = base.chars().collect();
+    let from = test_spans(newer);
+    let mut out = String::new();
+    let mut at = 0;
+    for (name, _, s, e) in test_spans(base) {
+        if !names.contains(&name) {
+            continue;
+        }
+        if let Some((_, text, _, _)) = from.iter().find(|(n, ..)| *n == name) {
+            out.extend(&c[at..s]);
+            out.push_str(text);
+            at = e;
+        }
+    }
+    out.extend(&c[at..]);
+    out
 }
 
 /// The file's text as tokens without its test functions: the helpers and other items.

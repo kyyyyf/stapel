@@ -1051,10 +1051,23 @@ impl Runner<'_> {
         // No checkout runs after the time limit (STP-35 AC-3).
         self.left()?;
         self.wt.checkout(commit)?;
-        // STP-37 AC-10: a test file a history commit changed comes from the newest such commit.
+        // STP-37 AC-10: in a test file a history commit changed, the step's own tests come from the
+        // newest such commit; the rest of the file stays as at `commit`.
         for (path, from) in files {
-            let text = stapel_core::steps::show(self.root, from, path)
+            let newer = stapel_core::steps::show(self.root, from, path)
                 .ok_or_else(|| format!("{path} is missing at {}", short(from)))?;
+            let base = stapel_core::steps::show(self.root, commit, path)
+                .ok_or_else(|| format!("{path} is missing at {}", short(commit)))?;
+            let names: Vec<String> = tests
+                .iter()
+                .filter(|t| t.path() == *path)
+                .map(|t| t.name.clone())
+                .collect();
+            let text = if self.junit.is_some() {
+                stapel_core::ts_tests::with_calls_from(&base, &newer, &names)
+            } else {
+                stapel_core::rust_tests::with_tests_from(&base, &newer, &names)
+            };
             std::fs::write(self.wt.path.join(path), text).map_err(|e| format!("{path}: {e}"))?;
         }
         if let Some(junit) = &self.junit {

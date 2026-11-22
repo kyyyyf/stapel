@@ -401,6 +401,28 @@ pub fn test_calls(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// `base` with the test calls named in `names` replaced by their text in `newer` (STP-37 AC-10).
+/// A named call missing in `newer` is left as it is in `base`.
+pub fn with_calls_from(base: &str, newer: &str, names: &[String]) -> String {
+    let c: Vec<char> = base.chars().collect();
+    let n: Vec<char> = newer.chars().collect();
+    let from = calls(&n);
+    let mut out = String::new();
+    let mut at = 0;
+    for k in calls(&c) {
+        if !names.contains(&k.name) || k.start < at {
+            continue;
+        }
+        if let Some(f) = from.iter().find(|f| f.name == k.name) {
+            out.extend(&c[at..k.start]);
+            out.extend(&n[f.start..f.end]);
+            at = k.end;
+        }
+    }
+    out.extend(&c[at..]);
+    out
+}
+
 /// Whether the file holds a `test`, `it` or `describe` call with `.only` (not after a `.`).
 pub fn has_only_call(text: &str) -> bool {
     let c: Vec<char> = text.chars().collect();
