@@ -968,7 +968,7 @@ impl Runner<'_> {
     }
 
     /// Runs `tests` at `commit`, one cargo run per test file.
-    fn at(&self, commit: &str, tests: &[TestId], at_red: bool) -> At {
+    fn at(&self, commit: &str, tests: &[TestId], at_red: bool, files: &[(String, String)]) -> At {
         // After a build-input hit no further cargo run starts (AC-7).
         if let Some(why) = self.outside.borrow().clone() {
             return Err(why);
@@ -976,6 +976,12 @@ impl Runner<'_> {
         // No checkout runs after the time limit (STP-35 AC-3).
         self.left()?;
         self.wt.checkout(commit)?;
+        // STP-37 AC-10: a test file a history commit changed comes from the newest such commit.
+        for (path, from) in files {
+            let text = stapel_core::steps::show(self.root, from, path)
+                .ok_or_else(|| format!("{path} is missing at {}", short(from)))?;
+            std::fs::write(self.wt.path.join(path), text).map_err(|e| format!("{path}: {e}"))?;
+        }
         if let Some(junit) = &self.junit {
             return self.at_junit(junit, commit, tests);
         }
@@ -1271,8 +1277,8 @@ impl Runner<'_> {
             (Ok(BTreeMap::new()), Ok(BTreeMap::new()))
         } else {
             (
-                self.at(&red.sha, tests, true),
-                self.at(&green.sha, tests, false),
+                self.at(&red.sha, tests, true, &a.red_files),
+                self.at(&green.sha, tests, false, &[]),
             )
         };
         // HEAD: tests missing there are removed; the rest run.
@@ -1292,7 +1298,7 @@ impl Runner<'_> {
             .cloned()
             .collect();
         let missing: Vec<&TestId> = tests.iter().filter(|t| !present.contains(t)).collect();
-        let at_head = self.at(self.head, &present, false);
+        let at_head = self.at(self.head, &present, false, &[]);
 
         for (state, when) in [(&at_red, "RED"), (&at_green, "GREEN"), (&at_head, "HEAD")] {
             match state {

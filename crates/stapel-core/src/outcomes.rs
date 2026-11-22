@@ -60,6 +60,9 @@ pub struct Analysis {
     /// The full id of the commit that made the fixed outcome, or of the `interleaved` RED
     /// (STP-14). `None` for a passing outcome and for a RED with no step commit after it.
     pub fault: Option<String>,
+    /// STP-37 AC-10: the test files a history commit changed, each with the newest such commit;
+    /// the RED run takes the file from it.
+    pub red_files: Vec<(String, String)>,
 }
 
 /// What a RED commit's own changes say: its step tests, its parent and its changes, and
@@ -471,6 +474,7 @@ pub fn analyse_in(
             notes: Vec::new(),
             to_run: Vec::new(),
             fault: None,
+            red_files: Vec::new(),
         };
         let fix = |a: &mut Analysis, o: &str, r: String| a.fixed = Some((o.to_string(), r));
         if reds.is_empty() || greens.is_empty() || pos(greens[0]) < pos(reds[0]) {
@@ -743,6 +747,12 @@ pub fn analyse_in(
                         };
                         if !a.notes.contains(&note) {
                             a.notes.push(note);
+                        }
+                        let path = unit.path();
+                        match a.red_files.iter_mut().find(|(p, _)| *p == path) {
+                            Some(old) if pos_of(&old.1) > pos_of(&sha) => {}
+                            Some(old) => old.1 = sha.clone(),
+                            None => a.red_files.push((path, sha.clone())),
                         }
                         current = value;
                     }
