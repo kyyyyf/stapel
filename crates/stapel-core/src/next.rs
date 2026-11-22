@@ -508,7 +508,19 @@ pub fn decide(f: &Facts) -> Decision {
     }
     let provisional = provisional(f.config, f.sections, f.state, f.patch_round);
     let unconfirmed = !confirm_facts.is_empty() && !provisional;
-    let provisional_fact = format!("provisional: plan waits for stapel ok {} before the close", f.key);
+    let waiting: Vec<&str> = confirmed
+        .iter()
+        .filter(|def| match latest(f.state, &def.id) {
+            None => true,
+            Some(c) => !freshness(f.config, f.sections, c).is_empty(),
+        })
+        .map(|def| def.id.as_str())
+        .collect();
+    let provisional_fact = format!(
+        "provisional: {} wait for stapel ok {} before the close",
+        waiting.join(", "),
+        f.key
+    );
 
     let plan = f
         .config
@@ -566,7 +578,7 @@ pub fn decide(f: &Facts) -> Decision {
     } else if let Some(h) = f.history {
         let wait: &[String] = if provisional { &confirm_facts } else { &[] };
         let action = history_action(f, h, plan, wait, &mut facts);
-        notes.extend(provisional.then(|| provisional_fact.clone()));
+        notes.extend((provisional && !waiting.is_empty()).then(|| provisional_fact.clone()));
         action
     } else {
         // The rules that read history come next; the caller reads it and decides again.
