@@ -588,6 +588,22 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
     };
     ok &= suite.outcome == "pass" || suite.outcome == "skipped";
     say!("suite: {}: {}", suite.outcome, suite.detail);
+    // The project commands run after the suite, at `head` and `full` (STP-37 AC-2, AC-4, AC-5).
+    let project_commands: &[String] = check.project.as_deref().unwrap_or(&[]);
+    let mut project_json: Vec<serde_json::Value> = Vec::new();
+    if !project_commands.is_empty() {
+        if level_now == "steps" {
+            say!("project: skipped: level steps");
+        } else {
+            for (command, outcome) in runner.project(project_commands) {
+                ok &= outcome == "pass";
+                project_json.push(serde_json::json!({
+                    "command": cut(&command, MAX_COMMAND),
+                    "outcome": outcome,
+                }));
+            }
+        }
+    }
     say!("result: {}", if ok { "pass" } else { "fail" });
     let mut record = serde_json::json!({
         "v": 1,
@@ -617,6 +633,14 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         "failed": suite.counts.1,
         "ignored": suite.counts.2,
     });
+    if !project_json.is_empty() {
+        // Past MAX_PROJECT entries the rest are left out; the record says `project_truncated: true`.
+        if project_json.len() > MAX_PROJECT {
+            project_json.truncate(MAX_PROJECT);
+            record["project_truncated"] = serde_json::json!(true);
+        }
+        record["project"] = serde_json::json!(project_json);
+    }
     if let Some(end) = &end {
         record["end"] = serde_json::json!(end);
     }
@@ -663,6 +687,11 @@ struct Suite {
 const MAX_STEPS: usize = 200;
 const MAX_LABEL: usize = 200;
 const MAX_REASON: usize = 1024;
+/// A project command is cut to this many bytes in a record, and at most this many are listed.
+const MAX_COMMAND: usize = 200;
+const MAX_PROJECT: usize = 20;
+/// A failing project command prints this many lines of its output.
+const PROJECT_TAIL: usize = 20;
 /// A record stays below the journal's 64 KiB line limit with room to spare.
 const MAX_RECORD: usize = 60 * 1024;
 
@@ -1204,6 +1233,74 @@ impl Runner<'_> {
                 if n == 1 { "" } else { "s" }
             ),
         )
+    }
+
+    /// Runs the project commands in order with `sh -c` in the check copy at HEAD, with the
+    /// environment of the other runs and under the time limit of the check; prints a line for each
+    /// and returns the command with its outcome. After the limit ran out, the running command is
+    /// killed with its group and it and the rest are `unverified` (STP-37 AC-2, AC-4).
+    fn project(&self, commands: &[String]) -> Vec<(String, &'static str)> {
+        let mut done: Vec<(String, &'static str)> = Vec::new();
+        let mut stop: Option<String> = None;
+        let prepared = self.wt.checkout(self.head).and_then(|()| {
+            if self.junit.is_some() {
+                self.link_modules()
+            } else {
+                Ok(())
+            }
+        });
+        if let Err(e) = prepared {
+            stop = Some(e);
+        }
+        for command in commands {
+            if stop.is_none() && self.left().is_err() {
+                stop = Some("time limit".to_string());
+            }
+            if let Some(why) = &stop {
+                say!("project: {command}: unverified: {why}");
+                done.push((command.clone(), "unverified"));
+                continue;
+            }
+            let left = self.left().unwrap_or_default();
+            let run = run_program(
+                Path::new("/bin/sh"),
+                &self.wt.path,
+                &["-c".to_string(), command.clone()],
+                &[],
+                left,
+            );
+            match run {
+                Err(e) => {
+                    say!("project: {command}: unverified: {e}");
+                    done.push((command.clone(), "unverified"));
+                }
+                Ok(run) if run.timed_out => {
+                    stop = Some("time limit".to_string());
+                    say!("project: {command}: unverified: time limit");
+                    done.push((command.clone(), "unverified"));
+                }
+                Ok(run) => match run.exit {
+                    Some(0) => {
+                        say!("project: {command}: pass");
+                        done.push((command.clone(), "pass"));
+                    }
+                    Some(code) => {
+                        say!("project: {command}: fail (exit {code})");
+                        let text = run.output.trim_end();
+                        let lines: Vec<&str> = text.lines().collect();
+                        for l in &lines[lines.len().saturating_sub(PROJECT_TAIL)..] {
+                            say!("{l}");
+                        }
+                        done.push((command.clone(), "fail"));
+                    }
+                    None => {
+                        say!("project: {command}: unverified: ended by a signal");
+                        done.push((command.clone(), "unverified"));
+                    }
+                },
+            }
+        }
+        done
     }
 
     /// The whole suite at HEAD.
