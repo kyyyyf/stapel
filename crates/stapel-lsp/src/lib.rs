@@ -668,9 +668,17 @@ fn button_args(
     if command == "stapel.answer" {
         return answer_args(docs, params);
     }
-    // The run of `stapel.inbox` comes with a later step; until then no ticket form maps to it.
     if command == "stapel.inbox" {
-        return Err(Fail::Invalid(format!("stapel lsp: {command} runs only from an inbox document")));
+        return inbox_args(docs, params);
+    }
+    let first_is_inbox = params
+        .arguments
+        .first()
+        .and_then(|a| a.as_str())
+        .and_then(|s| s.parse::<Uri>().ok())
+        .is_some_and(|u| docs.contains_key(&u) && inbox_root(&u).is_some());
+    if command == "stapel.page" && first_is_inbox {
+        return page_args(params);
     }
     let bad = || Fail::Invalid("stapel lsp: the arguments must be the URI of an open ticket.md or page.md".to_string());
     let want = if command == "stapel.ok" { 2 } else { 1 };
@@ -776,6 +784,58 @@ fn answer_args(
         is_page: false,
     };
     Ok((args, doc, Some(label)))
+}
+
+/// The run of `stapel.inbox`: `[inbox URI]`, `stapel inbox` in the inbox root.
+fn inbox_args(
+    docs: &HashMap<Uri, String>,
+    params: &ExecuteCommandParams,
+) -> Result<(Vec<String>, TicketDoc, Option<String>), Fail> {
+    let bad = || Fail::Invalid("stapel lsp: the argument must be the URI of an open inbox.md".to_string());
+    if params.arguments.len() != 1 {
+        return Err(bad());
+    }
+    let uri: Uri = params.arguments[0]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(bad)?;
+    if !docs.contains_key(&uri) {
+        return Err(bad());
+    }
+    let root = inbox_root(&uri).ok_or_else(bad)?;
+    let doc = TicketDoc {
+        root,
+        key: String::new(),
+        is_page: false,
+    };
+    Ok((vec!["inbox".to_string()], doc, None))
+}
+
+/// The run of `stapel.page` from an inbox document: `[inbox URI, KEY]`, `stapel page KEY` in the
+/// worktree of KEY. The caller has checked that the first argument is an open inbox.
+fn page_args(params: &ExecuteCommandParams) -> Result<(Vec<String>, TicketDoc, Option<String>), Fail> {
+    let bad = || Fail::Invalid("stapel lsp: the arguments must be the URI of an open inbox.md and a key".to_string());
+    if params.arguments.len() != 2 {
+        return Err(bad());
+    }
+    let (Some(uri), Some(key)) = (
+        params.arguments[0].as_str().and_then(|s| s.parse::<Uri>().ok()),
+        params.arguments[1].as_str(),
+    ) else {
+        return Err(bad());
+    };
+    let root = inbox_root(&uri).ok_or_else(bad)?;
+    if agent_shell() {
+        return Err(Fail::Refuse(AGENT_SHELL.to_string()));
+    }
+    let worktree = worktree_of(&root, key)
+        .ok_or_else(|| Fail::Refuse(format!("stapel lsp: no worktree has the branch of {key}")))?;
+    let doc = TicketDoc {
+        root: worktree,
+        key: key.to_string(),
+        is_page: false,
+    };
+    Ok((vec!["page".to_string(), key.to_string()], doc, None))
 }
 
 /// True when `page.md` is a current page now and its hash is the offered one.
