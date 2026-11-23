@@ -185,6 +185,15 @@ fn serve(connection: &Connection) -> i32 {
                                     MessageType::ERROR,
                                     "stapel lsp: this editor was started from an agent's shell (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); start it from your own shell to use the buttons".to_string(),
                                 );
+                            } else if params.command == "stapel.ok" && !offered_page_is_current(&docs, &params, &doc) {
+                                show(
+                                    connection,
+                                    MessageType::ERROR,
+                                    format!(
+                                        "stapel lsp: page.md is not current; run stapel page {} and read it again",
+                                        doc.key
+                                    ),
+                                );
                             } else {
                                 run_button(connection, &doc, &args);
                             }
@@ -282,6 +291,22 @@ fn button_args(
         _ => vec!["ok".to_string(), doc.key.clone()],
     };
     Ok((args, doc))
+}
+
+/// True when `page.md` is a current page now and its hash is the offered one.
+fn offered_page_is_current(
+    docs: &HashMap<Uri, String>,
+    params: &ExecuteCommandParams,
+    doc: &TicketDoc,
+) -> bool {
+    let Some(uri) = params.arguments[0].as_str().and_then(|s| s.parse::<Uri>().ok()) else {
+        return false;
+    };
+    let offered = params.arguments[1].as_str();
+    match current_page(docs, &uri, doc) {
+        Some(hash) => Some(hash.as_str()) == offered,
+        None => false,
+    }
 }
 
 /// True when the server's environment says it was started from an agent's shell.
