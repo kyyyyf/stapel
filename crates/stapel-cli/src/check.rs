@@ -520,6 +520,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         bounds,
         outside: std::cell::RefCell::new(blocked),
         junit: junit_run,
+        prepared: std::cell::Cell::new(false),
     };
     if end.is_some() {
         say!("ticket: {} at {} (closed)", ticket.key, short(&at));
@@ -678,6 +679,21 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
                     "command": cut_chars(&command, MAX_COMMAND),
                     "outcome": outcome,
                 }));
+            }
+        }
+    }
+    // The guards run after the project commands, at `head` and `full` (STP-41 AC-3 to AC-5).
+    let guard_entries: &[stapel_core::config::GuardEntry] = config
+        .guards
+        .as_ref()
+        .map(|g| g.check.as_slice())
+        .unwrap_or(&[]);
+    if !guard_entries.is_empty() {
+        if level_now == "steps" {
+            say!("guards: skipped: level steps");
+        } else {
+            for outcome in runner.guards(guard_entries) {
+                ok &= outcome == "pass";
             }
         }
     }
@@ -950,6 +966,8 @@ struct Runner<'a> {
     outside: std::cell::RefCell<Option<String>>,
     /// Set under the junit runner: the command and the report path of `[check]`.
     junit: Option<JunitRun<'a>>,
+    /// Set when the check copy was cleaned and set to HEAD for the project commands.
+    prepared: std::cell::Cell<bool>,
 }
 
 /// The id of the passing record that ran a step with this key, `None` when no record did (STP-35
@@ -1511,7 +1529,10 @@ impl Runner<'_> {
                     }
                 });
                 match result {
-                    Ok(()) => prepared = true,
+                    Ok(()) => {
+                        prepared = true;
+                        self.prepared.set(true);
+                    }
                     Err(e) => stop = Some(e),
                 }
             }
@@ -1565,6 +1586,89 @@ impl Runner<'_> {
                     None => {
                         say!("project: {shown}: unverified: ended by a signal");
                         done.push((command.clone(), "unverified"));
+                    }
+                },
+            }
+        }
+        done
+    }
+
+    /// Runs the guards in order with `sh -c` in the check copy, each after its tracked files were set
+    /// to HEAD (untracked files stay), with the environment of the project commands, under the time
+    /// limit; prints a line for each and returns the outcomes (STP-41 AC-3, AC-5).
+    fn guards(&self, entries: &[stapel_core::config::GuardEntry]) -> Vec<&'static str> {
+        let mut done: Vec<&'static str> = Vec::new();
+        let mut stop: Option<String> = None;
+        for entry in entries {
+            let shown = printable(&entry.name);
+            if stop.is_none() && self.left().is_err() {
+                stop = Some("time limit".to_string());
+            }
+            if stop.is_none() {
+                let result = if self.prepared.get() {
+                    self.wt.reset_tracked(self.head)
+                } else {
+                    self.wt.checkout(self.head).and_then(|()| {
+                        if self.junit.is_some() {
+                            self.link_modules()?;
+                        }
+                        self.prepared.set(true);
+                        Ok(())
+                    })
+                };
+                if let Err(e) = result {
+                    stop = Some(e);
+                }
+            }
+            if stop.is_none() && self.left().is_err() {
+                stop = Some("time limit".to_string());
+            }
+            if let Some(why) = &stop {
+                say!("guard: {shown}: unverified: {why}");
+                done.push("unverified");
+                continue;
+            }
+            let left = self.left().unwrap_or_default();
+            let target = self.target.to_string_lossy().into_owned();
+            let env: Vec<(&str, &str)> = if self.junit.is_some() {
+                Vec::new()
+            } else {
+                vec![("CARGO_TARGET_DIR", &target), ("CARGO_TERM_COLOR", "never")]
+            };
+            let run = run_program(
+                Path::new("/bin/sh"),
+                &self.wt.path,
+                &["-c".to_string(), entry.command.clone()],
+                &env,
+                left,
+            );
+            match run {
+                Err(e) => {
+                    say!("guard: {shown}: unverified: {e}");
+                    done.push("unverified");
+                }
+                Ok(run) if run.timed_out => {
+                    stop = Some("time limit".to_string());
+                    say!("guard: {shown}: unverified: time limit");
+                    done.push("unverified");
+                }
+                Ok(run) => match run.exit {
+                    Some(0) => {
+                        say!("guard: {shown}: pass");
+                        done.push("pass");
+                    }
+                    Some(code) => {
+                        say!("guard: {shown}: fail (exit {code})");
+                        let text = run.output.trim_end();
+                        let lines: Vec<&str> = text.lines().collect();
+                        for l in &lines[lines.len().saturating_sub(PROJECT_TAIL)..] {
+                            say!("{}", printable(l));
+                        }
+                        done.push("fail");
+                    }
+                    None => {
+                        say!("guard: {shown}: unverified: ended by a signal");
+                        done.push("unverified");
                     }
                 },
             }

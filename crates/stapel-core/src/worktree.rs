@@ -298,6 +298,15 @@ impl Worktree {
         Ok(())
     }
 
+    /// Sets the tracked files to `commit`, discarding their changes; untracked files stay.
+    pub fn reset_tracked(&self, commit: &str) -> Result<(), String> {
+        git(
+            &self.path,
+            &["checkout", "-q", "--detach", "--force", commit],
+        )?;
+        Ok(())
+    }
+
     fn remove(&self) {
         let p = self.path.to_string_lossy().into_owned();
         let _ = git(&self.root, &["worktree", "remove", "--force", &p]);
