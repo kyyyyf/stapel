@@ -374,7 +374,14 @@ fn serve(connection: &Connection) -> i32 {
                     reply_error(connection, req.id, ErrorCode::InvalidRequest, "shutting down");
                 } else if req.method == "textDocument/codeAction" {
                     let actions = match serde_json::from_value::<CodeActionParams>(req.params) {
-                        Ok(p) => buttons(&docs, &p.text_document.uri),
+                        Ok(p) => {
+                            // A client that asks for a kind (on format or save) gets no button.
+                            if p.context.only.as_ref().is_some_and(|o| !o.is_empty()) {
+                                Vec::new()
+                            } else {
+                                buttons(&docs, &p.text_document.uri)
+                            }
+                        }
                         Err(e) => {
                             reply_error(connection, req.id, ErrorCode::InvalidParams, &e.to_string());
                             continue;
