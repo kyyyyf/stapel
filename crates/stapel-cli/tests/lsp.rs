@@ -122,7 +122,14 @@ fn initialize_and_shutdown() {
     commands.sort();
     assert_eq!(
         commands,
-        ["stapel.next", "stapel.ok", "stapel.page", "stapel.status"]
+        [
+            "stapel.answer",
+            "stapel.inbox",
+            "stapel.next",
+            "stapel.ok",
+            "stapel.page",
+            "stapel.status"
+        ]
     );
 
     let hover = c.request(
@@ -1544,5 +1551,117 @@ fn capabilities_name_open_close_and_save() {
         sync["save"] == json!(true) || sync["save"].is_object(),
         "save not named: {sync}"
     );
+    let _ = c.child.kill();
+}
+
+// STP-40 AC-11: the buttons of an open inbox document, chosen by the entry of the range start.
+#[test]
+fn inbox_buttons() {
+    let dir = tempfile::tempdir().unwrap();
+    repo_with(dir.path(), "STP-1");
+    let text = "# Inbox\n\
+\n\
+## STP-1 \u{2014} T\n\
+worktree: /w\n\
+\n\
+### STP-1 finding F-1\n\
+code-review round 1, HIGH, p: claim\n\
+note:\n\
+\n\
+### STP-1 finding F-2\n\
+code-review round 1, HIGH, p: other\n\
+note:\n\
+\n\
+### STP-1 confirmation\n\
+waiting: Frame\n\
+page: /w/page.md\n";
+    let path = dir.path().join(".stapel/inbox.md");
+    std::fs::write(&path, text).unwrap();
+    let uri = file_uri(&path);
+    let fates = |id: &str| -> Vec<String> {
+        let mut v: Vec<String> = ["patch", "bad_plan", "defer", "no-change"]
+            .iter()
+            .map(|f| format!("answer {id}: {f}"))
+            .collect();
+        v.push("stapel inbox".to_string());
+        v
+    };
+    let range = |c: &mut Client, from: u32, to: u32, only: Option<Value>| {
+        let mut context = json!({"diagnostics": []});
+        if let Some(o) = only {
+            context["only"] = o;
+        }
+        c.request_with_notes(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": {"uri": uri},
+                "range": {"start": {"line": from, "character": 0}, "end": {"line": to, "character": 0}},
+                "context": context
+            }),
+        )
+    };
+
+    let mut c = Client::start();
+    c.initialize();
+    let before = {
+        c.open(&uri, text);
+        range(&mut c, 0, 0, None)
+    };
+    // no diagnostic after didOpen
+    assert!(
+        before
+            .1
+            .iter()
+            .all(|n| n["method"] != json!("textDocument/publishDiagnostics")),
+        "{:?}",
+        before.1
+    );
+    // the title line and a `##` line: only the inbox button
+    for line in [0, 2] {
+        let (resp, _) = range(&mut c, line, line, None);
+        assert_eq!(titles(&resp), ["stapel inbox"], "line {line}");
+    }
+    // inside a finding entry, from its heading to its last line
+    for line in [5, 6, 7, 8] {
+        let (resp, _) = range(&mut c, line, line, None);
+        assert_eq!(titles(&resp), fates("F-1"), "line {line}");
+    }
+    let (resp, _) = range(&mut c, 9, 11, None);
+    assert_eq!(titles(&resp), fates("F-2"));
+    // a range from a finding entry into the next one: the first
+    let (resp, _) = range(&mut c, 6, 10, None);
+    assert_eq!(titles(&resp), fates("F-1"));
+    // the whole file: its start line is the title line
+    let (resp, _) = range(&mut c, 0, 15, None);
+    assert_eq!(titles(&resp), ["stapel inbox"]);
+    // a confirmation entry
+    for line in [13, 14, 15] {
+        let (resp, _) = range(&mut c, line, line, None);
+        assert_eq!(titles(&resp), ["stapel page STP-1", "stapel inbox"], "line {line}");
+    }
+    // the commands and their first argument
+    let (resp, _) = range(&mut c, 5, 5, None);
+    let first = &resp["result"][0];
+    assert_eq!(first["command"]["command"], json!("stapel.answer"));
+    assert_eq!(resp["result"][4]["command"]["command"], json!("stapel.inbox"));
+    assert_eq!(resp["result"][4]["command"]["arguments"], json!([uri]));
+    let (resp, _) = range(&mut c, 13, 13, None);
+    assert_eq!(resp["result"][0]["command"]["command"], json!("stapel.page"));
+    // an `only` filter gets nothing
+    for only in [json!(["quickfix"]), json!(["source.fixAll"])] {
+        let (resp, _) = range(&mut c, 5, 5, Some(only));
+        assert!(titles(&resp).is_empty(), "{resp}");
+    }
+    // a document that was never opened gets nothing
+    let other = dir.path().join("elsewhere/.stapel/inbox.md");
+    let (resp, _) = c.code_action(&file_uri(&other), 0);
+    assert!(titles(&resp).is_empty(), "{resp}");
+    // an inbox without a loading stapel.toml gets nothing
+    let bare = dir.path().join("bare/.stapel");
+    std::fs::create_dir_all(&bare).unwrap();
+    let bare_uri = file_uri(&bare.join("inbox.md"));
+    c.open(&bare_uri, text);
+    let (resp, _) = c.code_action(&bare_uri, 5);
+    assert!(titles(&resp).is_empty(), "{resp}");
     let _ = c.child.kill();
 }
