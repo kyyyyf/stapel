@@ -378,8 +378,61 @@ Route: full, auto (risk tags `data`, `interface`).
 
 ## Review
 
-TODO
+Reviewers: spec review two rounds (SR1: 3 HIGH, 9 MEDIUM; SR2: 4 MEDIUM); four `stapel depends` rounds
+against STP-37 (DP-1 patched, DP-2 and DP-3 lowered by the person, then no dependency); a drift review
+(D1: 3 LOW) before code review; code review rounds 1 to 3, each with stapel-reviewer
+(claude-sonnet-5-5), an external stapel-reviewer (claude-fable-5-1) and stapel-drift on the whole
+ticket. The block of this ticket was not generated: the installed `stapel` predates this branch.
+
+- Round 1: no HIGH, 8 MEDIUM, 19 LOW. Patched by fix steps 11 to 14 (XR1-1 lone CR, XR1-2 and R1-2
+  fenced markers, XR1-3 `stapel new`, XR1-4, XR1-5, R1-5, R1-6 coverage) and by ticket text (XR1-6,
+  R1-7, XR1-7, XR1-13); 10 LOW deferred.
+- Round 2: no HIGH, 7 MEDIUM, 7 LOW. Step 12 had a regression (an unclosed fence or comment multiplied
+  the block; R2-2, XR2-1), fixed by step 15; coverage step 16 (R2-3, XR2-2); the ticket text that round
+  1 promised was written then (R2-1, XR2-3, XR2-4, DR2-1).
+- Round 3: no HIGH, 2 MEDIUM (XR3-1 coverage step 17, XR3-2 Frame text), 6 LOW. No round 4 (Decision).
+- The rounds of the Sonnet reviewer read part of the change twice (round 1 was resumed to finish;
+  round 3 left the Spec text and several cli files unread); the external reviewer covered them.
+- Checks on this Mac with a case-sensitive TMPDIR: `steps` checks after every builder commit; head
+  checks with the suite: 1 failed binary at `c13ee4b` (six old tests, see Decisions), then 1112 passed
+  at `ff6c047`, 1119 at `a16cf96`, 1122 at `c3bfcf3` and 1123 at the close commit. The check lock was
+  held several times by checks of STP-39 in another session; my checks waited.
 
 ## Summary
 
-TODO
+**Done.** `stapel findings import`, `findings triage`, `review start` and `stapel check` write a
+generated block of findings and check runs into the Review section, refuse a broken `ticket.md` before
+any write, and a block-only change of `ticket.md` is no uncommitted change for any stapel command
+(AC-1 to AC-6, AC-13, AC-14). `stapel export` writes `merge-request.md` (AC-7). `stapel ledger rules`
+counts what each rule caught (AC-8 to AC-10). `stapel tokens measure` and `stapel tokens KEY` print
+returns, interaction and waits (AC-11). The skill names all three (AC-12).
+
+**Decisions for the person to overrule** (all dated, in Decisions): the Summary in `merge-request.md`
+is trimmed at both ends; an export without the ticket's `state.json` writes no file; no round 4; the
+three older tree tests compare the tree without the block; markers in a fence or comment are text, and
+an unclosed fence or comment in the Review section refuses.
+
+**Deferred findings** (the merge request lists them): SR1-15, D1-3, R1-1, R1-3, DR1-4, R1-8, R1-9,
+DR1-1, DR1-3, XR1-8, XR1-9, XR1-10, XR1-12, XR1-14, R2-4, XR2-5, DR2-5, R3-1, R3-2, R3-3, DR3-1,
+DR3-2. Most are LOW: the fates of false findings in the block, the file mode after the rename, a
+Review section without a final line end, legacy lines in `ledger rules`, the order of the export branch
+and the file.
+
+**Measures (rule 8), against STP-37.**
+
+- Escaped defects: none known yet.
+- Code review HIGH and MEDIUM inside the promise: 0 HIGH and 17 MEDIUM over three rounds (STP-37: 0
+  HIGH; its rounds are in its Review). Seven MEDIUM were verification gaps, four were ticket text the
+  orchestrator promised in a triage note and wrote one round later, one was a regression of a fix step.
+- `ticket.md`: 37.0 kB (STP-37: 47.9 kB). Code: 2179 lines added in 33 files, about twice the Frame's
+  first estimate.
+- Tokens, cache read: orchestrator 85.7 M (STP-37: 56.6 M, worse), builder 9.3 M (14.9 M), reviewers
+  3.2 M (7.1 M), depends 1.1 M (0.6 M: four rounds while STP-37 changed).
+- The person: 5 dialogs, 5 question dialogs, 5 messages, 46 min of interaction (STP-37: 6, 5, 4, 60 min);
+  wall time 14 h (8.4 h).
+- Not better: the orchestrator's tokens and the rounds; better: the person's minutes and the builder.
+
+**Observation for rule 9.** `stapel ledger rules` on this repository shows 130 distinct `rule` values
+over the tickets that have findings, 112 of them `quiet`, and 370 counted findings under `none`: the
+free-text `rule` field cannot drive rule 9. Proposal for the next ticket or a ledger decision: a closed
+list of rule ids (the numbered rules of the skill and `none`) checked by `stapel findings import`.
