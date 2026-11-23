@@ -1,4 +1,6 @@
 /target
+/editors/zed/target
+/editors/zed/Cargo.lock
 /.stapel/scratch/
 /.stapel/config/private.*
 *.local.toml
