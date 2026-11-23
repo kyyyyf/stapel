@@ -1176,6 +1176,60 @@ fn changed_lines() {
     assert_eq!(logs, 1, "{notes:?}");
 }
 
+// AC-11: the confirmed text is split as `ticket::scan` splits, with no empty element after a final line end.
+#[test]
+fn crlf_confirmed_text() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Spec", "- s1\n- s2\n- s3\n- s4");
+    common::confirm_these(dir, "ABC-1", &["spec"]);
+    let tdir = dir.join(".stapel/tickets/ABC-1");
+    let ticket = tdir.join("ticket.md");
+    let uri = file_uri(&ticket);
+    let text = std::fs::read_to_string(&ticket).unwrap();
+    let set_text = |stored: &str| {
+        let mut state: Value =
+            serde_json::from_str(&std::fs::read_to_string(tdir.join("state.json")).unwrap())
+                .unwrap();
+        for c in state["confirmations"].as_array_mut().unwrap() {
+            if c["section"] == json!("spec") {
+                c["text"] = json!(stored);
+            }
+        }
+        std::fs::write(tdir.join("state.json"), state.to_string()).unwrap();
+    };
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &text);
+    let _ = c.code_action(&uri, 0);
+    let mut version = 1;
+    let mut hints = |c: &mut Client, buffer: &str| -> Vec<u64> {
+        version += 1;
+        c.change(&uri, version, buffer);
+        let (_, notes) = c.code_action(&uri, 0);
+        let got = published(&notes, &uri);
+        assert_eq!(got.len(), 1, "{notes:?}");
+        hint_lines(&got[0], buffer)
+    };
+
+    // a confirmed text with CRLF line ends and one changed line: one Hint on that line
+    set_text("- s1\r\n- s2\r\n- s3\r\n- s4\r\n");
+    let buffer = text.replace("- s2\n", "- S2 changed\n");
+    assert_ne!(buffer, text);
+    let want = vec![line_of(&buffer, "- S2 changed")];
+    assert_eq!(hints(&mut c, &buffer), want, "CRLF text");
+
+    // a confirmed text of exactly 5000 lines with a final line end: Hints still computed
+    let old: String = (0..5000).map(|i| format!("- line {i}\n")).collect();
+    set_text(&old);
+    let mut new: String = (0..4999).map(|i| format!("- line {i}\n")).collect();
+    new.push_str("- last changed\n");
+    let buffer = text.replace("- s1\n- s2\n- s3\n- s4\n", &new);
+    assert_ne!(buffer, text);
+    let want = vec![line_of(&buffer, "- last changed")];
+    assert_eq!(hints(&mut c, &buffer), want, "5000 lines");
+}
+
 // AC-12: after a button run the diagnostics of every open `ticket.md` are published again.
 #[test]
 fn diagnostics_after_ok() {
