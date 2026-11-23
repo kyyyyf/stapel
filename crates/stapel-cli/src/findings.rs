@@ -66,6 +66,12 @@ pub fn import(file: &str, key: Option<&str>) -> Result<(), Fail> {
 
 /// `stapel answer KEY ID FATE NOTE` (STP-40 AC-6): the person's triage record of one finding.
 pub fn answer(key: &str, id: &str, fate: &str, note: &str) -> Result<(), Fail> {
+    if in_agent_shell() {
+        return Err(Fail::failed(
+            "only a person answers a finding: this shell belongs to an agent (CLAUDECODE or \
+             CLAUDE_CODE_ENTRYPOINT is set)",
+        ));
+    }
     let (root, _config) = repo::open().map_err(Fail::failed)?;
     stapel_core::tickets::match_branch(&root, Some(key)).map_err(Fail::refused)?;
     if stapel_core::tickets::branch_ticket(&root).is_none() {
