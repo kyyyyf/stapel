@@ -77,3 +77,5 @@ always_writable = [".stapel/", "docs/"]
 [check]
 runner = "cargo"
 timeout_secs = 5400
+# The person asked on 2026-11-23 for fewer local checks: none after each step.
+points = ["review", "close"]
