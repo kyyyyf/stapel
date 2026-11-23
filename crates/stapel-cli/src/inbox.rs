@@ -43,14 +43,15 @@ fn read_entries(
     let config = repo::load(path)?;
     let lines = journal::read(&ticket.dir.join("findings.jsonl"))?;
     let text = read(&ticket.dir.join("ticket.md"))?;
-    crate::next::text_at(path).map_err(|e| format!("stapel next: {}", e.message))?;
-    let records: Vec<_> = lines
-        .into_iter()
-        .filter_map(|(_, e)| match e {
-            Line::V1(m) | Line::Legacy(m) => Some(m),
-            Line::Problem(_) => None,
-        })
-        .collect();
+    let mut records = Vec::new();
+    for (n, e) in lines {
+        match e {
+            Line::V1(m) | Line::Legacy(m) => records.push(m),
+            Line::Problem(reason) => {
+                return Err(format!("findings.jsonl line {n}: {reason}"));
+            }
+        }
+    }
     let entry = |kind| Entry {
         key: ticket.key.clone(),
         title: state.title.clone(),
