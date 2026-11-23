@@ -162,3 +162,157 @@ fn exit_without_shutdown() {
     c.close_stdin();
     assert_eq!(c.exit_code(), Some(1));
 }
+
+impl Client {
+    /// Like `request`, and returns the notifications that came before the response.
+    fn request_with_notes(&mut self, method: &str, params: Value) -> (Value, Vec<Value>) {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
+        let mut notes = Vec::new();
+        loop {
+            let msg = self.read();
+            if msg.get("id") == Some(&json!(id)) && msg.get("method").is_none() {
+                return (msg, notes);
+            }
+            notes.push(msg);
+        }
+    }
+
+    fn open(&mut self, uri: &str, text: &str) {
+        self.notify(
+            "textDocument/didOpen",
+            json!({"textDocument": {"uri": uri, "languageId": "markdown", "version": 1, "text": text}}),
+        );
+    }
+
+    fn code_action(&mut self, uri: &str, line: u32) -> (Value, Vec<Value>) {
+        self.request_with_notes(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": {"uri": uri},
+                "range": {"start": {"line": line, "character": 0}, "end": {"line": line, "character": 0}},
+                "context": {"diagnostics": []}
+            }),
+        )
+    }
+}
+
+/// A repository folder with `stapel.toml` and a ticket folder with `state.json`.
+fn repo_with(root: &std::path::Path, ticket: &str) {
+    let tdir = root.join(".stapel/tickets").join(ticket);
+    std::fs::create_dir_all(&tdir).unwrap();
+    std::fs::write(
+        root.join(".stapel/stapel.toml"),
+        stapel_core::config::default_toml("STP"),
+    )
+    .unwrap();
+    std::fs::write(tdir.join("state.json"), "{}").unwrap();
+    std::fs::write(tdir.join("ticket.md"), "# T\n\nline\nlast\n").unwrap();
+    std::fs::write(tdir.join("page.md"), "page\n").unwrap();
+}
+
+fn file_uri(path: &std::path::Path) -> String {
+    format!("file://{}", path.to_str().unwrap().replace(' ', "%20"))
+}
+
+fn titles(resp: &Value) -> Vec<String> {
+    assert!(resp.get("error").is_none(), "{resp}");
+    resp["result"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|x| x["title"].as_str().unwrap().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+// AC-2: the three buttons, in order, at any range; the argument is the URI.
+#[test]
+fn buttons_on_ticket_documents() {
+    let dir = tempfile::tempdir().unwrap();
+    repo_with(dir.path(), "STP-1");
+    let mut c = Client::start();
+    c.initialize();
+    for doc in ["ticket.md", "page.md"] {
+        let path = dir.path().join(".stapel/tickets/STP-1").join(doc);
+        let uri = file_uri(&path);
+        c.open(&uri, &std::fs::read_to_string(&path).unwrap());
+        for line in [0, 3] {
+            let (resp, _) = c.code_action(&uri, line);
+            let got = titles(&resp);
+            assert!(got.len() >= 3, "{doc} line {line}: {resp}");
+            assert_eq!(
+                got[..3],
+                ["stapel status STP-1", "stapel next", "stapel page STP-1"]
+            );
+            let first = &resp["result"][0];
+            assert!(first.get("kind").is_none_or(|k| k.is_null()), "{first}");
+            assert_eq!(first["command"]["command"], json!("stapel.status"));
+            assert_eq!(first["command"]["arguments"], json!([uri]));
+            assert_eq!(resp["result"][1]["command"]["command"], json!("stapel.next"));
+            assert_eq!(resp["result"][2]["command"]["command"], json!("stapel.page"));
+            assert_eq!(resp["result"][2]["command"]["arguments"], json!([uri]));
+        }
+    }
+}
+
+// AC-3: no action and no diagnostic for a document that is not an open ticket document.
+#[test]
+fn nothing_for_other_documents() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("my root");
+    repo_with(&root, "STP-1");
+    repo_with(&root, "-x");
+    repo_with(&root, "stp-039");
+    std::fs::write(root.join("README.md"), "x\n").unwrap();
+    std::fs::write(root.join("ticket.md"), "x\n").unwrap();
+    std::fs::create_dir_all(root.join(".stapel/tickets/STP-2")).unwrap();
+    std::fs::write(root.join(".stapel/tickets/STP-2/ticket.md"), "x\n").unwrap();
+    let bare = dir.path().join("bare");
+    std::fs::create_dir_all(bare.join(".stapel/tickets/STP-1")).unwrap();
+    std::fs::write(bare.join(".stapel/tickets/STP-1/ticket.md"), "x\n").unwrap();
+    std::fs::write(bare.join(".stapel/tickets/STP-1/state.json"), "{}").unwrap();
+    let broken = dir.path().join("broken");
+    repo_with(&broken, "STP-1");
+    std::fs::write(broken.join(".stapel/stapel.toml"), "this is = [not valid").unwrap();
+    let never = root.join(".stapel/tickets/STP-1/page.md");
+
+    let mut c = Client::start();
+    c.initialize();
+    let t = |r: &std::path::Path, rel: &str| file_uri(&r.join(rel));
+    let others = [
+        t(&root, "README.md"),
+        t(&root, "ticket.md"),
+        t(&root, ".stapel/tickets/STP-2/ticket.md"),
+        t(&bare, ".stapel/tickets/STP-1/ticket.md"),
+        t(&root, ".stapel/tickets/-x/ticket.md"),
+        t(&broken, ".stapel/tickets/STP-1/ticket.md"),
+        "untitled:Untitled-1".to_string(),
+    ];
+    for uri in &others {
+        c.open(uri, "# T\n\nline\n");
+        let (resp, notes) = c.code_action(uri, 0);
+        assert!(titles(&resp).is_empty(), "{uri}: {resp}");
+        assert!(
+            notes
+                .iter()
+                .all(|n| n["method"] != json!("textDocument/publishDiagnostics")),
+            "{uri}: {notes:?}"
+        );
+    }
+    // never opened
+    let (resp, notes) = c.code_action(&file_uri(&never), 0);
+    assert!(titles(&resp).is_empty(), "{resp}");
+    assert!(notes.is_empty(), "{notes:?}");
+
+    // a folder `stp-039` is a ticket document, and a root with a space is one
+    let uri = t(&root, ".stapel/tickets/stp-039/ticket.md");
+    c.open(&uri, "# T\n\nline\n");
+    let (resp, _) = c.code_action(&uri, 0);
+    assert_eq!(
+        titles(&resp)[..3],
+        ["stapel status stp-039", "stapel next", "stapel page stp-039"]
+    );
+}
