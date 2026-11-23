@@ -3,3 +3,7 @@
 {"v":1,"id":"d-5ca70fd39f4e","at":"2026-11-23T15:47:09Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:8fffb5e975713bb9f5006f66c22a4d2585d1bacec32d2c6926a435281d51d973","via":"grant"}
 {"v":1,"id":"d-c2d50b24a0fe","at":"2026-11-23T15:47:09Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:6f8dffcbe10ce0688ee60409c1a17a7ad9f96c5a24791edee54f433693168c67","via":"grant"}
 {"v":1,"id":"d-715a8ed40031","at":"2026-11-23T15:47:09Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:58c1acd474f68008eed668fbd1cae29ac87a4cf035173ac1483f88140c82a983","via":"grant"}
+{"v":1,"id":"d-1062712a58f9","at":"2026-11-23T15:58:55Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:3a09984cbdc82ba2d2def726bda9e74d3413382473dd1e8f78ab0f29c0eff006","via":"grant"}
+{"v":1,"id":"d-417426970b50","at":"2026-11-23T15:58:55Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:f0859444191c0b2c5c26a8004b10b0c75de76f58cb9b0aab2c27791d67b7f413","via":"grant"}
+{"v":1,"id":"d-4adb01cabbf4","at":"2026-11-23T15:58:55Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:79ff7057e3460433cb91899014236aad06b5d78b80a5c3d4af5ddd930505dda5","via":"grant"}
+{"v":1,"id":"d-b323f8127c29","at":"2026-11-23T15:58:55Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:6ceaa694c5eff181b83bfed955f9049c85fc2a9efdb27131354ba8820fcba42d","via":"grant"}
