@@ -166,7 +166,7 @@ ticket_drift`.
 | Init | a fresh `stapel init`: `.gitignore` holds `/.stapel/inbox.md`; Local mode: `info/exclude` holds it | `init::ignores_the_inbox` |
 | Inbox buttons | a range in a finding entry, in a confirmation entry, on the title line, on a `##` line, from a finding entry into the next one (the first); the order; an `only` filter; no diagnostic after `didOpen` | `lsp::inbox_buttons` |
 | Inbox answer | a note `ok, fix it`; a note `- later`; the record in the worktree's `findings.jsonl`; the Info message without the note; an entry whose `worktree:` line names another folder | `lsp::answers_from_the_inbox` |
-| Inbox refusals | no entry for the id; `note:` empty; a branch of KEY with no live worktree; an agent shell; fate `open`; three arguments; `stapel.page` with the inbox URI alone; `stapel.inbox` with a key; a URI that is not an inbox document; each text; a refused `stapel answer` child: the Error message | `lsp::inbox_refusals` |
+| Inbox refusals | no entry for the id; `note:` empty; a branch of KEY with no live worktree; an agent shell; fate `open`; three arguments; `stapel.page` with the inbox URI alone; `stapel.inbox` with a key; a URI that is not an inbox document; a refused `stapel answer` child | `lsp::inbox_refusals` |
 | Page and inbox | `stapel.page` from a confirmation entry writes the page in the worktree; `stapel.inbox` writes the file | `lsp::inbox_page_and_inbox_buttons` |
 | Rewrite | an answer of one of two findings: the file without its entry and with the note typed for the other; a run that failed: the file written again | `lsp::inbox_written_again_after_a_run` |
 
