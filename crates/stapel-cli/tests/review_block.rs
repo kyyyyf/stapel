@@ -395,3 +395,162 @@ fn block_only_change_is_clean() {
     assert!(common::read(dir, TICKET).contains(BEGIN));
     assert!(dirty(dir).iter().any(|p| p.ends_with("ABC-1/ticket.md")));
 }
+
+// ---- Step 4: the check runs in the block. ----
+
+/// A repository with a one-crate workspace, ticket ABC-1 and one passing step; all committed.
+fn repo_with_a_step() -> tempfile::TempDir {
+    let repo = common::git_repo();
+    let dir = repo.path();
+    put(
+        dir,
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/tiny\"]\nresolver = \"2\"\n",
+    );
+    put(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    put(dir, "crates/tiny/src/lib.rs", "pub fn one() {}\n");
+    put(
+        dir,
+        "Cargo.lock",
+        "version = 3\n\n[[package]]\nname = \"tiny\"\nversion = \"0.1.0\"\n",
+    );
+    put(dir, ".gitignore", "/target\n");
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    stapel(dir).args(["new", "First"]).assert().success();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "initial"]);
+    put(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "#[test]\nfn needs_two() {\n    // fake: needs pub fn two\n}\n",
+    );
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1 step 1 RED: two is missing"]);
+    put(
+        dir,
+        "crates/tiny/src/lib.rs",
+        "pub fn one() {}\npub fn two() {}\n",
+    );
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1 step 1 GREEN: two"]);
+    repo
+}
+
+/// `stapel check ABC-1` with the args and the fake cargo first on the path; the exit code is 0.
+fn check(dir: &Path, args: &[&str]) {
+    let bin = tempfile::tempdir().unwrap();
+    common::fake_cargo(bin.path());
+    let path = std::env::var_os("PATH").unwrap();
+    let mut paths = vec![bin.path().to_path_buf()];
+    paths.extend(std::env::split_paths(&path));
+    let out = stapel(dir)
+        .args(["check", "ABC-1"])
+        .args(args)
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+const RUNS: &str = ".stapel/tickets/ABC-1/runs.jsonl";
+
+fn runs(dir: &Path) -> Vec<Map<String, Value>> {
+    common::read(dir, RUNS)
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .map(|v| v.as_object().unwrap().clone())
+        .collect()
+}
+
+#[test]
+fn check_writes_the_block() {
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let head = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let short = &head[..7];
+
+    // Level `steps`: one row.
+    check(dir, &["--level", "steps"]);
+    let all = runs(dir);
+    let first = all.last().unwrap();
+    assert_eq!(first["level"], "steps");
+    let at_steps = first["at"].as_str().unwrap().to_string();
+    let block = block_of(&common::read(dir, TICKET));
+    assert_eq!(block, stapel_core::review_block::render(&[], &all));
+    assert!(
+        block.contains(&format!("| steps | pass | {short} | {at_steps} | pass 1 |")),
+        "{block}"
+    );
+    assert!(!block.contains("Check runs: none"), "{block}");
+    assert!(!block.contains("| head |"), "{block}");
+
+    // Then level `head`: two rows, `steps` first.
+    check(dir, &["--level", "head"]);
+    let all = runs(dir);
+    let at_head = all.last().unwrap()["at"].as_str().unwrap().to_string();
+    let block = block_of(&common::read(dir, TICKET));
+    assert_eq!(block, stapel_core::review_block::render(&[], &all));
+    let steps_row = block.find(&format!("| steps | pass | {short} | {at_steps} |"));
+    let head_row = block.find(&format!("| head | pass | {short} | {at_head} |"));
+    assert!(
+        steps_row.is_some() && head_row.is_some() && steps_row < head_row,
+        "{block}"
+    );
+
+    // Records written by hand: the newest per level, no `level`, no `steps`, sorted outcomes.
+    let outcomes = |names: &[&str]| -> Value {
+        Value::Array(names.iter().map(|o| json!({"outcome": o})).collect())
+    };
+    let mut names = vec!["pass"; 3];
+    names.extend(["cached"; 7]);
+    let rec = |extra: Value| -> Map<String, Value> {
+        let mut m = json!({"v": 1, "kind": "check", "ticket": "ABC-1"})
+            .as_object()
+            .unwrap()
+            .clone();
+        m.extend(extra.as_object().unwrap().clone());
+        m
+    };
+    let hand = vec![
+        rec(json!({"result": "fail", "head": "1111111aaa", "at": "2026-01-01T00:00:00Z"})),
+        rec(json!({"result": "fail", "level": "full", "head": "2222222bbb",
+            "at": "2026-01-02T00:00:00Z", "steps": outcomes(&["fail"])})),
+        rec(json!({"result": "pass", "level": "full", "head": "3333333ccc",
+            "at": "2026-01-03T00:00:00Z", "steps": outcomes(&names)})),
+    ];
+    let block = stapel_core::review_block::render(&[], &hand);
+    assert!(
+        block.contains("| head | fail | 1111111 | 2026-01-01T00:00:00Z | — |"),
+        "{block}"
+    );
+    assert!(
+        block.contains("| full | pass | 3333333 | 2026-01-03T00:00:00Z | cached 7, pass 3 |"),
+        "{block}"
+    );
+    assert!(!block.contains("2222222"), "{block}");
+    assert!(!block.contains("| steps |"), "{block}");
+
+    // `--list` and `--history` write no block.
+    let path = dir.join(TICKET);
+    let text = std::fs::read_to_string(&path).unwrap();
+    let old = block_of(&text);
+    let stale = text.replace(&old, &format!("{BEGIN}\nstale\n{END}\n"));
+    std::fs::write(&path, &stale).unwrap();
+    for flag in ["--list", "--history"] {
+        check(dir, &[flag]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), stale, "{flag}");
+    }
+}
