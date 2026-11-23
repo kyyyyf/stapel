@@ -21,6 +21,8 @@ pub enum Kind {
     Finding { id: String, line: String },
     /// Sections that wait for `stapel ok`, as ids in config order.
     Confirmation { waiting: Vec<String> },
+    /// The files of the ticket cannot be read; it counts as one decision.
+    Unreadable { reason: String },
 }
 
 /// The ids of the sections that wait for `stapel ok`, in config order, for a ticket past its spec
@@ -138,15 +140,21 @@ pub fn render(entries: &[Entry]) -> String {
     let mut last: Option<&str> = None;
     for e in entries {
         if last != Some(e.key.as_str()) {
-            text.push_str(&format!(
-                "\n## {} — {}\nworktree: {}\n",
-                e.key,
-                one_line(&e.title),
-                e.worktree
-            ));
+            let title = one_line(&e.title);
+            let heading = if title.is_empty() {
+                e.key.clone()
+            } else {
+                format!("{} — {title}", e.key)
+            };
+            text.push_str(&format!("\n## {heading}\nworktree: {}\n", e.worktree));
             last = Some(&e.key);
         }
         match &e.kind {
+            Kind::Unreadable { reason } => {
+                let reason = one_line(reason);
+                let reason = if reason.is_empty() { "?" } else { &reason };
+                text.push_str(&format!("unreadable: {reason}\n"));
+            }
             Kind::Finding { id, line } => {
                 text.push_str(&format!("\n### {} finding {id}\n{line}\nnote:\n", e.key));
             }
