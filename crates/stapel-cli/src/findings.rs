@@ -5,7 +5,7 @@ use crate::fail::Fail;
 use crate::repo;
 use stapel_core::identity::{in_agent_shell, user_name};
 use stapel_core::journal::append_all;
-use stapel_core::records::{importer_json, plan_findings};
+use stapel_core::records::{importer_json, plan_findings, with_importer};
 use stapel_core::triage::plan_triage;
 use std::path::Path;
 
@@ -61,6 +61,30 @@ pub fn import(file: &str, key: Option<&str>) -> Result<(), Fail> {
         plan.findings.lines.len(),
         plan.key
     );
+    Ok(())
+}
+
+/// `stapel answer KEY ID FATE NOTE` (STP-40 AC-6): the person's triage record of one finding.
+pub fn answer(key: &str, id: &str, fate: &str, note: &str) -> Result<(), Fail> {
+    let (root, _config) = repo::open().map_err(Fail::failed)?;
+    let user = user_name(&root).map_err(Fail::failed)?;
+    let importer = importer_json(false, &user);
+    let ticket = stapel_core::records::journal_ticket(&root, Some(key)).map_err(Fail::refused)?;
+    let target = ticket.dir.join("findings.jsonl");
+    let text = |s: &str| serde_json::to_string(s).expect("a string is JSON");
+    let body = format!(
+        "{{\"kind\":\"triage\",\"ticket\":{},\"id\":{},\"fate\":{},\"note\":{}}}",
+        text(&ticket.key),
+        text(id),
+        text(fate),
+        text(note)
+    );
+    let line = with_importer(&body, &importer).expect("the body ends in a brace");
+    guard_block(&ticket.dir)?;
+    append_all(&target, &[line]).map_err(Fail::refused)?;
+    write_block(&target);
+    sync_stops(&root, &ticket.key);
+    say!("answered: {id} of {}: {fate}", ticket.key);
     Ok(())
 }
 
