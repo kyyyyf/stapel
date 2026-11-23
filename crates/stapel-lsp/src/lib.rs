@@ -3,12 +3,14 @@
 use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::{
     CodeAction, CodeActionOrCommand, CodeActionParams, CodeActionProviderCapability, Command,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    ExecuteCommandOptions, ExecuteCommandParams, InitializeParams, LogMessageParams, MessageType,
-    ShowMessageParams, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Uri,
+    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, ExecuteCommandOptions,
+    ExecuteCommandParams, InitializeParams, LogMessageParams, MessageType, Position,
+    PublishDiagnosticsParams, Range, ServerCapabilities, ShowMessageParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, Uri,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// A ticket document: its root, its key and whether it is `page.md`.
@@ -20,6 +22,16 @@ pub struct TicketDoc {
 
 /// Classifies a URI as a ticket document; `None` for anything else.
 pub fn classify(uri: &Uri) -> Option<TicketDoc> {
+    let doc = locate(uri)?;
+    let text = std::fs::read_to_string(doc.root.join(".stapel/stapel.toml")).ok()?;
+    let config = stapel_core::config::Config::parse_at(&text, &doc.root).ok()?;
+    stapel_core::tickets::key_number(&config, &doc.key)?;
+    Some(doc)
+}
+
+/// The place of a URI: `ticket.md` or `page.md` in a ticket folder with a `state.json`; the
+/// configuration is not read.
+fn locate(uri: &Uri) -> Option<TicketDoc> {
     if !uri.scheme()?.as_str().eq_ignore_ascii_case("file") {
         return None;
     }
@@ -47,10 +59,110 @@ pub fn classify(uri: &Uri) -> Option<TicketDoc> {
     if !key_dir.join("state.json").is_file() {
         return None;
     }
-    let text = std::fs::read_to_string(stapel.join("stapel.toml")).ok()?;
-    let config = stapel_core::config::Config::parse_at(&text, &root).ok()?;
-    stapel_core::tickets::key_number(&config, &key)?;
     Some(TicketDoc { root, key, is_page })
+}
+
+/// The Information diagnostics on the heading of each waiting section of `text`, or the cause
+/// (naming the file) when `stapel.toml` or `state.json` cannot be read.
+fn waiting_diagnostics(doc: &TicketDoc, text: &str) -> Result<Option<Vec<Diagnostic>>, String> {
+    let toml = doc.root.join(".stapel/stapel.toml");
+    let source = std::fs::read_to_string(&toml)
+        .map_err(|e| format!("cannot read {}: {e}", toml.display()))?;
+    let config = stapel_core::config::Config::parse_at(&source, &doc.root)
+        .map_err(|e| format!("cannot load {}: {e}", toml.display()))?;
+    if stapel_core::tickets::key_number(&config, &doc.key).is_none() {
+        return Ok(None);
+    }
+    let path = doc.root.join(format!(".stapel/tickets/{}/state.json", doc.key));
+    let state = match stapel_core::state::load(&path) {
+        stapel_core::state::Loaded::State(state) => state,
+        // A hand-written state of STP-1 has no confirmations to compare with.
+        stapel_core::state::Loaded::Legacy(_) => return Ok(None),
+        stapel_core::state::Loaded::Unreadable(why) => {
+            return Err(format!("cannot read {}: {why}", path.display()));
+        }
+    };
+    let sections = stapel_core::ticket::parse(text);
+    let scanned = stapel_core::ticket::scan(text);
+    let mut out = Vec::new();
+    for def in config.sections.iter().filter(|s| s.owner != "generated") {
+        if stapel_core::stage::is_fresh(&config, &sections, &state, &def.id) {
+            continue;
+        }
+        for (line, s) in scanned.iter().enumerate() {
+            let Some((2, title)) = &s.heading else { continue };
+            if !title.trim().eq_ignore_ascii_case(def.title.trim()) {
+                continue;
+            }
+            let end = s.line.trim_end_matches('\r').encode_utf16().count();
+            out.push(Diagnostic {
+                range: Range::new(
+                    Position::new(line as u32, 0),
+                    Position::new(line as u32, end as u32),
+                ),
+                severity: Some(DiagnosticSeverity::INFORMATION),
+                source: Some("stapel".to_string()),
+                message: format!("waiting for confirmation (owner: {})", def.owner),
+                ..Default::default()
+            });
+        }
+    }
+    Ok(Some(out))
+}
+
+/// What the server knows about the diagnostics it sent.
+#[derive(Default)]
+struct Published {
+    /// Documents with a non-empty list on the client.
+    shown: HashSet<Uri>,
+    /// The last cause logged for a document, until its files read again.
+    bad: HashMap<Uri, String>,
+}
+
+fn publish(connection: &Connection, uri: &Uri, diagnostics: Vec<Diagnostic>) {
+    let params = PublishDiagnosticsParams {
+        uri: uri.clone(),
+        diagnostics,
+        version: None,
+    };
+    let note = Notification::new("textDocument/publishDiagnostics".to_string(), params);
+    let _ = connection.sender.send(Message::Notification(note));
+}
+
+/// Publishes the diagnostics of an open `ticket.md` from its buffer; logs a bad state once.
+fn refresh(connection: &Connection, docs: &HashMap<Uri, String>, uri: &Uri, sent: &mut Published) {
+    let Some(text) = docs.get(uri) else { return };
+    let Some(doc) = locate(uri).filter(|d| !d.is_page) else {
+        return;
+    };
+    match waiting_diagnostics(&doc, text) {
+        Ok(Some(list)) => {
+            sent.bad.remove(uri);
+            if list.is_empty() {
+                sent.shown.remove(uri);
+            } else {
+                sent.shown.insert(uri.clone());
+            }
+            publish(connection, uri, list);
+        }
+        Ok(None) => {}
+        Err(cause) => {
+            if sent.shown.remove(uri) {
+                publish(connection, uri, Vec::new());
+            }
+            if sent.bad.get(uri) != Some(&cause) {
+                let note = Notification::new(
+                    "window/logMessage".to_string(),
+                    LogMessageParams {
+                        typ: MessageType::ERROR,
+                        message: format!("stapel lsp: {cause}"),
+                    },
+                );
+                let _ = connection.sender.send(Message::Notification(note));
+                sent.bad.insert(uri.clone(), cause);
+            }
+        }
+    }
 }
 
 fn button(title: String, command: &str, uri: &Uri) -> CodeActionOrCommand {
@@ -120,7 +232,14 @@ pub const COMMANDS: [&str; 4] = ["stapel.status", "stapel.next", "stapel.page", 
 
 fn capabilities() -> ServerCapabilities {
     ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::FULL),
+                save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+                ..Default::default()
+            },
+        )),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         execute_command_provider: Some(ExecuteCommandOptions {
             commands: COMMANDS.iter().map(|c| c.to_string()).collect(),
@@ -153,6 +272,7 @@ fn serve(connection: &Connection) -> i32 {
     }
     let mut shutdown = false;
     let mut docs: HashMap<Uri, String> = HashMap::new();
+    let mut sent = Published::default();
     while let Ok(msg) = connection.receiver.recv() {
         match msg {
             Message::Request(req) => {
@@ -220,26 +340,42 @@ fn serve(connection: &Connection) -> i32 {
                     "exit" => return if shutdown { 0 } else { 1 },
                     "textDocument/didOpen" => {
                         if let Ok(p) = serde_json::from_value::<DidOpenTextDocumentParams>(note.params) {
-                            docs.insert(p.text_document.uri, p.text_document.text);
+                            let uri = p.text_document.uri;
+                            docs.insert(uri.clone(), p.text_document.text);
+                            refresh(connection, &docs, &uri, &mut sent);
                         }
                     }
                     "textDocument/didChange" => {
                         if let Ok(p) =
                             serde_json::from_value::<DidChangeTextDocumentParams>(note.params)
                         {
-                            if let (Some(text), Some(slot)) = (
-                                p.content_changes.into_iter().last(),
-                                docs.get_mut(&p.text_document.uri),
-                            ) {
+                            let uri = p.text_document.uri;
+                            if let (Some(text), Some(slot)) =
+                                (p.content_changes.into_iter().last(), docs.get_mut(&uri))
+                            {
                                 *slot = text.text;
+                                refresh(connection, &docs, &uri, &mut sent);
                             }
+                        }
+                    }
+                    "textDocument/didSave" => {
+                        if let Ok(p) =
+                            serde_json::from_value::<DidSaveTextDocumentParams>(note.params)
+                        {
+                            refresh(connection, &docs, &p.text_document.uri, &mut sent);
                         }
                     }
                     "textDocument/didClose" => {
                         if let Ok(p) =
                             serde_json::from_value::<DidCloseTextDocumentParams>(note.params)
                         {
-                            docs.remove(&p.text_document.uri);
+                            let uri = p.text_document.uri;
+                            let was_open = docs.remove(&uri).is_some();
+                            sent.shown.remove(&uri);
+                            sent.bad.remove(&uri);
+                            if was_open && locate(&uri).is_some_and(|d| !d.is_page) {
+                                publish(connection, &uri, Vec::new());
+                            }
                         }
                     }
                     _ => {}
