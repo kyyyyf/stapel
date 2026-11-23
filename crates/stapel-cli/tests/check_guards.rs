@@ -665,6 +665,54 @@ fn a_cut_output_is_unverified() {
     assert_eq!(record["guards"][1]["outcome"], "pass", "{record}");
 }
 
+// AC-16: a ratchet guard whose standard output is still held open by a process outside the group at
+// the drain deadline is unverified, writes nothing and fails.
+#[test]
+fn a_held_output_is_unverified() {
+    use std::os::unix::fs::PermissionsExt;
+    /// Kills the detached holder on every exit of the test, by the pid its launcher wrote.
+    struct Reap(std::path::PathBuf);
+    impl Drop for Reap {
+        fn drop(&mut self) {
+            if let Ok(pid) = std::fs::read_to_string(&self.0) {
+                let _ = std::process::Command::new("kill")
+                    .args(["-KILL", pid.trim()])
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+        }
+    }
+    let holder = tempfile::tempdir().unwrap();
+    let pidfile = holder.path().join("holder.pid");
+    let _reap = Reap(pidfile.clone());
+    let script = holder.path().join("hold.pl");
+    std::fs::write(
+        &script,
+        format!(
+            "use POSIX qw(setsid);\nmy $pid = fork();\nif ($pid) {{\n    open(my $f, '>', '{}') or die;\n    print $f $pid;\n    close($f);\n    exit 0;\n}}\nsetsid();\nexec('sleep', '30');\n",
+            pidfile.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let command = format!("printf \"violation\\n\"; perl {}", script.display());
+    let (repo, _scripts) = guards_repo("", 3600, &ratchet("held", &command, "held.txt"));
+    let dir = repo.path();
+    write(dir, "guards/held.txt", "violation\nfixed\n");
+    commit(dir, "ABC-1: baseline");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert!(
+        lines.contains(&"guard: held: unverified: output cut"),
+        "{text}"
+    );
+    assert!(text.contains("result: fail"), "{text}");
+    assert_eq!(read(dir, "guards/held.txt"), "violation\nfixed\n");
+    let record = last_check_record(dir);
+    assert_eq!(record["guards"][0]["outcome"], "unverified", "{record}");
+}
+
 // ---- step 6: tightening ----
 
 // AC-10: a passing ratchet guard writes its baseline without the fixed lines (order kept, first of
