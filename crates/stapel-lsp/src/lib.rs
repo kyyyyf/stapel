@@ -143,7 +143,7 @@ fn serve(connection: &Connection) -> i32 {
                         }
                     };
                     match button_args(&docs, &params) {
-                        Some((args, doc)) => {
+                        Ok((args, doc)) => {
                             if params.command == "stapel.ok" {
                                 // The `ok` run comes with its page check (steps 7 and 8).
                                 let text = format!(
@@ -158,12 +158,9 @@ fn serve(connection: &Connection) -> i32 {
                                 .sender
                                 .send(Message::Response(Response::new_ok(req.id, ())));
                         }
-                        None => reply_error(
-                            connection,
-                            req.id,
-                            ErrorCode::InvalidParams,
-                            "stapel lsp: the arguments must be the URI of an open ticket.md or page.md",
-                        ),
+                        Err(text) => {
+                            reply_error(connection, req.id, ErrorCode::InvalidParams, &text)
+                        }
                     }
                 } else if req.method == "shutdown" {
                     shutdown = true;
@@ -220,20 +217,37 @@ fn reply_error(connection: &Connection, id: lsp_server::RequestId, code: ErrorCo
 fn button_args(
     docs: &HashMap<Uri, String>,
     params: &ExecuteCommandParams,
-) -> Option<(Vec<String>, TicketDoc)> {
-    let uri: Uri = params.arguments.first()?.as_str()?.parse().ok()?;
-    if !docs.contains_key(&uri) {
-        return None;
+) -> Result<(Vec<String>, TicketDoc), String> {
+    let command = params.command.as_str();
+    if !COMMANDS.contains(&command) {
+        return Err(format!("stapel lsp: unknown command {command}"));
     }
-    let doc = classify(&uri)?;
-    let args = match params.command.as_str() {
+    let bad = || "stapel lsp: the arguments must be the URI of an open ticket.md or page.md".to_string();
+    let want = if command == "stapel.ok" { 2 } else { 1 };
+    if params.arguments.len() != want {
+        return Err(bad());
+    }
+    if want == 2 && !params.arguments[1].is_string() {
+        return Err(bad());
+    }
+    let uri: Uri = params.arguments[0]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(bad)?;
+    if !docs.contains_key(&uri) {
+        return Err(bad());
+    }
+    let doc = classify(&uri).ok_or_else(bad)?;
+    if command == "stapel.ok" && !doc.is_page {
+        return Err(bad());
+    }
+    let args = match command {
         "stapel.status" => vec!["status".to_string(), doc.key.clone()],
         "stapel.next" => vec!["next".to_string()],
         "stapel.page" => vec!["page".to_string(), doc.key.clone()],
-        "stapel.ok" => vec!["ok".to_string(), doc.key.clone()],
-        _ => return None,
+        _ => vec!["ok".to_string(), doc.key.clone()],
     };
-    Some((args, doc))
+    Ok((args, doc))
 }
 
 fn show(connection: &Connection, typ: MessageType, message: String) {
