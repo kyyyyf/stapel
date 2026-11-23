@@ -1659,7 +1659,8 @@ impl Runner<'_> {
             // The baseline of a ratchet guard is the file at HEAD, read before the command runs.
             let baseline: Option<Option<String>> = entry.baseline.as_ref().map(|b| {
                 let path = format!("{}:{}/{}", self.head, dir.strip_suffix('/').unwrap_or(dir), b);
-                git_text(self.root, &["show", &path]).ok()
+                // `cat-file blob` refuses a folder, which counts as no baseline.
+                git_text(self.root, &["cat-file", "blob", &path]).ok()
             });
             let left = self.left().unwrap_or_default();
             let target = self.target.to_string_lossy().into_owned();
@@ -1691,12 +1692,8 @@ impl Runner<'_> {
                         done.push(("unverified", 0));
                         continue;
                     }
-                    let Some(base) = baseline.flatten() else {
-                        say!("guard: {shown}: fail: no baseline");
-                        done.push(("fail", 0));
-                        continue;
-                    };
-                    let known = lines_of(&base);
+                    let missing = baseline.as_ref().is_some_and(Option::is_none);
+                    let known = lines_of(&baseline.flatten().unwrap_or_default());
                     let mut seen = std::collections::BTreeSet::new();
                     let fresh: Vec<String> = run
                         .stdout
@@ -1704,11 +1701,17 @@ impl Runner<'_> {
                         .map(|l| l.trim_end().to_string())
                         .filter(|l| !l.is_empty() && !known.contains(l) && seen.insert(l.clone()))
                         .collect();
-                    if fresh.is_empty() {
+                    if fresh.is_empty() && !missing {
                         say!("guard: {shown}: pass");
                         done.push(("pass", 0));
                     } else {
-                        say!("guard: {shown}: fail: {} new", fresh.len());
+                        if missing {
+                            let base = entry.baseline.as_deref().unwrap_or_default();
+                            let at = format!("{}/{}", dir.strip_suffix('/').unwrap_or(dir), base);
+                            say!("guard: {shown}: fail: no baseline {}", printable(&at));
+                        } else {
+                            say!("guard: {shown}: fail: {} new", fresh.len());
+                        }
                         for l in fresh.iter().take(PROJECT_TAIL) {
                             say!("  {}", printable(l));
                         }
