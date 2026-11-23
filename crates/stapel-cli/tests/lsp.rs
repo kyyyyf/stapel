@@ -445,3 +445,54 @@ fn a_failing_button() {
         "{msgs:?}"
     );
 }
+
+// AC-5: a bad command name or bad arguments get InvalidParams and nothing runs.
+#[test]
+fn refuses_unknown_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    repo_with(dir.path(), "STP-1");
+    repo_with(dir.path(), "STP-2");
+    std::fs::write(dir.path().join("README.md"), "x\n").unwrap();
+    let tdir = dir.path().join(".stapel/tickets/STP-1");
+    let ticket = file_uri(&tdir.join("ticket.md"));
+    let page = file_uri(&tdir.join("page.md"));
+    let other = file_uri(&dir.path().join(".stapel/tickets/STP-2/ticket.md"));
+    let readme = file_uri(&dir.path().join("README.md"));
+    let closed = file_uri(&dir.path().join(".stapel/tickets/STP-2/page.md"));
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&ticket, "# T\n");
+    c.open(&page, "page\n");
+    c.open(&other, "# T\n");
+    c.open(&readme, "x\n");
+    c.open(&closed, "page\n");
+    c.notify(
+        "textDocument/didClose",
+        json!({"textDocument": {"uri": closed}}),
+    );
+
+    let bad_args = "stapel lsp: the arguments must be the URI of an open ticket.md or page.md";
+    let cases: Vec<(&str, Value, String)> = vec![
+        (
+            "stapel.close",
+            json!([ticket]),
+            "stapel lsp: unknown command stapel.close".to_string(),
+        ),
+        ("", json!([ticket]), "stapel lsp: unknown command ".to_string()),
+        ("stapel.status", json!([]), bad_args.to_string()),
+        ("stapel.status", json!([ticket, ticket]), bad_args.to_string()),
+        ("stapel.status", json!([5]), bad_args.to_string()),
+        ("stapel.status", json!([readme]), bad_args.to_string()),
+        ("stapel.status", json!([other, "STP-2"]), bad_args.to_string()),
+        ("stapel.status", json!([closed]), bad_args.to_string()),
+        ("stapel.ok", json!([page]), bad_args.to_string()),
+        ("stapel.ok", json!([ticket, "0123456789abcdef"]), bad_args.to_string()),
+    ];
+    for (command, args, message) in cases {
+        let (resp, notes) = c.execute(command, args.clone());
+        assert_eq!(resp["error"]["code"], json!(-32602), "{command} {args}: {resp}");
+        assert_eq!(resp["error"]["message"], json!(message), "{command} {args}: {resp}");
+        assert!(shown(&notes).is_empty(), "{command} {args}: {notes:?}");
+        assert!(logged(&notes).is_empty(), "{command} {args}: {notes:?}");
+    }
+}
