@@ -241,6 +241,19 @@ pub fn place(ticket_text: &str, block: &str) -> Result<String, String> {
     Ok(lines.concat())
 }
 
+/// Whether the block of the ticket folder `dir` can be written: `Ok(true)` with a Review section and
+/// whole markers, `Ok(false)` with no `ticket.md` or no Review section, `Err` with `<path>: <reason>`
+/// for broken markers or two Review sections. It writes nothing.
+pub fn guard(dir: &Path) -> Result<bool, String> {
+    let path = dir.join("ticket.md");
+    if std::fs::symlink_metadata(&path).is_err() {
+        return Ok(false);
+    }
+    let text = ticket::read(&path)?;
+    let spot = locate(&text).map_err(|r| format!("{}: {r}", path.display()))?;
+    Ok(spot.is_some())
+}
+
 /// The block of a ticket folder, from its `findings.jsonl` and `runs.jsonl`.
 fn render_folder(dir: &Path) -> Result<String, String> {
     let read = |name: &str| -> Result<Vec<Map<String, Value>>, String> {

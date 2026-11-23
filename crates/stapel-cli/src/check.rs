@@ -360,6 +360,9 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         }
         return print_history(&root, &ticket.key, &head, end.as_deref(), &steps, bounds);
     }
+    if let Err(f) = crate::findings::guard_block(&ticket.dir) {
+        return refuse(f.message);
+    }
     let Some(check) = config.check.clone() else {
         return refuse(
             "check is not configured: add `[check]` with `runner = \"cargo\"` to .stapel/stapel.toml",

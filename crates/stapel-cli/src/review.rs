@@ -102,6 +102,7 @@ pub fn start(key: Option<&str>, round: Round) -> Result<(), Fail> {
             )));
         }
     }
+    crate::findings::guard_block(&ticket.dir)?;
     let ticket_text =
         stapel_core::ticket::read(&ticket.dir.join("ticket.md")).map_err(Fail::failed)?;
     let ticket_sections = stapel_core::ticket::parse(&ticket_text);
