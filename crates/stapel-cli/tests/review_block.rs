@@ -554,3 +554,39 @@ fn check_writes_the_block() {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), stale, "{flag}");
     }
 }
+
+// ---- Step 10: next without the block. ----
+
+#[test]
+fn next_ignores_the_block() {
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Description", "### Frame\n\nThe frame.");
+    common::set_section(
+        dir,
+        "ABC-1",
+        "Spec",
+        "| № | Criterion | Test |\n|---|---|---|\n| AC-1 | The spec. | t |",
+    );
+    common::set_section(dir, "ABC-1", "Design", "The design.");
+    common::set_section(dir, "ABC-1", "Proof", "The proof.");
+    common::set_section(dir, "ABC-1", "Plan", "Route: light, auto.\n\n1. Two.");
+    for section in ["description", "spec", "design", "proof", "plan"] {
+        stapel(dir).args(["ok", "ABC-1", section]).assert().success();
+    }
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1: sections"]);
+    check(dir, &[]);
+    let text = common::read(dir, TICKET);
+    assert!(text.contains(BEGIN), "the check wrote the block");
+    let said = next_said(dir);
+    assert!(said.contains("code-review"), "{said}");
+
+    // One hand line outside the block: the section is written.
+    let text = text.replacen("## Review\n\nTODO", "## Review\n\nReviewed by hand.", 1);
+    std::fs::write(dir.join(TICKET), text).unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1: hand review"]);
+    let said = next_said(dir);
+    assert!(said.contains("write-summary"), "{said}");
+}
