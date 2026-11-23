@@ -743,3 +743,219 @@ fn ok_refused_after_the_page_changed() {
     c.open(&uri, &std::fs::read_to_string(&page).unwrap());
     check(&mut c, &uri, "0123456789abcdef", &tdir, "made-up hash");
 }
+
+impl Client {
+    fn change(&mut self, uri: &str, version: i64, text: &str) {
+        self.notify(
+            "textDocument/didChange",
+            json!({"textDocument": {"uri": uri, "version": version}, "contentChanges": [{"text": text}]}),
+        );
+    }
+}
+
+/// The diagnostic lists published for `uri` in `notes`, in order.
+fn published(notes: &[Value], uri: &str) -> Vec<Vec<Value>> {
+    notes
+        .iter()
+        .filter(|n| n["method"] == json!("textDocument/publishDiagnostics"))
+        .filter(|n| n["params"]["uri"] == json!(uri))
+        .map(|n| n["params"]["diagnostics"].as_array().unwrap().clone())
+        .collect()
+}
+
+/// The (line, message) pairs of the diagnostics, sorted; the fixed fields are checked on the way.
+fn waiting_lines(list: &[Value], text: &str) -> Vec<(u64, String)> {
+    let lines: Vec<&str> = text.split('\n').map(|l| l.trim_end_matches('\r')).collect();
+    let mut out: Vec<(u64, String)> = list
+        .iter()
+        .map(|d| {
+            assert_eq!(d["severity"], json!(3), "{d}");
+            assert_eq!(d["source"], json!("stapel"), "{d}");
+            let line = d["range"]["start"]["line"].as_u64().unwrap();
+            assert_eq!(d["range"]["start"]["character"], json!(0), "{d}");
+            assert_eq!(d["range"]["end"]["line"], json!(line), "{d}");
+            assert_eq!(
+                d["range"]["end"]["character"],
+                json!(lines[line as usize].encode_utf16().count()),
+                "{d}"
+            );
+            (line, d["message"].as_str().unwrap().to_string())
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The expected (line, message) pairs for the headings in `text` named by `titles`.
+fn expected_waiting(text: &str, titles: &[(&str, &str)]) -> Vec<(u64, String)> {
+    let mut out = Vec::new();
+    for (i, line) in text.split('\n').enumerate() {
+        let line = line.trim_end_matches('\r');
+        for (title, owner) in titles {
+            if line == format!("## {title}") {
+                out.push((i as u64, format!("waiting for confirmation (owner: {owner})")));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+// AC-10: an Information diagnostic on the heading of each waiting section of a `ticket.md`.
+#[test]
+fn waiting_headings() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    common::confirm_these(dir, "ABC-1", &["spec"]);
+    let tdir = dir.join(".stapel/tickets/ABC-1");
+    let ticket = tdir.join("ticket.md");
+    let uri = file_uri(&ticket);
+    let all = [
+        ("Spec", "product"),
+        ("Design", "engineer"),
+        ("Proof", "qa"),
+        ("Plan", "engineer"),
+    ];
+    let text = std::fs::read_to_string(&ticket).unwrap();
+    let mut c = Client::start();
+    c.initialize();
+
+    // a confirmed Spec has none; the others wait
+    c.open(&uri, &text);
+    let (_, notes) = c.code_action(&uri, 0);
+    let got = published(&notes, &uri);
+    assert_eq!(got.len(), 1, "{notes:?}");
+    assert_eq!(
+        waiting_lines(&got[0], &text),
+        expected_waiting(&text, &all[1..])
+    );
+
+    // the buffer edits the confirmed Spec: its diagnostic comes back
+    let edited = text.replace("The spec.", "The spec, edited.");
+    assert_ne!(edited, text);
+    c.change(&uri, 2, &edited);
+    let (_, notes) = c.code_action(&uri, 0);
+    let got = published(&notes, &uri);
+    assert_eq!(got.len(), 1, "{notes:?}");
+    let lf_lines = waiting_lines(&got[0], &edited);
+    assert_eq!(lf_lines, expected_waiting(&edited, &all));
+
+    // the same buffer with CRLF line ends: the same lines
+    let crlf = edited.replace('\n', "\r\n");
+    c.change(&uri, 3, &crlf);
+    let (_, notes) = c.code_action(&uri, 0);
+    let got = published(&notes, &uri);
+    assert_eq!(got.len(), 1, "{notes:?}");
+    assert_eq!(waiting_lines(&got[0], &crlf), lf_lines);
+
+    // a duplicated Spec heading: one on each
+    let dup = format!("{text}\n## Spec\n\nmore\n");
+    c.change(&uri, 4, &dup);
+    let (_, notes) = c.code_action(&uri, 0);
+    let got = published(&notes, &uri);
+    assert_eq!(got.len(), 1, "{notes:?}");
+    let lines = waiting_lines(&got[0], &dup);
+    assert_eq!(lines, expected_waiting(&dup, &all));
+    assert_eq!(lines.iter().filter(|(_, m)| m.contains("product")).count(), 2);
+
+    // the Design heading removed: none for Design (its text now lies in the Spec, which changed)
+    let no_design = text.replace("## Design\n", "");
+    assert_ne!(no_design, text);
+    c.change(&uri, 5, &no_design);
+    let (_, notes) = c.code_action(&uri, 0);
+    let got = published(&notes, &uri);
+    assert_eq!(got.len(), 1, "{notes:?}");
+    assert_eq!(
+        waiting_lines(&got[0], &no_design),
+        expected_waiting(
+            &no_design,
+            &[("Spec", "product"), ("Proof", "qa"), ("Plan", "engineer")]
+        )
+    );
+
+    // a page.md gets none
+    let page_uri = file_uri(&tdir.join("page.md"));
+    c.open(&page_uri, "page\n");
+    let (_, notes) = c.code_action(&page_uri, 0);
+    assert!(published(&notes, &page_uri).is_empty(), "{notes:?}");
+
+    // close: an empty list
+    c.notify(
+        "textDocument/didClose",
+        json!({"textDocument": {"uri": uri}}),
+    );
+    let (_, notes) = c.code_action(&page_uri, 0);
+    assert_eq!(published(&notes, &uri), vec![Vec::<Value>::new()], "{notes:?}");
+}
+
+// AC-13: a state or config that cannot be read gives no diagnostic and one Error log line.
+#[test]
+fn bad_state_is_logged() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    let tdir = dir.join(".stapel/tickets/ABC-1");
+    let ticket = tdir.join("ticket.md");
+    let uri = file_uri(&ticket);
+    let text = std::fs::read_to_string(&ticket).unwrap();
+    let good_state = std::fs::read_to_string(tdir.join("state.json")).unwrap();
+    let errors = |notes: &[Value]| -> Vec<String> {
+        notes
+            .iter()
+            .filter(|n| n["method"] == json!("window/logMessage"))
+            .filter(|n| n["params"]["type"] == json!(1))
+            .map(|n| n["params"]["message"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let mut c = Client::start();
+    c.initialize();
+
+    // a malformed state.json, over an open and two changes: logged once
+    std::fs::write(tdir.join("state.json"), "{ not json").unwrap();
+    c.open(&uri, &text);
+    let (resp, notes) = c.code_action(&uri, 0);
+    assert!(titles(&resp).len() >= 3, "{resp}");
+    assert!(published(&notes, &uri).iter().all(|l| l.is_empty()), "{notes:?}");
+    let first = errors(&notes);
+    assert_eq!(first.len(), 1, "{notes:?}");
+    assert!(first[0].contains("state.json"), "{first:?}");
+    for version in [2, 3] {
+        c.change(&uri, version, &format!("{text}\nmore {version}\n"));
+        let (resp, notes) = c.code_action(&uri, 0);
+        assert!(titles(&resp).len() >= 3, "{resp}");
+        assert!(published(&notes, &uri).iter().all(|l| l.is_empty()), "{notes:?}");
+        assert!(errors(&notes).is_empty(), "{notes:?}");
+    }
+
+    // the state reads again: diagnostics come
+    std::fs::write(tdir.join("state.json"), &good_state).unwrap();
+    c.change(&uri, 4, &text);
+    let (_, notes) = c.code_action(&uri, 0);
+    let got = published(&notes, &uri);
+    assert_eq!(got.len(), 1, "{notes:?}");
+    assert!(!got[0].is_empty(), "{notes:?}");
+    assert!(errors(&notes).is_empty(), "{notes:?}");
+
+    // a stapel.toml that no longer loads
+    std::fs::write(dir.join(".stapel/stapel.toml"), "this is = [not valid").unwrap();
+    for version in [5, 6] {
+        c.change(&uri, version, &format!("{text}\nmore {version}\n"));
+        let (_, notes) = c.code_action(&uri, 0);
+        assert!(published(&notes, &uri).iter().all(|l| l.is_empty()), "{notes:?}");
+        let got = errors(&notes);
+        if version == 5 {
+            assert_eq!(got.len(), 1, "{notes:?}");
+            assert!(got[0].contains("stapel.toml"), "{got:?}");
+        } else {
+            assert!(got.is_empty(), "{notes:?}");
+        }
+    }
+
+    // a good document in another repository is still served
+    let other = common::repo_with_ticket();
+    let other_ticket = other.path().join(".stapel/tickets/ABC-1/ticket.md");
+    let other_uri = file_uri(&other_ticket);
+    c.open(&other_uri, &std::fs::read_to_string(&other_ticket).unwrap());
+    let (resp, notes) = c.code_action(&other_uri, 0);
+    assert!(titles(&resp).len() >= 3, "{resp}");
+    assert!(!published(&notes, &other_uri).is_empty(), "{notes:?}");
+}
