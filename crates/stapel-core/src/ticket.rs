@@ -41,6 +41,15 @@ pub struct Scanned {
 
 /// The lines of `text` with the heading and block rules of `parse`.
 pub fn scan(text: &str) -> Vec<Scanned> {
+    scan_state(text).0
+}
+
+/// Whether `text` ends inside a fence or an HTML comment block that no line closes.
+pub fn ends_open(text: &str) -> bool {
+    scan_state(text).1
+}
+
+fn scan_state(text: &str) -> (Vec<Scanned>, bool) {
     // Lone CR (old Mac editors) ends a line too.
     let text = &text.replace("\r\n", "\n").replace('\r', "\n");
     let mut out = Vec::new();
@@ -80,7 +89,7 @@ pub fn scan(text: &str) -> Vec<Scanned> {
             inside,
         });
     }
-    out
+    (out, fence.is_some() || in_comment)
 }
 
 pub fn parse(text: &str) -> Vec<Section> {

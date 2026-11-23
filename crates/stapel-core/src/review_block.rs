@@ -220,6 +220,9 @@ fn locate(text: &str) -> Result<Option<Spot>, String> {
         .copied()
         .find(|i| *i > heading)
         .unwrap_or(lines.len());
+    if end == lines.len() && ticket::ends_open(text) {
+        return Err("the Review section ends inside an unclosed fence or comment".into());
+    }
     let begins: Vec<usize> = (heading + 1..end)
         .filter(|i| !scanned[*i].inside && is_marker(&lines[*i], BEGIN))
         .collect();
