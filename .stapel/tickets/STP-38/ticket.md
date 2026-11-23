@@ -313,6 +313,15 @@ Route: full, auto (risk tags `data`, `interface`).
 9. The skill (AC-12; test `init_process::names_the_records`): `assets/skill.md`, then `stapel init`.
 10. Next without the block (AC-14; test `review_block::next_ignores_the_block`): `next` judges whether
     the Review section is written on its text without the generated block.
+11. Lone carriage return (XR1-1; test `review_block::lone_carriage_return_refuses`): a `ticket.md` with a
+    carriage return not followed by a line feed refuses with exit 2 before any write.
+12. Fenced markers (XR1-2, R1-2; test `review_block::fenced_markers_are_text`): marker lines inside a
+    fence or an HTML comment are text; locating the block uses the fence state of `ticket::scan`.
+13. `stapel new` (XR1-3; test `new_branch::block_and_merge_request_are_not_changes`): its dirty check
+    leaves out `merge-request.md` and a block-only `ticket.md`, through `worktree.rs`.
+14. Coverage (XR1-4, XR1-5, R1-5, R1-6; tests `review_block::check_after_a_block_only_change`,
+    `review_block::no_ticket_md`, `export::without_state_json_no_merge_request`,
+    `ledger_rules::orders_keys_by_number`): tests of built behaviour, each in a coverage commit.
 
 ## Review
 
