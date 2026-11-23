@@ -560,6 +560,7 @@ fn serve(connection: &Connection) -> i32 {
                                 );
                             } else {
                                 run_button(connection, &doc, &args, label);
+                                rewrite_inbox(&docs, &params);
                                 let open: Vec<Uri> = docs.keys().cloned().collect();
                                 for uri in open {
                                     refresh(connection, &docs, &uri, &mut sent);
@@ -851,6 +852,89 @@ fn offered_page_is_current(
     match current_page(docs, &uri, doc) {
         Some(hash) => Some(hash.as_str()) == offered,
         None => false,
+    }
+}
+
+/// The `### ` entries of an inbox text: the heading and the text of the `note:` line, if any.
+fn entry_notes(text: &str) -> Vec<(String, Option<String>)> {
+    let mut list: Vec<(String, Option<String>)> = Vec::new();
+    let mut in_entry = false;
+    for s in stapel_core::ticket::scan(text) {
+        if let Some((level, title)) = &s.heading {
+            in_entry = *level == 3;
+            if in_entry {
+                list.push((title.split_whitespace().collect::<Vec<_>>().join(" "), None));
+            }
+        } else if in_entry
+            && let Some(n) = s.line.strip_prefix("note:")
+            && let Some(last) = list.last_mut()
+            && last.1.is_none()
+        {
+            last.1 = Some(n.trim().to_string());
+        }
+    }
+    list
+}
+
+/// `fresh` with the `note:` line of each entry whose heading is in `buffer` set to the buffer's note.
+fn carry_notes(fresh: &str, buffer: &str) -> String {
+    let old = entry_notes(buffer);
+    let mut out = String::new();
+    let mut heading: Option<String> = None;
+    let mut done = false;
+    let scanned = stapel_core::ticket::scan(fresh);
+    for (i, s) in scanned.iter().enumerate() {
+        let mut line = s.line.to_string();
+        if let Some((level, title)) = &s.heading {
+            heading = (*level == 3).then(|| title.split_whitespace().collect::<Vec<_>>().join(" "));
+            done = false;
+        } else if let Some(h) = &heading
+            && !done
+            && line.starts_with("note:")
+        {
+            done = true;
+            if let Some((_, Some(note))) = old.iter().find(|(t, _)| t == h)
+                && !note.is_empty()
+            {
+                line = format!("note: {note}");
+            }
+        }
+        out.push_str(&line);
+        if i + 1 < scanned.len() {
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// After a run from an inbox document: writes the inbox again and carries the buffer's notes over.
+fn rewrite_inbox(docs: &HashMap<Uri, String>, params: &ExecuteCommandParams) {
+    if !matches!(params.command.as_str(), "stapel.answer" | "stapel.page" | "stapel.inbox") {
+        return;
+    }
+    let Some(uri) = params.arguments.first().and_then(|a| a.as_str()).and_then(|s| s.parse::<Uri>().ok()) else {
+        return;
+    };
+    let (Some(root), Some(buffer)) = (inbox_root(&uri), docs.get(&uri)) else {
+        return;
+    };
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let ran = std::process::Command::new(exe)
+        .arg("inbox")
+        .current_dir(&root)
+        .stdin(std::process::Stdio::null())
+        .output();
+    if !ran.is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let path = root.join(".stapel/inbox.md");
+    if let Ok(fresh) = std::fs::read_to_string(&path) {
+        let merged = carry_notes(&fresh, buffer);
+        if merged != fresh {
+            let _ = std::fs::write(&path, merged);
+        }
     }
 }
 
