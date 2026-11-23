@@ -414,7 +414,7 @@ an unclosed fence or comment in the Review section refuses.
 
 **Deferred findings** (the merge request lists them): SR1-15, D1-3, R1-1, R1-3, DR1-4, R1-8, R1-9,
 DR1-1, DR1-3, XR1-8, XR1-9, XR1-10, XR1-12, XR1-14, R2-4, XR2-5, DR2-5, R3-1, R3-2, R3-3, DR3-1,
-DR3-2. Most are LOW: the fates of false findings in the block, the file mode after the rename, a
+DR3-2, and of the merge review (no HIGH or MEDIUM) XRM-1, XRM-2, XRM-3, RM-1. Most are LOW: the fates of false findings in the block, the file mode after the rename, a
 Review section without a final line end, legacy lines in `ledger rules`, the order of the export branch
 and the file.
 
