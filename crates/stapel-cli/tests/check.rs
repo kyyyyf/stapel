@@ -1377,16 +1377,26 @@ fn runs_in_a_worktree_and_leaves_the_tree_alone() {
     let common = dir.join(".git/stapel");
     write(&common, "check-worktree/junk.txt", "left over\n");
     let machine = |p: &str| p.contains("runs.jsonl");
-    let before: Vec<_> = common::snapshot(dir)
-        .into_iter()
-        .filter(|(p, _, _)| !machine(p))
-        .collect();
+    // A check rewrites only the generated Review block of `ticket.md`; that file's time is left out.
+    let view = |dir: &std::path::Path| -> Vec<(String, Vec<u8>, std::time::SystemTime)> {
+        common::snapshot(dir)
+            .into_iter()
+            .filter(|(p, _, _)| !machine(p))
+            .map(|(p, bytes, time)| {
+                let time = if p.ends_with("ticket.md") {
+                    std::time::UNIX_EPOCH
+                } else {
+                    time
+                };
+                let bytes = common::without_review_block_of(&p, bytes);
+                (p, bytes, time)
+            })
+            .collect()
+    };
+    let before = view(dir);
     let (code, text) = check(dir);
     assert_eq!(code, 0, "{text}");
-    let after: Vec<_> = common::snapshot(dir)
-        .into_iter()
-        .filter(|(p, _, _)| !machine(p))
-        .collect();
+    let after = view(dir);
     assert_eq!(before, after, "the working tree changed");
     assert!(!common.join("check-worktree").exists());
     let worktrees = git(dir, &["worktree", "list"]);

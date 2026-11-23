@@ -4,6 +4,42 @@ use assert_cmd::Command;
 use std::path::Path;
 use tempfile::TempDir;
 
+/// `text` without the generated block of the Review section (the lines from
+/// `<!-- stapel:review:begin -->` to `<!-- stapel:review:end -->` and the one empty line before them),
+/// so that a test can compare a `ticket.md` that a block writer rewrote; a text without the block is
+/// returned as it is.
+pub fn without_review_block(text: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut inside = false;
+    for line in text.split_inclusive('\n') {
+        let bare = line.trim_end();
+        if !inside && bare == "<!-- stapel:review:begin -->" {
+            if out.last().is_some_and(|l| l.trim().is_empty()) {
+                out.pop();
+            }
+            inside = true;
+            continue;
+        }
+        if inside {
+            inside = bare != "<!-- stapel:review:end -->";
+            continue;
+        }
+        out.push(line);
+    }
+    out.concat()
+}
+
+/// `bytes` of a file named `rel` with the generated Review block left out when it is a `ticket.md`.
+pub fn without_review_block_of(rel: &str, bytes: Vec<u8>) -> Vec<u8> {
+    if !rel.ends_with("ticket.md") {
+        return bytes;
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => without_review_block(&text).into_bytes(),
+        Err(e) => e.into_bytes(),
+    }
+}
+
 /// A temporary directory that git does not see as part of any enclosing repository.
 pub fn bare_dir() -> TempDir {
     tempfile::tempdir().unwrap()

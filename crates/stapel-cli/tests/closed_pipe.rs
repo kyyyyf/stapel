@@ -154,7 +154,8 @@ fn tree(dir: &Path) -> BTreeMap<String, String> {
                 continue;
             }
             let rel = path.strip_prefix(root).unwrap().display().to_string();
-            let bytes = std::fs::read(&path).unwrap();
+            // The generated Review block holds the time of a check run, which differs per run.
+            let bytes = common::without_review_block_of(&rel, std::fs::read(&path).unwrap());
             let text = match path.extension().and_then(|e| e.to_str()) {
                 Some("json") => {
                     let mut v: Value = serde_json::from_slice(&bytes).unwrap();
