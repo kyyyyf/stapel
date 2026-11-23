@@ -542,7 +542,7 @@ fn serve(connection: &Connection) -> i32 {
                         }
                     };
                     match button_args(&docs, &params) {
-                        Ok((args, doc)) => {
+                        Ok((args, doc, label)) => {
                             if agent_shell() {
                                 show(
                                     connection,
@@ -559,7 +559,7 @@ fn serve(connection: &Connection) -> i32 {
                                     ),
                                 );
                             } else {
-                                run_button(connection, &doc, &args);
+                                run_button(connection, &doc, &args, label);
                                 let open: Vec<Uri> = docs.keys().cloned().collect();
                                 for uri in open {
                                     refresh(connection, &docs, &uri, &mut sent);
@@ -645,13 +645,16 @@ fn reply_error(connection: &Connection, id: lsp_server::RequestId, code: ErrorCo
 fn button_args(
     docs: &HashMap<Uri, String>,
     params: &ExecuteCommandParams,
-) -> Result<(Vec<String>, TicketDoc), String> {
+) -> Result<(Vec<String>, TicketDoc, Option<String>), String> {
     let command = params.command.as_str();
     if !COMMANDS.contains(&command) {
         return Err(format!("stapel lsp: unknown command {command}"));
     }
-    // The runs of the inbox buttons come with the next steps; until then no ticket form maps to them.
-    if matches!(command, "stapel.answer" | "stapel.inbox") {
+    if command == "stapel.answer" {
+        return answer_args(docs, params);
+    }
+    // The run of `stapel.inbox` comes with a later step; until then no ticket form maps to it.
+    if command == "stapel.inbox" {
         return Err(format!("stapel lsp: {command} runs only from an inbox document"));
     }
     let bad = || "stapel lsp: the arguments must be the URI of an open ticket.md or page.md".to_string();
@@ -679,7 +682,68 @@ fn button_args(
         "stapel.page" => vec!["page".to_string(), doc.key.clone()],
         _ => vec!["ok".to_string(), doc.key.clone()],
     };
-    Ok((args, doc))
+    Ok((args, doc, None))
+}
+
+/// The live worktree of the repository at `root` whose branch names `key`.
+fn worktree_of(root: &std::path::Path, key: &str) -> Option<PathBuf> {
+    stapel_core::parallel::worktrees(root)
+        .into_iter()
+        .filter(|w| !w.prunable && w.path.is_dir())
+        .find(|w| {
+            stapel_core::parallel::current_branch(&w.path)
+                .is_some_and(|b| b.eq_ignore_ascii_case(key))
+        })
+        .map(|w| w.path)
+}
+
+/// The text after `note:` in the entry `### <key> finding <id>` of an inbox buffer, trimmed.
+fn entry_note(text: &str, key: &str, id: &str) -> Option<String> {
+    let scanned = stapel_core::ticket::scan(text);
+    let heading = scanned.iter().position(|s| {
+        s.heading.as_ref().is_some_and(|(level, title)| {
+            *level == 3 && title.split_whitespace().collect::<Vec<_>>() == [key, "finding", id]
+        })
+    })?;
+    scanned[heading + 1..]
+        .iter()
+        .take_while(|s| s.heading.is_none())
+        .find_map(|s| s.line.strip_prefix("note:").map(|n| n.trim().to_string()))
+}
+
+/// The run of `stapel.answer`: `[inbox URI, KEY, ID, FATE]`, the note from the buffer, the run in
+/// the worktree of KEY; the label leaves the note out.
+fn answer_args(
+    docs: &HashMap<Uri, String>,
+    params: &ExecuteCommandParams,
+) -> Result<(Vec<String>, TicketDoc, Option<String>), String> {
+    let bad = || "stapel lsp: the arguments must be the URI of an open inbox.md, a key, a finding id and a fate".to_string();
+    let strings: Vec<&str> = params.arguments.iter().filter_map(|a| a.as_str()).collect();
+    if params.arguments.len() != 4 || strings.len() != 4 {
+        return Err(bad());
+    }
+    let uri: Uri = strings[0].parse().map_err(|_| bad())?;
+    let text = docs.get(&uri).ok_or_else(bad)?;
+    let root = inbox_root(&uri).ok_or_else(bad)?;
+    let (key, id, fate) = (strings[1], strings[2], strings[3]);
+    if !PERSON_FATES.contains(&fate) {
+        return Err(bad());
+    }
+    let note = entry_note(text, key, id)
+        .ok_or_else(|| format!("stapel lsp: no entry `### {key} finding {id}` with a note: line in the buffer"))?;
+    let worktree = worktree_of(&root, key)
+        .ok_or_else(|| format!("stapel lsp: no live worktree whose branch names {key}"))?;
+    let args = ["answer", "--", key, id, fate, note.as_str()]
+        .iter()
+        .map(|a| a.to_string())
+        .collect();
+    let label = format!("stapel answer {key} {id} {fate}");
+    let doc = TicketDoc {
+        root: worktree,
+        key: key.to_string(),
+        is_page: false,
+    };
+    Ok((args, doc, Some(label)))
 }
 
 /// True when `page.md` is a current page now and its hash is the offered one.
@@ -710,8 +774,8 @@ fn show(connection: &Connection, typ: MessageType, message: String) {
 }
 
 /// Runs this executable with `args` in the root, logs the output and shows the outcome.
-fn run_button(connection: &Connection, doc: &TicketDoc, args: &[String]) {
-    let label = format!("stapel {}", args.join(" "));
+fn run_button(connection: &Connection, doc: &TicketDoc, args: &[String], label: Option<String>) {
+    let label = label.unwrap_or_else(|| format!("stapel {}", args.join(" ")));
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
