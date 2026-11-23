@@ -10,6 +10,7 @@ mod export;
 mod fail;
 mod findings;
 mod hook;
+mod inbox;
 mod init;
 mod ledger;
 mod lint;
@@ -82,6 +83,8 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Write `.stapel/inbox.md`: the decisions that wait for the person.
+    Inbox,
     /// Print the brief of one Plan step to a builder. Writes nothing.
     Brief {
         /// The ticket key.
@@ -416,6 +419,7 @@ fn main() -> ExitCode {
         Command::Cargo { args } => return cargo::run(&args),
         Command::Brief { key, step } => return fail::finish(brief::run(&key, &step)),
         Command::Depends { key } => return fail::finish(depends::run(key.as_deref())),
+        Command::Inbox => return fail::finish(inbox::run()),
         Command::Next { key, json } => return fail::finish(next::run(key.as_deref(), json)),
         Command::Status { key } => match status::run(key.as_deref()) {
             Ok(code) => return code,
