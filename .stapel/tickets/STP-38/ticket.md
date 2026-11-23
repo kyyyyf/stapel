@@ -432,6 +432,11 @@ and the file.
   wall time 14 h (8.4 h).
 - Not better: the orchestrator's tokens and the rounds; better: the person's minutes and the builder.
 
+**No merge request text for this ticket.** `stapel export STP-38` (this branch's binary) refuses here:
+`the tree of the Onto ref refs/remotes/origin/main has .stapel`. Export serves a foreign repository;
+this repository merges the ticket branch into main locally, so `merge-request.md` is not written and the
+skill's sentence about it applies to exported tickets only. Proposal: the skill says so.
+
 **Observation for rule 9.** `stapel ledger rules` on this repository shows 130 distinct `rule` values
 over the tickets that have findings, 112 of them `quiet`, and 370 counted findings under `none`: the
 free-text `rule` field cannot drive rule 9. Proposal for the next ticket or a ledger decision: a closed
