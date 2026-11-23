@@ -396,7 +396,11 @@ Findings:
 | step-drift | 1 | drift | 0 | 1 | 4 | 0 | patch 5 |
 | dependency | STP-39:c0dd15b1:c1d22378 | depends | 0 | 0 | 2 | 0 | patch 2 |
 
-Check runs: none
+Check runs:
+
+| Level | Result | Commit | At | Steps |
+|---|---|---|---|---|
+| head | fail | 698e185 | 2026-11-23T16:55:14Z | pass 8, tests-changed 5 |
 <!-- stapel:review:end -->
 
 ## Summary
