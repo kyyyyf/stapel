@@ -1,5 +1,7 @@
 //! STP-39: `stapel lsp`, the language server on standard input and output.
 
+mod common;
+
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -314,5 +316,132 @@ fn nothing_for_other_documents() {
     assert_eq!(
         titles(&resp)[..3],
         ["stapel status stp-039", "stapel next", "stapel page stp-039"]
+    );
+}
+
+impl Client {
+    /// Runs a button command and returns its response and the notifications before it.
+    fn execute(&mut self, command: &str, args: Value) -> (Value, Vec<Value>) {
+        self.request_with_notes(
+            "workspace/executeCommand",
+            json!({"command": command, "arguments": args}),
+        )
+    }
+}
+
+/// The `window/showMessage` notifications as (type, message).
+fn shown(notes: &[Value]) -> Vec<(i64, String)> {
+    notes
+        .iter()
+        .filter(|n| n["method"] == json!("window/showMessage"))
+        .map(|n| {
+            (
+                n["params"]["type"].as_i64().unwrap(),
+                n["params"]["message"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// The text of the `window/logMessage` notifications, joined.
+fn logged(notes: &[Value]) -> String {
+    notes
+        .iter()
+        .filter(|n| n["method"] == json!("window/logMessage"))
+        .map(|n| n["params"]["message"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// AC-4: a button runs the executable in the root; Info message, log and `null`.
+#[test]
+fn runs_a_button() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    let tdir = dir.join(".stapel/tickets/ABC-1");
+    let ticket = tdir.join("ticket.md");
+    let uri = file_uri(&ticket);
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &std::fs::read_to_string(&ticket).unwrap());
+
+    let (resp, notes) = c.execute("stapel.status", json!([uri]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    assert!(resp.get("error").is_none(), "{resp}");
+    let msgs = shown(&notes);
+    assert_eq!(msgs.len(), 1, "{notes:?}");
+    assert_eq!(msgs[0].0, 3);
+    assert!(
+        msgs[0].1.starts_with("stapel status ABC-1: ticket: ABC-1"),
+        "{msgs:?}"
+    );
+    assert!(logged(&notes).contains("ticket: ABC-1"), "{notes:?}");
+
+    let (resp, notes) = c.execute("stapel.next", json!([uri]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    let msgs = shown(&notes);
+    assert_eq!(msgs.len(), 1, "{notes:?}");
+    assert_eq!(msgs[0].0, 3, "{msgs:?}");
+    assert!(msgs[0].1.starts_with("stapel next: "), "{msgs:?}");
+
+    assert!(!tdir.join("page.md").exists());
+    let (resp, notes) = c.execute("stapel.page", json!([uri]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    let msgs = shown(&notes);
+    assert_eq!(msgs.len(), 1, "{notes:?}");
+    assert_eq!(msgs[0].0, 3, "{msgs:?}");
+    assert!(msgs[0].1.starts_with("stapel page ABC-1: "), "{msgs:?}");
+    assert!(tdir.join("page.md").is_file());
+}
+
+// AC-4: a failing run gives an Error message with the exit code and the first line.
+#[test]
+fn a_failing_button() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    let tdir = dir.join(".stapel/tickets/ABC-1");
+    let ticket = tdir.join("ticket.md");
+    let uri = file_uri(&ticket);
+    std::fs::write(tdir.join("state.json"), "not json").unwrap();
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &std::fs::read_to_string(&ticket).unwrap());
+    let (resp, notes) = c.execute("stapel.page", json!([uri]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    let msgs = shown(&notes);
+    assert_eq!(msgs.len(), 1, "{notes:?}");
+    assert_eq!(msgs[0].0, 1, "{msgs:?}");
+    assert!(
+        msgs[0].1.starts_with("stapel page ABC-1: exit 1: stapel: "),
+        "{msgs:?}"
+    );
+    assert!(!logged(&notes).is_empty(), "{notes:?}");
+
+    // a ticket that is not the branch's: the child's refusal
+    let pair = common::two_ticket_worktrees();
+    let b = &pair.b;
+    std::fs::create_dir_all(b.join(".stapel/tickets/ABC-1")).unwrap();
+    for file in ["ticket.md", "state.json"] {
+        std::fs::copy(
+            pair.a.join(".stapel/tickets/ABC-1").join(file),
+            b.join(".stapel/tickets/ABC-1").join(file),
+        )
+        .unwrap();
+    }
+    let foreign = b.join(".stapel/tickets/ABC-1/ticket.md");
+    let uri = file_uri(&foreign);
+    c.open(&uri, &std::fs::read_to_string(&foreign).unwrap());
+    let (resp, notes) = c.execute("stapel.page", json!([uri]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    let msgs = shown(&notes);
+    assert_eq!(msgs.len(), 1, "{notes:?}");
+    assert_eq!(msgs[0].0, 1, "{msgs:?}");
+    assert!(
+        msgs[0].1.starts_with("stapel page ABC-1: exit 2: "),
+        "{msgs:?}"
+    );
+    assert!(
+        msgs[0].1.contains("ABC-1 is not the ticket of branch ABC-2"),
+        "{msgs:?}"
     );
 }
