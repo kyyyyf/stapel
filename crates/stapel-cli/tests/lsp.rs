@@ -695,3 +695,51 @@ fn no_ok_on_a_stale_page() {
     c.open(&uri, &std::fs::read_to_string(&ticket).unwrap());
     assert!(!has_ok(&mut c, &uri), "ticket.md");
 }
+
+// AC-9: a run on a page that changed after the offer, or with another hash, runs nothing.
+#[test]
+fn ok_refused_after_the_page_changed() {
+    let message = "stapel lsp: page.md is not current; run stapel page ABC-1 and read it again";
+    let mut c = Client::start();
+    c.initialize();
+    let fresh = || {
+        let repo = common::repo_with_ticket();
+        common::stapel(repo.path())
+            .args(["page", "ABC-1"])
+            .assert()
+            .success();
+        repo
+    };
+    let check = |c: &mut Client, uri: &str, hash: &str, tdir: &std::path::Path, what: &str| {
+        let state = std::fs::read(tdir.join("state.json")).unwrap();
+        let (resp, notes) = c.execute("stapel.ok", json!([uri, hash]));
+        assert_eq!(resp["result"], Value::Null, "{what}: {resp}");
+        assert!(resp.get("error").is_none(), "{what}: {resp}");
+        assert_eq!(shown(&notes), vec![(1, message.to_string())], "{what}: {notes:?}");
+        assert!(logged(&notes).is_empty(), "{what}: {notes:?}");
+        assert_eq!(std::fs::read(tdir.join("state.json")).unwrap(), state, "{what}");
+    };
+
+    // offered, then the Spec changed, then the run
+    let repo = fresh();
+    let tdir = repo.path().join(".stapel/tickets/ABC-1");
+    let page = tdir.join("page.md");
+    let bytes = std::fs::read(&page).unwrap();
+    let hash = stapel_core::page::page_hash(&bytes);
+    let uri = file_uri(&page);
+    c.open(&uri, &String::from_utf8(bytes).unwrap());
+    common::set_section(repo.path(), "ABC-1", "Spec", "The spec, revised.");
+    check(&mut c, &uri, &hash, &tdir, "spec changed");
+
+    // the page regenerated after the offer
+    common::stapel(repo.path()).args(["page", "ABC-1"]).assert().success();
+    check(&mut c, &uri, &hash, &tdir, "page regenerated");
+
+    // a made-up hash on a current page
+    let repo = fresh();
+    let tdir = repo.path().join(".stapel/tickets/ABC-1");
+    let page = tdir.join("page.md");
+    let uri = file_uri(&page);
+    c.open(&uri, &std::fs::read_to_string(&page).unwrap());
+    check(&mut c, &uri, "0123456789abcdef", &tdir, "made-up hash");
+}
