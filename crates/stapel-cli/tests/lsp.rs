@@ -768,6 +768,8 @@ fn waiting_lines(list: &[Value], text: &str) -> Vec<(u64, String)> {
     let lines: Vec<&str> = text.split('\n').map(|l| l.trim_end_matches('\r')).collect();
     let mut out: Vec<(u64, String)> = list
         .iter()
+        // the Hints of changed lines (STP-39 step 10) are checked in `changed_lines`
+        .filter(|d| d["severity"] != json!(4))
         .map(|d| {
             assert_eq!(d["severity"], json!(3), "{d}");
             assert_eq!(d["source"], json!("stapel"), "{d}");
@@ -958,4 +960,150 @@ fn bad_state_is_logged() {
     let (resp, notes) = c.code_action(&other_uri, 0);
     assert!(titles(&resp).len() >= 3, "{resp}");
     assert!(!published(&notes, &other_uri).is_empty(), "{notes:?}");
+}
+
+/// The (line, message) of the Hint diagnostics in `list`; the fixed fields are checked on the way.
+fn hint_lines(list: &[Value], text: &str) -> Vec<u64> {
+    let lines: Vec<&str> = text.split('\n').map(|l| l.trim_end_matches('\r')).collect();
+    let mut out: Vec<u64> = list
+        .iter()
+        .filter(|d| d["severity"] == json!(4))
+        .map(|d| {
+            assert_eq!(d["source"], json!("stapel"), "{d}");
+            assert_eq!(d["message"], json!("changed since the last confirmation"), "{d}");
+            let line = d["range"]["start"]["line"].as_u64().unwrap();
+            assert_eq!(d["range"]["start"]["character"], json!(0), "{d}");
+            assert_eq!(d["range"]["end"]["line"], json!(line), "{d}");
+            assert_eq!(
+                d["range"]["end"]["character"],
+                json!(lines[line as usize].encode_utf16().count()),
+                "{d}"
+            );
+            line
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+fn line_of(text: &str, line: &str) -> u64 {
+    text.split('\n')
+        .position(|l| l.trim_end_matches('\r') == line)
+        .unwrap_or_else(|| panic!("no line {line}")) as u64
+}
+
+// AC-11: Hints on the lines that the line diff marks inserted against the confirmed text.
+#[test]
+fn changed_lines() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Spec", "- s1\n- s2\n- s3\n- s4");
+    common::set_section(dir, "ABC-1", "Design", "- a\n- a\n- b");
+    common::confirm_these(dir, "ABC-1", &["spec", "design", "proof"]);
+    // the confirmation of Proof keeps no text
+    let tdir = dir.join(".stapel/tickets/ABC-1");
+    let mut state: Value =
+        serde_json::from_str(&std::fs::read_to_string(tdir.join("state.json")).unwrap()).unwrap();
+    for c in state["confirmations"].as_array_mut().unwrap() {
+        if c["section"] == json!("proof") {
+            c.as_object_mut().unwrap().remove("text");
+        }
+    }
+    std::fs::write(tdir.join("state.json"), state.to_string()).unwrap();
+
+    let ticket = tdir.join("ticket.md");
+    let uri = file_uri(&ticket);
+    let text = std::fs::read_to_string(&ticket).unwrap();
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &text);
+    let (_, notes) = c.code_action(&uri, 0);
+    let got = published(&notes, &uri);
+    assert_eq!(got.len(), 1, "{notes:?}");
+    assert_eq!(hint_lines(&got[0], &text), Vec::<u64>::new(), "unchanged");
+
+    let mut version = 1;
+    let mut hints = |c: &mut Client, buffer: &str| -> (Vec<u64>, Vec<Value>) {
+        version += 1;
+        c.change(&uri, version, buffer);
+        let (_, notes) = c.code_action(&uri, 0);
+        let got = published(&notes, &uri);
+        assert_eq!(got.len(), 1, "{notes:?}");
+        (hint_lines(&got[0], buffer), notes)
+    };
+
+    // one line changed, one added, one removed: Hints on the changed and the added line only
+    let buffer = text.replace("- s2\n", "- S2 changed\n").replace("- s4\n", "- s5 new\n");
+    assert_ne!(buffer, text);
+    let want = vec![line_of(&buffer, "- S2 changed"), line_of(&buffer, "- s5 new")];
+    let (got, _) = hints(&mut c, &buffer);
+    assert_eq!(got, want, "changed, added");
+
+    // `- a` twice and a third added: one Hint
+    let buffer = text.replace("- a\n- a\n- b\n", "- a\n- a\n- a\n- b\n");
+    assert_ne!(buffer, text);
+    let first = line_of(&buffer, "- a");
+    let (got, _) = hints(&mut c, &buffer);
+    // `similar` marks the first of the three equal lines as the inserted one
+    assert_eq!(got, vec![first], "a duplicate line");
+
+    // a fresh section with CRLF line ends: none
+    let (got, _) = hints(&mut c, &text.replace('\n', "\r\n"));
+    assert_eq!(got, Vec::<u64>::new(), "fresh with CRLF");
+
+    // trailing spaces and two leading blank lines on the other lines: the changed line only
+    let buffer = text.replace(
+        "- s1\n- s2\n- s3\n- s4\n",
+        "\n\n- s1  \n- S2 changed \n- s3\t\n- s4  \n",
+    );
+    let want = vec![line_of(&buffer, "- S2 changed ")];
+    let (got, _) = hints(&mut c, &buffer);
+    assert_eq!(got, want, "whitespace");
+
+    // a section confirmed without stored text: none
+    let buffer = text.replace("The proof.", "The proof, edited.");
+    assert_ne!(buffer, text);
+    let (got, _) = hints(&mut c, &buffer);
+    assert_eq!(got, Vec::<u64>::new(), "no stored text");
+
+    // a body of 5001 lines: none and one log line
+    let big: String = (0..5001).map(|i| format!("- line {i}\n")).collect();
+    let buffer = text.replace("- s1\n- s2\n- s3\n- s4\n", &big);
+    assert_ne!(buffer, text);
+    let (got, notes) = hints(&mut c, &buffer);
+    assert_eq!(got, Vec::<u64>::new(), "too long");
+    let logs = notes
+        .iter()
+        .filter(|n| n["method"] == json!("window/logMessage"))
+        .count();
+    assert_eq!(logs, 1, "{notes:?}");
+}
+
+// AC-12: after a button run the diagnostics of every open `ticket.md` are published again.
+#[test]
+fn diagnostics_after_ok() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    common::stapel(dir).args(["page", "ABC-1"]).assert().success();
+    let tdir = dir.join(".stapel/tickets/ABC-1");
+    let page = tdir.join("page.md");
+    let bytes = std::fs::read(&page).unwrap();
+    let hash = stapel_core::page::page_hash(&bytes);
+    let page_uri = file_uri(&page);
+    let ticket = tdir.join("ticket.md");
+    let uri = file_uri(&ticket);
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &std::fs::read_to_string(&ticket).unwrap());
+    c.open(&page_uri, &String::from_utf8(bytes).unwrap());
+    let (_, notes) = c.code_action(&page_uri, 0);
+    let got = published(&notes, &uri);
+    assert_eq!(got.len(), 1, "{notes:?}");
+    assert!(!got[0].is_empty(), "{notes:?}");
+
+    let (resp, notes) = c.execute("stapel.ok", json!([page_uri, hash]));
+    assert!(resp.get("error").is_none(), "{resp}");
+    let got = published(&notes, &uri);
+    assert_eq!(got, vec![Vec::<Value>::new()], "{notes:?}");
+    assert!(published(&notes, &page_uri).is_empty(), "{notes:?}");
 }
