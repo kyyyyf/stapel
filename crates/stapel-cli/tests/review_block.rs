@@ -744,6 +744,55 @@ fn check_after_a_block_only_change() {
     assert!(!said.contains("uncommitted"), "{said}");
 }
 
+// STP-38 AC-6 (XR2-2): a block-only change of ANOTHER ticket's ticket.md, committed after the check
+// of this ticket, keeps that check current.
+#[test]
+fn block_of_another_ticket_keeps_the_check() {
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Description", "### Frame\n\nThe problem.");
+    common::set_section(dir, "ABC-1", "Spec", SPEC);
+    common::set_section(dir, "ABC-1", "Design", "The design.");
+    common::set_section(dir, "ABC-1", "Proof", "The proof.");
+    common::set_section(dir, "ABC-1", "Plan", "Route: full, auto.\n\n1. One (AC-1).");
+    common::confirm_these(dir, "ABC-1", &["description", "spec", "design", "proof", "plan"]);
+    let base = git(dir, &["rev-parse", "HEAD~2"]).trim().to_string();
+    let mut state = common::state_json(dir, "ABC-1");
+    state["base"] = json!(base);
+    put(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &serde_json::to_string_pretty(&state).unwrap(),
+    );
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1: base"]);
+    // `stapel new` makes its own worktree; a second ticket folder is put here by hand.
+    let other = ".stapel/tickets/ABC-2/ticket.md";
+    put(dir, other, &common::read(dir, TICKET));
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-2 added"]);
+    // Without a check the state asks for one, so the later assertions are not vacuous.
+    let said = next_said(dir);
+    assert!(said.contains("run-check"), "{said}");
+    check(dir, &["--level", "head"]);
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1: check block"]);
+    let said = next_said(dir);
+    assert!(!said.contains("run-check"), "the check is current: {said}");
+
+    // The block of ABC-2 appears and is committed: ABC-2/ticket.md differs from the checked commit
+    // only inside the block.
+    let before = common::read(dir, other);
+    let after = common::read(dir, TICKET);
+    put(dir, other, &after);
+    assert!(after.contains(BEGIN) && after != before, "the block of ABC-2 is written");
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-2: block"]);
+    let said = next_said(dir);
+    assert!(!said.contains("run-check"), "{said}");
+    assert!(!said.contains("uncommitted"), "{said}");
+}
+
 // STP-38 AC-5: with no ticket.md `findings import` goes on with the notice; with no Review section
 // `check` and `review start` print it too.
 #[test]

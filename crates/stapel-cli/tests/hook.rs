@@ -317,6 +317,20 @@ fn denies_machine_file_writes_even_with_build() {
     }
 }
 
+// STP-38 R2-3: `merge-request.md` is written by `stapel export` only, never by an agent's write tool.
+#[test]
+fn denies_merge_request_writes() {
+    let repo = initialized_repo();
+    let root = repo.path();
+    set_state(root, "ABC-1", r#"{"build": {"allowed": true}}"#);
+    let rel = ".stapel/tickets/ABC-1/merge-request.md";
+    for tool in WRITE_TOOLS {
+        write_call(root, tool, &root.join(rel).display().to_string())
+            .code(DENY)
+            .stderr(contains("only stapel"));
+    }
+}
+
 // F-3, E-6: the repository is found from the target path and from CLAUDE_PROJECT_DIR too.
 #[test]
 fn finds_repo_from_target_and_project_dir() {
