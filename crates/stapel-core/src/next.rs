@@ -191,7 +191,7 @@ pub fn is_light(plan: &str) -> bool {
 }
 
 /// The facts about a Plan with no step or with a label twice.
-fn plan_faults(plan: &str) -> Vec<String> {
+pub fn plan_faults(plan: &str) -> Vec<String> {
     let labels = plan_steps(plan);
     if labels.is_empty() {
         return vec!["the Plan has no steps".into()];

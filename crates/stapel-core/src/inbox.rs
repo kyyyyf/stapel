@@ -2,7 +2,7 @@
 //! `.stapel/inbox.md`.
 
 use crate::config::Config;
-use crate::next::{is_light, plan_steps};
+use crate::next::{is_light, plan_faults};
 use crate::stage::{freshness, latest};
 use crate::state::State;
 use crate::ticket::{Section, find};
@@ -54,7 +54,7 @@ pub fn waiting_sections(
             && (def.id != "plan"
                 || find(sections, &def.title)
                     .found()
-                    .is_some_and(|plan| !plan_steps(plan).is_empty()))
+                    .is_some_and(|plan| plan_faults(plan).is_empty()))
     });
     let light = config
         .section("plan")
