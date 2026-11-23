@@ -446,3 +446,109 @@ fn the_record_lists_the_guards() {
     assert!(record.get("guards").is_none(), "{record}");
     assert!(record.get("guards_truncated").is_none(), "{record}");
 }
+
+// ---- step 4: ratchet guards ----
+
+/// One `[[guards.check]]` entry with a literal-string command and a baseline.
+fn ratchet(name: &str, command: &str, baseline: &str) -> String {
+    format!("{}baseline = \"{baseline}\"\n", guard(name, command))
+}
+
+/// The last `check` record of ticket ABC-1.
+fn last_check_record(dir: &Path) -> serde_json::Value {
+    let text = read(dir, ".stapel/tickets/ABC-1/runs.jsonl");
+    let line = text
+        .lines()
+        .rfind(|l| l.contains("\"kind\":\"check\""))
+        .unwrap();
+    serde_json::from_str(line).unwrap()
+}
+
+// AC-6: known violations pass; blank lines, CRLF, trailing spaces and stderr lines are no violations.
+#[test]
+fn known_violations_pass() {
+    let guards = [
+        ratchet("equal", "printf \"a\\nb\\n\"", "equal.txt"),
+        ratchet("subset", "printf \"a\\n\"", "subset.txt"),
+        ratchet("crlf", "printf \"a\\r\\nb  \\n\\n\"", "crlf.txt"),
+        ratchet("exit1", "printf \"a\\n\"; exit 1", "exit1.txt"),
+        ratchet("stderr", "printf \"a\\n\"; echo oops >&2", "stderr.txt"),
+    ]
+    .concat();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "guards/equal.txt", "a\nb\n");
+    write(dir, "guards/subset.txt", "a\n\n\n");
+    write(dir, "guards/crlf.txt", "a\nb\n");
+    write(dir, "guards/exit1.txt", "a\n");
+    write(dir, "guards/stderr.txt", "a\n");
+    commit(dir, "ABC-1: baselines");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    for name in ["equal", "subset", "crlf", "exit1", "stderr"] {
+        assert!(
+            text.lines()
+                .any(|l| l.trim() == format!("guard: {name}: pass")),
+            "{name}: {text}"
+        );
+    }
+    assert!(text.contains("result: pass"), "{text}");
+    let record = last_check_record(dir);
+    let list = record["guards"].as_array().expect("guards");
+    assert_eq!(list.len(), 5, "{record}");
+    for item in list {
+        assert_eq!(item["new"], 0, "{record}");
+        assert_eq!(item["removed"], 0, "{record}");
+    }
+}
+
+// AC-7: new violations fail with their count and the first 20; the baseline is read from git.
+#[test]
+fn a_new_violation_fails() {
+    // One new line among known ones; the same line three times counts once; a control character.
+    let command = "printf \"a\\nb\\nfresh\\nfresh\\nfresh\\nx\\ty\\n\"";
+    let (repo, _scripts) = guards_repo("", 3600, &ratchet("size", command, "size.txt"));
+    let dir = repo.path();
+    write(dir, "guards/size.txt", "a\nb\n");
+    commit(dir, "ABC-1: baseline");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert!(lines.contains(&"guard: size: fail: 2 new"), "{text}");
+    assert!(lines.contains(&"fresh"), "{text}");
+    assert!(lines.contains(&"x y"), "{text}");
+    assert!(!lines.contains(&"a"), "{text}");
+    assert!(text.contains("result: fail"), "{text}");
+    assert_eq!(read(dir, "guards/size.txt"), "a\nb\n");
+    let record = last_check_record(dir);
+    assert_eq!(record["guards"][0]["outcome"], "fail", "{record}");
+    assert_eq!(record["guards"][0]["new"], 2, "{record}");
+
+    // 25 new lines: the count and the first 20 in output order.
+    let many = "i=1; while [ $i -le 25 ]; do echo v$i; i=$((i+1)); done";
+    let (repo, _scripts) = guards_repo("", 3600, &ratchet("many", many, "many.txt"));
+    let dir = repo.path();
+    write(dir, "guards/many.txt", "old\n");
+    commit(dir, "ABC-1: baseline");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert!(lines.contains(&"guard: many: fail: 25 new"), "{text}");
+    assert!(lines.contains(&"v1") && lines.contains(&"v20"), "{text}");
+    assert!(!lines.contains(&"v21"), "{text}");
+
+    // A command that appends its violations to its baseline in the copy still fails.
+    let cheat = "echo cheat >> guards/cheat.txt; echo cheat";
+    let (repo, _scripts) = guards_repo("", 3600, &ratchet("cheat", cheat, "cheat.txt"));
+    let dir = repo.path();
+    write(dir, "guards/cheat.txt", "old\n");
+    commit(dir, "ABC-1: baseline");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.trim() == "guard: cheat: fail: 1 new"),
+        "{text}"
+    );
+    assert_eq!(read(dir, "guards/cheat.txt"), "old\n");
+}
