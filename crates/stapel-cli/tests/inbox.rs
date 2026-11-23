@@ -219,3 +219,114 @@ fn nothing_waits() {
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "inbox: nothing waits\n");
     assert_eq!(common::read(dir, ".stapel/inbox.md"), "# Inbox\n\nNothing waits.\n");
 }
+
+fn owed_in(wt: &Path, key: &str, id: &str) {
+    std::fs::write(
+        wt.join(format!(".stapel/tickets/{key}/findings.jsonl")),
+        format!("{}\n", finding(id, "code-review", Some(2), "HIGH", "inside")),
+    )
+    .unwrap();
+}
+
+fn entry_of(wt: &Path, key: &str, title: &str, id: &str) -> String {
+    let wt = wt.canonicalize().unwrap().display().to_string();
+    format!(
+        "## {key} — {title}\nworktree: {wt}\n\n### {key} finding {id}\ncode-review round 2, HIGH, inside: claim of {id}\nnote:\n"
+    )
+}
+
+// AC-4: the owed decisions of every live worktree, this checkout included.
+#[test]
+fn tickets_of_every_worktree() {
+    let pair = common::two_ticket_worktrees();
+    let dir = pair.repo.path();
+    owed_in(&pair.a, "ABC-1", "F-1");
+
+    // Skipped: a branch with no ticket, a detached HEAD, a closed ticket, a prunable worktree.
+    let feature = dir.join(".claude/worktrees/feature");
+    git_in(dir, &["worktree", "add", "-q", "-b", "feature", feature.to_str().unwrap()]);
+    let detached = dir.join(".claude/worktrees/detached");
+    git_in(dir, &["worktree", "add", "-q", "--detach", detached.to_str().unwrap()]);
+    stapel(dir).args(["new", "Third"]).assert().success();
+    let third = dir.join(".claude/worktrees/ABC-3");
+    owed_in(&third, "ABC-3", "F-3");
+    let path = third.join(".stapel/tickets/ABC-3/state.json");
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    state["closed"] = json!({"by": "test-user", "at": "2026-01-02T10:00:00Z", "reason": "done"});
+    std::fs::write(&path, state.to_string()).unwrap();
+    stapel(dir).args(["new", "Fourth"]).assert().success();
+    let fourth = dir.join(".claude/worktrees/ABC-4");
+    owed_in(&fourth, "ABC-4", "F-4");
+    std::fs::remove_dir_all(&fourth).unwrap();
+
+    // From the main checkout, which is on no ticket: ABC-1 only; ABC-2 owes nothing.
+    let out = stapel(dir).arg("inbox").assert().code(0).get_output().clone();
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "inbox: 1 decision waits in .stapel/inbox.md\n"
+    );
+    assert_eq!(
+        common::read(dir, ".stapel/inbox.md"),
+        format!("# Inbox\n\n{}", entry_of(&pair.a, "ABC-1", "First", "F-1"))
+    );
+
+    // ABC-2 in a folder whose path has a space; both tickets, sorted by key.
+    let spaced = dir.join(".claude/worktrees/with space");
+    git_in(dir, &["worktree", "move", pair.b.to_str().unwrap(), spaced.to_str().unwrap()]);
+    owed_in(&spaced, "ABC-2", "F-2");
+    let want = format!(
+        "# Inbox\n\n{}\n{}",
+        entry_of(&pair.a, "ABC-1", "First", "F-1"),
+        entry_of(&spaced, "ABC-2", "Second", "F-2")
+    );
+    assert_eq!(inbox_text(dir), want);
+
+    // From a ticket worktree the same list: this checkout is included once.
+    stapel(&pair.a).arg("inbox").assert().code(0);
+    assert_eq!(common::read(&pair.a, ".stapel/inbox.md"), want);
+}
+
+// AC-5: a ticket whose files cannot be read gets an `unreadable:` line; the others are listed.
+#[test]
+fn unreadable_ticket() {
+    let pair = common::two_ticket_worktrees();
+    let dir = pair.repo.path();
+    stapel(dir).args(["new", "Third"]).assert().success();
+    let third = dir.join(".claude/worktrees/ABC-3");
+    owed_in(&pair.b, "ABC-2", "F-2");
+
+    // A findings file that is a folder.
+    let findings = pair.a.join(".stapel/tickets/ABC-1/findings.jsonl");
+    std::fs::create_dir_all(&findings).unwrap();
+    // A stapel.toml that does not load.
+    std::fs::write(third.join(".stapel/stapel.toml"), "not [ toml\n").unwrap();
+
+    let out = stapel(dir).arg("inbox").assert().code(0).get_output().clone();
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "inbox: 3 decisions wait in .stapel/inbox.md\n"
+    );
+    let text = common::read(dir, ".stapel/inbox.md");
+    let wt = |p: &Path| p.canonicalize().unwrap().display().to_string();
+    let reason = |text: &str, head: &str| {
+        let at = text.find(head).unwrap_or_else(|| panic!("no {head:?} in {text}"));
+        let rest = &text[at + head.len()..];
+        let line = rest.lines().next().unwrap();
+        let reason = line.strip_prefix("unreadable: ").unwrap_or_else(|| panic!("{rest}"));
+        assert!(!reason.trim().is_empty(), "{text}");
+    };
+    reason(&text, &format!("## ABC-1 — First\nworktree: {}\n", wt(&pair.a)));
+    reason(&text, &format!("## ABC-3 — Third\nworktree: {}\n", wt(&third)));
+    assert!(
+        text.contains(&entry_of(&pair.b, "ABC-2", "Second", "F-2")),
+        "{text}"
+    );
+
+    // A state.json that does not parse: the heading has the key only.
+    std::fs::remove_dir_all(&findings).unwrap();
+    std::fs::write(pair.a.join(".stapel/tickets/ABC-1/state.json"), "{ nope").unwrap();
+    let text = inbox_text(dir);
+    reason(&text, &format!("## ABC-1\nworktree: {}\n", wt(&pair.a)));
+    assert!(text.contains("## ABC-2 — Second\n"), "{text}");
+}
