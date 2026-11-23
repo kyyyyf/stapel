@@ -688,12 +688,19 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         .as_ref()
         .map(|g| g.check.as_slice())
         .unwrap_or(&[]);
+    let mut guards_json: Vec<serde_json::Value> = Vec::new();
     if !guard_entries.is_empty() {
         if level_now == "steps" {
             say!("guards: skipped: level steps");
         } else {
-            for outcome in runner.guards(guard_entries) {
+            for (entry, outcome) in guard_entries.iter().zip(runner.guards(guard_entries)) {
                 ok &= outcome == "pass";
+                guards_json.push(serde_json::json!({
+                    "name": cut_chars(&entry.name, MAX_COMMAND),
+                    "outcome": outcome,
+                    "new": 0,
+                    "removed": 0,
+                }));
             }
         }
     }
@@ -733,6 +740,13 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
             record["project_truncated"] = serde_json::json!(true);
         }
         record["project"] = serde_json::json!(project_json);
+    }
+    if !guards_json.is_empty() {
+        if guards_json.len() > MAX_PROJECT {
+            guards_json.truncate(MAX_PROJECT);
+            record["guards_truncated"] = serde_json::json!(true);
+        }
+        record["guards"] = serde_json::json!(guards_json);
     }
     if !history.is_empty() {
         let (entries, truncated) = history_json(&history);
