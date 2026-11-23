@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "key": "STP-40",
+  "title": "The inbox of the person's decisions",
+  "base": "e1b6853328a88c7d3fc4b4190867a3a9f4c1f816",
+  "base_branch": "main",
+  "confirmations": []
+}
