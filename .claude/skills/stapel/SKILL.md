@@ -1,7 +1,7 @@
 ---
 name: stapel
 description: "Carries a development ticket from description to merge with the stapel process."
-# stapel: 0.1.0 sha256:f811b7cdd329239d2305b9b39cacaeb55bb49055dd4d56d9c01ba1b3714da352
+# stapel: 0.1.0 sha256:a60650bb1a9e86c185a93cebb39ed3e56e57660696edb4a5d16a8439c4a4b929
 ---
 # The stapel process
 
@@ -160,6 +160,9 @@ list must not only grow.
   --round 3` (any whole N of 1 or more after round N-1) starts the round.
 - A commit that must change its step's test file or a build input after a RED says so in a line of its
   message: `history: <reason>`; stapel check then judges the step by its runs.
+- The guards folder `[guards] dir` holds the machine checks; an agent's write into it asks the person in a dialog.
+  `stapel check` writes a tightened baseline into it; the orchestrator commits it, with a `history:` line in the
+  commit message.
 - At the close stapel close appends one `catches` record (counted findings by stage and `rule`) and one
   `finding` record per deferred finding; do not write them by hand. A close that fails writes none.
 - stapel writes the generated block of the Review section (counts, rounds and check runs, between the
