@@ -1,10 +1,11 @@
 //! LSP server for Zed: section actions and diagnostics on the ticket documents.
 
-use lsp_server::{Connection, ErrorCode, Message, Response};
+use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::{
     CodeAction, CodeActionOrCommand, CodeActionParams, CodeActionProviderCapability, Command,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    ExecuteCommandOptions, InitializeParams, ServerCapabilities, TextDocumentSyncCapability,
+    ExecuteCommandOptions, ExecuteCommandParams, InitializeParams, LogMessageParams, MessageType,
+    ShowMessageParams, ServerCapabilities, TextDocumentSyncCapability,
     TextDocumentSyncKind, Uri,
 };
 use std::collections::HashMap;
@@ -133,6 +134,37 @@ fn serve(connection: &Connection) -> i32 {
                     let _ = connection
                         .sender
                         .send(Message::Response(Response::new_ok(req.id, actions)));
+                } else if req.method == "workspace/executeCommand" {
+                    let params = match serde_json::from_value::<ExecuteCommandParams>(req.params) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            reply_error(connection, req.id, ErrorCode::InvalidParams, &e.to_string());
+                            continue;
+                        }
+                    };
+                    match button_args(&docs, &params) {
+                        Some((args, doc)) => {
+                            if params.command == "stapel.ok" {
+                                // The `ok` run comes with its page check (steps 7 and 8).
+                                let text = format!(
+                                    "stapel lsp: page.md is not current; run stapel page {} and read it again",
+                                    doc.key
+                                );
+                                show(connection, MessageType::ERROR, text);
+                            } else {
+                                run_button(connection, &doc, &args);
+                            }
+                            let _ = connection
+                                .sender
+                                .send(Message::Response(Response::new_ok(req.id, ())));
+                        }
+                        None => reply_error(
+                            connection,
+                            req.id,
+                            ErrorCode::InvalidParams,
+                            "stapel lsp: the arguments must be the URI of an open ticket.md or page.md",
+                        ),
+                    }
                 } else if req.method == "shutdown" {
                     shutdown = true;
                     let _ = connection
@@ -182,4 +214,84 @@ fn serve(connection: &Connection) -> i32 {
 fn reply_error(connection: &Connection, id: lsp_server::RequestId, code: ErrorCode, text: &str) {
     let resp = Response::new_err(id, code as i32, text.to_string());
     let _ = connection.sender.send(Message::Response(resp));
+}
+
+/// The `stapel` arguments and the document of a button command on an open ticket document.
+fn button_args(
+    docs: &HashMap<Uri, String>,
+    params: &ExecuteCommandParams,
+) -> Option<(Vec<String>, TicketDoc)> {
+    let uri: Uri = params.arguments.first()?.as_str()?.parse().ok()?;
+    if !docs.contains_key(&uri) {
+        return None;
+    }
+    let doc = classify(&uri)?;
+    let args = match params.command.as_str() {
+        "stapel.status" => vec!["status".to_string(), doc.key.clone()],
+        "stapel.next" => vec!["next".to_string()],
+        "stapel.page" => vec!["page".to_string(), doc.key.clone()],
+        "stapel.ok" => vec!["ok".to_string(), doc.key.clone()],
+        _ => return None,
+    };
+    Some((args, doc))
+}
+
+fn show(connection: &Connection, typ: MessageType, message: String) {
+    let params = ShowMessageParams { typ, message };
+    let note = Notification::new("window/showMessage".to_string(), params);
+    let _ = connection.sender.send(Message::Notification(note));
+}
+
+/// Runs this executable with `args` in the root, logs the output and shows the outcome.
+fn run_button(connection: &Connection, doc: &TicketDoc, args: &[String]) {
+    let label = format!("stapel {}", args.join(" "));
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            show(connection, MessageType::ERROR, format!("{label}: could not run: {e}"));
+            return;
+        }
+    };
+    let output = std::process::Command::new(exe)
+        .args(args)
+        .current_dir(&doc.root)
+        .stdin(std::process::Stdio::null())
+        .output();
+    let output = match output {
+        Ok(o) => o,
+        Err(e) => {
+            show(connection, MessageType::ERROR, format!("{label}: could not run: {e}"));
+            return;
+        }
+    };
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    let note = Notification::new(
+        "window/logMessage".to_string(),
+        LogMessageParams {
+            typ: MessageType::INFO,
+            message: format!("{label}\n{text}"),
+        },
+    );
+    let _ = connection.sender.send(Message::Notification(note));
+    let first = text.lines().find(|l| !l.trim().is_empty()).map(str::trim);
+    match output.status.code() {
+        Some(0) => show(
+            connection,
+            MessageType::INFO,
+            format!("{label}: {}", first.unwrap_or("done")),
+        ),
+        Some(n) => {
+            let message = match first {
+                Some(l) => format!("{label}: exit {n}: {l}"),
+                None => format!("{label}: exit {n}"),
+            };
+            show(connection, MessageType::ERROR, message);
+        }
+        None => {
+            use std::os::unix::process::ExitStatusExt;
+            let sig = output.status.signal().unwrap_or(0);
+            show(connection, MessageType::ERROR, format!("{label}: killed by signal {sig}"));
+        }
+    }
 }
