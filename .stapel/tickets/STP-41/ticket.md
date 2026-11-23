@@ -341,6 +341,7 @@ Findings:
 | spec-review | 2 | reviewer | 0 | 3 | 7 | 0 | patch 10 |
 | dependency | STP-40:4afbf11c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:bd0eb2ad | depends | 0 | 1 | 0 | 0 | patch 1 |
+| dependency | STP-40:d1af2e56:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 
 Check runs: none
 <!-- stapel:review:end -->
