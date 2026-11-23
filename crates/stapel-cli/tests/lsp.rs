@@ -1746,6 +1746,59 @@ fn answers_from_the_inbox() {
     }
 }
 
+// STP-40 AC-15: after a run from an inbox document, whatever its exit, the server runs `stapel inbox`
+// in the inbox root and carries the buffer's notes into the entries that remain.
+#[test]
+fn inbox_written_again_after_a_run() {
+    let pair = common::two_ticket_worktrees();
+    let root = pair.repo.path();
+    let findings = pair.a.join(".stapel/tickets/ABC-1/findings.jsonl");
+    let owed = |id: &str| {
+        json!({
+            "v": 1, "id": id, "stage": "code-review", "round": 2, "severity": "HIGH",
+            "promise": "inside", "claim": format!("claim of {id}"), "fate": "open",
+        })
+        .to_string()
+    };
+    std::fs::write(&findings, format!("{}\n{}\n", owed("F-1"), owed("F-2"))).unwrap();
+    let entry = |id: &str, note: &str| {
+        format!(
+            "### ABC-1 finding {id}\ncode-review round 2, HIGH, inside: claim of {id}\nnote: {note}\n\n"
+        )
+    };
+    let inbox = root.join(".stapel/inbox.md");
+    std::fs::write(&inbox, "stale\n").unwrap();
+    let uri = file_uri(&inbox);
+    let buffer = format!(
+        "# Inbox\n\n## ABC-1 \u{2014} First\nworktree: /nowhere/else\n\n{}{}",
+        entry("F-1", "ok, fix it"),
+        entry("F-2", "typed for the other")
+    );
+
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &buffer);
+    let (resp, _) = c.execute("stapel.answer", json!([uri, "ABC-1", "F-1", "patch"]));
+    assert!(resp.get("error").is_none(), "{resp}");
+    let text = std::fs::read_to_string(&inbox).unwrap();
+    assert!(!text.contains("### ABC-1 finding F-1"), "{text}");
+    assert!(text.contains("### ABC-1 finding F-2"), "{text}");
+    assert!(text.contains("note: typed for the other"), "{text}");
+    assert!(!text.contains("ok, fix it"), "{text}");
+
+    // a run that failed: F-1 no longer waits; the file is written again all the same
+    std::fs::write(&inbox, "stale\n").unwrap();
+    let (resp, notes) = c.execute("stapel.answer", json!([uri, "ABC-1", "F-1", "patch"]));
+    assert!(resp.get("error").is_none(), "{resp}");
+    assert_eq!(shown(&notes).len(), 1, "{notes:?}");
+    assert_eq!(shown(&notes)[0].0, 1, "{notes:?}");
+    let text = std::fs::read_to_string(&inbox).unwrap();
+    assert!(!text.contains("stale"), "{text}");
+    assert!(text.contains("### ABC-1 finding F-2"), "{text}");
+    assert!(text.contains("note: typed for the other"), "{text}");
+    let _ = c.child.kill();
+}
+
 // STP-40 AC-13: a run that cannot go ahead shows an Error message and answers `null`; wrong
 // argument forms answer InvalidParams; nothing runs and nothing is appended.
 #[test]
@@ -1914,7 +1967,9 @@ fn inbox_page_and_inbox_buttons() {
     assert!(!page_b.exists());
     assert!(!root.join(".stapel/tickets/ABC-1/page.md").exists());
 
-    assert!(!inbox.exists());
+    // STP-40 AC-15: the run from the inbox is followed by a write of the inbox
+    assert!(inbox.is_file());
+    std::fs::remove_file(&inbox).unwrap();
     let (resp, notes) = c.execute("stapel.inbox", json!([uri]));
     assert_eq!(resp["result"], Value::Null, "{resp}");
     assert!(resp.get("error").is_none(), "{resp}");
