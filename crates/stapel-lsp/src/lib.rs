@@ -32,6 +32,16 @@ pub fn classify(uri: &Uri) -> Option<TicketDoc> {
 /// The place of a URI: `ticket.md` or `page.md` in a ticket folder with a `state.json`; the
 /// configuration is not read.
 fn locate(uri: &Uri) -> Option<TicketDoc> {
+    let doc = locate_path(uri)?;
+    let key_dir = doc.root.join(".stapel/tickets").join(&doc.key);
+    if !key_dir.join("state.json").is_file() {
+        return None;
+    }
+    Some(doc)
+}
+
+/// The place of a URI by its path alone: nothing on disk is read.
+fn locate_path(uri: &Uri) -> Option<TicketDoc> {
     if !uri.scheme()?.as_str().eq_ignore_ascii_case("file") {
         return None;
     }
@@ -56,9 +66,6 @@ fn locate(uri: &Uri) -> Option<TicketDoc> {
         return None;
     }
     let root = stapel.parent()?.to_path_buf();
-    if !key_dir.join("state.json").is_file() {
-        return None;
-    }
     Some(TicketDoc { root, key, is_page })
 }
 
@@ -213,10 +220,22 @@ fn publish(connection: &Connection, uri: &Uri, diagnostics: Vec<Diagnostic>) {
     let _ = connection.sender.send(Message::Notification(note));
 }
 
+/// Publishes an empty list when a list is shown, and forgets the logged cause.
+fn clear(connection: &Connection, uri: &Uri, sent: &mut Published) {
+    sent.bad.remove(uri);
+    if sent.shown.remove(uri) {
+        publish(connection, uri, Vec::new());
+    }
+}
+
 /// Publishes the diagnostics of an open `ticket.md` from its buffer; logs a bad state once.
 fn refresh(connection: &Connection, docs: &HashMap<Uri, String>, uri: &Uri, sent: &mut Published) {
     let Some(text) = docs.get(uri) else { return };
-    let Some(doc) = locate(uri).filter(|d| !d.is_page) else {
+    if !locate_path(uri).is_some_and(|d| !d.is_page) {
+        return;
+    }
+    let Some(doc) = locate(uri) else {
+        clear(connection, uri, sent);
         return;
     };
     match waiting_diagnostics(&doc, text) {
@@ -239,7 +258,7 @@ fn refresh(connection: &Connection, docs: &HashMap<Uri, String>, uri: &Uri, sent
             }
             publish(connection, uri, list);
         }
-        Ok(None) => {}
+        Ok(None) => clear(connection, uri, sent),
         Err(cause) => {
             if sent.shown.remove(uri) {
                 publish(connection, uri, Vec::new());
@@ -478,7 +497,7 @@ fn serve(connection: &Connection) -> i32 {
                             let was_open = docs.remove(&uri).is_some();
                             sent.shown.remove(&uri);
                             sent.bad.remove(&uri);
-                            if was_open && locate(&uri).is_some_and(|d| !d.is_page) {
+                            if was_open && locate_path(&uri).is_some_and(|d| !d.is_page) {
                                 publish(connection, &uri, Vec::new());
                             }
                         }
