@@ -125,7 +125,8 @@ fn waiting_diagnostics(doc: &TicketDoc, text: &str) -> Result<Option<Computed>, 
 /// The diagnostics of a buffer and the lines for the log.
 struct Computed {
     list: Vec<Diagnostic>,
-    logs: Vec<String>,
+    /// The section id and the line for the log of each section over the limit.
+    logs: Vec<(String, String)>,
 }
 
 /// The longest body or confirmed text that gets Hints, in lines.
@@ -140,7 +141,7 @@ fn changed_lines(
     state: &stapel_core::state::State,
     id: &str,
     title: &str,
-    logs: &mut Vec<String>,
+    logs: &mut Vec<(String, String)>,
 ) -> Option<Vec<Diagnostic>> {
     let confirmed = stapel_core::stage::latest(state, id)?;
     let old_text = confirmed.text.as_deref()?;
@@ -179,8 +180,11 @@ fn changed_lines(
         first.zip(last).map_or(0, |(f, l)| l - f + 1)
     };
     if counted(&new_lines) > MAX_HINT_LINES || counted(&old_lines) > MAX_HINT_LINES {
-        logs.push(format!(
-            "stapel lsp: section {id} has more than {MAX_HINT_LINES} lines; no changed-line hints"
+        logs.push((
+            id.to_string(),
+            format!(
+                "stapel lsp: section {id} has more than {MAX_HINT_LINES} lines; no changed-line hints"
+            ),
         ));
         return None;
     }
@@ -219,6 +223,8 @@ struct Published {
     shown: HashSet<Uri>,
     /// The last cause logged for a document, until its files read again.
     bad: HashMap<Uri, String>,
+    /// The sections of a document whose long-section warning is logged and that stay long.
+    long: HashMap<Uri, HashSet<String>>,
 }
 
 fn publish(connection: &Connection, uri: &Uri, diagnostics: Vec<Diagnostic>) {
@@ -234,6 +240,7 @@ fn publish(connection: &Connection, uri: &Uri, diagnostics: Vec<Diagnostic>) {
 /// Publishes an empty list when a list is shown, and forgets the logged cause.
 fn clear(connection: &Connection, uri: &Uri, sent: &mut Published) {
     sent.bad.remove(uri);
+    sent.long.remove(uri);
     if sent.shown.remove(uri) {
         publish(connection, uri, Vec::new());
     }
@@ -251,7 +258,13 @@ fn refresh(connection: &Connection, docs: &HashMap<Uri, String>, uri: &Uri, sent
     };
     match waiting_diagnostics(&doc, text) {
         Ok(Some(Computed { list, logs })) => {
-            for message in logs {
+            let before = sent.long.remove(uri).unwrap_or_default();
+            let mut now = HashSet::new();
+            for (id, message) in logs {
+                now.insert(id.clone());
+                if before.contains(&id) {
+                    continue;
+                }
                 let note = Notification::new(
                     "window/logMessage".to_string(),
                     LogMessageParams {
@@ -260,6 +273,9 @@ fn refresh(connection: &Connection, docs: &HashMap<Uri, String>, uri: &Uri, sent
                     },
                 );
                 let _ = connection.sender.send(Message::Notification(note));
+            }
+            if !now.is_empty() {
+                sent.long.insert(uri.clone(), now);
             }
             sent.bad.remove(uri);
             if list.is_empty() {
@@ -271,6 +287,7 @@ fn refresh(connection: &Connection, docs: &HashMap<Uri, String>, uri: &Uri, sent
         }
         Ok(None) => clear(connection, uri, sent),
         Err(cause) => {
+            sent.long.remove(uri);
             if sent.shown.remove(uri) {
                 publish(connection, uri, Vec::new());
             }
@@ -508,6 +525,7 @@ fn serve(connection: &Connection) -> i32 {
                             let was_open = docs.remove(&uri).is_some();
                             sent.shown.remove(&uri);
                             sent.bad.remove(&uri);
+                            sent.long.remove(&uri);
                             if was_open && locate_path(&uri).is_some_and(|d| !d.is_page) {
                                 publish(connection, &uri, Vec::new());
                             }
