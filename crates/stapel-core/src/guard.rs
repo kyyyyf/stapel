@@ -130,6 +130,45 @@ fn toml_edit_ask(input: &HookInput, target: &Path) -> Option<Decision> {
     Some(Decision::AskEdit(TOML_ASK_REASON.into()))
 }
 
+/// The dialog for a write into the guards folder `[guards] dir` (STP-41 AC-12): the main agent in
+/// a dialog mode is asked, a subagent or another mode is denied. A write outside the folder, or a
+/// repository without `[guards]`, is `None`: the other write rules stand.
+fn guards_write_ask(input: &HookInput, target: &Path) -> Option<Decision> {
+    let root = stapel_root(target)?;
+    let config = std::fs::read_to_string(root.join(".stapel/stapel.toml")).ok()?;
+    let guards = Config::parse_at(&config, &root).ok()?.guards?;
+    let dir = guards
+        .dir
+        .strip_suffix('/')
+        .unwrap_or(&guards.dir)
+        .to_string();
+    let lower = |path: &Path| -> Vec<String> {
+        path.components()
+            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+            .collect()
+    };
+    let rel = lower(target.strip_prefix(&root).ok()?);
+    let folder = lower(Path::new(&dir));
+    if rel.len() < folder.len() || rel[..folder.len()] != folder[..] {
+        return None;
+    }
+    if input.agent_id.as_deref().is_some_and(|id| !id.is_empty()) {
+        return Some(Decision::Deny(format!(
+            "only the main agent writes into the guards folder {dir}, through the person's dialog"
+        )));
+    }
+    let mode = input.permission_mode.as_deref().unwrap_or("");
+    if !crate::dialog::DIALOG_MODES.contains(&mode) {
+        return Some(Decision::Deny(format!(
+            "a write into the guards folder {dir} needs the permission dialog, which Claude \
+             Code does not show in permission mode \"{mode}\""
+        )));
+    }
+    Some(Decision::AskEdit(format!(
+        "a write into the guards folder {dir}: the person confirms it in this dialog"
+    )))
+}
+
 impl HookInput {
     pub fn parse(text: &str) -> Result<HookInput, String> {
         serde_json::from_str(text).map_err(|e| format!("hook input could not be parsed: {e}"))
@@ -259,6 +298,9 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
                 }
             }
             if let Some(ask) = toml_edit_ask(input, &target) {
+                return ask;
+            }
+            if let Some(ask) = guards_write_ask(input, &target) {
                 return ask;
             }
             decide_write(&target)
@@ -623,7 +665,8 @@ fn subagent_git_args(args: &[String], root: &Path, at: &Path) -> bool {
             let Some(path) = args.get(i + 1) else {
                 return false;
             };
-            if path.contains('$') || path.starts_with('~') || !in_own_worktree(&at.join(path), root) {
+            if path.contains('$') || path.starts_with('~') || !in_own_worktree(&at.join(path), root)
+            {
                 return false;
             }
             // A later `-C` is relative to this one; keep it simple and refuse a chain.
@@ -1498,9 +1541,7 @@ pub fn plain_invocation(command: &str) -> Option<Invocation> {
         .cloned()
         .collect();
     let (program, rest) = match words.first().map(|w| base_name(w)) {
-        Some("stapel")
-            if words.get(1).is_some_and(|w| w == "cargo") && cargo_runs(&words[2..]) =>
-        {
+        Some("stapel") if words.get(1).is_some_and(|w| w == "cargo") && cargo_runs(&words[2..]) => {
             let sep = words.iter().position(|w| w == "--")?;
             (words[..=sep].to_vec(), &words[sep + 1..])
         }
