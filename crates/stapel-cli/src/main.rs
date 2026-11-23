@@ -147,6 +147,8 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
         args: Vec<String>,
     },
+    /// Run the language server for an editor on standard input and output.
+    Lsp,
     /// Review findings kept in a ticket's findings.jsonl.
     #[command(subcommand)]
     Findings(FindingsAction),
@@ -414,6 +416,7 @@ fn main() -> ExitCode {
         }
         Command::Lint { key } => return lint::run(key.as_deref()),
         Command::Cargo { args } => return cargo::run(&args),
+        Command::Lsp => return ExitCode::from(stapel_lsp::run() as u8),
         Command::Brief { key, step } => return fail::finish(brief::run(&key, &step)),
         Command::Depends { key } => return fail::finish(depends::run(key.as_deref())),
         Command::Next { key, json } => return fail::finish(next::run(key.as_deref(), json)),
