@@ -1,6 +1,11 @@
 //! STP-40: the inbox of the decisions that wait for the person: its entries and the text of
 //! `.stapel/inbox.md`.
 
+use crate::config::Config;
+use crate::next::{is_light, plan_steps};
+use crate::stage::{freshness, latest};
+use crate::state::State;
+use crate::ticket::{Section, find};
 use crate::triage::state_of;
 use serde_json::{Map, Value};
 
@@ -14,6 +19,59 @@ pub fn one_line(text: &str) -> String {
 pub enum Kind {
     /// A finding: its id and the line `<stage> round <round>, <severity>, <promise>: <claim>`.
     Finding { id: String, line: String },
+    /// Sections that wait for `stapel ok`, as ids in config order.
+    Confirmation { waiting: Vec<String> },
+}
+
+/// The ids of the sections that wait for `stapel ok`, in config order, for a ticket past its spec
+/// review; empty before it. Past the review: the Description has its Frame, every section is
+/// written and the Plan has steps, and the Plan is light, a section was confirmed once or a
+/// spec-review finding exists.
+pub fn waiting_sections(
+    config: &Config,
+    sections: &[Section],
+    state: &State,
+    finding_stages: &[String],
+) -> Vec<String> {
+    let written = |title: &str| {
+        find(sections, title)
+            .found()
+            .is_some_and(|body| !matches!(body.trim(), "" | "TODO"))
+    };
+    let framed = written("Description")
+        && find(sections, "Description")
+            .found()
+            .is_some_and(|body| body.lines().any(|l| l.trim_end() == "### Frame"));
+    let confirmable: Vec<_> = config
+        .sections
+        .iter()
+        .filter(|s| s.owner != "generated")
+        .collect();
+    let all_written = confirmable.iter().all(|def| {
+        written(&def.title)
+            && (def.id != "plan"
+                || find(sections, &def.title)
+                    .found()
+                    .is_some_and(|plan| !plan_steps(plan).is_empty()))
+    });
+    let light = config
+        .section("plan")
+        .and_then(|def| find(sections, &def.title).found())
+        .is_some_and(is_light);
+    let reviewed = light
+        || !state.confirmations.is_empty()
+        || finding_stages.iter().any(|s| s == "spec-review");
+    if !(framed && all_written && reviewed) {
+        return Vec::new();
+    }
+    confirmable
+        .iter()
+        .filter(|def| match latest(state, &def.id) {
+            None => true,
+            Some(c) => !freshness(config, sections, c).is_empty(),
+        })
+        .map(|def| def.id.clone())
+        .collect()
 }
 
 /// One owed decision of an open ticket.
@@ -91,6 +149,15 @@ pub fn render(entries: &[Entry]) -> String {
         match &e.kind {
             Kind::Finding { id, line } => {
                 text.push_str(&format!("\n### {} finding {id}\n{line}\nnote:\n", e.key));
+            }
+            Kind::Confirmation { waiting } => {
+                text.push_str(&format!(
+                    "\n### {} confirmation\nwaiting: {}\npage: {}/.stapel/tickets/{}/page.md\n",
+                    e.key,
+                    waiting.join(", "),
+                    e.worktree,
+                    e.key
+                ));
             }
         }
     }

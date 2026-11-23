@@ -2,12 +2,13 @@
 
 use crate::fail::Fail;
 use crate::repo;
-use stapel_core::inbox::{Entry, Kind, owed_findings, render};
+use stapel_core::inbox::{Entry, Kind, owed_findings, render, waiting_sections};
+use stapel_core::ticket::{parse, read};
 use stapel_core::journal::{self, Entry as Line};
 use stapel_core::tickets::{Status, branch_ticket};
 
 pub fn run() -> Result<(), Fail> {
-    let (root, _config) = repo::open().map_err(Fail::failed)?;
+    let (root, config) = repo::open().map_err(Fail::failed)?;
     let mut entries: Vec<Entry> = Vec::new();
     if let Some(ticket) = branch_ticket(&root)
         && let Status::Open(state) = &ticket.status
@@ -21,13 +22,23 @@ pub fn run() -> Result<(), Fail> {
             })
             .collect();
         let worktree = root.canonicalize().unwrap_or_else(|_| root.clone());
+        let entry = |kind| Entry {
+            key: ticket.key.clone(),
+            title: state.title.clone(),
+            worktree: worktree.display().to_string(),
+            kind,
+        };
         for (id, line) in owed_findings(&records) {
-            entries.push(Entry {
-                key: ticket.key.clone(),
-                title: state.title.clone(),
-                worktree: worktree.display().to_string(),
-                kind: Kind::Finding { id, line },
-            });
+            entries.push(entry(Kind::Finding { id, line }));
+        }
+        let text = read(&ticket.dir.join("ticket.md")).map_err(Fail::failed)?;
+        let stages: Vec<String> = records
+            .iter()
+            .filter_map(|m| m.get("stage")?.as_str().map(String::from))
+            .collect();
+        let waiting = waiting_sections(&config, &parse(&text), state, &stages);
+        if !waiting.is_empty() {
+            entries.push(entry(Kind::Confirmation { waiting }));
         }
     }
     let path = root.join(".stapel/inbox.md");
