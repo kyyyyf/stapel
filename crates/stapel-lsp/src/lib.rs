@@ -163,11 +163,22 @@ fn changed_lines(
         .iter()
         .map(|s| stapel_core::hash::normal_form(&s.line))
         .collect();
-    let old_lines: Vec<String> = old_text
-        .split(['\n', '\r'])
+    // Split as `ticket::scan` does, with no empty element after a final line end.
+    let old_unified = old_text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut old_lines: Vec<String> = old_unified
+        .split('\n')
         .map(stapel_core::hash::normal_form)
         .collect();
-    if new_lines.len() > MAX_HINT_LINES || old_lines.len() > MAX_HINT_LINES {
+    if old_unified.ends_with('\n') {
+        old_lines.pop();
+    }
+    // Blank lines at the edges of a side are not counted.
+    let counted = |lines: &[String]| {
+        let first = lines.iter().position(|l| !l.is_empty());
+        let last = lines.iter().rposition(|l| !l.is_empty());
+        first.zip(last).map_or(0, |(f, l)| l - f + 1)
+    };
+    if counted(&new_lines) > MAX_HINT_LINES || counted(&old_lines) > MAX_HINT_LINES {
         logs.push(format!(
             "stapel lsp: section {id} has more than {MAX_HINT_LINES} lines; no changed-line hints"
         ));
