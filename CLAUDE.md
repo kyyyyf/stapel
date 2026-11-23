@@ -47,9 +47,7 @@ needed technical terms stay as they are; a longer sentence is allowed when split
 
 ```text
 crates/stapel-core    tickets, state facts, section hashes, checks, decision log, the PreToolUse guard
-crates/stapel-agent   model providers, roles, context packs, token journal
 crates/stapel-index   index: language adapters, blast radius
-crates/stapel-forge   MR/PR, CI, line comments
 crates/stapel-mcp     MCP server for the agent
 crates/stapel-lsp     LSP server for Zed
 crates/stapel-cli     the `stapel` binary

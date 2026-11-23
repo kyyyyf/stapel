@@ -3,15 +3,25 @@
 use assert_cmd::Command;
 use std::path::Path;
 
-const MEMBERS: [&str; 7] = [
+const MEMBERS: [&str; 5] = [
     "stapel-core",
-    "stapel-agent",
     "stapel-index",
-    "stapel-forge",
     "stapel-mcp",
     "stapel-lsp",
     "stapel-cli",
 ];
+
+// STP-39 AC-15: the two empty crates are removed.
+#[test]
+fn no_empty_crates() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for name in ["agent", "forge"] {
+        assert!(
+            !root.join(format!("crates/stapel-{name}")).exists(),
+            "crates/stapel-{name} still exists"
+        );
+    }
+}
 
 #[test]
 fn workspace_has_seven_members() {
@@ -53,7 +63,7 @@ fn version_prints_package_version() {
 #[test]
 fn stub_packages_are_empty() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for name in ["agent", "index", "forge", "mcp", "lsp"] {
+    for name in ["index", "mcp"] {
         let lib = root.join(format!("crates/stapel-{name}/src/lib.rs"));
         let text = std::fs::read_to_string(&lib).unwrap();
         assert!(
