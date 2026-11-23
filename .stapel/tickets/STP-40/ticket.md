@@ -26,7 +26,8 @@ watching files on disk; notifications outside the editor.
 **Promise (closed list).**
 
 1. List: `stapel inbox` writes `.stapel/inbox.md` in the root it runs in, with one entry per owed decision
-   of every open ticket of the repository, in this checkout and in every worktree of `git worktree list`:
+   of every open ticket that the branch of a live worktree of `git worktree list` names, this checkout's
+   included:
    each finding that waits for the person (the rule of `stapel next` for `ask-human`) and each ticket past
    its spec review with a section that waits for `stapel ok`. Each entry names the ticket, its worktree path and the item; an
    empty inbox says so. A ticket whose files cannot be read gets one line that says so.
@@ -93,7 +94,8 @@ Terms:
 - **Entry**: the lines of an inbox document from a `### ` heading to the next heading; a **finding entry**
   has the heading `### <KEY> finding <ID>`, a **confirmation entry** `### <KEY> confirmation`. Lines are
   split as `ticket::scan` splits. The entry of a range is the entry that holds its start line; the title
-  line and a `## ` line belong to no entry.
+  line and a `## ` line belong to no entry. The note of an entry is the text after its first `note:`
+  line, trimmed.
 - **One-line form**: a text with each run of whitespace, line breaks included, replaced by one space, and
   trimmed. The id, the title (from `state.json`) and the fields of a finding line are written in it; a
   missing field writes `?`, a number writes its digits. The severity is that of the finding's triage
@@ -116,7 +118,7 @@ Terms:
 | AC-12 | WHEN the button `stapel.answer` runs with the inbox URI, KEY, ID and a person's fate THE server takes the note from the `note:` line of the entry `### <KEY> finding <ID>` in the buffer (the text after `note:`, trimmed), runs `stapel answer KEY ID FATE NOTE` in the live worktree whose branch names KEY, and reports the run as STP-39 AC-4 does with the label `stapel answer <KEY> <ID> <FATE>`, the note left out. | `lsp::answers_from_the_inbox` |
 | AC-13 | IF the buffer has no entry `### <KEY> finding <ID>`, its note is empty, no live worktree has a branch that names KEY, or the server runs in an agent shell THEN the server runs nothing, answers `null` and shows an Error message; IF the arguments of a command with an inbox URI are not those of AC-12 or AC-14 THEN it answers `InvalidParams` and runs nothing (texts in Design); the forms of STP-39 with ticket documents are unchanged. | `lsp::inbox_refusals` |
 | AC-14 | WHEN the button `stapel.page` runs with the arguments inbox URI and KEY, or `stapel.inbox` with the inbox URI THE server runs `stapel page KEY` in the worktree of KEY, or `stapel inbox` in the inbox root, and reports as STP-39 AC-4 does. | `lsp::inbox_page_and_inbox_buttons` |
-| AC-15 | WHEN a button run from an inbox document ran, whatever its exit THE server runs `stapel inbox` in the inbox root and then puts into the `note:` line of each new entry whose heading is in the buffer the note text of that buffer entry, so notes typed for other entries stay. | `lsp::inbox_written_again_after_a_run` |
+| AC-15 | WHEN a button run from an inbox document ran, whatever its exit, or its child could not start THE server runs `stapel inbox` in the inbox root and then puts into the `note:` line of each new entry whose heading is in the buffer the note text of that buffer entry, so notes typed for other entries stay. | `lsp::inbox_written_again_after_a_run` |
 
 ### Guarantees
 
@@ -238,12 +240,11 @@ a `"` or a backslash (JSON escaping by `serde_json`; tested in `answer::appends_
 ### Shape
 
 - `stapel-core::inbox`: `Entry` (key, title, worktree, kind: finding with id and line, confirmation with
-  ids, unreadable with reason), `one_line(text)`, `render(entries) -> String`; `parse(text) ->
-  Vec<EntryRef>` (heading, line range, note) that the server uses to find the entry at a line, its note,
-  and to carry notes into a new file.
+  ids, unreadable with reason), `one_line(text)`, `render(entries) -> String`. The server finds the entry
+  at a line, its note and the notes to carry with its own functions on `ticket::scan` (DR3-1).
 - `stapel-cli`: `inbox.rs` collects the entries (the walk of `open_lines`, the findings by `is_persons`,
-  the action by `text_at`) and writes the file; `answer.rs` checks and appends one triage line through the
-  same journal call as `findings triage`; `main.rs` gains `Inbox` and `Answer`.
+  the waiting sections) and writes the file; `findings::answer` checks and appends one triage line
+  through the same journal call as `findings triage` (DR3-1); `main.rs` gains `Inbox` and `Answer`.
 - `stapel-core::guard`: `answer` in `check_stapel` sets a new reason.
 - `stapel-lsp`: `classify` also knows the inbox document; the commands `stapel.answer` and `stapel.inbox`
   join `COMMANDS`; `stapel.page` accepts an inbox URI plus a key; the worktree of a key comes from
@@ -301,8 +302,8 @@ inbox URI that is not an open buffer, given to `stapel.page`, and an inbox URI g
 Notes of the build, dated 2026-11-23, agent.
 
 - `stapel-core::inbox`: `one_line`, `owed_findings`, `waiting_sections`, `render`; `Kind` is `Finding`,
-  `Confirmation` or `Unreadable`. An unreadable ticket (state, findings, `ticket.md`, `stapel.toml` or
-  the next action fails) gets an `unreadable:` line; a ticket without a title gets the heading `## KEY`.
+  `Confirmation` or `Unreadable`. An unreadable ticket (state, findings, `ticket.md` or `stapel.toml`
+  cannot be read, or a findings line does not parse) gets an `unreadable:` line; a ticket without a title gets the heading `## KEY`.
   Waiting ids are joined by `, `.
 - `stapel-cli/src/inbox.rs` walks the worktrees and drops a repeated canonical path.
   `findings::answer` writes one serde line with `records::importer_json(false, user)`, then the generated
@@ -394,6 +395,11 @@ merge into main.
 15. Fix XR1-1 and DR2-1 (AC-5; test `inbox::unreadable_ticket`, which fails at the RED because a
     `findings.jsonl` line that does not parse is skipped): the GREEN gives such a ticket an `unreadable:`
     line and drops the unused `next::text_at` call. Must not change: the other unreadable cases.
+16. Fix XR2-1 (AC-5; test `inbox::unreadable_ticket`, which fails at the RED because a `findings.jsonl`
+    line of an unknown version makes the ticket unreadable): the GREEN skips such a line with
+    `journal::is_unknown_version`, as `stapel answer` does; the RED also moves the misplaced comment
+    (XR2-5), the GREEN fixes the doc comment of `entries_of` (XR2-3). Must not change: a line that does
+    not parse.
 
 ## Review
 
@@ -409,6 +415,7 @@ Findings:
 | spec-review | 1 | external | 0 | 8 | 5 | 0 | defer 1, patch 12 |
 | step-drift | 1 | drift | 0 | 1 | 4 | 0 | patch 5 |
 | code-review | 1 | drift, external, reviewer | 0 | 4 | 12 | 0 | defer 6, patch 10 |
+| code-review | 2 | drift, external, reviewer | 0 | 2 | 9 | 0 | defer 2, no-change 1, patch 8 |
 | dependency | STP-39:c0dd15b1:c1d22378 | depends | 0 | 0 | 2 | 0 | patch 2 |
 
 Check runs:
