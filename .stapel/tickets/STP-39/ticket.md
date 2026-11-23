@@ -166,7 +166,7 @@ ticket_drift`.
 | After a run | an open `ticket.md` with waiting sections, then `stapel.ok` from its `page.md`: the waiting diagnostics are gone | `lsp::diagnostics_after_ok` |
 | Bad state | a malformed `state.json` logged once over two changes; a `stapel.toml` that does not load; after each, a code action request on a good document is served | `lsp::bad_state_is_logged` |
 | Zed | `editors/zed/extension.toml` names the server `stapel` for `Markdown`; `src/lib.rs` uses `worktree.which("stapel")`, the argument `lsp` and the error text; `cargo metadata --no-deps` loads its `Cargo.toml` | `lsp::the_zed_extension_starts_stapel_lsp` |
-| Workspace | `cargo metadata` members; the folders `crates/stapel-agent` and `crates/stapel-forge` absent; the stub check over `index` and `mcp` | `cli::no_empty_crates`, `cli::workspace_has_seven_members`, `cli::stub_packages_are_empty` |
+| Workspace | `cargo metadata` members; the folders of the crates `stapel-agent` and `stapel-forge` absent; the stub check over `index` and `mcp` | `cli::no_empty_crates`, `cli::workspace_has_seven_members`, `cli::stub_packages_are_empty` |
 
 ### Inputs
 
@@ -221,7 +221,7 @@ AC-4; not tested, it needs a broken executable); a child command that prints mor
 - F-3: `ticket::parse` splits at level-2 headings outside fences; `ticket::scan` gives each line with its
   heading; `stage::is_fresh` and `stage::latest` judge a section; `Confirmation.text` holds the body at
   the latest confirmation only (older ones are cleared by `ok.rs::add`).
-- F-4: `crates/stapel-lsp` holds only a doc comment; `crates/stapel-agent` and `crates/stapel-forge` hold
+- F-4: `crates/stapel-lsp` holds only a doc comment; the crates `stapel-agent` and `stapel-forge` held
   only a doc comment and are named in `cli::workspace_has_seven_members` (STP-1).
 - F-5: the workspace members are `crates/*`; a crate under `editors/` is outside it.
 - F-6: `cli::stub_packages_are_empty` asserts that `src/lib.rs` of agent, index, forge, mcp and lsp holds
@@ -293,7 +293,7 @@ No `ok` button exists before step 7; until then a valid `stapel.ok` run gets the
 `stapel ok` never runs without the page check.
 
 1. Empty crates (AC-15; test `cli::no_empty_crates`, which fails at the RED because the folders exist):
-   the GREEN removes `crates/stapel-agent` and `crates/stapel-forge`, updates `Cargo.lock`, the layout of
+   the GREEN removes the crates `stapel-agent` and `stapel-forge`, updates `Cargo.lock`, the layout of
    `CLAUDE.md`, the list of `cli::workspace_has_seven_members` and of `cli::stub_packages_are_empty`
    (message line `history: the two empty crates are removed`). Must not change: the other crates.
 2. Lifecycle (AC-1; tests `lsp::initialize_and_shutdown`, `lsp::exit_without_shutdown`): the RED adds
