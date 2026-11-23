@@ -282,6 +282,21 @@ fn tickets_of_every_worktree() {
     );
     assert_eq!(inbox_text(dir), want);
 
+    // Key numbers 9 and 10: sorted by number, not by the key as text (ABC-10 before ABC-2).
+    git_in(dir, &["branch", "ABC-8"]);
+    stapel(dir).args(["new", "Ninth"]).assert().success();
+    stapel(dir).args(["new", "Tenth"]).assert().success();
+    let ninth = dir.join(".claude/worktrees/ABC-9");
+    let tenth = dir.join(".claude/worktrees/ABC-10");
+    owed_in(&ninth, "ABC-9", "F-9");
+    owed_in(&tenth, "ABC-10", "F-10");
+    let want = format!(
+        "{want}\n{}\n{}",
+        entry_of(&ninth, "ABC-9", "Ninth", "F-9"),
+        entry_of(&tenth, "ABC-10", "Tenth", "F-10")
+    );
+    assert_eq!(inbox_text(dir), want);
+
     // From a ticket worktree the same list: this checkout is included once.
     stapel(&pair.a).arg("inbox").assert().code(0);
     assert_eq!(common::read(&pair.a, ".stapel/inbox.md"), want);
