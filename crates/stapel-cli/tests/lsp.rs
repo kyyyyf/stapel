@@ -1879,3 +1879,50 @@ fn inbox_refusals() {
     assert_eq!(std::fs::read_to_string(&findings).unwrap(), seeded);
     let _ = c.child.kill();
 }
+
+// STP-40 AC-14: `stapel.page` with the inbox URI and a key runs `stapel page KEY` in the worktree
+// of the key; `stapel.inbox` runs `stapel inbox` in the inbox root.
+#[test]
+fn inbox_page_and_inbox_buttons() {
+    let pair = common::two_ticket_worktrees();
+    let root = pair.repo.path();
+    let inbox = root.join(".stapel/inbox.md");
+    let buffer = format!(
+        "# Inbox\n\n## ABC-1 \u{2014} First\nworktree: {}\n\n### ABC-1 confirmation\nwaiting: Frame\npage: {}/page.md\n",
+        pair.a.display(),
+        pair.a.join(".stapel/tickets/ABC-1").display()
+    );
+    assert!(!inbox.exists());
+    let uri = file_uri(&inbox);
+    let page_a = pair.a.join(".stapel/tickets/ABC-1/page.md");
+    let page_b = pair.b.join(".stapel/tickets/ABC-2/page.md");
+    assert!(!page_a.exists());
+
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &buffer);
+
+    let (resp, notes) = c.execute("stapel.page", json!([uri, "ABC-1"]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    assert!(resp.get("error").is_none(), "{resp}");
+    let msgs = shown(&notes);
+    assert_eq!(msgs.len(), 1, "{notes:?}");
+    assert_eq!(msgs[0].0, 3, "{msgs:?}");
+    assert!(msgs[0].1.starts_with("stapel page ABC-1: "), "{msgs:?}");
+    assert!(logged(&notes).starts_with("stapel page ABC-1\n"), "{notes:?}");
+    assert!(page_a.is_file());
+    assert!(!page_b.exists());
+    assert!(!root.join(".stapel/tickets/ABC-1/page.md").exists());
+
+    assert!(!inbox.exists());
+    let (resp, notes) = c.execute("stapel.inbox", json!([uri]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    assert!(resp.get("error").is_none(), "{resp}");
+    let msgs = shown(&notes);
+    assert_eq!(msgs.len(), 1, "{notes:?}");
+    assert_eq!(msgs[0].0, 3, "{msgs:?}");
+    assert!(msgs[0].1.starts_with("stapel inbox: "), "{msgs:?}");
+    assert!(logged(&notes).starts_with("stapel inbox\n"), "{notes:?}");
+    assert!(inbox.is_file());
+    let _ = c.child.kill();
+}
