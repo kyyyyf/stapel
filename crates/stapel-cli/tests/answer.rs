@@ -218,3 +218,36 @@ fn refusals() {
         "stapel answer runs in the worktree of ABC-1; this checkout's branch names no ticket",
     );
 }
+
+// AC-8: an agent's shell never answers; no option makes it run there.
+#[test]
+fn refuses_in_an_agent_shell() {
+    let repo = past_spec_on_branch();
+    let dir = repo.path();
+    std::fs::write(dir.join(TARGET), format!("{}\n", owed("F-1"))).unwrap();
+    let before = std::fs::read(dir.join(TARGET)).unwrap();
+    for (var, value) in [("CLAUDECODE", "1"), ("CLAUDE_CODE_ENTRYPOINT", "cli")] {
+        let out = stapel(dir)
+            .env(var, value)
+            .args(["answer", "ABC-1", "F-1", "patch", "- fix it"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{var}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stderr),
+            "stapel: only a person answers a finding: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set)\n",
+            "{var}"
+        );
+        assert_eq!(std::fs::read(dir.join(TARGET)).unwrap(), before, "{var}");
+
+        // There is no `--grant` form.
+        let out = stapel(dir)
+            .env(var, value)
+            .args(["answer", "--grant", "x", "ABC-1", "F-1", "patch", "n"])
+            .output()
+            .unwrap();
+        assert_ne!(out.status.code(), Some(0), "{var}");
+        assert_eq!(std::fs::read(dir.join(TARGET)).unwrap(), before, "{var}");
+    }
+}

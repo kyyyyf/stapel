@@ -2318,3 +2318,23 @@ fn stapel_toml_edit_refusals() {
         original
     );
 }
+
+// STP-40 AC-9: `stapel answer` records a person's answer; the guard denies it for an agent.
+#[test]
+fn denies_stapel_answer() {
+    let repo = initialized_repo();
+    for command in [
+        "stapel answer STP-1 F-1 patch x",
+        "cd a && stapel answer STP-1 F-1 patch x",
+        "STAPEL answer STP-1 F-1 patch x",
+        "stapel ANSWER STP-1 F-1 patch x",
+        "stapel cargo run -- answer STP-1 F-1 patch x",
+        "stapel cargo run -p stapel-cli -- answer STP-1 F-1 patch x",
+        "echo `stapel answer STP-1 F-1 patch x`",
+    ] {
+        bash(repo.path(), command).code(DENY).stderr(contains(
+            "stapel answer records a person's answer; an agent asks the person in the chat and runs stapel findings triage",
+        ));
+    }
+    bash(repo.path(), "stapel findings triage f").success();
+}
