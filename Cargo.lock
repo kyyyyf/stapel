@@ -627,10 +627,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
-name = "stapel-agent"
-version = "0.1.0"
-
-[[package]]
 name = "stapel-cli"
 version = "0.1.0"
 dependencies = [
@@ -660,10 +656,6 @@ dependencies = [
  "toml",
  "unicode-normalization",
 ]
-
-[[package]]
-name = "stapel-forge"
-version = "0.1.0"
 
 [[package]]
 name = "stapel-index"
