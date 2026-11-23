@@ -106,7 +106,7 @@ Terms:
 | AC-2 | WHEN an inbox ticket owes a confirmation THE entry `### <KEY> confirmation` follows its findings with the lines `waiting: <waiting ids, comma separated>` and `page: <worktree>/.stapel/tickets/<KEY>/page.md`, and counts as one decision. | `inbox::lists_owed_confirmations` |
 | AC-3 | IF no inbox ticket owes a decision THEN `inbox.md` holds the title line and `Nothing waits.`, and the command prints `inbox: nothing waits`. | `inbox::nothing_waits` |
 | AC-4 | WHEN several live worktrees have open branch tickets THE inbox lists the owed decisions of each, this checkout's included; a closed ticket, a branch that names no ticket and a prunable worktree give nothing, and a ticket that owes nothing gives no heading. | `inbox::tickets_of_every_worktree` |
-| AC-5 | IF the `state.json` or `findings.jsonl` of an inbox ticket cannot be read, or its `stapel next` fails THEN its heading is followed by `unreadable: <reason>`, it counts as one decision, and the other tickets are listed. | `inbox::unreadable_ticket` |
+| AC-5 | IF the `state.json`, `findings.jsonl`, `ticket.md` or `stapel.toml` of an inbox ticket cannot be read, or a line of its `findings.jsonl` does not parse THEN its heading is followed by `unreadable: <reason>`, it counts as one decision, and the other tickets are listed. | `inbox::unreadable_ticket` |
 | AC-6 | WHEN `stapel answer KEY ID FATE NOTE` runs outside an agent shell on an owed finding of the checkout's ticket with a person's fate THE command appends to its `findings.jsonl` the line `{"kind":"triage","ticket":"<KEY>","id":"<ID>","fate":"<FATE>","note":"<NOTE>","imported_by":{"by":"person","user":"<user>"}}`, prints `answered: <ID> of <KEY>: <FATE>`, exits 0, and `stapel next` no longer names the finding; a NOTE that starts with `-` is a note, not an option. | `answer::appends_a_person_triage` |
 | AC-7 | IF the id is no finding of the ticket, the finding is not owed, the fate is not a person's fate, the note is empty after trimming, the record line would exceed the journal's line limit, the ticket is closed, its `state.json` is legacy or unreadable, a line of its `findings.jsonl` does not parse, git has no user name, or the checkout's branch names another ticket than KEY or none THEN `stapel answer` prints `stapel: <reason>` (texts in Design), exits 2 and appends nothing. | `answer::refusals` |
 | AC-8 | IF `stapel answer` runs in an agent shell THEN it prints `stapel: only a person answers a finding: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set)`, exits 1 and appends nothing; no option makes it run there. | `answer::refuses_in_an_agent_shell` |
@@ -125,7 +125,9 @@ Terms:
   the buttons of `ticket.md` and `page.md`, every other command. Changed: the command list of STP-39 AC-1
   gains two names; the guard reads the program name in lower case (DR-2).
 - **Not promised:** the Frame's list; an entry the editor shows after the file changed on disk and before
-  the editor reloads it; two answers to one finding from two sessions (the second is refused by AC-7).
+  the editor reloads it; two answers to one finding from two sessions (the second is refused by AC-7); an
+  open ticket that the branch of no live worktree names (since plan item 1.13 `stapel new` gives each
+  ticket its worktree) (XR1-2).
 
 ### Abuse table
 
@@ -161,7 +163,7 @@ ticket_drift`.
 | Confirmations | a ticket whose next action is `write-page`; one with `confirm`; one with `spec-review` (no entry); one in its build with a provisional section (an entry); one with an owed finding and a waiting section (both entries, the finding first); waiting ids in config order | `inbox::lists_owed_confirmations` |
 | Empty | a fixture with no open ticket; a ticket that owes nothing; `inbox.md` written over an old one | `inbox::nothing_waits` |
 | Worktrees | two worktrees with tickets that owe; this checkout on a ticket branch; a closed ticket; a branch `feature` with no ticket; a worktree folder deleted (prunable) | `inbox::tickets_of_every_worktree` |
-| Unreadable | a `findings.jsonl` that is a folder; a `state.json` that does not parse; a worktree whose `stapel.toml` does not load (no next action); the other ticket still listed | `inbox::unreadable_ticket` |
+| Unreadable | a `findings.jsonl` that is a folder; a `findings.jsonl` line that does not parse; a `state.json` that does not parse; a worktree whose `stapel.toml` does not load; the other ticket still listed | `inbox::unreadable_ticket` |
 | Answer | each person's fate on an owed finding; the line byte for byte; the user name; a note `- fix it` and a note `say "no" \ later`; `stapel next` afterwards | `answer::appends_a_person_triage` |
 | Refusals | unknown id; a triaged finding; a LOW finding; fate `open`, `intent_gap`, `PATCH`; a note of spaces; a note of 70 000 bytes; KEY of another ticket than the branch's; the main checkout (no branch ticket); a closed ticket; a legacy `state.json`; a `findings.jsonl` with a line that does not parse; no `user.name` in git; `findings.jsonl` unchanged each time | `answer::refusals` |
 | Agent shell | `CLAUDECODE=1`; `CLAUDE_CODE_ENTRYPOINT=cli`; `findings.jsonl` unchanged | `answer::refuses_in_an_agent_shell` |
@@ -290,6 +292,9 @@ inbox URI that is not an open buffer, given to `stapel.page`, and an inbox URI g
   agent gets the agent message whatever the buffer holds.
 - 2026-11-23, agent: the rewrite of AC-15 also follows `stapel.page` and `stapel.inbox`, so the
   `stapel.inbox` button runs `stapel inbox` twice; the step 11 test now expects the file after a page run.
+- 2026-11-23, agent (XR1-3): `.stapel/stapel.toml` of this repository gets `[check] points = ["review",
+  "close"]`, because the person asked on 2026-11-23 for fewer local checks (a check takes 45 to 100 min
+  here); a ledger decision records it.
 
 ### As built
 
@@ -310,10 +315,12 @@ Notes of the build, dated 2026-11-23, agent.
   shell, the entry, the note (an entry without a `note:` line counts as an empty note), then
   `worktree_of`. The answer runs `stapel answer -- KEY ID FATE NOTE` with the label without the note.
   `rewrite_inbox` runs `stapel inbox` silently after each run that ran and carries non-empty buffer notes
-  by heading; a failed `stapel inbox` leaves the file as it was.
+  by heading; a failed `stapel inbox` leaves the file as it was. The rewrite also follows a button whose
+  child could not start (XR1-9). The note is the text of the entry's first `note:` line (XR1-10).
 - History lines: step 7's GREEN (`.gitignore` of this repository). Tests: the RED of step 7 changed
   `init::appends_to_existing_gitignore`; the RED of step 12 changed one line of
-  `lsp::inbox_page_and_inbox_buttons`.
+  `lsp::inbox_page_and_inbox_buttons`; the RED of step 8 added two names to STP-39's
+  `lsp::initialize_and_shutdown` (XR1-6).
 
 ## Proof
 
@@ -380,6 +387,13 @@ merge into main.
 13. Fix DR-1 (AC-1; test `inbox::tickets_of_every_worktree`, which fails at the RED because a ticket with
     key number 10 is listed before one with 9): the GREEN sorts the tickets by `tickets::key_number`.
     Must not change: the entries of a ticket.
+14. Fix CR1-1 (AC-2; test `inbox::lists_owed_confirmations`, which fails at the RED because a ticket whose
+    Plan names one step label twice gets a confirmation entry): the GREEN makes `waiting_sections` count the
+    Plan as written only when `next.rs` `plan_faults` finds nothing, as `next::decide` does. Must not
+    change: the confirmation entry of a valid Plan.
+15. Fix XR1-1 and DR2-1 (AC-5; test `inbox::unreadable_ticket`, which fails at the RED because a
+    `findings.jsonl` line that does not parse is skipped): the GREEN gives such a ticket an `unreadable:`
+    line and drops the unused `next::text_at` call. Must not change: the other unreadable cases.
 
 ## Review
 
@@ -394,6 +408,7 @@ Findings:
 |---|---|---|---|---|---|---|---|
 | spec-review | 1 | external | 0 | 8 | 5 | 0 | defer 1, patch 12 |
 | step-drift | 1 | drift | 0 | 1 | 4 | 0 | patch 5 |
+| code-review | 1 | drift, external, reviewer | 0 | 4 | 12 | 0 | defer 6, patch 10 |
 | dependency | STP-39:c0dd15b1:c1d22378 | depends | 0 | 0 | 2 | 0 | patch 2 |
 
 Check runs:
