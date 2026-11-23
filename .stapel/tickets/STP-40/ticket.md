@@ -400,7 +400,7 @@ Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| head | fail | 698e185 | 2026-11-23T16:55:14Z | pass 8, tests-changed 5 |
+| head | pass | 856d66d | 2026-11-23T17:25:09Z | pass 13 |
 <!-- stapel:review:end -->
 
 ## Summary
