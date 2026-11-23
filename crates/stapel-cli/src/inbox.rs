@@ -5,7 +5,7 @@ use crate::repo;
 use stapel_core::inbox::{Entry, Kind, owed_findings, render, waiting_sections};
 use stapel_core::journal::{self, Entry as Line};
 use stapel_core::ticket::{parse, read};
-use stapel_core::tickets::{Status, Ticket, branch_ticket};
+use stapel_core::tickets::{Status, Ticket, branch_ticket, key_number};
 use std::path::{Path, PathBuf};
 
 /// The owed decisions of the open ticket of the checkout at `path`; one unreadable entry when its
@@ -73,7 +73,7 @@ fn read_entries(
 }
 
 pub fn run() -> Result<(), Fail> {
-    let (root, _config) = repo::open().map_err(Fail::failed)?;
+    let (root, config) = repo::open().map_err(Fail::failed)?;
     let mut paths: Vec<PathBuf> = vec![root.clone()];
     for wt in stapel_core::parallel::worktrees(&root) {
         if !wt.prunable && wt.path.is_dir() {
@@ -81,7 +81,7 @@ pub fn run() -> Result<(), Fail> {
         }
     }
     let mut seen: Vec<PathBuf> = Vec::new();
-    let mut found: Vec<(String, Vec<Entry>)> = Vec::new();
+    let mut found: Vec<((Option<u64>, String), Vec<Entry>)> = Vec::new();
     for path in paths {
         let real = path.canonicalize().unwrap_or_else(|_| path.clone());
         if seen.contains(&real) {
@@ -95,7 +95,8 @@ pub fn run() -> Result<(), Fail> {
             continue;
         }
         let entries = entries_of(&path, &real.display().to_string(), &ticket);
-        found.push((ticket.key.to_lowercase(), entries));
+        let order = (key_number(&config, &ticket.key), ticket.key.to_lowercase());
+        found.push((order, entries));
     }
     found.sort_by(|a, b| a.0.cmp(&b.0));
     let entries: Vec<Entry> = found.into_iter().flat_map(|(_, e)| e).collect();
