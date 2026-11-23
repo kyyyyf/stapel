@@ -666,6 +666,41 @@ fn fenced_markers_are_text() {
     );
 }
 
+// STP-38 step 15: a Review section that ends inside an unclosed fence or comment refuses before any
+// write, so no writer adds a block inside it or beside a comment it would close.
+#[test]
+fn unclosed_fence_or_comment_refuses() {
+    let cases = [
+        // Opened with four backticks, "closed" with three.
+        "## Review\n\n````\nhand text\n```\n",
+        // A fence never closed, with a later heading inside it.
+        "## Review\n\n```\nhand text\n## Summary\nTODO\n",
+        // A comment never closed.
+        "## Review\n\n<!-- hand note\n## Summary\nTODO\n",
+    ];
+    for text in cases {
+        let repo = repo_with_ticket();
+        let dir = repo.path();
+        put(dir, TICKET, text);
+        put(
+            dir,
+            "in.jsonl",
+            &lines(&[finding("F-1", "spec-review", 1, "reviewer", "HIGH", "open")]),
+        );
+        git(dir, &["add", "-A"]);
+        git(dir, &["commit", "-q", "-m", "an unclosed construct"]);
+        let before = common::snapshot(dir);
+        let out = stapel(dir).args(["findings", "import", "in.jsonl"]).assert().code(2);
+        let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+        assert!(
+            err.starts_with("stapel: ") && err.contains("unclosed"),
+            "{text:?}: {err}"
+        );
+        assert_eq!(common::snapshot(dir), before, "{text:?}: files changed");
+        assert_eq!(common::read(dir, TICKET), text);
+    }
+}
+
 // STP-38 AC-6: a tree whose only change is the generated block does not stop `check` or `review
 // start`, and once the block is committed the check is still current.
 #[test]
