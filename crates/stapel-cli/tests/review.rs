@@ -392,11 +392,15 @@ fn copy_keeps_the_index() {
     let repo = built();
     let dir = repo.path();
     let index = || std::fs::read(dir.join(".git/index")).unwrap();
+    // `review start` may rewrite the generated Review block of `ticket.md`, and nothing else of it.
+    let ticket = ".stapel/tickets/ABC-1/ticket.md";
     let state = || {
-        (
-            git(dir, &["status", "--porcelain"]),
-            git(dir, &["rev-parse", "HEAD"]),
-        )
+        let status: String = git(dir, &["status", "--porcelain"])
+            .lines()
+            .filter(|l| !l.ends_with(ticket))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        (status, git(dir, &["rev-parse", "HEAD"]))
     };
     let (before_index, before_state) = (index(), state());
 
@@ -404,6 +408,10 @@ fn copy_keeps_the_index() {
     assert!(tree(dir, 1).join("code.txt").exists(), "the copy");
     assert!(index() == before_index, ".git/index changed");
     assert_eq!(state(), before_state);
+    assert_eq!(
+        common::without_review_block(&std::fs::read_to_string(dir.join(ticket)).unwrap()),
+        common::without_review_block(&git(dir, &["show", &format!("HEAD:{ticket}")])),
+    );
     assert!(!dir.join(".stapel/scratch/review/ABC-1-r1/index").exists());
     assert!(!tree(dir, 1).join("index").exists());
     assert_eq!(
