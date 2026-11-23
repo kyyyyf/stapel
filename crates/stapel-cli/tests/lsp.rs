@@ -696,6 +696,36 @@ fn no_ok_on_a_stale_page() {
     assert!(!has_ok(&mut c, &uri), "ticket.md");
 }
 
+// AC-2: a non-empty `only` filter gets no button, on a current page.md and on ticket.md.
+#[test]
+fn no_buttons_under_a_kind_filter() {
+    let repo = common::repo_with_ticket();
+    common::stapel(repo.path())
+        .args(["page", "ABC-1"])
+        .assert()
+        .success();
+    let mut c = Client::start();
+    c.initialize();
+    for doc in ["page.md", "ticket.md"] {
+        let path = repo.path().join(".stapel/tickets/ABC-1").join(doc);
+        let uri = file_uri(&path);
+        c.open(&uri, &std::fs::read_to_string(&path).unwrap());
+        let (resp, _) = c.code_action(&uri, 0);
+        assert!(titles(&resp).len() >= 3, "{doc} without a filter: {resp}");
+        for only in [json!(["source.fixAll"]), json!(["quickfix"])] {
+            let (resp, _) = c.request_with_notes(
+                "textDocument/codeAction",
+                json!({
+                    "textDocument": {"uri": uri},
+                    "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+                    "context": {"diagnostics": [], "only": only}
+                }),
+            );
+            assert!(titles(&resp).is_empty(), "{doc} under {only}: {resp}");
+        }
+    }
+}
+
 // AC-9: a run on a page that changed after the offer, or with another hash, runs nothing.
 #[test]
 fn ok_refused_after_the_page_changed() {
