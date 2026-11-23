@@ -987,6 +987,69 @@ fn diagnostics_cleared_when_the_state_goes() {
     assert_eq!(published(&notes, &uri), vec![Vec::<Value>::new()], "{notes:?}");
 }
 
+// AC-10: `didSave` publishes again; after `stapel ok` from a terminal the waiting diagnostics are gone.
+#[test]
+fn save_refreshes_diagnostics() {
+    let repo = common::repo_with_ticket();
+    let tdir = repo.path().join(".stapel/tickets/ABC-1");
+    let ticket = tdir.join("ticket.md");
+    let uri = file_uri(&ticket);
+    let text = std::fs::read_to_string(&ticket).unwrap();
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &text);
+    let (_, notes) = c.code_action(&uri, 0);
+    let got = published(&notes, &uri);
+    assert_eq!(got.len(), 1, "{notes:?}");
+    assert!(!waiting_lines(&got[0], &text).is_empty(), "{notes:?}");
+
+    common::confirm_sections(repo.path(), "ABC-1");
+    c.notify(
+        "textDocument/didSave",
+        json!({"textDocument": {"uri": uri}}),
+    );
+    let (_, notes) = c.code_action(&uri, 0);
+    let got = published(&notes, &uri);
+    assert_eq!(got.len(), 1, "{notes:?}");
+    assert!(waiting_lines(&got[0], &text).is_empty(), "{notes:?}");
+}
+
+// AC-9: a page regenerated after the offer and sent as `didChange` is refused by the hash.
+#[test]
+fn ok_refused_after_a_reloaded_page() {
+    let message = "stapel lsp: page.md is not current; run stapel page ABC-1 and read it again";
+    let repo = common::repo_with_ticket();
+    common::stapel(repo.path())
+        .args(["page", "ABC-1"])
+        .assert()
+        .success();
+    let tdir = repo.path().join(".stapel/tickets/ABC-1");
+    let page = tdir.join("page.md");
+    let bytes = std::fs::read(&page).unwrap();
+    let hash = stapel_core::page::page_hash(&bytes);
+    let uri = file_uri(&page);
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &String::from_utf8(bytes.clone()).unwrap());
+
+    common::set_section(repo.path(), "ABC-1", "Spec", "The spec, revised.");
+    common::stapel(repo.path())
+        .args(["page", "ABC-1"])
+        .assert()
+        .success();
+    let now = std::fs::read(&page).unwrap();
+    assert_ne!(now, bytes);
+    c.change(&uri, 2, &String::from_utf8(now).unwrap());
+
+    let state = std::fs::read(tdir.join("state.json")).unwrap();
+    let (resp, notes) = c.execute("stapel.ok", json!([uri, hash]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    assert!(resp.get("error").is_none(), "{resp}");
+    assert_eq!(shown(&notes), vec![(1, message.to_string())], "{notes:?}");
+    assert!(logged(&notes).is_empty(), "{notes:?}");
+    assert_eq!(std::fs::read(tdir.join("state.json")).unwrap(), state);
+}
+
 // AC-13: a state or config that cannot be read gives no diagnostic and one Error log line.
 #[test]
 fn bad_state_is_logged() {
