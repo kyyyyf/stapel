@@ -171,3 +171,120 @@ fn keeps_text_outside() {
     let (text, block) = import_into(&ticket_with("Hand line.\n\n", "\r\n"));
     assert_eq!(text, ticket_with(&format!("Hand line.\n\n{block}\n"), "\r\n"));
 }
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .args(["-c", "user.email=none", "-c", "user.name=test-user"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}");
+    String::from_utf8(out.stdout).unwrap()
+}
+
+const SPEC: &str = "**Terms**\n\n- **Widget**: a thing.\n\n| № | Criterion | Test |\n|---|---|---|\n\
+| AC-1 | first criterion | `t::a` |\n\n**Guarantees**\n\n- A widget stays whole.";
+
+/// A committed ticket ABC-1 with a base commit, a Spec with a criterion and one finding imported
+/// (so the Review section holds a block); the tree is clean.
+fn built() -> tempfile::TempDir {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Spec", SPEC);
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "initial"]);
+    let base = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    let mut state = common::state_json(dir, "ABC-1");
+    state["base"] = json!(base);
+    put(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &serde_json::to_string_pretty(&state).unwrap(),
+    );
+    std::fs::write(dir.join("code.txt"), "one\n").unwrap();
+    put(
+        dir,
+        "in.jsonl",
+        &lines(&[finding("F-1", "code-review", 1, "reviewer", "HIGH", "open")]),
+    );
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success();
+    assert!(common::read(dir, TICKET).contains(BEGIN));
+    std::fs::remove_file(dir.join("in.jsonl")).unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1 step 1 GREEN: code"]);
+    repo
+}
+
+#[test]
+fn broken_markers_refuse() {
+    let probe = built();
+    let text = common::read(probe.path(), TICKET);
+    let block = block_of(&text);
+    let broken: Vec<(&str, String)> = vec![
+        ("two sections", format!("{text}\n## Review\n\nMore.\n")),
+        ("begin alone", text.replace(&format!("{END}\n"), "")),
+        ("end alone", text.replace(&format!("{BEGIN}\n"), "")),
+        ("two blocks", text.replace(&block, &format!("{block}\n{block}"))),
+    ];
+    for (case, bad) in broken {
+        let repo = built();
+        let dir = repo.path();
+        put(dir, TICKET, &bad);
+        put(
+            dir,
+            "in.jsonl",
+            &lines(&[finding("F-2", "code-review", 1, "reviewer", "LOW", "patch")]),
+        );
+        put(
+            dir,
+            "triage.jsonl",
+            &json!({"id": "F-1", "ticket": "ABC-1", "fate": "patch", "verdict": "low"}).to_string(),
+        );
+        git(dir, &["add", "-A"]);
+        git(dir, &["commit", "-q", "-m", "break the markers"]);
+        let before = common::snapshot(dir);
+        let commands: [&[&str]; 4] = [
+            &["findings", "import", "in.jsonl"],
+            &["findings", "triage", "triage.jsonl"],
+            &["review", "start", "ABC-1", "--round", "1"],
+            &["check", "ABC-1"],
+        ];
+        for args in commands {
+            let out = stapel(dir).args(args).assert().code(2);
+            let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+            assert!(
+                err.starts_with("stapel: ") && err.contains("ticket.md: "),
+                "{case} {args:?}: {err}"
+            );
+            assert_eq!(common::snapshot(dir), before, "{case} {args:?}: files changed");
+        }
+        assert!(!dir.join(".stapel/scratch/review").exists(), "{case}");
+    }
+
+    // No Review section: the import goes on, the notice, ticket.md unchanged.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let plain = common::read(dir, TICKET).replace("## Review\n", "## Reviews\n");
+    put(dir, TICKET, &plain);
+    put(
+        dir,
+        "in.jsonl",
+        &lines(&[finding("F-1", "spec-review", 1, "reviewer", "HIGH", "open")]),
+    );
+    let out = stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success();
+    let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(
+        err.contains("notice: ")
+            && err.contains("ticket.md has no Review section; no generated block"),
+        "{err}"
+    );
+    assert_eq!(common::read(dir, TICKET), plain);
+    assert_eq!(records(dir).len(), 1);
+}
