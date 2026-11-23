@@ -96,7 +96,7 @@ Terms:
   `page::page_hash` of `page.md` when the button was offered.
 - **Lines** of a text: split as `ticket::scan` splits (`\r\n`, `\r` and `\n` end a line), positions in
   UTF-16 code units. A diagnostic **on a line** covers it from character 0 to its end.
-- **Button**s are code actions without a kind; the `only` filter of a request is ignored.
+- **Button**s are code actions without a kind; a request with a non-empty `only` filter gets none.
 - **Agent shell**: the server's environment has `CLAUDECODE` or `CLAUDE_CODE_ENTRYPOINT` set.
 - **Current page**: `page.md` on disk is byte for byte the text `stapel page KEY` would write now
   (`page::page_text` of `confirm::prepare_waiting`, which refuses a key that is another ticket than the
@@ -109,7 +109,7 @@ Terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN `stapel lsp` gets `initialize` THE server answers with full text sync, a code action provider and an execute command provider with the commands `stapel.status`, `stapel.next`, `stapel.page` and `stapel.ok`; after `shutdown` and `exit` it exits 0; IF `exit` comes without `shutdown`, or standard input ends THEN it exits 1; a request it does not handle gets `MethodNotFound`, a request after `shutdown` gets `InvalidRequest`. | `lsp::initialize_and_shutdown`, `lsp::exit_without_shutdown` |
+| AC-1 | WHEN `stapel lsp` gets `initialize` THE server answers with full text sync with open, close and save, a code action provider and an execute command provider with the commands `stapel.status`, `stapel.next`, `stapel.page` and `stapel.ok`; after `shutdown` and `exit` it exits 0; IF `exit` comes without `shutdown`, or standard input ends THEN it exits 1; a request it does not handle gets `MethodNotFound`, a request after `shutdown` gets `InvalidRequest`. | `lsp::initialize_and_shutdown`, `lsp::exit_without_shutdown`, `lsp::capabilities_name_open_close_and_save` |
 | AC-2 | WHEN a code action request names an open ticket document THE server returns the buttons titled `stapel status <KEY>`, `stapel next` and `stapel page <KEY>`, in this order, at any range of the document; IF the request carries a non-empty `only` filter THEN it returns no button, so a client that applies code actions on format or save never runs one. | `lsp::buttons_on_ticket_documents`, `lsp::no_buttons_under_a_kind_filter` |
 | AC-3 | IF a document is not an open ticket document (another name, another folder, no `stapel.toml`, no `state.json`, a folder name that is not a key such as `-x`, a scheme other than `file`, a URI not opened) THEN the server returns no code action and publishes no diagnostic for it. | `lsp::nothing_for_other_documents` |
 | AC-4 | WHEN `workspace/executeCommand` names a button with an open ticket document THE server runs its own executable with `status <KEY>`, `next`, `page <KEY>` or `ok <KEY>` in the root, waits for it, sends `window/logMessage` with the output, sends `window/showMessage` of type Info with `stapel <args>: <first line>` on exit 0 (`stapel <args>: done` when there is none), or of type Error with `stapel <args>: exit <n>: <first line>` (`stapel <args>: exit <n>` when there is none), `stapel <args>: killed by signal <n>` or `stapel <args>: could not run: <reason>`, and answers `null`. | `lsp::runs_a_button`, `lsp::a_failing_button` |
@@ -118,10 +118,10 @@ Terms:
 | AC-7 | WHEN the document of a code action request is `page.md` and it is a current page THE buttons also hold `stapel ok <KEY>`, last, with the offered hash; the run confirms every waiting section with `via: terminal`, as `stapel ok KEY` from a terminal does. | `lsp::ok_on_a_current_page` |
 | AC-8 | IF `page.md` is not a current page (edited, older than the ticket text, unsaved buffer, no waiting section, a key that is another ticket than the branch's) or the document is `ticket.md` THEN no `ok` button is offered. | `lsp::no_ok_on_a_stale_page` |
 | AC-9 | IF `stapel.ok` arrives when `page.md` is not a current page, or its hash on disk is not the offered hash (a page regenerated after the offer) THEN the server runs nothing, answers `null` and shows an Error message `stapel lsp: page.md is not current; run stapel page <KEY> and read it again`. | `lsp::ok_refused_after_the_page_changed`, `lsp::ok_refused_after_a_reloaded_page` |
-| AC-10 | WHEN a `ticket.md` is opened, changed or saved THE server publishes for it one Information diagnostic `waiting for confirmation (owner: <owner>)`, source `stapel`, on the heading line of each waiting section (on each such line when the heading is duplicated, none when it is missing); WHEN it is closed, or its `state.json` disappears, turns into a state without `schema_version`, or its folder stops being a key, THE server publishes an empty list for it once and forgets its logged errors; a `page.md` gets no diagnostic. | `lsp::waiting_headings`, `lsp::save_refreshes_diagnostics`, `lsp::diagnostics_cleared_when_the_state_goes` |
-| AC-11 | WHEN a section of `ticket.md` is waiting because its text hash changed and its latest confirmation has its text THE server publishes a Hint diagnostic `changed since the last confirmation`, source `stapel`, on each non-blank line of its body in the buffer that the line diff of `similar` marks inserted against the lines of the confirmed text, both sides compared line by line after NFC and trailing whitespace removal; a confirmation without text, a fresh section, or a body or text of more than 5000 lines gives none (the last with one `window/logMessage`); the confirmed text is split into lines as `ticket::scan` splits, with no empty element after a final line end. | `lsp::changed_lines`, `lsp::crlf_confirmed_text` |
+| AC-10 | WHEN a `ticket.md` is opened, changed or saved THE server publishes for it one Information diagnostic `waiting for confirmation (owner: <owner>)`, source `stapel`, on the heading line of each waiting section (on each such line when the heading is duplicated, none when it is missing); WHEN it is closed, or its `state.json` disappears, turns into a state without `schema_version`, or its folder stops being a key, THE server publishes an empty list for it once and forgets its logged errors; a `page.md` gets no diagnostic. | `lsp::waiting_headings`, `lsp::save_refreshes_diagnostics`, `lsp::diagnostics_cleared_when_the_state_goes`, `lsp::folder_not_a_key_and_missing_config` |
+| AC-11 | WHEN a section of `ticket.md` is waiting because its text hash changed and its latest confirmation has its text THE server publishes a Hint diagnostic `changed since the last confirmation`, source `stapel`, on each non-blank line of its body in the buffer that the line diff of `similar` marks inserted against the lines of the confirmed text, both sides compared line by line after NFC and trailing whitespace removal; a confirmation without text, a fresh section, or a body or text of more than 5000 lines, blank lines at its edges not counted, gives none (the last with one `window/logMessage` per open document and section, again only after the section was under the limit); the confirmed text is split into lines as `ticket::scan` splits, with no empty element after a final line end. | `lsp::changed_lines`, `lsp::crlf_confirmed_text`, `lsp::long_section_warns_once` |
 | AC-12 | WHEN a button run ends THE server publishes the diagnostics of every open `ticket.md` again, read from disk state after the run. | `lsp::diagnostics_after_ok` |
-| AC-13 | IF `stapel.toml` or `state.json` of an open `ticket.md` in a ticket folder cannot be read or parsed (a `stapel.toml` that is missing or does not load included; a `state.json` without `schema_version` counts as no state and is not logged) THEN the server publishes no diagnostic for it, sends one `window/logMessage` of type Error naming the file and the cause until the file reads again, and serves the next message. | `lsp::bad_state_is_logged` |
+| AC-13 | IF `stapel.toml` or `state.json` of an open `ticket.md` in a ticket folder cannot be read or parsed (a `stapel.toml` that is missing or does not load included; a `state.json` without `schema_version` counts as no state and is not logged) THEN the server publishes no diagnostic for it, sends one `window/logMessage` of type Error naming the file and the cause until the file reads again, and serves the next message. | `lsp::bad_state_is_logged`, `lsp::folder_not_a_key_and_missing_config` |
 | AC-14 | WHEN the files of `editors/zed/` are read THE `extension.toml` declares the language server `stapel` for the language `Markdown`, `src/lib.rs` starts `worktree.which("stapel")` with the one argument `lsp` and returns `stapel not found on PATH` when there is none, and `cargo metadata --no-deps --manifest-path editors/zed/Cargo.toml` loads; the behaviour in Zed is the stand of Proof. | `lsp::the_zed_extension_starts_stapel_lsp` |
 | AC-15 | WHEN `cargo metadata` lists the workspace THE members are `stapel-core`, `stapel-index`, `stapel-mcp`, `stapel-lsp` and `stapel-cli`; `stapel-agent` and `stapel-forge` are gone, and the stub check covers `stapel-index` and `stapel-mcp` only. | `cli::no_empty_crates`, `cli::workspace_has_seven_members`, `cli::stub_packages_are_empty` |
 
@@ -144,7 +144,7 @@ Terms:
 | makes a folder named `--version` with a `state.json` under `.stapel/tickets/` | not a ticket document: no button | `lsp::nothing_for_other_documents` |
 | edits `page.md` so that it lies about the change, then asks the person to press `ok` | the page differs from the computed one: no `ok` button, a run is refused | `lsp::no_ok_on_a_stale_page`, `lsp::ok_refused_after_the_page_changed` |
 | edits `ticket.md` after the person opened a current page | the computed page changes: the run is refused | `lsp::ok_refused_after_the_page_changed` |
-| edits `ticket.md` and runs `stapel page` after the button was offered, so the new page is current again | the hash differs from the offered hash: the run is refused | `lsp::ok_refused_after_the_page_changed` |
+| edits `ticket.md` and runs `stapel page` after the button was offered, so the new page is current again | the hash differs from the offered hash: the run is refused | `lsp::ok_refused_after_the_page_changed`, `lsp::ok_refused_after_a_reloaded_page` |
 | removes `CLAUDECODE` with `env -u` before it starts the server | deliberate circumvention, not promised (no `security` tag); as for `stapel ok` today | — |
 
 **Author self-check (item 7).** Done on 2026-11-23: each row of the Abuse table maps to promise item 3 or
@@ -167,7 +167,7 @@ ticket_drift`.
 | Other documents | `README.md`; `ticket.md` outside `.stapel/tickets/`; a ticket folder without `state.json`; a root without `stapel.toml`; a folder `-x` with a `state.json`; a folder `stp-039` (a ticket document, key as named); a `stapel.toml` that does not load; an `untitled:` URI; a ticket document never opened; a root whose path has a space (`%20` in the URI) is a ticket document | `lsp::nothing_for_other_documents` |
 | Running | `stapel.status` prints the `ticket:` line in the Info message and the whole output in the log; `stapel.next`; `stapel.page` writes `page.md`; a key whose `state.json` is malformed: `stapel.page` gives an Error message with `exit 1`; a `ticket.md` of a ticket that is not the branch's: `stapel.page` shows the child's refusal with `exit 2` | `lsp::runs_a_button`, `lsp::a_failing_button` |
 | Refusals | `stapel.close`; `stapel.status` with no argument, two arguments, a number, a URI of `README.md`, the URI of another ticket's file plus a key, a ticket document closed before the run; `stapel.ok` without the hash; `stapel.ok` with the URI of an open `ticket.md` and the hash of a current `page.md` | `lsp::refuses_unknown_commands` |
-| Agent shell | `CLAUDECODE=1`; `CLAUDE_CODE_ENTRYPOINT=cli`; each with `stapel.ok` on a current page and with `stapel.status`; `state.json` unchanged; `stapel.close` in an agent shell: `InvalidParams`, no message | `lsp::refuses_in_an_agent_shell` |
+| Agent shell | `CLAUDECODE=1`; `CLAUDE_CODE_ENTRYPOINT=cli`; each with `stapel.ok` and with `stapel.status`; `state.json` unchanged; `stapel.close` in an agent shell: `InvalidParams`, no message (`stapel.ok` on a really current page: `CLAUDECODE` only, in `lsp::refusals_beyond_the_first_cases`) | `lsp::refuses_in_an_agent_shell` |
 | `ok` | a current page: the button is last with the hash of `page.md`; its run confirms every waiting section, `via` is `terminal` | `lsp::ok_on_a_current_page` |
 | Stale page | `page.md` with one byte changed; `page.md` written before a later edit of the Spec; buffer changed but not saved; no `page.md`; no waiting section; a page of a ticket that is not the branch's; `ticket.md` | `lsp::no_ok_on_a_stale_page` |
 | Stale run | the button offered, then the Spec changed, then the run; the button offered, then the Spec changed and `stapel page` run again, then the run; a run with a made-up hash on a current page; each refused, `state.json` unchanged | `lsp::ok_refused_after_the_page_changed` |
@@ -178,13 +178,14 @@ ticket_drift`.
 | Zed | `editors/zed/extension.toml` names the server `stapel` for `Markdown`; `src/lib.rs` uses `worktree.which("stapel")`, the argument `lsp` and the error text; `cargo metadata --no-deps` loads its `Cargo.toml` | `lsp::the_zed_extension_starts_stapel_lsp` |
 | Workspace | `cargo metadata` members; the folders of the crates `stapel-agent` and `stapel-forge` absent; the stub check over `index` and `mcp` | `cli::no_empty_crates`, `cli::workspace_has_seven_members`, `cli::stub_packages_are_empty` |
 | Review round 1 fixes | a code action request with `only: ["source.fixAll"]` on a current `page.md` and on `ticket.md`: no button; an open `ticket.md` with waiting diagnostics whose `state.json` is deleted, then rewritten as `{}`, then restored as a bad file twice: an empty list once each time, and the bad file logged again; `didClose` after `state.json` is gone: an empty list; a confirmed text with CRLF line ends and one changed line: one Hint on that line; a confirmed text of exactly 5000 lines with a final line end: Hints still computed | `lsp::no_buttons_under_a_kind_filter`, `lsp::diagnostics_cleared_when_the_state_goes`, `lsp::crlf_confirmed_text` |
-| Review round 1 coverage | `didSave` after `stapel ok` from a terminal: the waiting diagnostics are gone; `stapel lsp extra`: exit 2; `stapel.ok` in an agent shell on a current page; `stapel.ok` with a number as the second argument and with three arguments; a bad argument in an agent shell: `InvalidParams`; a run whose child prints nothing: `done`; the page regenerated after the offer and sent as `didChange`: refused by the hash | `lsp::save_refreshes_diagnostics`, `lsp::refusals_beyond_the_first_cases`, `lsp::ok_refused_after_a_reloaded_page` |
+| Review round 1 coverage | `didSave` after `stapel ok` from a terminal: the waiting diagnostics are gone; `stapel lsp extra`: exit 2; `stapel.ok` in an agent shell on a current page; `stapel.ok` with a number as the second argument and with three arguments; a bad argument in an agent shell: `InvalidParams`; the page regenerated after the offer and sent as `didChange`: refused by the hash | `lsp::save_refreshes_diagnostics`, `lsp::refusals_beyond_the_first_cases`, `lsp::ok_refused_after_a_reloaded_page` |
+| Review round 2 | a section of 5001 lines changed twice: one Warning; shortened under the limit and lengthened again: a second Warning; the `initialize` answer has `openClose: true` and `save`; an open `ticket.md` whose key template in `stapel.toml` changes so its folder is no key: an empty list once; a root without `stapel.toml`: one Error log line naming it | `lsp::long_section_warns_once`, `lsp::capabilities_name_open_close_and_save`, `lsp::folder_not_a_key_and_missing_config` |
 
 ### Inputs
 
 | Input | Type | Smallest / largest | Empty | Invalid | Precision | Test |
 |---|---|---|---|---|---|---|
-| `stapel lsp` arguments | none | none / none | the only form | any argument: clap refuses, exit 2 | — | `lsp::initialize_and_shutdown` |
+| `stapel lsp` arguments | none | none / none | the only form | any argument: clap refuses, exit 2 | — | `lsp::initialize_and_shutdown`, `lsp::refusals_beyond_the_first_cases` |
 | LSP message | `Content-Length` framed JSON-RPC | one header / the client's size | end of input: exit 1 | bad framing or JSON: the `lsp-server` error, exit 1 (not tested) | — | `lsp::exit_without_shutdown` |
 | Document URI | URI string | `file:///` / any | — | not `file:`, not a ticket document: no actions, no diagnostics | the path as decoded by `lsp-types` | `lsp::nothing_for_other_documents` |
 | Command name | string | — / — | empty: unknown command | not a button name: `InvalidParams` | exact | `lsp::refuses_unknown_commands` |
@@ -204,7 +205,8 @@ ticket_drift`.
 | environment | `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` | refusal of every run | `lsp::refuses_in_an_agent_shell` |
 | file system | `state.json` or `stapel.toml` malformed or unreadable | logged, no diagnostic, server goes on | `lsp::bad_state_is_logged` |
 | file system | `page.md` absent | no `ok` | `lsp::no_ok_on_a_stale_page` |
-| child process | exit 0; exit non-zero; output with non-UTF-8 bytes | Info or Error message; bytes read lossy | `lsp::runs_a_button`, `lsp::a_failing_button` |
+| child process | exit 0; exit non-zero | Info or Error message | `lsp::runs_a_button`, `lsp::a_failing_button` |
+| child process | output with non-UTF-8 bytes; no output (`done`, bare `exit N`) | bytes read lossy; the short forms of AC-4; not tested (Review Focus) | — |
 | child process | killed by a signal; the executable cannot start | the `killed by signal` and `could not run` forms; not tested (Review Focus) | — |
 | child process | a run that does not end | not promised; the server waits | — |
 | git | the branch of the root, read in the server by `prepare_waiting` for the page check | a key that is not the branch's ticket: no `ok` button, a run refused | `lsp::no_ok_on_a_stale_page` |
@@ -219,8 +221,9 @@ branch's ticket; the review judges it); a `page.md` whose line endings the edito
 current; tested by the one-byte case only); a heading inside a fenced block (`ticket::scan` rules; not
 tested here); a child killed by a signal or an executable that cannot start (the two message forms of
 AC-4; not tested, it needs a broken executable); a child command that prints more than the client shows
-(the whole output goes to the log; not tested); a child output with non-UTF-8 bytes (read lossy; not
-tested, it needs such a child).
+(the whole output goes to the log; not tested); a child output with non-UTF-8 bytes or with no output
+(read lossy; the `done` and bare `exit N` forms of AC-4; not tested: every `stapel` button prints a line
+and the server runs its own executable, so a test needs such a child).
 
 ## Design
 
@@ -288,8 +291,8 @@ Notes of the build, dated 2026-11-23, agent.
 - A bad state is logged again only when its cause changes or the files read in between; a shown list
   is cleared on a bad state. A `state.json` without `schema_version` (the `{}` of older fixtures) is
   treated as no state: no diagnostic and no log line.
-- `changed_lines` compares each line after `hash::normal_form`; above 5000 lines on either side it logs
-  one Warning. `similar` marks the first of several equal lines as inserted.
+- `changed_lines` compares each line after `hash::normal_form`; above 5000 lines on either side, blank
+  lines at the edges of each side not counted (agent decision of step 14), it logs one Warning. `similar` marks the first of several equal lines as inserted.
 - After every run that ran, the diagnostics of every open document are published again before the
   answer.
 - The Zed extension passes `worktree.shell_env()` as the environment; an editor started from an agent's
@@ -304,7 +307,7 @@ Notes of the build, dated 2026-11-23, agent.
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `lsp::initialize_and_shutdown`, `lsp::exit_without_shutdown` |
+| AC-1 | `lsp::initialize_and_shutdown`, `lsp::exit_without_shutdown`, `lsp::capabilities_name_open_close_and_save` |
 | AC-2 | `lsp::buttons_on_ticket_documents`, `lsp::no_buttons_under_a_kind_filter` |
 | AC-3 | `lsp::nothing_for_other_documents` |
 | AC-4 | `lsp::runs_a_button`, `lsp::a_failing_button` |
@@ -313,10 +316,10 @@ Notes of the build, dated 2026-11-23, agent.
 | AC-7 | `lsp::ok_on_a_current_page` |
 | AC-8 | `lsp::no_ok_on_a_stale_page` |
 | AC-9 | `lsp::ok_refused_after_the_page_changed`, `lsp::ok_refused_after_a_reloaded_page` |
-| AC-10 | `lsp::waiting_headings`, `lsp::save_refreshes_diagnostics`, `lsp::diagnostics_cleared_when_the_state_goes` |
-| AC-11 | `lsp::changed_lines`, `lsp::crlf_confirmed_text` |
+| AC-10 | `lsp::waiting_headings`, `lsp::save_refreshes_diagnostics`, `lsp::diagnostics_cleared_when_the_state_goes`, `lsp::folder_not_a_key_and_missing_config` |
+| AC-11 | `lsp::changed_lines`, `lsp::crlf_confirmed_text`, `lsp::long_section_warns_once` |
 | AC-12 | `lsp::diagnostics_after_ok` |
-| AC-13 | `lsp::bad_state_is_logged` |
+| AC-13 | `lsp::bad_state_is_logged`, `lsp::folder_not_a_key_and_missing_config` |
 | AC-14 | `lsp::the_zed_extension_starts_stapel_lsp`, and the stand below |
 | AC-15 | `cli::no_empty_crates`, `cli::workspace_has_seven_members`, `cli::stub_packages_are_empty` |
 
@@ -379,6 +382,17 @@ No `ok` button exists before step 7; until then a valid `stapel.ok` run gets the
     fails, it becomes a RED and the GREEN fixes the code.
 16. Refusal coverage (XR1-5, AC-5, AC-6; test `lsp::refusals_beyond_the_first_cases`): a coverage
     commit `STP-39 step 16 tests: ...`. If the test fails, it becomes a RED and the GREEN fixes the code.
+17. One long-section warning (CR2-1, XR2-5, DR2-2, AC-11; test `lsp::long_section_warns_once`, which
+    fails at the RED because a second `didChange` of the same long section logs the Warning again): the
+    GREEN logs the Warning of a section over 5000 lines once per open document and section, and again only
+    after that section has been under the limit. Must not change: the Hints of shorter sections.
+18. Capability coverage (XR2-2, AC-1; test `lsp::capabilities_name_open_close_and_save`): a coverage
+    commit `STP-39 step 18 tests: ...` that checks `openClose` and `save` in the `initialize` answer. If
+    the test fails, it becomes a RED and the GREEN fixes the code.
+19. Branch coverage (XR2-6, AC-10, AC-13; test `lsp::folder_not_a_key_and_missing_config`): a coverage
+    commit `STP-39 step 19 tests: ...` that checks the empty list once when the key template of
+    `stapel.toml` changes so the folder is no key, and the Error log line for a root without
+    `stapel.toml`. If the test fails, it becomes a RED and the GREEN fixes the code.
 
 ## Review
 
