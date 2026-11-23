@@ -318,10 +318,99 @@ fn button(title: String, command: &str, uri: &Uri) -> CodeActionOrCommand {
     })
 }
 
-/// The buttons of an open ticket document; none for any other URI.
-fn buttons(docs: &HashMap<Uri, String>, uri: &Uri) -> Vec<CodeActionOrCommand> {
-    if !docs.contains_key(uri) {
+/// The root of an inbox document: `<root>/.stapel/inbox.md` where `<root>/.stapel/stapel.toml` loads.
+fn inbox_root(uri: &Uri) -> Option<PathBuf> {
+    if !uri.scheme()?.as_str().eq_ignore_ascii_case("file") {
+        return None;
+    }
+    let decoded = uri.path().as_estr().decode().into_string().ok()?;
+    let path = PathBuf::from(decoded.as_ref() as &str);
+    if !path.is_absolute() || path.file_name()? != "inbox.md" {
+        return None;
+    }
+    let stapel = path.parent()?;
+    if stapel.file_name()? != ".stapel" {
+        return None;
+    }
+    let root = stapel.parent()?.to_path_buf();
+    let text = std::fs::read_to_string(stapel.join("stapel.toml")).ok()?;
+    stapel_core::config::Config::parse_at(&text, &root).ok()?;
+    Some(root)
+}
+
+/// The person's fates, in the order of their buttons.
+const PERSON_FATES: [&str; 4] = ["patch", "bad_plan", "defer", "no-change"];
+
+/// The entry of an inbox line.
+enum InboxEntry {
+    Finding(String, String),
+    Confirmation(String),
+}
+
+/// The entry that holds `line`: the nearest heading at or above it must be a `### ` entry heading.
+fn inbox_entry(text: &str, line: usize) -> Option<InboxEntry> {
+    let scanned = stapel_core::ticket::scan(text);
+    let upto = line.min(scanned.len().checked_sub(1)?);
+    let (level, title) = scanned[..=upto].iter().rev().find_map(|s| s.heading.clone())?;
+    if level != 3 {
+        return None;
+    }
+    let words: Vec<&str> = title.split_whitespace().collect();
+    match words.as_slice() {
+        [key, "finding", id] => Some(InboxEntry::Finding(key.to_string(), id.to_string())),
+        [key, "confirmation"] => Some(InboxEntry::Confirmation(key.to_string())),
+        _ => None,
+    }
+}
+
+/// The buttons of an open inbox document for the entry at `line`.
+fn inbox_buttons(text: &str, uri: &Uri, line: usize) -> Vec<CodeActionOrCommand> {
+    let mut list = Vec::new();
+    match inbox_entry(text, line) {
+        Some(InboxEntry::Finding(key, id)) => {
+            for fate in PERSON_FATES {
+                let title = format!("answer {id}: {fate}");
+                list.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: title.clone(),
+                    command: Some(Command {
+                        title,
+                        command: "stapel.answer".to_string(),
+                        arguments: Some(vec![
+                            serde_json::json!(uri.as_str()),
+                            serde_json::json!(key),
+                            serde_json::json!(id),
+                            serde_json::json!(fate),
+                        ]),
+                    }),
+                    ..Default::default()
+                }));
+            }
+        }
+        Some(InboxEntry::Confirmation(key)) => {
+            let title = format!("stapel page {key}");
+            list.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: title.clone(),
+                command: Some(Command {
+                    title,
+                    command: "stapel.page".to_string(),
+                    arguments: Some(vec![serde_json::json!(uri.as_str()), serde_json::json!(key)]),
+                }),
+                ..Default::default()
+            }));
+        }
+        None => {}
+    }
+    list.push(button("stapel inbox".to_string(), "stapel.inbox", uri));
+    list
+}
+
+/// The buttons of an open ticket or inbox document at `line`; none for any other URI.
+fn buttons(docs: &HashMap<Uri, String>, uri: &Uri, line: usize) -> Vec<CodeActionOrCommand> {
+    let Some(text) = docs.get(uri) else {
         return Vec::new();
+    };
+    if inbox_root(uri).is_some() {
+        return inbox_buttons(text, uri, line);
     }
     let Some(doc) = classify(uri) else {
         return Vec::new();
@@ -369,7 +458,14 @@ fn current_page(docs: &HashMap<Uri, String>, uri: &Uri, doc: &TicketDoc) -> Opti
 }
 
 /// The command names of the buttons.
-pub const COMMANDS: [&str; 4] = ["stapel.status", "stapel.next", "stapel.page", "stapel.ok"];
+pub const COMMANDS: [&str; 6] = [
+    "stapel.status",
+    "stapel.next",
+    "stapel.page",
+    "stapel.ok",
+    "stapel.answer",
+    "stapel.inbox",
+];
 
 fn capabilities() -> ServerCapabilities {
     ServerCapabilities {
@@ -426,7 +522,7 @@ fn serve(connection: &Connection) -> i32 {
                             if p.context.only.as_ref().is_some_and(|o| !o.is_empty()) {
                                 Vec::new()
                             } else {
-                                buttons(&docs, &p.text_document.uri)
+                                buttons(&docs, &p.text_document.uri, p.range.start.line as usize)
                             }
                         }
                         Err(e) => {
@@ -553,6 +649,10 @@ fn button_args(
     let command = params.command.as_str();
     if !COMMANDS.contains(&command) {
         return Err(format!("stapel lsp: unknown command {command}"));
+    }
+    // The runs of the inbox buttons come with the next steps; until then no ticket form maps to them.
+    if matches!(command, "stapel.answer" | "stapel.inbox") {
+        return Err(format!("stapel lsp: {command} runs only from an inbox document"));
     }
     let bad = || "stapel lsp: the arguments must be the URI of an open ticket.md or page.md".to_string();
     let want = if command == "stapel.ok" { 2 } else { 1 };
