@@ -768,7 +768,8 @@ fn closed_ticket_by_key_only() {
     ledger_add(dir, Some("ABC-1"))
         .success()
         .stdout("recorded: finding for ABC-1\n");
-    assert_eq!(ledger_text(dir).unwrap().lines().count(), 1);
+    // The close wrote its `catches` record first (STP-37).
+    assert_eq!(ledger_text(dir).unwrap().lines().count(), 2);
 
     // No KEY and no open ticket: today's refusal, one `stapel: `.
     let out = import(dir, None).code(2).get_output().clone();
@@ -785,7 +786,7 @@ fn closed_ticket_by_key_only() {
         err,
         "stapel: no open ticket; name one, e.g. stapel status <KEY>\n"
     );
-    assert_eq!(ledger_text(dir).unwrap().lines().count(), 1);
+    assert_eq!(ledger_text(dir).unwrap().lines().count(), 2);
 
     // No KEY with one open ticket: that ticket, not the closed one.
     stapel(dir).args(["new", "Second"]).assert().success();

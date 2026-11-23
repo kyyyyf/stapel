@@ -160,21 +160,15 @@ fn refuses_a_dirty_tree() {
 fn refuses_bad_rounds() {
     let repo = built();
     let dir = repo.path();
-    for round in ["0", "3"] {
+    for round in ["0", "x", "-1"] {
         refused(
             dir,
             &["ABC-1", "--round", round],
             2,
-            "--round must be 1 or 2; after round 2 the person decides",
+            "--round must be a whole number of 1 or more, or merge",
         );
     }
-    for args in [
-        vec!["ABC-1", "--round", "x"],
-        vec!["ABC-1", "--round", "-1"],
-        vec!["ABC-1"],
-    ] {
-        start(dir, &args).code(2).stderr(contains("error:"));
-    }
+    start(dir, &["ABC-1"]).code(2).stderr(contains("error:"));
     no_review_folder(dir);
 }
 
@@ -309,9 +303,9 @@ fn refusal_order_of_the_later_cases() {
     std::fs::write(dir.join("stray.txt"), "x").unwrap();
     refused(
         dir,
-        &["ABC-1", "--round", "3"],
+        &["ABC-1", "--round", "0"],
         2,
-        "--round must be 1 or 2; after round 2 the person decides",
+        "--round must be a whole number of 1 or more, or merge",
     );
 
     // A dirty tree wins over a missing base and over a bad base.
@@ -1225,13 +1219,107 @@ fn refusals_write_nothing() {
     let ignores_before = ignores(dir);
     // Round 2 without round 1 findings.
     start(dir, &["ABC-1", "--round", "2"]).code(2);
-    for args in [
-        vec!["ABC-1", "--round", "x"],
-        vec!["ABC-1"],
-    ] {
-        start(dir, &args).code(2).stderr(contains("error:"));
-    }
+    refused(
+        dir,
+        &["ABC-1", "--round", "x"],
+        2,
+        "--round must be a whole number of 1 or more, or merge",
+    );
+    start(dir, &["ABC-1"]).code(2).stderr(contains("error:"));
     assert_eq!(snapshot(dir), before, "a refusal changed files");
     assert_eq!(ignores(dir), ignores_before, "an ignore file was written");
     no_review_folder(dir);
+}
+
+#[test]
+fn any_round_number() {
+    let repo = built();
+    let dir = repo.path();
+    let pack = |n: u64| {
+        std::fs::read_to_string(dir.join(format!(".stapel/scratch/review/ABC-1-r{n}/pack.md")))
+            .unwrap()
+    };
+    let finding = |round: u64, id: &str, claim: &str| {
+        format!(
+            r#"{{"v":1,"stage":"code-review","round":"{round}","id":"{id}","severity":"HIGH","claim":"{claim}"}}"#
+        )
+    };
+    let patch = |id: &str| format!(r#"{{"v":1,"kind":"triage","id":"{id}","fate":"patch"}}"#);
+
+    // Round 3 after round 2 findings: the pack carries the patch findings of round 2 only.
+    let lines = [
+        finding(1, "R-1", "first round claim"),
+        patch("R-1"),
+        finding(2, "R-2", "second round claim"),
+        patch("R-2"),
+        finding(2, "R-3", "deferred claim"),
+        r#"{"v":1,"kind":"triage","id":"R-3","fate":"defer"}"#.to_string(),
+    ];
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    findings(dir, &refs);
+    start(dir, &["ABC-1", "--round", "3"]).code(0);
+    let text = pack(3);
+    assert!(text.contains("# Review pack ABC-1, round 3"), "{text}");
+    assert!(text.contains("## Findings of round 2 with the fate patch\n"), "{text}");
+    assert!(text.contains("\n- R-2 (HIGH): second round claim\n"), "{text}");
+    assert!(!text.contains("R-1"), "{text}");
+    assert!(!text.contains("R-3"), "{text}");
+
+    // Round 7 after round 6; the other round folders go.
+    let lines = [finding(6, "R-9", "sixth round claim"), patch("R-9")];
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    findings(dir, &refs);
+    start(dir, &["ABC-1", "--round", "7"]).code(0);
+    let text = pack(7);
+    assert!(text.contains("## Findings of round 6 with the fate patch\n"), "{text}");
+    assert!(text.contains("\n- R-9 (HIGH): sixth round claim\n"), "{text}");
+    assert!(!dir.join(".stapel/scratch/review/ABC-1-r3").exists());
+
+    // The largest u64 is a round.
+    let max = u64::MAX;
+    let lines = [finding(max - 1, "R-8", "late claim"), patch("R-8")];
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    findings(dir, &refs);
+    start(dir, &["ABC-1", "--round", &max.to_string()]).code(0);
+
+    std::fs::remove_dir_all(dir.join(".stapel/scratch")).unwrap();
+    for round in ["0", "-1", "x", "1.5", "18446744073709551616"] {
+        refused(
+            dir,
+            &["ABC-1", "--round", round],
+            2,
+            "--round must be a whole number of 1 or more, or merge",
+        );
+    }
+}
+
+#[test]
+fn a_round_needs_the_previous_round() {
+    let repo = built();
+    let dir = repo.path();
+    let text = |n: u64| {
+        format!(
+            "round {n} needs the code review findings of round {} in .stapel/tickets/ABC-1/findings.jsonl",
+            n - 1
+        )
+    };
+    refused(dir, &["ABC-1", "--round", "3"], 2, &text(3));
+
+    // Round 1 findings do not serve round 3.
+    findings(dir, &[ROUND_ONE]);
+    refused(dir, &["ABC-1", "--round", "3"], 2, &text(3));
+    refused(dir, &["ABC-1", "--round", "4"], 2, &text(4));
+
+    // A finding of another stage does not serve it either.
+    findings(
+        dir,
+        &[r#"{"v":1,"stage":"step-drift","round":"2","id":"D-1"}"#],
+    );
+    refused(dir, &["ABC-1", "--round", "3"], 2, &text(3));
+
+    findings(
+        dir,
+        &[r#"{"v":1,"stage":"code-review","round":"2","id":"R-2"}"#],
+    );
+    start(dir, &["ABC-1", "--round", "3"]).code(0);
 }

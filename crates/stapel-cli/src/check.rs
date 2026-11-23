@@ -237,6 +237,24 @@ fn tests_hash(tests: &[TestId]) -> String {
     sha256_hex(&[&text])
 }
 
+/// The cache key of a step: its test hash; with history commits the hash of the history text of its
+/// RED run (path, history commit and text hash) joins it (STP-37 AC-10). A step without history
+/// commits keeps the plain test hash.
+fn step_key(root: &Path, a: &Analysis) -> String {
+    let base = tests_hash(&a.tests);
+    if a.red_files.is_empty() {
+        return base;
+    }
+    let mut files: Vec<&(String, String)> = a.red_files.iter().collect();
+    files.sort();
+    let mut text = format!("{base}\n");
+    for (path, commit) in files {
+        let body = stapel_core::steps::show(root, commit, path).unwrap_or_default();
+        text.push_str(&format!("{path} {commit} {}\n", sha256_hex(&[&body])));
+    }
+    sha256_hex(&[&text])
+}
+
 /// The lock hash at `commit`: SHA-256 of `Cargo.lock` under cargo, of every `package-lock.json`,
 /// `yarn.lock` and `pnpm-lock.yaml` under junit; the word `none` when there is none.
 fn lock_hash(root: &Path, commit: &str, junit: bool) -> String {
@@ -495,6 +513,8 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         timeout,
         deadline,
         head: &at,
+        key: &ticket.key,
+        bounds,
         outside: std::cell::RefCell::new(blocked),
         junit: junit_run,
     };
@@ -509,6 +529,44 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
     // The level follows the `cargo:` line (AC-11).
     let level_now = level.or(check.level.as_deref()).unwrap_or("head").to_string();
     say!("level: {level_now}");
+    // Under junit a Node pin of the checked commit is compared with `node --version` (STP-37 AC-6, AC-7).
+    let pin = if junit {
+        match node_pin(&root, &at) {
+            Ok(pin) => pin,
+            Err(e) => return refuse(e),
+        }
+    } else {
+        None
+    };
+    if let Some((file, pin, numbers)) = pin {
+        let run = runner.left().and_then(|left| {
+            run_program(
+                Path::new("node"),
+                &wt.path,
+                &["--version".to_string()],
+                &[],
+                left,
+            )
+        });
+        let version = match run {
+            Ok(run) if run.timed_out => Err(runner.limit_reason()),
+            Ok(run) if run.exit == Some(0) => node_version_of(&run.output)
+                .ok_or_else(|| format!("no version in the output: {}", run.output.trim())),
+            Ok(run) => Err(format!("exit {:?}: {}", run.exit, run.output.trim())),
+            Err(e) => Err(e),
+        };
+        match version {
+            Err(e) => return refuse(format!("node --version failed: {e}")),
+            Ok((version, have)) => {
+                if have[..numbers.len()] != numbers[..] {
+                    return refuse(format!(
+                        "node {version} does not match the pin {pin} in {file}"
+                    ));
+                }
+                say!("node: {version} (pin {pin} in {file})");
+            }
+        }
+    }
     if !inputs.unchanged.is_empty() {
         say!("build inputs: {}", named(&inputs.unchanged));
     }
@@ -536,7 +594,15 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
                 let source = if level_now == "full" {
                     None
                 } else {
-                    cached_from(&ticket.dir, &ticket.key, a, &lock_now, &toolchain_now, &tool_now)
+                    cached_from(
+                        &ticket.dir,
+                        &ticket.key,
+                        a,
+                        &step_key(&root, a),
+                        &lock_now,
+                        &toolchain_now,
+                        &tool_now,
+                    )
                 };
                 match source {
                     // At the level `steps` a cached step runs nothing (AC-8).
@@ -560,7 +626,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
                 "outcome": outcome,
                 "reason": cut(&reason, MAX_REASON),
                 "tests": a.tests.len(),
-                "tests_hash": tests_hash(&a.tests),
+                "tests_hash": step_key(&root, a),
                 "names": names_of(&outcome, &reason),
             });
             if let Some(from) = &from {
@@ -570,6 +636,14 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
             steps_json.push(step_json);
         }
         say_step(a, &outcome, &reason);
+    }
+    // The history commits of the range, before the suite line (STP-37 AC-13).
+    let history = match build_inputs::history_commits(&root, &ticket.key, &at, bounds) {
+        Ok(h) => h,
+        Err(e) => return refuse(e),
+    };
+    for line in history_lines(&history) {
+        say!("{line}");
     }
     // The entries left out of the local suite; at `full` nothing is left out (AC-12).
     let excluded: Vec<String> = if level_now == "full" {
@@ -588,6 +662,22 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
     };
     ok &= suite.outcome == "pass" || suite.outcome == "skipped";
     say!("suite: {}: {}", suite.outcome, suite.detail);
+    // The project commands run after the suite, at `head` and `full` (STP-37 AC-2, AC-4, AC-5).
+    let project_commands: &[String] = check.project.as_deref().unwrap_or(&[]);
+    let mut project_json: Vec<serde_json::Value> = Vec::new();
+    if !project_commands.is_empty() {
+        if level_now == "steps" {
+            say!("project: skipped: level steps");
+        } else {
+            for (command, outcome) in runner.project(project_commands) {
+                ok &= outcome == "pass" || outcome == "skipped";
+                project_json.push(serde_json::json!({
+                    "command": cut_chars(&command, MAX_COMMAND),
+                    "outcome": outcome,
+                }));
+            }
+        }
+    }
     say!("result: {}", if ok { "pass" } else { "fail" });
     let mut record = serde_json::json!({
         "v": 1,
@@ -617,6 +707,21 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         "failed": suite.counts.1,
         "ignored": suite.counts.2,
     });
+    if !project_json.is_empty() {
+        // Past MAX_PROJECT entries the rest are left out; the record says `project_truncated: true`.
+        if project_json.len() > MAX_PROJECT {
+            project_json.truncate(MAX_PROJECT);
+            record["project_truncated"] = serde_json::json!(true);
+        }
+        record["project"] = serde_json::json!(project_json);
+    }
+    if !history.is_empty() {
+        let (entries, truncated) = history_json(&history);
+        record["history"] = serde_json::json!(entries);
+        if truncated {
+            record["history_truncated"] = serde_json::json!(true);
+        }
+    }
     if let Some(end) = &end {
         record["end"] = serde_json::json!(end);
     }
@@ -663,8 +768,143 @@ struct Suite {
 const MAX_STEPS: usize = 200;
 const MAX_LABEL: usize = 200;
 const MAX_REASON: usize = 1024;
+/// A project command or a history reason is cut to this many characters in a record, and at most
+/// `MAX_PROJECT` entries of each are listed.
+const MAX_COMMAND: usize = 200;
+const MAX_PROJECT: usize = 20;
+/// A failing project command prints this many lines of its output.
+const PROJECT_TAIL: usize = 20;
 /// A record stays below the journal's 64 KiB line limit with room to spare.
 const MAX_RECORD: usize = 60 * 1024;
+
+/// The numbers of a version: one to three dot-separated numbers with an optional leading `v`.
+fn version_numbers(text: &str) -> Option<Vec<u64>> {
+    let text = text.strip_prefix('v').unwrap_or(text);
+    let parts: Vec<&str> = text.split('.').collect();
+    if parts.len() > 3 {
+        return None;
+    }
+    parts
+        .iter()
+        .map(|p| {
+            if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) {
+                p.parse().ok()
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// The Node pin at a commit: the file, the trimmed text and its numbers, for the first of `.nvmrc`
+/// and `.node-version` whose text is one line that is a version (STP-37 AC-6).
+/// A pin that is not a version, or two pins that disagree, is an error (STP-37 AC-8).
+type Pin = (&'static str, String, Vec<u64>);
+fn node_pin(root: &Path, at: &str) -> Result<Option<Pin>, String> {
+    let mut pins: Vec<Pin> = Vec::new();
+    for file in [".nvmrc", ".node-version"] {
+        let Some(text) = stapel_core::steps::show(root, at, file) else {
+            continue;
+        };
+        let text = text.trim();
+        let numbers = if text.contains('\n') { None } else { version_numbers(text) };
+        let Some(numbers) = numbers else {
+            return Err(format!("{file}: not a version: {text}"));
+        };
+        pins.push((file, text.to_string(), numbers));
+    }
+    if pins.len() == 2 && pins[0].2 != pins[1].2 {
+        return Err(format!(
+            ".nvmrc and .node-version disagree: {}, {}",
+            pins[0].1, pins[1].1
+        ));
+    }
+    Ok(pins.into_iter().next())
+}
+
+/// The first `v<n>.<n>.<n>` word of the output of `node --version`: the word and its numbers.
+fn node_version_of(output: &str) -> Option<(String, Vec<u64>)> {
+    output.split_whitespace().find_map(|w| {
+        let numbers = version_numbers(w)?;
+        (w.starts_with('v') && numbers.len() == 3).then(|| (w.to_string(), numbers))
+    })
+}
+
+/// One path as one shell word: single-quoted, with `./` before a path that starts with `-`.
+/// The text with each control character (a newline included) as a space (STP-37 AC-2).
+fn printable(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
+fn shell_word(path: &str) -> String {
+    let path = if path.starts_with('-') { format!("./{path}") } else { path.to_string() };
+    format!("'{}'", path.replace('\'', "'\\''"))
+}
+
+/// Whether a whitespace-separated word of the command is exactly `{files}`.
+fn has_files_word(command: &str) -> bool {
+    command.split_whitespace().any(|w| w == "{files}")
+}
+
+/// The command with each whole word `{files}` replaced by `list`, joined by spaces.
+fn replace_files_word(command: &str, list: &[String]) -> String {
+    let joined = list.join(" ");
+    let mut out = String::new();
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        if word == "{files}" {
+            out.push_str(&joined);
+        } else {
+            out.push_str(word);
+        }
+        word.clear();
+    };
+    for c in command.chars() {
+        if c.is_whitespace() {
+            flush(&mut word, &mut out);
+            out.push(c);
+        } else {
+            word.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
+}
+
+/// The first `max` characters of `text`.
+fn cut_chars(text: &str, max: usize) -> String {
+    text.chars().take(max).collect()
+}
+
+/// The history lines of a report (STP-37 AC-13): `history: <short id> <reason>`, control
+/// characters of the reason each replaced by a space, the reason cut to `MAX_COMMAND` characters.
+fn history_lines(history: &[(String, String)]) -> Vec<String> {
+    history
+        .iter()
+        .map(|(sha, reason)| {
+            let shown: String = cut_chars(reason, MAX_COMMAND)
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            format!("history: {} {shown}", short(sha))
+        })
+        .collect()
+}
+
+/// The `history` entries of a check record (STP-37 AC-14): `{commit, reason}`, at most
+/// `MAX_PROJECT` of them; the flag says whether the rest were left out.
+fn history_json(history: &[(String, String)]) -> (Vec<serde_json::Value>, bool) {
+    let entries = history
+        .iter()
+        .take(MAX_PROJECT)
+        .map(|(sha, reason)| {
+            serde_json::json!({"commit": sha, "reason": cut_chars(reason, MAX_COMMAND)})
+        })
+        .collect();
+    (entries, history.len() > MAX_PROJECT)
+}
 
 fn cut(text: &str, max: usize) -> String {
     let mut end = text.len().min(max);
@@ -696,6 +936,9 @@ struct Runner<'a> {
     /// The end of the time limit of the whole check.
     deadline: std::time::Instant,
     head: &'a str,
+    /// The ticket key and the bounds of its range, which `{files}` reads.
+    key: &'a str,
+    bounds: Bounds<'a>,
     /// Set when a build input lies above the worktree: no cargo runs, and every step and the suite
     /// read `unverified: build-input-outside: <path>`.
     outside: std::cell::RefCell<Option<String>>,
@@ -710,12 +953,12 @@ fn cached_from(
     dir: &Path,
     ticket: &str,
     a: &Analysis,
+    want_tests: &str,
     lock: &str,
     toolchain: &str,
     tool: &str,
 ) -> Option<String> {
     let (red, green) = (a.red.as_ref()?, a.green.as_ref()?);
-    let want_tests = tests_hash(&a.tests);
     let text = std::fs::read_to_string(dir.join("runs.jsonl")).ok()?;
     let mut found = None;
     for line in text.lines() {
@@ -741,7 +984,7 @@ fn cached_from(
             if matches!(outcome, "pass" | "cached")
                 && s["red"].as_str() == Some(red.sha.as_str())
                 && s["green"].as_str() == Some(green.sha.as_str())
-                && s["tests_hash"].as_str() == Some(want_tests.as_str())
+                && s["tests_hash"].as_str() == Some(want_tests)
             {
                 let from = if outcome == "cached" {
                     s["from"].as_str().unwrap_or(id)
@@ -809,7 +1052,7 @@ impl Runner<'_> {
     }
 
     /// Runs `tests` at `commit`, one cargo run per test file.
-    fn at(&self, commit: &str, tests: &[TestId], at_red: bool) -> At {
+    fn at(&self, commit: &str, tests: &[TestId], at_red: bool, files: &[(String, String)]) -> At {
         // After a build-input hit no further cargo run starts (AC-7).
         if let Some(why) = self.outside.borrow().clone() {
             return Err(why);
@@ -817,6 +1060,25 @@ impl Runner<'_> {
         // No checkout runs after the time limit (STP-35 AC-3).
         self.left()?;
         self.wt.checkout(commit)?;
+        // STP-37 AC-10: in a test file a history commit changed, the step's own tests come from the
+        // newest such commit; the rest of the file stays as at `commit`.
+        for (path, from) in files {
+            let newer = stapel_core::steps::show(self.root, from, path)
+                .ok_or_else(|| format!("{path} is missing at {}", short(from)))?;
+            let base = stapel_core::steps::show(self.root, commit, path)
+                .ok_or_else(|| format!("{path} is missing at {}", short(commit)))?;
+            let names: Vec<String> = tests
+                .iter()
+                .filter(|t| t.path() == *path)
+                .map(|t| t.name.clone())
+                .collect();
+            let text = if self.junit.is_some() {
+                stapel_core::ts_tests::with_calls_from(&base, &newer, &names)
+            } else {
+                stapel_core::rust_tests::with_tests_from(&base, &newer, &names)
+            };
+            std::fs::write(self.wt.path.join(path), text).map_err(|e| format!("{path}: {e}"))?;
+        }
         if let Some(junit) = &self.junit {
             return self.at_junit(junit, commit, tests);
         }
@@ -1112,8 +1374,8 @@ impl Runner<'_> {
             (Ok(BTreeMap::new()), Ok(BTreeMap::new()))
         } else {
             (
-                self.at(&red.sha, tests, true),
-                self.at(&green.sha, tests, false),
+                self.at(&red.sha, tests, true, &a.red_files),
+                self.at(&green.sha, tests, false, &[]),
             )
         };
         // HEAD: tests missing there are removed; the rest run.
@@ -1133,7 +1395,7 @@ impl Runner<'_> {
             .cloned()
             .collect();
         let missing: Vec<&TestId> = tests.iter().filter(|t| !present.contains(t)).collect();
-        let at_head = self.at(self.head, &present, false);
+        let at_head = self.at(self.head, &present, false, &[]);
 
         for (state, when) in [(&at_red, "RED"), (&at_green, "GREEN"), (&at_head, "HEAD")] {
             match state {
@@ -1204,6 +1466,136 @@ impl Runner<'_> {
                 if n == 1 { "" } else { "s" }
             ),
         )
+    }
+
+    /// Runs the project commands in order with `sh -c` in the check copy at HEAD, with the
+    /// environment of the other runs and under the time limit of the check; prints a line for each
+    /// and returns the command with its outcome. After the limit ran out, the running command is
+    /// killed with its group and it and the rest are `unverified` (STP-37 AC-2, AC-4).
+    fn project(&self, commands: &[String]) -> Vec<(String, &'static str)> {
+        let mut done: Vec<(String, &'static str)> = Vec::new();
+        let mut stop: Option<String> = None;
+        let mut prepared = false;
+        let mut files: Option<Result<Vec<String>, String>> = None;
+        for command in commands {
+            let mut command_run = command.clone();
+            let shown = printable(command);
+            // The limit comes first: before the checkout and before the `{files}` skip.
+            if stop.is_none() && self.left().is_err() {
+                stop = Some("time limit".to_string());
+            }
+            if stop.is_none() && has_files_word(command) {
+                let list = files.get_or_insert_with(|| self.changed_files());
+                match list {
+                    Ok(list) if list.is_empty() => {
+                        say!("project: {shown}: skipped: no changed files");
+                        done.push((command.clone(), "skipped"));
+                        continue;
+                    }
+                    Ok(list) => command_run = replace_files_word(command, list),
+                    Err(e) => stop = Some(e.clone()),
+                }
+            }
+            if stop.is_none() && !prepared {
+                let result = self.wt.checkout(self.head).and_then(|()| {
+                    if self.junit.is_some() {
+                        self.link_modules()
+                    } else {
+                        Ok(())
+                    }
+                });
+                match result {
+                    Ok(()) => prepared = true,
+                    Err(e) => stop = Some(e),
+                }
+            }
+            if stop.is_none() && self.left().is_err() {
+                stop = Some("time limit".to_string());
+            }
+            if let Some(why) = &stop {
+                say!("project: {shown}: unverified: {why}");
+                done.push((command.clone(), "unverified"));
+                continue;
+            }
+            let left = self.left().unwrap_or_default();
+            // Under the cargo runner the command gets the environment of the cargo runs.
+            let target = self.target.to_string_lossy().into_owned();
+            let env: Vec<(&str, &str)> = if self.junit.is_some() {
+                Vec::new()
+            } else {
+                vec![("CARGO_TARGET_DIR", &target), ("CARGO_TERM_COLOR", "never")]
+            };
+            let run = run_program(
+                Path::new("/bin/sh"),
+                &self.wt.path,
+                &["-c".to_string(), command_run],
+                &env,
+                left,
+            );
+            match run {
+                Err(e) => {
+                    say!("project: {shown}: unverified: {e}");
+                    done.push((command.clone(), "unverified"));
+                }
+                Ok(run) if run.timed_out => {
+                    stop = Some("time limit".to_string());
+                    say!("project: {shown}: unverified: time limit");
+                    done.push((command.clone(), "unverified"));
+                }
+                Ok(run) => match run.exit {
+                    Some(0) => {
+                        say!("project: {shown}: pass");
+                        done.push((command.clone(), "pass"));
+                    }
+                    Some(code) => {
+                        say!("project: {shown}: fail (exit {code})");
+                        let text = run.output.trim_end();
+                        let lines: Vec<&str> = text.lines().collect();
+                        for l in &lines[lines.len().saturating_sub(PROJECT_TAIL)..] {
+                            say!("{}", printable(l));
+                        }
+                        done.push((command.clone(), "fail"));
+                    }
+                    None => {
+                        say!("project: {shown}: unverified: ended by a signal");
+                        done.push((command.clone(), "unverified"));
+                    }
+                },
+            }
+        }
+        done
+    }
+
+    /// The changed files of the ticket: the paths of each non-merge commit of the first-parent
+    /// range that exist at the checked commit and do not lie under `.stapel/`; sorted, unique, each
+    /// one shell-quoted word (STP-37 AC-3).
+    fn changed_files(&self) -> Result<Vec<String>, String> {
+        let commits = build_inputs::range(self.root, self.key, self.head, self.bounds)?;
+        let mut kept = Vec::new();
+        for sha in commits {
+            let parents = git_text(self.root, &["rev-list", "--parents", "-n", "1", &sha])?;
+            if parents.split_whitespace().count() <= 2 {
+                kept.push(sha);
+            }
+        }
+        let commits = kept.join("\n");
+        let existing = git_text(self.root, &["ls-tree", "-r", "-z", "--name-only", self.head])?;
+        let existing: std::collections::BTreeSet<&str> =
+            existing.split('\0').filter(|p| !p.is_empty()).collect();
+        let mut files: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for sha in commits.lines() {
+            let out = git_text(
+                self.root,
+                &["diff-tree", "-z", "--no-renames", "--name-only", "-r", "--root", sha],
+            )?;
+            // With a commit argument, the first item is the commit id.
+            for path in out.split('\0').filter(|p| !p.is_empty() && *p != sha) {
+                if existing.contains(path) && !path.starts_with(".stapel/") {
+                    files.insert(path.to_string());
+                }
+            }
+        }
+        Ok(files.iter().map(|p| shell_word(p)).collect())
     }
 
     /// The whole suite at HEAD.
@@ -1376,6 +1768,8 @@ pub(crate) struct HistoryStep {
 pub(crate) struct HistoryReport {
     pub inputs: BuildInputs,
     pub steps: Vec<HistoryStep>,
+    /// STP-37 AC-13: the history commits of the range as (full id, reason), oldest first.
+    pub history: Vec<(String, String)>,
 }
 
 pub(crate) fn history_report(
@@ -1416,7 +1810,12 @@ pub(crate) fn history_report(
             }
         })
         .collect();
-    Ok(HistoryReport { inputs, steps })
+    let history = build_inputs::history_commits(root, key, at, bounds)?;
+    Ok(HistoryReport {
+        inputs,
+        steps,
+        history,
+    })
 }
 
 /// `stapel check --history`: the full check's lines for the history outcomes, `needs-run` for the
@@ -1451,6 +1850,9 @@ fn print_history(
             }
             None => say_step(&s.analysis, "needs-run", ""),
         }
+    }
+    for line in history_lines(&report.history) {
+        say!("{line}");
     }
     if ok {
         say!("result: no history faults");

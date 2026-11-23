@@ -1,7 +1,7 @@
 ---
 name: stapel
 description: "Carries a development ticket from description to merge with the stapel process."
-# stapel: 0.1.0 sha256:76dc645c044ba8a0352a930300615f0d5253c92254ac4c693423e9a1ca257fa6
+# stapel: 0.1.0 sha256:2e871335633ce56b2c3413c8853bfcabe6eb3de4069777c331e62a8a9d784df8
 ---
 # The stapel process
 
@@ -155,7 +155,12 @@ list must not only grow.
   stapel-reviewer, an external reviewer, and stapel-drift once before code review. The ticket records the
   reviewers that ran and the round.
 - Code review rounds: two by default. A third round runs without a question when round 2 left no HIGH
-  finding inside the promise; a HIGH finding after round 2 goes to the person.
+  finding inside the promise; a HIGH finding after round 2 goes to the person. `stapel review start KEY
+  --round 3` (any whole N of 1 or more after round N-1) starts the round.
+- A commit that must change its step's test file or a build input after a RED says so in a line of its
+  message: `history: <reason>`; stapel check then judges the step by its runs.
+- At the close stapel close appends one `catches` record (counted findings by stage and `rule`) and one
+  `finding` record per deferred finding; do not write them by hand. A close that fails writes none.
 - Every code reviewer also does the deletion check, the claims check (falsify each claim of the criteria
   and of Design "as built" against the code) and the verification gap (would an existing test fail if a
   behaviour change were wrong). A test that did not run counts as missing.

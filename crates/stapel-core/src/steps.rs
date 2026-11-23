@@ -113,6 +113,18 @@ pub fn parse_subject(key: &str, subject: &str) -> Option<(String, Marker)> {
     (!label.is_empty()).then(|| (label.to_string(), marker))
 }
 
+/// The reason of a commit message's history line (STP-37): the first line that starts with
+/// `history: ` followed by a non-empty reason, the reason trimmed. Another case of the key is no
+/// line.
+pub fn history_reason(message: &str) -> Option<String> {
+    message
+        .lines()
+        .filter_map(|l| l.strip_prefix("history: "))
+        .map(str::trim)
+        .find(|r| !r.is_empty())
+        .map(String::from)
+}
+
 /// The Walk: `base..head` with a `base`, else `head` (the history from the root).
 pub fn walk_range(base: Option<&str>, head: &str) -> String {
     match base {
