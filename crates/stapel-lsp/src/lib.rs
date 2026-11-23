@@ -73,11 +73,46 @@ fn buttons(docs: &HashMap<Uri, String>, uri: &Uri) -> Vec<CodeActionOrCommand> {
     let Some(doc) = classify(uri) else {
         return Vec::new();
     };
-    vec![
+    let mut list = vec![
         button(format!("stapel status {}", doc.key), "stapel.status", uri),
         button("stapel next".to_string(), "stapel.next", uri),
         button(format!("stapel page {}", doc.key), "stapel.page", uri),
-    ]
+    ];
+    if let Some(hash) = current_page(docs, uri, &doc) {
+        let title = format!("stapel ok {}", doc.key);
+        list.push(CodeActionOrCommand::CodeAction(CodeAction {
+            title: title.clone(),
+            command: Some(Command {
+                title,
+                command: "stapel.ok".to_string(),
+                arguments: Some(vec![serde_json::json!(uri.as_str()), serde_json::json!(hash)]),
+            }),
+            ..Default::default()
+        }));
+    }
+    list
+}
+
+/// The `ok` button's run is the child's `stapel ok KEY`, which records `via: terminal`.
+///
+/// The hash of `page.md` when it is a current page: on disk it is the text `stapel page KEY`
+/// would write now, a section waits, and the open buffer equals the disk.
+fn current_page(docs: &HashMap<Uri, String>, uri: &Uri, doc: &TicketDoc) -> Option<String> {
+    if !doc.is_page {
+        return None;
+    }
+    let text = std::fs::read_to_string(doc.root.join(".stapel/stapel.toml")).ok()?;
+    let config = stapel_core::config::Config::parse_at(&text, &doc.root).ok()?;
+    let waiting = stapel_core::confirm::prepare_waiting(&doc.root, &config, &doc.key).ok()?;
+    if waiting.is_empty() {
+        return None;
+    }
+    let want = stapel_core::page::page_text(&config, &waiting);
+    let disk = std::fs::read(doc.root.join(format!(".stapel/tickets/{}/page.md", doc.key))).ok()?;
+    if disk != want.as_bytes() || docs.get(uri)?.as_bytes() != disk.as_slice() {
+        return None;
+    }
+    Some(stapel_core::page::page_hash(&disk))
 }
 
 /// The command names of the buttons.
@@ -150,13 +185,6 @@ fn serve(connection: &Connection) -> i32 {
                                     MessageType::ERROR,
                                     "stapel lsp: this editor was started from an agent's shell (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); start it from your own shell to use the buttons".to_string(),
                                 );
-                            } else if params.command == "stapel.ok" {
-                                // The `ok` run comes with its page check (steps 7 and 8).
-                                let text = format!(
-                                    "stapel lsp: page.md is not current; run stapel page {} and read it again",
-                                    doc.key
-                                );
-                                show(connection, MessageType::ERROR, text);
                             } else {
                                 run_button(connection, &doc, &args);
                             }
