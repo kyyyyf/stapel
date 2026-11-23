@@ -67,10 +67,58 @@ pub fn import(file: &str, key: Option<&str>) -> Result<(), Fail> {
 /// `stapel answer KEY ID FATE NOTE` (STP-40 AC-6): the person's triage record of one finding.
 pub fn answer(key: &str, id: &str, fate: &str, note: &str) -> Result<(), Fail> {
     let (root, _config) = repo::open().map_err(Fail::failed)?;
-    let user = user_name(&root).map_err(Fail::failed)?;
-    let importer = importer_json(false, &user);
+    stapel_core::tickets::match_branch(&root, Some(key)).map_err(Fail::refused)?;
+    if stapel_core::tickets::branch_ticket(&root).is_none() {
+        return Err(Fail::refused(format!(
+            "stapel answer runs in the worktree of {key}; this checkout's branch names no ticket"
+        )));
+    }
     let ticket = stapel_core::records::journal_ticket(&root, Some(key)).map_err(Fail::refused)?;
+    if matches!(ticket.status, stapel_core::tickets::Status::Closed(_)) {
+        return Err(Fail::refused(format!("{} is closed", ticket.key)));
+    }
+    let user = user_name(&root).map_err(Fail::refused)?;
+    let importer = importer_json(false, &user);
+    if !["patch", "bad_plan", "defer", "no-change"].contains(&fate) {
+        return Err(Fail::refused(
+            "the fate must be one of patch, bad_plan, defer, no-change",
+        ));
+    }
+    if note.trim().is_empty() {
+        return Err(Fail::refused("the note is empty"));
+    }
     let target = ticket.dir.join("findings.jsonl");
+    let label = format!(".stapel/tickets/{}/findings.jsonl", ticket.key);
+    let existing = stapel_core::journal::read(&target).map_err(Fail::refused)?;
+    for (n, entry) in &existing {
+        if let stapel_core::journal::Entry::Problem(reason) = entry
+            && !stapel_core::journal::is_unknown_version(reason)
+        {
+            return Err(Fail::refused(format!("{label}:{n}: {reason}")));
+        }
+    }
+    let records: Vec<_> = existing
+        .iter()
+        .filter_map(|(_, e)| match e {
+            stapel_core::journal::Entry::V1(m) | stapel_core::journal::Entry::Legacy(m) => {
+                Some(m.clone())
+            }
+            stapel_core::journal::Entry::Problem(_) => None,
+        })
+        .collect();
+    let state = stapel_core::triage::state_of(&records, id);
+    if state.finding.is_none() {
+        return Err(Fail::refused(format!(
+            "{id} is not a finding of {}",
+            ticket.key
+        )));
+    }
+    if !state.is_persons() {
+        return Err(Fail::refused(format!(
+            "{id} of {} does not wait for a person",
+            ticket.key
+        )));
+    }
     let text = |s: &str| serde_json::to_string(s).expect("a string is JSON");
     let body = format!(
         "{{\"kind\":\"triage\",\"ticket\":{},\"id\":{},\"fate\":{},\"note\":{}}}",
@@ -80,6 +128,11 @@ pub fn answer(key: &str, id: &str, fate: &str, note: &str) -> Result<(), Fail> {
         text(note)
     );
     let line = with_importer(&body, &importer).expect("the body ends in a brace");
+    if line.len() + 1 > stapel_core::journal::MAX_LINE {
+        return Err(Fail::refused(
+            "the record is longer than the journal line limit",
+        ));
+    }
     guard_block(&ticket.dir)?;
     append_all(&target, &[line]).map_err(Fail::refused)?;
     write_block(&target);
