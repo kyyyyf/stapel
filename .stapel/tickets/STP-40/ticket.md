@@ -42,7 +42,7 @@ watching files on disk; notifications outside the editor.
    person gives (`patch`, `bad_plan`, `defer`, `no-change`), which takes the note from the entry's `note:`
    line in the buffer and runs `stapel answer` in that ticket's worktree; per waiting ticket a button
    `stapel page KEY` in that worktree; and one button `stapel inbox` that writes the file again. After a
-   run that ran, the server writes the inbox again and keeps the notes typed for entries that remain.
+   run that ran, or whose child could not start, the server writes the inbox again and keeps the notes typed for entries that remain.
 5. Setup: `stapel init` adds `/.stapel/inbox.md` to the ignore lines it writes.
 
 Not promised: an answer between the writing of `inbox.md` and the click that another session already gave
@@ -56,7 +56,7 @@ agent-shell refusal of `stapel ok`), STP-36 (the `open:` lines of open tickets i
 language server, buttons and their run rules).
 
 **Size.** About 450 source lines (`stapel inbox`, `stapel answer`, the guard entry, the inbox buttons) and
-about 650 test lines; 12 Plan steps. Route: full, auto.
+about 650 test lines; 12 Plan steps, 16 with the fix steps of the reviews. Route: full, auto.
 
 ### Decisions
 
@@ -108,7 +108,7 @@ Terms:
 | AC-2 | WHEN an inbox ticket owes a confirmation THE entry `### <KEY> confirmation` follows its findings with the lines `waiting: <waiting ids, comma separated>` and `page: <worktree>/.stapel/tickets/<KEY>/page.md`, and counts as one decision. | `inbox::lists_owed_confirmations` |
 | AC-3 | IF no inbox ticket owes a decision THEN `inbox.md` holds the title line and `Nothing waits.`, and the command prints `inbox: nothing waits`. | `inbox::nothing_waits` |
 | AC-4 | WHEN several live worktrees have open branch tickets THE inbox lists the owed decisions of each, this checkout's included; a closed ticket, a branch that names no ticket and a prunable worktree give nothing, and a ticket that owes nothing gives no heading. | `inbox::tickets_of_every_worktree` |
-| AC-5 | IF the `state.json`, `findings.jsonl`, `ticket.md` or `stapel.toml` of an inbox ticket cannot be read, or a line of its `findings.jsonl` does not parse THEN its heading is followed by `unreadable: <reason>`, it counts as one decision, and the other tickets are listed. | `inbox::unreadable_ticket` |
+| AC-5 | IF the `state.json`, `findings.jsonl`, `ticket.md` or `stapel.toml` of an inbox ticket cannot be read, or a line of its `findings.jsonl` does not parse (a line of an unknown version is skipped, as `stapel answer` skips it) THEN its heading is followed by `unreadable: <reason>`, it counts as one decision, and the other tickets are listed. | `inbox::unreadable_ticket` |
 | AC-6 | WHEN `stapel answer KEY ID FATE NOTE` runs outside an agent shell on an owed finding of the checkout's ticket with a person's fate THE command appends to its `findings.jsonl` the line `{"kind":"triage","ticket":"<KEY>","id":"<ID>","fate":"<FATE>","note":"<NOTE>","imported_by":{"by":"person","user":"<user>"}}`, prints `answered: <ID> of <KEY>: <FATE>`, exits 0, and `stapel next` no longer names the finding; a NOTE that starts with `-` is a note, not an option. | `answer::appends_a_person_triage` |
 | AC-7 | IF the id is no finding of the ticket, the finding is not owed, the fate is not a person's fate, the note is empty after trimming, the record line would exceed the journal's line limit, the ticket is closed, its `state.json` is legacy or unreadable, a line of its `findings.jsonl` does not parse, git has no user name, or the checkout's branch names another ticket than KEY or none THEN `stapel answer` prints `stapel: <reason>` (texts in Design), exits 2 and appends nothing. | `answer::refusals` |
 | AC-8 | IF `stapel answer` runs in an agent shell THEN it prints `stapel: only a person answers a finding: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set)`, exits 1 and appends nothing; no option makes it run there. | `answer::refuses_in_an_agent_shell` |
@@ -246,9 +246,10 @@ a `"` or a backslash (JSON escaping by `serde_json`; tested in `answer::appends_
   the waiting sections) and writes the file; `findings::answer` checks and appends one triage line
   through the same journal call as `findings triage` (DR3-1); `main.rs` gains `Inbox` and `Answer`.
 - `stapel-core::guard`: `answer` in `check_stapel` sets a new reason.
-- `stapel-lsp`: `classify` also knows the inbox document; the commands `stapel.answer` and `stapel.inbox`
-  join `COMMANDS`; `stapel.page` accepts an inbox URI plus a key; the worktree of a key comes from
-  `parallel::worktrees` and `tickets::branch_ticket`, never from the buffer. After a run from the inbox it
+- `stapel-lsp`: `inbox_root` knows the inbox document (`classify` is unchanged); the commands
+  `stapel.answer` and `stapel.inbox` join `COMMANDS`; `stapel.page` accepts an inbox URI plus a key; the
+  worktree of a key is the live worktree of `parallel::worktrees` whose `parallel::current_branch` equals
+  the key, never a path from the buffer (XR3-1). After a run from the inbox it
   runs `stapel inbox` as a child, then reads the file, fills the notes of the buffer's entries by heading
   and writes it.
 
@@ -303,7 +304,8 @@ Notes of the build, dated 2026-11-23, agent.
 
 - `stapel-core::inbox`: `one_line`, `owed_findings`, `waiting_sections`, `render`; `Kind` is `Finding`,
   `Confirmation` or `Unreadable`. An unreadable ticket (state, findings, `ticket.md` or `stapel.toml`
-  cannot be read, or a findings line does not parse) gets an `unreadable:` line; a ticket without a title gets the heading `## KEY`.
+  cannot be read, or a findings line does not parse; a line of an unknown version is skipped, DR4-1) gets an
+  `unreadable:` line; a ticket without a title gets the heading `## KEY`.
   Waiting ids are joined by `, `.
 - `stapel-cli/src/inbox.rs` walks the worktrees and drops a repeated canonical path.
   `findings::answer` writes one serde line with `records::importer_json(false, user)`, then the generated
@@ -416,6 +418,7 @@ Findings:
 | step-drift | 1 | drift | 0 | 1 | 4 | 0 | patch 5 |
 | code-review | 1 | drift, external, reviewer | 0 | 4 | 12 | 0 | defer 6, patch 10 |
 | code-review | 2 | drift, external, reviewer | 0 | 2 | 9 | 0 | defer 2, no-change 1, patch 8 |
+| code-review | 3 | drift, external, reviewer | 0 | 1 | 11 | 0 | defer 2, no-change 5, patch 5 |
 | dependency | STP-39:c0dd15b1:c1d22378 | depends | 0 | 0 | 2 | 0 | patch 2 |
 
 Check runs:
