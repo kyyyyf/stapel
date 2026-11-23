@@ -375,7 +375,11 @@ Findings:
 | dependency | STP-40:796eb16c:0646a136 | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:d1af2e56:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 
-Check runs: none
+Check runs:
+
+| Level | Result | Commit | At | Steps |
+|---|---|---|---|---|
+| head | pass | 65538da | 2026-11-23T20:48:48Z | pass 10 |
 <!-- stapel:review:end -->
 
 ## Summary
