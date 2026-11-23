@@ -1345,3 +1345,96 @@ fn the_zed_extension_starts_stapel_lsp() {
         .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }
+
+// AC-1, AC-5, AC-6 (XR1-5): refusals the first tests leave out.
+#[test]
+fn refusals_beyond_the_first_cases() {
+    // `stapel lsp` takes no argument: a usage error, exit 2
+    let out = Command::new(env!("CARGO_BIN_EXE_stapel"))
+        .args(["lsp", "extra"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+
+    let repo = common::repo_with_ticket();
+    common::stapel(repo.path())
+        .args(["page", "ABC-1"])
+        .assert()
+        .success();
+    let tdir = repo.path().join(".stapel/tickets/ABC-1");
+    let ticket = tdir.join("ticket.md");
+    let page = tdir.join("page.md");
+    let bytes = std::fs::read(&page).unwrap();
+    let hash = stapel_core::page::page_hash(&bytes);
+    let ticket_uri = file_uri(&ticket);
+    let page_uri = file_uri(&page);
+    let readme = file_uri(&repo.path().join("README.md"));
+    let bad_args = "stapel lsp: the arguments must be the URI of an open ticket.md or page.md";
+    let agent = "stapel lsp: this editor was started from an agent's shell (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); start it from your own shell to use the buttons";
+    let state = std::fs::read(tdir.join("state.json")).unwrap();
+
+    // the server of a client: with the agent variable set, or without it
+    fn start(agent_shell: bool) -> Client {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_stapel"));
+        cmd.arg("lsp")
+            .env_remove("CLAUDECODE")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        if agent_shell {
+            cmd.env("CLAUDECODE", "1");
+        }
+        let mut child = cmd.spawn().unwrap();
+        let stdin = child.stdin.take();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        Client {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+        }
+    }
+
+    for agent_shell in [false, true] {
+        let mut c = start(agent_shell);
+        c.initialize();
+        c.open(&ticket_uri, &std::fs::read_to_string(&ticket).unwrap());
+        c.open(&page_uri, &String::from_utf8(bytes.clone()).unwrap());
+
+        // a number as the second argument, three arguments, a closed document
+        let cases = [
+            ("stapel.ok", json!([page_uri, 5])),
+            ("stapel.ok", json!([page_uri, hash, hash])),
+            ("stapel.ok", json!([page_uri, null])),
+            ("stapel.status", json!([readme])),
+            ("stapel.page", json!([ticket_uri, ticket_uri])),
+        ];
+        for (command, args) in cases {
+            let (resp, notes) = c.execute(command, args.clone());
+            assert_eq!(resp["error"]["code"], json!(-32602), "{agent_shell} {command} {args}: {resp}");
+            assert_eq!(resp["error"]["message"], json!(bad_args), "{agent_shell} {command} {args}: {resp}");
+            assert!(shown(&notes).is_empty(), "{agent_shell} {command} {args}: {notes:?}");
+            assert!(logged(&notes).is_empty(), "{agent_shell} {command} {args}: {notes:?}");
+        }
+        let (resp, _) = c.execute("stapel.close", json!([ticket_uri]));
+        assert_eq!(
+            resp["error"]["message"],
+            json!("stapel lsp: unknown command stapel.close"),
+            "{agent_shell}: {resp}"
+        );
+
+        if agent_shell {
+            // a valid ok on a page that is current: still nothing runs
+            let (resp, notes) = c.execute("stapel.ok", json!([page_uri, hash]));
+            assert_eq!(resp["result"], Value::Null, "{resp}");
+            assert!(resp.get("error").is_none(), "{resp}");
+            assert_eq!(shown(&notes), vec![(1, agent.to_string())], "{notes:?}");
+            assert!(logged(&notes).is_empty(), "{notes:?}");
+        }
+        assert_eq!(std::fs::read(tdir.join("state.json")).unwrap(), state);
+        assert_eq!(std::fs::read(&page).unwrap(), bytes);
+        let _ = c.child.kill();
+    }
+}
