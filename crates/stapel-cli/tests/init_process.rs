@@ -814,6 +814,27 @@ fn skill_text_names_the_page() {
     }
 }
 
+// STP-41 AC-14: the starter holds a commented `[guards]` example and the skill names the guards folder,
+// the dialog and the commit of a tightened baseline.
+#[test]
+fn starter_names_guards() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let starter = read(dir, ".stapel/stapel.toml");
+    for start in ["# [guards]", "# dir", "# [[guards.check]]", "# baseline"] {
+        assert!(starter.lines().any(|l| l.starts_with(start)), "no {start}");
+    }
+    for line in starter.lines().filter(|l| l.contains("guards")) {
+        assert!(line.starts_with('#'), "uncommented {line:?}");
+    }
+    let skill = collapsed(&body_of(dir, SKILL));
+    assert!(skill.contains("`[guards] dir`"), "no folder");
+    assert!(skill.contains("asks the person in a dialog"), "no dialog");
+    assert!(skill.contains("tightened baseline"), "no baseline commit");
+    assert!(skill.contains("`history:` line"), "no history line");
+}
+
 // AC-17: each agent body holds the role lines.
 #[test]
 fn agent_texts_hold_their_rules() {
