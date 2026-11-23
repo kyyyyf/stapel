@@ -590,3 +590,27 @@ fn next_ignores_the_block() {
     let said = next_said(dir);
     assert!(said.contains("write-summary"), "{said}");
 }
+
+#[test]
+fn lone_carriage_return_refuses() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let text = "a\rb\n## Review\nTODO\n## Summary\nTODO\n";
+    put(dir, TICKET, text);
+    put(
+        dir,
+        "in.jsonl",
+        &lines(&[finding("F-1", "spec-review", 1, "reviewer", "HIGH", "open")]),
+    );
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "a lone carriage return"]);
+    let before = common::snapshot(dir);
+    let out = stapel(dir).args(["findings", "import", "in.jsonl"]).assert().code(2);
+    let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(
+        err.starts_with("stapel: ") && err.contains("ticket.md: "),
+        "{err}"
+    );
+    assert_eq!(common::snapshot(dir), before, "files changed");
+    assert_eq!(common::read(dir, TICKET), text);
+}
