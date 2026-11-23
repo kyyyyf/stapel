@@ -415,7 +415,7 @@ Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| head | pass | 856d66d | 2026-11-23T17:25:09Z | pass 13 |
+| head | pass | 57bc362 | 2026-11-23T18:34:35Z | cached 13, pass 2 |
 <!-- stapel:review:end -->
 
 ## Summary
