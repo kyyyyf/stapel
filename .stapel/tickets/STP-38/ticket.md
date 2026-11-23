@@ -7,19 +7,18 @@ first cut grouped into four tickets).
 
 ### Frame
 
-**Problem.** The orchestrator copies counts, rounds and check runs from `findings.jsonl` and
-`runs.jsonl` into the Review section by hand, and writes the merge request text by hand. `stapel tokens
-measure` prints no count of returns, and no command counts what each rule caught, so rule 9 is never
-applied.
+**Problem.** The orchestrator copies findings and check runs into the Review section by hand, and
+writes the merge request text by hand. `stapel tokens measure` counts no returns, and no command counts
+what each rule caught, so rule 9 is never applied.
 
 **Plan item:** 3b-4 (3.9, 3.10).
 
 **Risk tags:** `data` (the binary writes `ticket.md`, the person's file), `interface` (the generated block
 and its markers, `merge-request.md`, `stapel ledger rules`, the lines of `stapel tokens measure`).
 
-**Non-goals.** Generating the Summary; posting the merge request to a forge; the `catches` records of the
-ledger (STP-37); removing a rule (rule 9 stays a decision with the person); a record of stand runs (hand
-lines outside the block); the Review of closed tickets; the removal of the empty crates.
+**Non-goals.** Generating the Summary; posting the merge request to a forge; the `catches` records
+(STP-37); removing a rule (a decision with the person); a record of stand runs; the Review of closed
+tickets; the empty crates.
 
 **Promise (closed list).**
 
@@ -28,7 +27,8 @@ lines outside the block); the Review of closed tickets; the removal of the empty
    lists per stage and round the roles of the findings and the findings by severity after triage and by
    fate, and the newest check run per level with its result, commit and step outcomes. Text outside the
    block is kept byte for byte; a Review section without the markers gets the block at its end; a
-   `ticket.md` without a Review section gets no block; `stapel next` ignores the block.
+   `ticket.md` without a Review section gets no block; `stapel next` ignores the block. A lone carriage
+   return, or a Review section ending in an unclosed fence or comment, refuses (exit 2).
 2. Clean tree: an uncommitted change of `ticket.md` that lies only inside the generated block does not
    count as an uncommitted change for the stapel commands, and does not make a confirmation stale.
 3. Merge request text: `stapel export` writes `.stapel/tickets/<KEY>/merge-request.md` with the title, the
@@ -44,12 +44,12 @@ lines outside the block); the Review of closed tickets; the removal of the empty
 6. The skill and `stapel init` name items 1, 3 and 4: the block is not edited by hand, `merge-request.md`
    is named at the close, `stapel ledger rules` runs at the measures.
 
-Not promised: a hand edit inside the markers (overwritten); a `ticket.md` with two Review sections or
-broken markers (refused, exit 2); a `rule` spelled two ways (two rules).
+Not promised: a hand edit inside the markers (overwritten); a `rule` spelled two ways (two rules); the
+refusals of item 1 and AC-5 are the only fixes of a broken `ticket.md`.
 
 **Prior art.** STP-24, STP-29, STP-30, STP-35; the hand-written Review sections of STP-35 and STP-36.
 
-**Size.** About 450 source and 600 test lines; 16 Plan steps (6 fix steps). Route: full, auto.
+**Size.** About 800 source and 1500 test lines; 17 Plan steps (7 fix steps). Route: full, auto.
 
 ### Decisions
 
@@ -74,7 +74,7 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   writes no `merge-request.md` and prints nothing (the existing export tests run from the base
   checkout). Rejected: a refusal.
 - 2026-11-22: Decision (agent, step 5): the Summary body in `merge-request.md` has its leading and
-  trailing empty lines trimmed; AC-7 says "as it is" of the text between. Rejected: the raw section.
+  trailing empty lines trimmed; AC-7 says so since round 1 (R1-7). Rejected: the raw section.
 - 2026-11-22: Decision (agent, step 7): `ledger_rules::bad_lines_and_last` passed before the code of
   step 7, because step 6 already held `--last`, the notice and `rules: no findings`; it is a coverage
   commit (`788453b`).
@@ -88,9 +88,10 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
   `closed_pipe::closed_output_keeps_every_write`, `review::copy_keeps_the_index`); they leave the block
   out of the comparison in a test-only commit on main, merged into the branch (no step of STP-38
   touches those files). Rejected: a block that `stapel check` does not write.
-- 2026-11-23: Decision (agent, steps 2 and 3): untested and left to the review: the case of no
-  `ticket.md` (AC-5), and `stapel check` itself after a block-only change (AC-6 is tested through
-  `dirty_paths` and `stapel next`).
+- 2026-11-23: Decision (agent, steps 2 and 3): the case of no `ticket.md` (AC-5) and `stapel check`
+  itself after a block-only change (AC-6) were untested after the build; coverage step 14 tests both.
+- 2026-11-23: Decision (agent): no code review round 4. Round 3 left no HIGH finding; its two MEDIUM
+  findings were a coverage test (step 17) and Frame text, both done before the close.
 
 ## Spec
 
@@ -114,7 +115,7 @@ Terms:
 | AC-2 | WHEN `findings.jsonl` holds no finding THE block says `Findings: none`; WHEN `runs.jsonl` holds no check record THE block says `Check runs: none`. | `review_block::import_and_triage_write_the_block` |
 | AC-3 | WHEN `stapel check` appends a record THE block has one row per check level (`steps`, `head`, `full`) with the newest record of that level: the result, the first 7 characters of the commit field `head`, `at`, and the step outcomes with their counts sorted by outcome (`cached 7, pass 3`); a record without `level` is of level `head`, one without `steps` has `—`; `--list` and `--history` write no block. | `review_block::check_writes_the_block` |
 | AC-4 | WHEN the Review section has a generated block THE writer replaces only its lines; WHEN it has none THE block is inserted after the last non-empty line of the section, after one empty line, and the section's trailing empty lines stay after the block, so removing the block gives the text back; the block's lines take the line end of the begin marker, or else of the first line of `ticket.md`; every other byte of `ticket.md` stays. | `review_block::keeps_text_outside` |
-| AC-5 | IF `ticket.md` has two Review sections, a marker without its pair, two blocks, a carriage return not followed by a line feed (anywhere in the file, also without a Review section), or a Review section that ends inside an unclosed fence or HTML comment THEN the block writer exits 2 with `stapel: <path>: <reason>` before it writes anything (`review start` before its pack, `stapel check` before any test); IF it has no Review section, or there is no `ticket.md`, THEN the command goes on as today without a block and prints `notice: <path> has no Review section; no generated block`; `stapel check --list` and `--history` do not read the block. | `review_block::broken_markers_refuse`, `review_block::lone_carriage_return_refuses`, `review_block::fenced_markers_are_text`, `review_block::unclosed_fence_or_comment_refuses`, `review_block::no_ticket_md` |
+| AC-5 | IF `ticket.md` has two Review sections, a marker without its pair, two blocks, a carriage return not followed by a line feed (anywhere in the file, also without a Review section), or a Review section that ends inside an unclosed fence or HTML comment THEN the block writer exits 2 with `stapel: <path>: <reason>` before it writes anything (`review start` before its pack, `stapel check` before any test); IF it has no Review section, or there is no `ticket.md`, THEN the command goes on as today without a block and prints `notice: <path> has no Review section; no generated block`; `stapel check --list` and `--history` do not read the block. | `review_block::broken_markers_refuse`, `review_block::lone_carriage_return_refuses`, `review_block::lone_carriage_return_without_review_refuses`, `review_block::fenced_markers_are_text`, `review_block::unclosed_fence_or_comment_refuses`, `review_block::no_ticket_md` |
 | AC-6 | WHEN the only difference of `ticket.md` from HEAD lies in the generated block (the file with its block removed equals the HEAD text with its block removed, both with CRLF read as LF) THE `worktree::dirty_paths` leaves it out, so `stapel check`, `stapel review start`, `stapel next`, `stapel new`, the check freshness of `checkstate` (against the checked commit) and the tree check of `parallel` do not count it; a change outside the block, or a `ticket.md` that `git show HEAD:<path>` cannot read, counts as today. | `review_block::block_only_change_is_clean`, `review_block::check_after_a_block_only_change`, `review_block::block_of_another_ticket_keeps_the_check`, `new_branch::block_and_merge_request_are_not_changes` |
 | AC-7 | WHEN `stapel export` succeeds THE file `.stapel/tickets/<KEY>/merge-request.md` holds `# <KEY> — <title>`, the Summary section body with its empty lines at both ends trimmed, and `## Deferred findings` with one line `- <id> <severity> <stage> round <round>: <claim>` per finding not false whose newest fate is `defer`, or `none`; it is rewritten on every export and the command prints `merge request: <path>`; `merge-request.md` is a machine file (not an uncommitted change, the guard denies an agent write); the orchestrator commits it with the close commit (AC-12); from a checkout without the ticket's `state.json` the export writes no file and prints no line. | `export::writes_the_merge_request`, `export::without_state_json_no_merge_request`, `hook::denies_merge_request_writes` |
 | AC-8 | WHEN `stapel ledger rules` runs THE output is a table: a row per `rule` value of any finding, counted or not (trimmed; absent or empty is `none`), sorted by name, a column per ticket with at least one finding (the newest five, ordered by the number of the key, then by its prefix; or `--last <N>`) and a column `total` over every ticket, each cell the number of counted findings; the text matches the golden file `ledger_rules.txt`. It writes nothing. | `ledger_rules::counts_per_rule_and_ticket`, `ledger_rules::orders_keys_by_number` |
@@ -149,7 +150,7 @@ also `--test ticket_drift`.
 | Category | Cases | Tests |
 |---|---|---|
 | Block from findings | import of findings of two stages and two rounds (a LOW, a HIGH regraded `low`, a finding with the verdict `false`, three roles), then a triage: the golden block after each; no finding and no run: both `none` lines | `review_block::import_and_triage_write_the_block` |
-| Lone carriage return | `a\rb` before the Review section: import exits 2, nothing written | `review_block::lone_carriage_return_refuses` |
+| Lone carriage return | `a\rb` before the Review section, and in a `ticket.md` without one: import exits 2, no notice, nothing written | `review_block::lone_carriage_return_refuses`, `review_block::lone_carriage_return_without_review_refuses` |
 | Fenced markers | a real block beside a backtick fence, a tilde fence and a comment quoting markers: only the real block changes; quoted markers without a block: the hand text stays | `review_block::fenced_markers_are_text` |
 | Unclosed fence or comment | a Review section ending in an unclosed fence, and one with an unclosed `<!--`: exit 2, nothing written | `review_block::unclosed_fence_or_comment_refuses` |
 | No ticket.md | ticket.md removed: import goes on with the notice; a renamed Review section: check and review start print the notice | `review_block::no_ticket_md` |
@@ -175,7 +176,7 @@ also `--test ticket_drift`.
 
 | Input | Type | Smallest / largest | Empty | Invalid | Precision | Test |
 |---|---|---|---|---|---|---|
-| Review section of `ticket.md` | Markdown text | no block / one block | no block: added; no section: notice, no block | AC-5: exit 2 | whole lines, trailing spaces and a carriage return ignored | `review_block::broken_markers_refuse`, `review_block::keeps_text_outside` |
+| Review section of `ticket.md` | Markdown text | no block / one block | no block: added; no section: notice, no block | AC-5: exit 2 | whole lines, trailing spaces and a carriage return ignored; in a fence or comment: text | `review_block::broken_markers_refuse`, `review_block::keeps_text_outside` |
 | `findings.jsonl` | JSON lines | none / the journal limit | none: `Findings: none` | a broken line: the writers refuse as `records` does today; `ledger rules` skips it with a notice | severity and fate after triage | `review_block::import_and_triage_write_the_block`, `ledger_rules::bad_lines_and_last` |
 | `runs.jsonl` | JSON lines | none / the journal limit | none: `Check runs: none` | a line without `level`: counted as `head`, the default level of older records | `head` cut to 7 characters | `review_block::check_writes_the_block` |
 | `--last` | whole number | 1 / u32 | absent: 5 | 0, negative, not a number: exit 2 | exact | `ledger_rules::bad_lines_and_last` |
@@ -295,8 +296,10 @@ HEAD text, so a hand edit inside the block plus a Spec edit is still refused.
 - Step 13: `new.rs::dirty_paths` also leaves out `worktree::is_machine_file` and a block-only
   `ticket.md`; its own `.json` and `.jsonl` rule stays.
 - Step 15: `locate` refuses a Review section that ends while a fence or a comment is open.
-- Steps 14 and 16 are coverage commits (`6d87909`, `43d01d3`); the step 16 tests were checked by
-  removing the `checkstate` filter and the `guard` entry, each of which made its test fail.
+- Steps 14, 16 and 17 are coverage commits (`6d87909`, `5919412`, `39812cb`); the tests of steps 16
+  and 17 were checked by removing the `checkstate` filter, the `guard` entry and the early lone-CR check,
+  each of which made its test fail. The step 16 commit carries a `history:` line, because it changes
+  `tests/hook.rs`, a file of no step; the branch tip was rebuilt to add it.
 
 ## Proof
 
@@ -306,7 +309,7 @@ HEAD text, so a hand edit inside the block plus a Spec edit is still refused.
 | AC-2 | `review_block::import_and_triage_write_the_block` |
 | AC-3 | `review_block::check_writes_the_block` |
 | AC-4 | `review_block::keeps_text_outside` |
-| AC-5 | `review_block::broken_markers_refuse`, `review_block::lone_carriage_return_refuses`, `review_block::fenced_markers_are_text`, `review_block::unclosed_fence_or_comment_refuses`, `review_block::no_ticket_md` |
+| AC-5 | `review_block::broken_markers_refuse`, `review_block::lone_carriage_return_refuses`, `review_block::lone_carriage_return_without_review_refuses`, `review_block::fenced_markers_are_text`, `review_block::unclosed_fence_or_comment_refuses`, `review_block::no_ticket_md` |
 | AC-6 | `review_block::block_only_change_is_clean`, `review_block::check_after_a_block_only_change`, `review_block::block_of_another_ticket_keeps_the_check`, `new_branch::block_and_merge_request_are_not_changes` |
 | AC-7 | `export::writes_the_merge_request`, `export::without_state_json_no_merge_request`, `hook::denies_merge_request_writes` |
 | AC-8 | `ledger_rules::counts_per_rule_and_ticket`, `ledger_rules::orders_keys_by_number` |
