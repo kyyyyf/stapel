@@ -1122,6 +1122,58 @@ fn bad_state_is_logged() {
     assert!(!published(&notes, &other_uri).is_empty(), "{notes:?}");
 }
 
+// AC-10, AC-13: a folder that stops being a key gives an empty list once; a root without stapel.toml
+// gives one Error log line naming it.
+#[test]
+fn folder_not_a_key_and_missing_config() {
+    let errors = |notes: &[Value]| -> Vec<String> {
+        notes
+            .iter()
+            .filter(|n| n["method"] == json!("window/logMessage"))
+            .filter(|n| n["params"]["type"] == json!(1))
+            .map(|n| n["params"]["message"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    let ticket = dir.join(".stapel/tickets/ABC-1/ticket.md");
+    let uri = file_uri(&ticket);
+    let text = std::fs::read_to_string(&ticket).unwrap();
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &text);
+    let (_, notes) = c.code_action(&uri, 0);
+    assert!(!published(&notes, &uri)[0].is_empty(), "{notes:?}");
+
+    // the key template changes: ABC-1 is no key any more
+    let config = dir.join(".stapel/stapel.toml");
+    let toml = std::fs::read_to_string(&config).unwrap();
+    assert!(toml.contains("ABC-{n}"), "{toml}");
+    std::fs::write(&config, toml.replace("ABC-{n}", "XYZ-{n}")).unwrap();
+    c.change(&uri, 2, &format!("{text}\nmore 2\n"));
+    let (resp, notes) = c.code_action(&uri, 0);
+    assert!(titles(&resp).is_empty(), "{resp}");
+    assert_eq!(published(&notes, &uri), vec![Vec::<Value>::new()], "{notes:?}");
+    c.change(&uri, 3, &format!("{text}\nmore 3\n"));
+    let (_, notes) = c.code_action(&uri, 0);
+    assert!(published(&notes, &uri).is_empty(), "{notes:?}");
+
+    // a root without stapel.toml: one Error log line naming the file
+    let other = common::repo_with_ticket();
+    let other_ticket = other.path().join(".stapel/tickets/ABC-1/ticket.md");
+    let other_uri = file_uri(&other_ticket);
+    std::fs::remove_file(other.path().join(".stapel/stapel.toml")).unwrap();
+    c.open(&other_uri, &text);
+    let (_, notes) = c.code_action(&other_uri, 0);
+    assert!(published(&notes, &other_uri).iter().all(|l| l.is_empty()), "{notes:?}");
+    let got = errors(&notes);
+    assert_eq!(got.len(), 1, "{notes:?}");
+    assert!(got[0].contains("stapel.toml"), "{got:?}");
+    c.change(&other_uri, 2, &format!("{text}\nmore 2\n"));
+    let (_, notes) = c.code_action(&other_uri, 0);
+    assert!(errors(&notes).is_empty(), "{notes:?}");
+}
+
 /// The (line, message) of the Hint diagnostics in `list`; the fixed fields are checked on the way.
 fn hint_lines(list: &[Value], text: &str) -> Vec<u64> {
     let lines: Vec<&str> = text.split('\n').map(|l| l.trim_end_matches('\r')).collect();
