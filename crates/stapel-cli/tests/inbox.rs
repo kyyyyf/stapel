@@ -193,6 +193,15 @@ fn lists_owed_confirmations() {
         inbox_text(dir),
         format!("{head}{}", confirmation(dir, "plan"))
     );
+
+    // A Plan that names one step label twice is not written as `stapel next` reads it: no entry.
+    common::set_section(
+        dir,
+        "ABC-1",
+        "Plan",
+        "Route: full, auto.\n\n1. One (AC-1).\n1. Again (AC-1).",
+    );
+    assert!(!inbox_text(dir).contains("confirmation"));
 }
 
 // AC-3: no decision waits; the file is written over an older one.
