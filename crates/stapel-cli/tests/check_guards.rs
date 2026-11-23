@@ -664,3 +664,63 @@ fn a_cut_output_is_unverified() {
     assert_eq!(record["guards"][0]["removed"], 0, "{record}");
     assert_eq!(record["guards"][1]["outcome"], "pass", "{record}");
 }
+
+// ---- step 6: tightening ----
+
+// AC-10: a passing ratchet guard writes its baseline without the fixed lines (order kept, first of
+// equal lines only, each line ended by `\n`); a guard without fixed lines writes nothing; a failed
+// write prints its line; the next check refuses the dirty tree.
+#[test]
+fn fixed_violations_leave_the_baseline() {
+    use std::os::unix::fs::PermissionsExt;
+    let guards = [
+        ratchet("tight", "printf \"c\\na\\nb\\n\"", "tight.txt"),
+        ratchet("same", "printf \"a\\n\"", "same.txt"),
+        ratchet("locked", "printf \"a\\n\"", "locked.txt"),
+        ratchet("failing", "printf \"a\\nnew\\n\"", "failing.txt"),
+    ]
+    .concat();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "guards/tight.txt", "a\nx\nb\nx\nc\nb\n\n");
+    write(dir, "guards/same.txt", "a\r\n\r\na\n");
+    write(dir, "guards/locked.txt", "a\nfixed\n");
+    write(dir, "guards/failing.txt", "a\nfixed\n");
+    commit(dir, "ABC-1: baselines");
+    let locked = dir.join("guards/locked.txt");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let (code, text) = run(dir, &["--level", "head"]);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(code, 1, "{text}");
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert!(
+        lines.contains(&"guard: tight: pass, 1 fixed removed from guards/tight.txt; commit it"),
+        "{text}"
+    );
+    assert_eq!(read(dir, "guards/tight.txt"), "a\nb\nc\n");
+    assert!(lines.contains(&"guard: same: pass"), "{text}");
+    assert_eq!(read(dir, "guards/same.txt"), "a\r\n\r\na\n");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("guard: locked: pass; baseline not written: ")),
+        "{text}"
+    );
+    assert_eq!(read(dir, "guards/locked.txt"), "a\nfixed\n");
+    assert!(lines.contains(&"guard: failing: fail: 1 new"), "{text}");
+    assert_eq!(read(dir, "guards/failing.txt"), "a\nfixed\n");
+    let record = last_check_record(dir);
+    let list = record["guards"].as_array().expect("guards");
+    assert_eq!(list[0]["outcome"], "pass", "{record}");
+    assert_eq!(list[0]["removed"], 1, "{record}");
+    assert_eq!(list[1]["removed"], 0, "{record}");
+    assert_eq!(list[2]["outcome"], "pass", "{record}");
+    assert_eq!(list[2]["removed"], 0, "{record}");
+    assert_eq!(list[3]["removed"], 0, "{record}");
+
+    // The tightened baseline is an uncommitted change: the next check refuses it.
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("guards/tight.txt"), "{text}");
+    assert!(text.contains("uncommitted"), "{text}");
+}
