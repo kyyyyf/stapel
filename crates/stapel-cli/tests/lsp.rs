@@ -920,6 +920,73 @@ fn waiting_headings() {
     assert_eq!(published(&notes, &uri), vec![Vec::<Value>::new()], "{notes:?}");
 }
 
+// AC-10: an empty list once when the state goes, the logged errors forgotten, an empty list on close.
+#[test]
+fn diagnostics_cleared_when_the_state_goes() {
+    let repo = common::repo_with_ticket();
+    let tdir = repo.path().join(".stapel/tickets/ABC-1");
+    let ticket = tdir.join("ticket.md");
+    let state = tdir.join("state.json");
+    let uri = file_uri(&ticket);
+    let text = std::fs::read_to_string(&ticket).unwrap();
+    let good = std::fs::read_to_string(&state).unwrap();
+    let errors = |notes: &[Value]| -> usize {
+        notes
+            .iter()
+            .filter(|n| n["method"] == json!("window/logMessage"))
+            .filter(|n| n["params"]["type"] == json!(1))
+            .count()
+    };
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &text);
+    let (_, notes) = c.code_action(&uri, 0);
+    assert!(!published(&notes, &uri)[0].is_empty(), "{notes:?}");
+    let mut version = 1;
+    let mut edit = |c: &mut Client| {
+        version += 1;
+        c.change(&uri, version, &format!("{text}\nmore {version}\n"));
+        c.code_action(&uri, 0).1
+    };
+
+    // state.json deleted: an empty list once
+    std::fs::remove_file(&state).unwrap();
+    let notes = edit(&mut c);
+    assert_eq!(published(&notes, &uri), vec![Vec::<Value>::new()], "{notes:?}");
+    let notes = edit(&mut c);
+    assert!(published(&notes, &uri).is_empty(), "{notes:?}");
+
+    // restored, then a state without schema_version
+    std::fs::write(&state, &good).unwrap();
+    let notes = edit(&mut c);
+    assert!(!published(&notes, &uri)[0].is_empty(), "{notes:?}");
+    std::fs::write(&state, "{}").unwrap();
+    let notes = edit(&mut c);
+    assert_eq!(published(&notes, &uri), vec![Vec::<Value>::new()], "{notes:?}");
+    let notes = edit(&mut c);
+    assert!(published(&notes, &uri).is_empty(), "{notes:?}");
+
+    // a bad file twice: an empty list once each time, and the error logged again
+    for round in 0..2 {
+        std::fs::write(&state, &good).unwrap();
+        let notes = edit(&mut c);
+        assert!(!published(&notes, &uri)[0].is_empty(), "{round}: {notes:?}");
+        std::fs::write(&state, "{ not json").unwrap();
+        let notes = edit(&mut c);
+        assert_eq!(published(&notes, &uri), vec![Vec::<Value>::new()], "{round}: {notes:?}");
+        assert_eq!(errors(&notes), 1, "{round}: {notes:?}");
+    }
+
+    // deleted again, then closed: an empty list
+    std::fs::write(&state, &good).unwrap();
+    let notes = edit(&mut c);
+    assert!(!published(&notes, &uri)[0].is_empty(), "{notes:?}");
+    std::fs::remove_file(&state).unwrap();
+    c.notify("textDocument/didClose", json!({"textDocument": {"uri": uri}}));
+    let (_, notes) = c.code_action(&uri, 0);
+    assert_eq!(published(&notes, &uri), vec![Vec::<Value>::new()], "{notes:?}");
+}
+
 // AC-13: a state or config that cannot be read gives no diagnostic and one Error log line.
 #[test]
 fn bad_state_is_logged() {
