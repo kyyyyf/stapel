@@ -110,7 +110,7 @@ Terms:
 | AC-8 | IF `stapel answer` runs in an agent shell THEN it prints `stapel: only a person answers a finding: this shell belongs to an agent (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set)`, exits 1 and appends nothing; no option makes it run there. | `answer::refuses_in_an_agent_shell` |
 | AC-9 | WHEN an agent's Bash command runs `stapel answer`, alone, in a compound command or as `stapel cargo run -- answer` THE PreToolUse guard denies it with `stapel answer records a person's answer; an agent asks the person in the chat and runs stapel findings triage`. | `hook::denies_stapel_answer` |
 | AC-10 | WHEN `stapel init` writes its ignore lines THE list holds `/.stapel/inbox.md`. | `init::ignores_the_inbox` |
-| AC-11 | WHEN a code action request without an `only` filter names an open inbox document THE server returns, for a range whose entry is a finding entry the buttons `answer <ID>: <fate>` for the four person's fates in their order, for a confirmation entry `stapel page <KEY>`, and then `stapel inbox` at any range; an inbox document gets no diagnostic. | `lsp::inbox_buttons` |
+| AC-11 | WHEN a code action request without an `only` filter names an open inbox document THE server returns, for a range whose entry is a finding entry the buttons `answer <ID>: <fate>` for the four person's fates in their order, for a confirmation entry `stapel page <KEY>`, and then `stapel inbox` at any range; an inbox document gets no diagnostic; the commands of STP-39 AC-1 gain `stapel.answer` and `stapel.inbox`. | `lsp::inbox_buttons` |
 | AC-12 | WHEN the button `stapel.answer` runs with the inbox URI, KEY, ID and a person's fate THE server takes the note from the `note:` line of the entry `### <KEY> finding <ID>` in the buffer (the text after `note:`, trimmed), runs `stapel answer KEY ID FATE NOTE` in the live worktree whose branch names KEY, and reports the run as STP-39 AC-4 does with the label `stapel answer <KEY> <ID> <FATE>`, the note left out. | `lsp::answers_from_the_inbox` |
 | AC-13 | IF the buffer has no entry `### <KEY> finding <ID>`, its note is empty, no live worktree has a branch that names KEY, or the server runs in an agent shell THEN the server runs nothing, answers `null` and shows an Error message; IF the arguments of a command with an inbox URI are not those of AC-12 or AC-14 THEN it answers `InvalidParams` and runs nothing (texts in Design); the forms of STP-39 with ticket documents are unchanged. | `lsp::inbox_refusals` |
 | AC-14 | WHEN the button `stapel.page` runs with the arguments inbox URI and KEY, or `stapel.inbox` with the inbox URI THE server runs `stapel page KEY` in the worktree of KEY, or `stapel inbox` in the inbox root, and reports as STP-39 AC-4 does. | `lsp::inbox_page_and_inbox_buttons` |
@@ -120,7 +120,8 @@ Terms:
 
 - **Promised:** the Frame's promise items: item 1 by AC-1 to AC-5, item 2 by AC-6 and AC-7, item 3 by AC-8
   and AC-9, item 4 by AC-11 to AC-15, item 5 by AC-10. Unchanged: `stapel findings triage`, `stapel ok`,
-  the buttons of `ticket.md` and `page.md`, every other command.
+  the buttons of `ticket.md` and `page.md`, every other command. Changed: the command list of STP-39 AC-1
+  gains two names.
 - **Not promised:** the Frame's list; an entry the editor shows after the file changed on disk and before
   the editor reloads it; two answers to one finding from two sessions (the second is refused by AC-7).
 
@@ -323,7 +324,8 @@ merge into main.
    lines and runs `stapel init` in this repository (message line `history: the installed .gitignore gains
    the inbox`). Must not change: the other installed files.
 8. Inbox buttons (AC-11; test `lsp::inbox_buttons`): the GREEN classifies the inbox document and offers
-   its buttons. Must not change: the buttons of ticket documents.
+   its buttons; the RED also adds the two names to the list of STP-39's
+   `lsp::capabilities_name_open_close_and_save`. Must not change: the buttons of ticket documents.
 9. Answer from the inbox (AC-12; test `lsp::answers_from_the_inbox`): the GREEN runs `stapel answer` in
    the worktree of the key with the buffer's note. Must not change: the run report of STP-39.
 10. Inbox refusals (AC-13; test `lsp::inbox_refusals`, which fails at the RED because the run goes ahead):
