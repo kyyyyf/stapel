@@ -614,3 +614,54 @@ fn lone_carriage_return_refuses() {
     assert_eq!(common::snapshot(dir), before, "files changed");
     assert_eq!(common::read(dir, TICKET), text);
 }
+
+#[test]
+fn fenced_markers_are_text() {
+    let import = |dir: &Path| {
+        put(
+            dir,
+            "in.jsonl",
+            &lines(&[finding("F-1", "spec-review", 1, "reviewer", "HIGH", "open")]),
+        );
+        stapel(dir).args(["findings", "import", "in.jsonl"]).assert().code(0);
+    };
+    let quote = format!("```\n{BEGIN}\nhand text\n{END}\n```\n");
+    let tilde = format!("~~~\n{BEGIN}\nhand text\n{END}\n~~~\n");
+    // A comment ends at the first line with `-->`, so one marker line is all it can hold.
+    let comment = format!("<!--\nhand text\n{END}\n");
+
+    // A real block beside a fenced quote of both markers: the real block is rewritten.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let old = stapel_core::review_block::render(&[], &[]);
+    let text = format!("## Review\n\n{old}\nExample:\n\n{quote}\n{tilde}\n{comment}\n## Summary\nTODO\n");
+    put(dir, TICKET, &text);
+    import(dir);
+    let got = common::read(dir, TICKET);
+    let new = block_of(&got);
+    assert!(new.contains("spec-review"), "{got}");
+    assert_eq!(got, text.replacen(&old, &new, 1), "only the real block changes");
+
+    // A fenced pair and no real block: the hand text stays and the block goes to the section end.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let text = format!("## Review\n\n{quote}\n{tilde}\n{comment}\n## Summary\nTODO\n");
+    put(dir, TICKET, &text);
+    import(dir);
+    let got = common::read(dir, TICKET);
+    let head = format!("## Review\n\n{quote}\n{tilde}\n{comment}\n");
+    assert!(got.starts_with(&head), "{got}");
+    assert!(got[head.len()..].starts_with(BEGIN), "{got}");
+    assert!(got.ends_with("## Summary\nTODO\n"), "{got}");
+
+    // The helpers agree: a text with only fenced markers has no block to remove.
+    let only = format!("## Review\n\n{quote}\n");
+    assert_eq!(
+        stapel_core::review_block::without_block(&only).as_deref(),
+        Some(only.as_str())
+    );
+    assert_eq!(
+        stapel_core::review_block::body_without_block(&format!("\n{quote}")),
+        format!("\n{quote}")
+    );
+}
