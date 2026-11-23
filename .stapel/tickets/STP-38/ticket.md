@@ -366,6 +366,12 @@ Route: full, auto (risk tags `data`, `interface`).
     Review section that ends inside an unclosed fence or HTML comment refuses with exit 2 before any write.
 16. Coverage (R2-3, XR2-2; tests `hook::denies_merge_request_writes`,
     `review_block::block_of_another_ticket_keeps_the_check`): tests of built behaviour in a coverage commit.
+17. Coverage (XR3-1; test `review_block::lone_carriage_return_without_review_refuses`): a lone carriage
+    return in a `ticket.md` without a Review section refuses with exit 2.
+
+| Fix step | Tests |
+|---|---|
+| 17 | `review_block::lone_carriage_return_without_review_refuses` |
 
 ## Review
 
