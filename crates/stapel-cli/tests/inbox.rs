@@ -347,13 +347,27 @@ fn unreadable_ticket() {
         "{text}"
     );
 
-    // A state.json that does not parse: the heading has the key only.
     std::fs::remove_dir_all(&findings).unwrap();
     // A findings line that does not parse.
     std::fs::write(&findings, "this is not json\n").unwrap();
     let text = inbox_text(dir);
     reason(&text, &format!("## ABC-1 — First\nworktree: {}\n", wt(&pair.a)));
     assert!(text.contains("## ABC-2 — Second\n"), "{text}");
+
+    // A line of an unknown version is skipped: the owed finding is listed.
+    std::fs::write(
+        &findings,
+        format!(
+            "{}\n{{\"v\":2,\"kind\":\"future\"}}\n",
+            finding("F-1", "code-review", Some(2), "HIGH", "inside")
+        ),
+    )
+    .unwrap();
+    let text = inbox_text(dir);
+    assert!(text.contains(&entry_of(&pair.a, "ABC-1", "First", "F-1")), "{text}");
+    assert!(!text.contains(&format!("## ABC-1 — First\nworktree: {}\nunreadable", wt(&pair.a))), "{text}");
+
+    // A state.json that does not parse: the heading has the key only.
     std::fs::remove_file(&findings).unwrap();
     std::fs::write(pair.a.join(".stapel/tickets/ABC-1/state.json"), "{ nope").unwrap();
     let text = inbox_text(dir);
