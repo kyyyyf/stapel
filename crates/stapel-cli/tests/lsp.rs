@@ -1107,3 +1107,27 @@ fn diagnostics_after_ok() {
     assert_eq!(got, vec![Vec::<Value>::new()], "{notes:?}");
     assert!(published(&notes, &page_uri).is_empty(), "{notes:?}");
 }
+
+// AC-14: the Zed extension only starts `stapel lsp` from PATH for Markdown.
+#[test]
+fn the_zed_extension_starts_stapel_lsp() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../editors/zed");
+    let manifest: toml::Value =
+        toml::from_str(&std::fs::read_to_string(root.join("extension.toml")).unwrap()).unwrap();
+    let server = &manifest["language_servers"]["stapel"];
+    let languages: Vec<&str> =
+        server["languages"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(languages, vec!["Markdown"], "{manifest:?}");
+
+    let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+    assert!(lib.contains("worktree.which(\"stapel\")"), "{lib}");
+    assert!(lib.contains("vec![\"lsp\".to_string()]"), "{lib}");
+    assert!(lib.contains("stapel not found on PATH"), "{lib}");
+
+    let out = Command::new(env!("CARGO"))
+        .args(["metadata", "--no-deps", "--format-version", "1", "--manifest-path"])
+        .arg(root.join("Cargo.toml"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
