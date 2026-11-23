@@ -1293,6 +1293,47 @@ fn crlf_confirmed_text() {
     assert_eq!(hints(&mut c, &buffer), want, "5000 lines");
 }
 
+// AC-11: the warning of a long section is logged once per open document and section, and again
+// only after the section was under the limit.
+#[test]
+fn long_section_warns_once() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Spec", "- s1\n- s2\n- s3\n- s4");
+    common::confirm_these(dir, "ABC-1", &["spec"]);
+    let ticket = dir.join(".stapel/tickets/ABC-1/ticket.md");
+    let uri = file_uri(&ticket);
+    let text = std::fs::read_to_string(&ticket).unwrap();
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &text);
+    let _ = c.code_action(&uri, 0);
+    let mut version = 1;
+    let mut warnings = |c: &mut Client, buffer: &str| -> usize {
+        version += 1;
+        c.change(&uri, version, buffer);
+        let (_, notes) = c.code_action(&uri, 0);
+        notes
+            .iter()
+            .filter(|n| n["method"] == json!("window/logMessage"))
+            .filter(|n| n["params"]["type"] == json!(2))
+            .count()
+    };
+    let long = |tag: &str| -> String {
+        let big: String = (0..5001).map(|i| format!("- line {i} {tag}\n")).collect();
+        text.replace("- s1\n- s2\n- s3\n- s4\n", &big)
+    };
+    let first = long("a");
+    assert_ne!(first, text);
+    assert_eq!(warnings(&mut c, &first), 1, "first change");
+    assert_eq!(warnings(&mut c, &long("b")), 0, "second change of the same section");
+    // under the limit, a changed section
+    let short = text.replace("- s2\n", "- S2 changed\n");
+    assert_eq!(warnings(&mut c, &short), 0, "under the limit");
+    // over the limit again
+    assert_eq!(warnings(&mut c, &long("c")), 1, "again after the section was shorter");
+}
+
 // AC-12: after a button run the diagnostics of every open `ticket.md` are published again.
 #[test]
 fn diagnostics_after_ok() {
