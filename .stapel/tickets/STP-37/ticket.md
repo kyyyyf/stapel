@@ -1,0 +1,452 @@
+# STP-37 — The close and the history
+
+## Description
+
+Source: `docs/PLAN.md`, phase 3b, ticket 3b-3 (items 3.5, 3.6, 3.7b); ledger 2026-11-20 (the ten items of
+the first cut grouped into four tickets).
+
+### Frame
+
+**Problem.** Part of what must be true at the close is left to the CI. In the pilot the project's checks
+(prettier, eslint, tsc) failed in CI after a green `stapel check`, and jest ran under a Node version other
+than the pinned one. The history rules judge the shape, not the result: a GREEN that touches its step's
+test file, or a build input changed after a RED, blocks the step; in STP-35 three test-only commits went to
+main apart and the branch was rebuilt each time. `stapel review start` refuses round 3, and the rule 9
+records `catches` and `finding` are written by hand, or not at all.
+
+**Plan item:** 3b-3 (3.5, 3.6, 3.7b).
+
+**Risk tags:** `interface` (the `[check]` key `project`, the lines of `stapel check`, the `history:` line
+of a commit message, the `--round` values, the output of `stapel close`), `data` (ledger records that
+`stapel ledger rules` of 3b-4 will read; check records the close reads).
+
+**Non-goals.** Reading CI or pre-commit configuration files; switching or installing a Node version;
+version ranges (`engines`), aliases (`lts/*`) and other version managers' files (`.tool-versions`,
+`volta`); reading the CI result; `stapel ledger rules` and the generated Review section (3b-4); the items
+of STP-36 (the close's own dialog rules); the open items XR2-3 and XR2-7 of STP-35.
+
+**Promise (closed list).**
+
+1. Project checks: `stapel check` at level `head` and `full` runs the shell commands of `[check] project`
+   in the check copy after the suite; `{files}` becomes the ticket's changed files. A failed command fails
+   the check and so stops the close.
+2. Node pin: under the junit runner, `stapel check` compares the version in `.nvmrc` or `.node-version`
+   with `node --version` and refuses a mismatch, a pin that is not a version, or a missing `node`, exit 2.
+3. History reason: a non-RED commit with a line `history: <reason>` may change its step's test file (which
+   must still fail at RED) or a build input after a RED; the step is judged by its runs instead of
+   `tests-changed` or the build input block; the report and the record list these commits.
+4. Review rounds: `stapel review start --round N` accepts any whole N of 1 or more after round N−1.
+5. Ledger at the close: `stapel close` appends one `catches` record (counted findings by stage and `rule`)
+   and one `finding` record per deferred finding; a close that fails writes none.
+
+Not promised: a project command that leaves processes after its exit; file names with a newline in
+`{files}`; a `history:` line that a later commit reverts; deduplication against hand-made ledger records.
+
+**Prior art.** STP-6 (build inputs), STP-14 (history outcomes), STP-24 (`review start`), STP-28 (junit),
+STP-35 (levels, time limit; its test-only commits), the hand-written `catches` records of STP-25, STP-26.
+
+**Size.** About 500 source lines (`check.rs`, `config.rs`, `outcomes.rs`, `build_inputs.rs`, `review.rs`,
+`close.rs`, `records.rs`, the skill and the starter `stapel.toml`), about 700 test lines. 12 Plan steps,
+the limit; split past 12. Route: full, auto.
+
+### Decisions
+
+Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Assumption, Open question.
+
+- 2026-11-22: Decision (project checks, the human, recommended): an explicit list of commands in
+  `stapel.toml`, with `{files}` for the changed files; a failure stops the close. Rejected: reading the CI
+  and pre-commit files; moving 3.5 to a later ticket.
+- 2026-11-22: Decision (where the project checks run, agent): inside `stapel check` at level `head` and
+  `full`, in the check copy, so the close reads one record and the grant of `stapel close` does not wait
+  for long commands. Rejected: running them inside `stapel close`.
+- 2026-11-22: Decision (Node pin, the human, recommended): compare the pin with `node --version` and refuse
+  on a mismatch; no version manager. Rejected: a wrapper command; not promised.
+- 2026-11-22: Decision (ledger, the human, recommended): one `catches` record and one `finding` record per
+  deferred finding. Rejected: `catches` only; a `finding` record per HIGH and MEDIUM finding.
+- 2026-11-22: Decision (history reason, the human, recommended): the step is judged by its test runs, its
+  line names the reason, and the Summary lists the commits (from the check report: `stapel export` writes
+  no Summary before 3b-4). Rejected: a ledger decision per reason; the reason in the commit message only.
+- 2026-11-22: Assumption: STP-36 changes `close.rs` in parallel; `stapel depends` runs before the build.
+- 2026-11-22: Decision (build order, the human): steps 1 to 10 are built before STP-36 is on main; the
+  merge dependencies DP-1/DP-2 (and the same DP2-x, DP3-x of later rounds) are lowered to LOW, and steps
+  11 and 12 are built after main with STP-36 is merged into this branch (74200d1).
+- 2026-11-22: Decision (agent, XR2-7): the Plan goes past the 12 steps of the Size with the fix steps of
+  code review rounds 1 and 2 (steps 13 to 21); they close findings of this ticket's promise, so the ticket
+  is not split.
+
+## Spec
+
+Terms:
+
+- **Project command**: one entry of `[check] project`, a shell command run with `sh -c`.
+- **Changed files**: the paths that `git diff-tree -z --no-renames --name-only` gives for each non-merge
+  commit of the ticket's first-parent range as the check finds it (with or without `base`), that exist at
+  the checked commit and do not lie under `.stapel/`; sorted, unique, each passed as one shell-quoted
+  word, with `./` before a path that starts with `-`.
+- **Pin**: the text of `.nvmrc` or `.node-version` at the root of the checked commit. A pin is a
+  **version** when it is one non-empty line of one to three dot-separated numbers with an optional
+  leading `v`, surrounding whitespace ignored. It **matches** `node --version` when each given number
+  equals the same number of the node version. Two pins **disagree** when their lists of numbers differ.
+- **History line**: a line of a commit message, the subject included, that starts with `history: `
+  followed by a non-empty reason; the first such line of a commit counts. A **history commit** is a
+  non-RED commit of the ticket's first-parent range with a history line.
+- **Counted finding**: a finding of `findings.jsonl` whose severity after its triage verdicts
+  (`triage::state_of`) is HIGH or MEDIUM, with `promise` `inside`, not marked false, and whose newest fate
+  is not `no-change`.
+
+| № | Criterion | Test |
+|---|---|---|
+| AC-1 | IF an entry of `[check] project` is empty or whitespace THEN loading `stapel.toml` fails with `check.project entries must not be empty`. | `check_project::refuses_an_empty_command` |
+| AC-2 | WHEN the level is `head` or `full` and `[check] project` has entries THE check runs each in order with `sh -c` in the check copy, with the environment of its other runs, after the suite and prints `project: <command>: pass`, or `project: <command>: fail (exit <n>)` and the last 20 lines of its output (control characters printed as spaces); a fail makes the result `fail`, exit 1, and the close refuses it as any failing check. | `check_project::runs_the_commands`, `check_project::a_failing_command_fails_the_check`, `check_project::cargo_commands_share_the_target`, `check_project::control_characters_are_replaced`, `check_project::junit_and_full_run_the_commands` |
+| AC-3 | WHEN a whitespace-separated word of a project command is exactly `{files}` THE word becomes the changed files; IF there is none THEN the command does not run and its line is `project: <command>: skipped: no changed files`, which counts as passing. | `check_project::files_are_the_changed_files`, `check_project::no_changed_files_skips`, `check_project::files_without_base` |
+| AC-4 | IF the time limit of the check runs out during a project command, or before the first one THEN the running command and its descendants are killed as other runs, and its line and the lines of the commands not run say `unverified: time limit` (before any checkout of the copy and before the `{files}` skip); the result is `fail`. | `check_project::time_limit_stops_a_command`, `check_project::the_limit_comes_before_the_skip`, `check_project::no_checkout_after_the_limit` |
+| AC-5 | WHEN the level is `steps` THE check runs no project command and prints `project: skipped: level steps`. | `check_project::steps_level_skips` |
+| AC-6 | WHEN the runner is junit and the checked commit has a pin that is a version THE check, at every level, runs `node --version` in the check copy under its time limit before any test, prints `node: <version> (pin <pin> in <file>)` after the `level:` line, and goes on when the pin matches; under the cargo runner and in `--history` mode the pin files are not read. | `check_node::a_matching_pin_runs`, `check_node::a_hanging_node_ends_at_the_limit` |
+| AC-7 | IF the pin does not match THEN the check exits 2 with `stapel: node <version> does not match the pin <pin> in <file>` and runs no test. | `check_node::a_mismatch_refuses` |
+| AC-8 | IF a pin is not a version (`.nvmrc` judged first), `.nvmrc` and `.node-version` disagree, or `node --version` cannot run or prints no version THEN the check exits 2 with `stapel: <file>: not a version: <text>`, `stapel: .nvmrc and .node-version disagree: <a>, <b>` or `stapel: node --version failed: <reason>`, and runs no test. | `check_node::refuses_a_bad_pin` |
+| AC-9 | WHEN a history commit changes a protected test in a test file of a step THE step is not `tests-changed`: the test text of that commit is the protected text for later commits, and the note `history by <label>: <reason>` follows the step's line, in both modes; a test inside a source file and a deleted test are judged as today; IF the history commit also changes that test file outside the step's own tests (a helper, an import) THEN it excuses nothing in that file and the step is judged as today. | `check_history_reason::green_may_change_its_test`, `check_history_reason::the_note_in_full_and_junit`, `check_history_reason::a_history_helper_is_tests_changed`, `check_history_reason::a_source_file_test_and_the_cargo_note`, `check_history_reason::a_junit_history_helper_is_tests_changed` |
+| AC-10 | IF a step's test was changed by a history commit THEN its RED run takes the RED commit's test file with the step's own tests replaced by their text at the newest such commit (the other tests of the file as at the RED commit), on the RED commit's code, and the step is `no-red` unless that run fails as a RED is judged today, a compile failure included; a cached step whose history text changed runs its RED again. | `check_history_reason::a_weakened_test_is_no_red`, `check_history_reason::a_cached_step_runs_its_red_again`, `check_history_reason::later_tests_stay_out_of_the_red_run` |
+| AC-11 | WHEN a history commit changes a build input under the cargo runner, or an input, a configuration file or the command's script under the junit runner THE change blocks no step and no run, in both modes; a later non-RED commit without a history line still blocks, as today, and the text of the history commit is the baseline it is compared with. | `check_history_reason::build_input_with_a_reason`, `check_history_reason::junit_input_with_a_reason` |
+| AC-12 | IF a commit has `history:` with an empty or whitespace reason, or the history line is in a RED commit THEN the commit is judged as one without a history line. | `check_history_reason::an_empty_reason_counts_as_none` |
+| AC-13 | WHEN the range has history commits THE report prints `history: <short id> <reason>` for each, oldest first, before the suite line (in `--history` mode after the step lines), and the check record has `history`. | `check_history_reason::the_record_lists_the_reasons` |
+| AC-14 | WHEN a check writes `project` or `history` into its record THE entries are `{command, outcome}` with the outcome `pass`, `fail`, `skipped` or `unverified`, and `{commit, reason}` with the full commit id; a command or reason is cut to 200 characters, and past 20 entries the rest are left out with `project_truncated: true` or `history_truncated: true` in the record. | `check_history_reason::the_record_lists_the_reasons`, `check_project::runs_the_commands`, `check_project::a_non_ascii_command_is_cut` |
+| AC-15 | WHEN `stapel review start --round N` gets a whole N of 3 or more and `findings.jsonl` has code review findings of round N−1 THE round starts as round 2 does, its pack carries the patch findings of round N−1; IF it has none THEN it refuses with `round <N> needs the code review findings of round <N-1> in .stapel/tickets/<KEY>/findings.jsonl`; IF N is 0 or not a whole number THEN it refuses with `--round must be a whole number of 1 or more, or merge`; exit 2. | `review::any_round_number`, `review::a_round_needs_the_previous_round` |
+| AC-16 | WHEN `stapel close` closes a ticket THE ledger gets, in one write before `state.json` is saved, one `catches` record with the note `At the close: counted findings: <stage>/<rule>=<n>; …` (sorted by stage, then rule; `;` and `=` in a rule written `_`), or `At the close: counted findings: none`, and one `finding` record per finding not marked false whose newest fate is `defer`, with the note `At the close, deferred: <id> <severity> <stage> round <n>: <claim>` (severity after triage, claim cut to 500 characters); the close prints `ledger: <n> records`. | `close_ledger::writes_catches_and_deferred`, `close_ledger::no_findings` |
+| AC-17 | IF `stapel close` refuses, `findings.jsonl` or the ledger has a malformed line, or the append fails THEN the ledger and `state.json` are unchanged, the close names the cause, and a later close after the fix writes the records; a failed append spends the grant, so the later close has its own dialog. | `close_ledger::a_refused_close_writes_nothing`, `close_ledger::bad_journals_refuse` |
+| AC-18 | WHEN `stapel init` writes the starter `stapel.toml` and the skill THE starter names `project` with `{files}` in a comment under `[check]`, and the skill names the history line, the round numbers and the ledger records of the close. | `init_process::starter_names_project_and_history` |
+
+### Guarantees
+
+- **Promised:** the Frame's promise items: item 1 by AC-1 to AC-5 and AC-14, item 2 by AC-6 to AC-8, item
+  3 by AC-9 to AC-14, item 4 by AC-15, item 5 by AC-16 and AC-17; AC-18 tells the process about them.
+  Unchanged: the step outcomes of commits without a history line; the cache key, except that it also covers
+  the history text a step's RED run takes (project commands are never cached); the golden reports of a check without `project` and without a pin; rounds 1, 2 and `merge`;
+  `stapel next`, which names no round after 2 (the orchestrator names round 3, as the skill says).
+- **Not promised:** the Frame's list; the order of records when two closes append at once.
+
+## Test plan
+
+Integration tests in `crates/stapel-cli/tests/`: the new files `check_project.rs`, `check_node.rs`,
+`check_history_reason.rs` and `close_ledger.rs`, and the existing `review.rs` and `init_process.rs`. The
+check tests use the fake cargo of `tests/common/`; the node tests put a fake `node` script first on an
+absolute `PATH` and use the junit fixtures of `check_junit.rs`. Light tests: `stapel cargo test -j 4 -p
+stapel-cli --test <file> -- --test-threads=4`; before each GREEN also `--test ticket_drift`.
+
+| Category | Cases | Tests |
+|---|---|---|
+| Project key | `""`, `"  "`; a list of two commands loads | `check_project::refuses_an_empty_command` |
+| Project run | two passing commands in order (a log file shows the order and the copy's path); one that exits 3 with 30 output lines: the last 20 printed, result `fail`, exit 1, `stapel close` refuses; 22 commands, one of 300 characters: the record cut and `project_truncated` | `check_project::runs_the_commands`, `check_project::a_failing_command_fails_the_check` |
+| Changed files | a changed file, a file with a space, a UTF-8 name (`é.ts`), a file named `-x.ts`, a deleted file, a renamed file, a file under `.stapel/`, a file changed only before the base, a file brought only by a merge of the base branch; `{files}` twice in one command; `--x={files}` and `"{files}"` left as written; no changed file outside `.stapel/` | `check_project::files_are_the_changed_files`, `check_project::no_changed_files_skips` |
+| Time limit | a command that sleeps past the limit and starts a child; a second command not run; a suite that uses the whole limit before the first command | `check_project::time_limit_stops_a_command` |
+| Level | `--level steps` with two commands | `check_project::steps_level_skips` |
+| Node match | pin `20`, `v20.11`, `20.11.1` with node `v20.11.1`, at level `steps` too; under cargo a `.nvmrc` of `lts/*` is ignored; `--history` with a mismatching pin is not refused | `check_node::a_matching_pin_runs` |
+| Node refusal | pin `18` with node `v20.11.1`; pin `20.1` with `v20.11.1`; `lts/*`, empty, two lines, `20.x`; `.nvmrc` `20` and `.node-version` `18`; `.nvmrc` `lts/*` and `.node-version` `18` (the alias is named); `20` and `v20` agree; no `node` on `PATH`; a `node` that exits 1; a `node` that prints `hello` | `check_node::a_mismatch_refuses`, `check_node::refuses_a_bad_pin` |
+| History tests | a GREEN with a history line that edits its step's test; a later fix commit with a history line that edits step 1's test; the same without the line (`tests-changed` as today); a history commit that deletes a test (as today); a test inside a source file (as today); `--history` mode | `check_history_reason::green_may_change_its_test` |
+| Weakened test | a history GREEN that edits its step's test so that it passes on the RED code: `no-red`; a history GREEN that fixes a typo of the test, which still fails on the RED code: `pass`; a history GREEN whose test does not compile on the RED code: `pass` | `check_history_reason::a_weakened_test_is_no_red` |
+| History inputs | a history commit that changes `tests/common/mod.rs` between steps; then a commit without the line that changes `Cargo.toml`; a later commit without the line that reverts the history commit's input (blocks); under junit a history commit that changes `jest.config.js` and one that changes the command's script; both modes | `check_history_reason::build_input_with_a_reason`, `check_history_reason::junit_input_with_a_reason` |
+| History line | `history:` with no reason; `history:   `; a RED with a history line; `History: x` (another case: no line); each next to a valid history commit in the same fixture, which is excused; the line in the subject (counts); two lines (the first reason) | `check_history_reason::an_empty_reason_counts_as_none` |
+| History record | two history commits: report lines oldest first, the `history` field of the record with full ids; a reason of 300 characters cut; `--history` mode places the lines after the steps | `check_history_reason::the_record_lists_the_reasons` |
+| Rounds | round 3 after round 2 findings, with a round 2 patch finding in its pack; round 7 after round 6; round 3 without round 2 findings; round 0, `-1` and `x` with the new text; the existing `refuses_bad_rounds` and precedence tests changed from round 3 | `review::any_round_number`, `review::a_round_needs_the_previous_round` |
+| Ledger | findings of two stages and three rules, a LOW finding, a HIGH regraded `low` by a verdict, a finding marked false, an outside finding, a `no-change` finding, two deferred findings, a deferred finding marked false (no record), a deferred HIGH regraded `low` (named `LOW`), a rule with `;`, a claim of 600 characters; a ticket without findings | `close_ledger::writes_catches_and_deferred`, `close_ledger::no_findings` |
+| Ledger failures | a close refused for a failing check and for a missing reason, then a close that succeeds and writes; a malformed line of `findings.jsonl`; a malformed line of the ledger; a ledger file that is read-only; each leaves `state.json` open | `close_ledger::a_refused_close_writes_nothing`, `close_ledger::bad_journals_refuse` |
+| Review round 1 fixes | a passing check, then a history commit that weakens step 1's test: the next `head` check runs step 1's RED again (`no-red`); a shared test file whose later step's test needs later code, with step 1's test weakened by a history commit: `no-red`; a ticket without `base`: `{files}` holds only the ticket's files; the limit used up before the first command, with a `{files}` command and no changed file: `unverified: time limit` and no checkout; a cargo-runner command that prints `CARGO_TARGET_DIR`; a command and an output with a control character | `check_history_reason::a_cached_step_runs_its_red_again`, `check_history_reason::later_tests_stay_out_of_the_red_run`, `check_project::files_without_base`, `check_project::the_limit_comes_before_the_skip`, `check_project::cargo_commands_share_the_target`, `check_project::control_characters_are_replaced` |
+| Review round 1 coverage | a command of 300 `ж`: cut to 200 characters; project commands at level `full`, and under junit with a matching pin (`node_modules` linked); a `node` that sleeps past the limit; the history note in a full check and under junit, a history commit that deletes a test, a test inside a source file | `check_project::a_non_ascii_command_is_cut`, `check_project::junit_and_full_run_the_commands`, `check_node::a_hanging_node_ends_at_the_limit`, `check_history_reason::the_note_in_full_and_junit` |
+| Review round 2 | a history commit that weakens step 1's test through a helper it adds to the same file: `tests-changed`; a test inside a source file changed by a history commit (as today); the cargo `history by` note in a full check; a post-checkout hook that would leave a mark shows no checkout after the limit | `check_history_reason::a_history_helper_is_tests_changed`, `check_history_reason::a_source_file_test_and_the_cargo_note`, `check_project::no_checkout_after_the_limit` |
+| Review round 3 | under junit a history commit that rewrites a step's test to call a helper it adds to the same file, and one that adds an import: `tests-changed`, in a full check and in `--history` | `check_history_reason::a_junit_history_helper_is_tests_changed` |
+| Process files | the starter `stapel.toml` and the skill | `init_process::starter_names_project_and_history` |
+
+### Inputs
+
+| Input | Type | Smallest / largest | Empty | Invalid | Precision | Test |
+|---|---|---|---|---|---|---|
+| `[check] project` | list of strings | 0 / any; 20 in the record | absent or `[]`: no project line | an empty or whitespace entry: load error | run as given by `sh -c`; cut to 200 characters in the record | `check_project::refuses_an_empty_command`, `check_project::runs_the_commands` |
+| `{files}` in a command | whole word | 0 / every changed file | no changed file: skipped | a file name with a newline: not promised; `{files}` inside another word: left as written | each path one shell-quoted word | `check_project::files_are_the_changed_files` |
+| `.nvmrc`, `.node-version` | text file | `1` / `v99.99.99` | empty: refused | alias, range, several lines, `20.x`: refused | each given number, exact | `check_node::refuses_a_bad_pin` |
+| History line | line of a commit message | one character of reason / the message | empty reason: no line | another case of `history:`: no line | the first line, trimmed; cut to 200 characters in the record | `check_history_reason::an_empty_reason_counts_as_none` |
+| `--round N` | whole number or `merge` | 1 / the largest `u64` | absent: as today | 0, negative, not a number: refused with the new text | exact | `review::any_round_number` |
+| Findings of `findings.jsonl` | JSON lines | none / the journal limit | none: `catches` says `none` | a malformed line: the close refuses with its place | state after triage; claim cut to 500 characters | `close_ledger::writes_catches_and_deferred`, `close_ledger::bad_journals_refuse` |
+| `.stapel/process-ledger.jsonl` | JSON lines | absent / the journal limit | absent: created | a malformed line, a write error: the close refuses | one write of all records | `close_ledger::bad_journals_refuse` |
+
+### External states
+
+| System | Dimension | Handling | Test |
+|---|---|---|---|
+| git | paths with spaces, glob characters and UTF-8 in `{files}`; deletions; renames (`--no-renames`: the new path; the old one does not exist) | read with `-z`; quoted words; deletions left out | `check_project::files_are_the_changed_files` |
+| git | paths with newlines or non-UTF-8 bytes in `{files}` | not promised | — |
+| git | commit messages with control bytes in a history line | the reason is printed with control bytes replaced, as the report does today | `check_history_reason::the_record_lists_the_reasons` |
+| git | history shape: merges of the base branch, amended and rebuilt history | the first-parent range: commits brought by a merge are outside it; a history line of the merge commit itself counts; files brought only by a merge are not changed files | `check_history_reason::build_input_with_a_reason`, `check_project::files_are_the_changed_files` |
+| git | shallow clone, object format, worktrees, submodules, dirty tree, configuration | unchanged by this ticket | — |
+| node | `node --version` output: `v20.11.1`, extra text, nothing | the first `v<n>.<n>.<n>` token, else refused | `check_node::refuses_a_bad_pin` |
+| node | no `node` on `PATH`; `node` exits non-zero; `node` that hangs | refused, exit 2; a hang ends at the check's time limit | `check_node::refuses_a_bad_pin`, `check_node::a_hanging_node_ends_at_the_limit` |
+| node | version managers that change `node` per folder (nvm, fnm, volta shims) | the `node` the check copy finds is compared; not switched | — |
+| cargo | every dimension | unchanged; project commands are shell commands, not cargo runs | — |
+| os | processes of a project command: groups, children that leave the group | the kill of the check's time limit, as for other runs | `check_project::time_limit_stops_a_command` |
+| os | `sh` missing | not promised | — |
+| os | case-insensitive file systems: `.NVMRC` | not read; only the exact names | — |
+| claude-code | every dimension | not read by this ticket | — |
+
+**Review Focus:** a project command that changes files of the check copy (the copy is removed after the
+check; not tested); a `{files}` list longer than the system's argument limit (not promised, `sh` fails and
+the command fails); two closes of different tickets appending to the ledger at once (one line each; not
+tested); a history line inside a commit that is both a GREEN and a merge (judged as a GREEN; the review
+judges it); a pin file present at HEAD but absent at a RED commit (the pin of the checked commit is read
+once; not tested).
+
+## Design
+
+### Facts
+
+- F-1: `outcomes.rs` (about line 700 to 750) walks later commits for each protected unit of a step; a
+  non-RED commit that changes it makes the step `tests-changed`; a deletion with `spec change:` retires
+  a test. The message is already read there.
+- F-2: `build_inputs.rs::BuildInputs::changed` is the first non-RED commit of the range that changes a
+  build input; `check.rs` (about line 464) turns it into `build-input-changed: <path> at <id>` and blocks
+  every later step without a cargo run. Under junit the block comes from `build_inputs.rs::analyse_junit`
+  (`walk_changes`, every commit of the range, no message read) and `check.rs::junit_block`; the
+  `--history` mode (`check.rs` about line 1393) is a third site.
+- F-3: `review.rs:62` refuses a round outside 1 and 2; `review.rs:83` to `:97` checks round 1 findings
+  before round 2; `write_pack` gives findings only to round 2 and `patch_findings` reads round 1; the
+  tests `review::refuses_bad_rounds` and the precedence tests use `--round 3` as a bad round.
+- F-8: `triage::state_of` gives a finding's severity after its verdicts and marks false findings;
+  `is_blocking` and `patch_findings` leave false findings out.
+- F-9: `check.rs` trims only `steps` until the record fits `MAX_RECORD` (about line 627).
+- F-4: `close.rs` checks the current check line and the merge review, consumes the grant, saves
+  `state.json` and writes a decision record; nothing touches the ledger. `records::check_ledger` builds a
+  ledger line and `journal::append_all` appends lines.
+- F-5: the check copy links the working tree's `node_modules` (`check.rs:867`); each run gets the time
+  left of the whole check (STP-35).
+- F-6: `stapel export` writes no Summary; the orchestrator writes it.
+- F-7: `check.rs::refuse` prints `stapel: <message>` and exits 2.
+
+### Decisions (before the build)
+
+- 2026-11-22, agent: `{files}` leaves out paths under `.stapel/`, because the ticket files are not project
+  code and prettier would judge `ticket.md`.
+- 2026-11-22, agent: a project command runs after the suite even when a step failed, so one check shows
+  every failure.
+- 2026-11-22, agent: a counted finding leaves out false findings and the newest fate `no-change`, as the
+  hand-written records of STP-25 and STP-26 did (SR1-5).
+- 2026-11-22, agent (SR1-6): the close builds the ledger records before it consumes the grant and appends
+  them in one write before `state.json` is saved; a failed append refuses the close. A failed save after
+  the append leaves records of an open ticket; that case is not promised.
+- 2026-11-22, agent (SR1-9): a history commit may change a step's test only so that the test still fails
+  on the RED code; the RED run takes the test file from the newest history commit that changed it.
+- 2026-11-22, agent (SR1-8): the round N pack carries the patch findings of round N−1; `stapel next` is
+  not changed.
+- The project commands run through the runner's program run with the deadline, in the check copy as the
+  current directory. The record cut follows F-9: `project` and `history` are cut first to 20 entries.
+- The pin is read from the check copy at the checked commit; `node` is found as the junit runner finds its
+  command today.
+- The history line is read in `steps.rs` with the commit message, so that `outcomes.rs` and
+  `build_inputs.rs` share one parser.
+
+### Decisions (as built)
+
+All dated 2026-11-22, mark `agent`; the person may overrule them at the close.
+
+- AC-14's `truncated: true` is a top-level `project_truncated: true` and `history_truncated: true` in the
+  record, after the `steps_truncated` precedent. Commands and reasons are cut by characters (`cut_chars`).
+- The printed `history:` line is cut to 200 characters as the record is, and a control character in it
+  becomes a space; the record keeps the reason raw apart from the cut.
+- Besides the time limit, a project command reads `unverified: <reason>` when it cannot start or ends by a
+  signal, and when the changed files cannot be read from git (then every later command too); each fails the
+  check (DR-1).
+- The first `history: ` line of a message with a non-empty reason counts (`steps.rs::history_reason`).
+- The RED run of a step takes the RED commit's test file with only the step's own tests replaced by their
+  text at the newest history commit (`rust_tests::with_tests_from`, `ts_tests::with_calls_from`, from
+  `Analysis::red_files`); the GREEN and HEAD runs take the commit as it is (step 14, XR1-3).
+- The record's `tests_hash` holds `step_key`: the test hash alone for a step without history commits, else
+  a hash of it with each history path, commit and text hash, so a changed history text misses the cache
+  (step 13, XR1-1).
+- `{files}` takes its commits from `build_inputs::range`, with or without `base` (step 15). Each project
+  command looks at the time limit before the `{files}` skip; the copy is checked out once, before the first
+  command that runs (step 16). Under the cargo runner project commands get `CARGO_TARGET_DIR` and
+  `CARGO_TERM_COLOR=never`; under junit the allow-listed environment of the runs, nothing more (step 17).
+  `printable` turns control characters of `project:` lines and output tails into spaces; the record keeps
+  the raw command (step 17).
+- A history commit that also changes a step's test file outside its test functions (`helper_text` under
+  cargo; the rest of the file without blank space and `;` under junit) excuses nothing in that file
+  (`outcomes.rs::changes_file_outside_tests`, step 20, XR2-1). It compares the text outside all test
+  functions, so a test function the weakened test calls is not caught (XR3-1, deferred).
+- A history commit's build-input changes are still recorded as touched but set no `changed`
+  (`build_inputs.rs::history_commit`); `history_commits` lists them for the report and record.
+- The round refusal keeps round 2's text with the full path; AC-15 quotes it. The pack heading is
+  `Findings of round <N-1> with the fate patch`; `--round` accepts hyphen values so `-1` gets the refusal.
+- The close builds its ledger lines (`stapel-core/src/close_ledger.rs`) after STP-36's `close_refusal`, the
+  main-merge, check and merge-review gates and before the grant is consumed, appends them in one write
+  after it and before `state.json` is saved, and prints `ledger: <n> records`. A finding without `rule`
+  counts under `none`. `records::closed_ticket_by_key_only` now counts the `catches` line.
+- The starter `stapel.toml` comment for `project` is a list: `# project = ["npx prettier --check {files}"]`.
+- Step 2's RED was rebuilt once (history rewrite before any review) because `runs_the_commands` depended on
+  the length of `TMPDIR`; the code did not change.
+
+## Proof
+
+| Criterion | Test |
+|---|---|
+| AC-1 | `check_project::refuses_an_empty_command` |
+| AC-2 | `check_project::runs_the_commands`, `check_project::a_failing_command_fails_the_check`, `check_project::cargo_commands_share_the_target`, `check_project::control_characters_are_replaced`, `check_project::junit_and_full_run_the_commands` |
+| AC-3 | `check_project::files_are_the_changed_files`, `check_project::no_changed_files_skips`, `check_project::files_without_base` |
+| AC-4 | `check_project::time_limit_stops_a_command`, `check_project::the_limit_comes_before_the_skip`, `check_project::no_checkout_after_the_limit` |
+| AC-5 | `check_project::steps_level_skips` |
+| AC-6 | `check_node::a_matching_pin_runs`, `check_node::a_hanging_node_ends_at_the_limit` |
+| AC-7 | `check_node::a_mismatch_refuses` |
+| AC-8 | `check_node::refuses_a_bad_pin` |
+| AC-9 | `check_history_reason::green_may_change_its_test`, `check_history_reason::the_note_in_full_and_junit`, `check_history_reason::a_history_helper_is_tests_changed`, `check_history_reason::a_source_file_test_and_the_cargo_note`, `check_history_reason::a_junit_history_helper_is_tests_changed` |
+| AC-10 | `check_history_reason::a_weakened_test_is_no_red`, `check_history_reason::a_cached_step_runs_its_red_again`, `check_history_reason::later_tests_stay_out_of_the_red_run` |
+| AC-11 | `check_history_reason::build_input_with_a_reason`, `check_history_reason::junit_input_with_a_reason` |
+| AC-12 | `check_history_reason::an_empty_reason_counts_as_none` |
+| AC-13 | `check_history_reason::the_record_lists_the_reasons` |
+| AC-14 | `check_history_reason::the_record_lists_the_reasons`, `check_project::runs_the_commands`, `check_project::a_non_ascii_command_is_cut` |
+| AC-15 | `review::any_round_number`, `review::a_round_needs_the_previous_round` |
+| AC-16 | `close_ledger::writes_catches_and_deferred`, `close_ledger::no_findings` |
+| AC-17 | `close_ledger::a_refused_close_writes_nothing`, `close_ledger::bad_journals_refuse` |
+| AC-18 | `init_process::starter_names_project_and_history` |
+
+## Plan
+
+Route: full (tags `interface`, `data`), auto.
+
+1. Project key (AC-1; test `check_project::refuses_an_empty_command`, which fails at the RED because the
+   key is unknown): the GREEN adds `project` to `config.rs::Check` with its load error. Must not change:
+   the other keys.
+2. Project commands (AC-2, AC-4, AC-5, the `project` part of AC-14; tests
+   `check_project::runs_the_commands`, `check_project::a_failing_command_fails_the_check`,
+   `check_project::time_limit_stops_a_command`, `check_project::steps_level_skips`): the GREEN runs the
+   commands after the suite with the deadline, prints their lines and writes `project` into the record.
+   Must not change: a check without the key.
+3. Changed files (AC-3; tests `check_project::files_are_the_changed_files`,
+   `check_project::no_changed_files_skips`): the GREEN replaces the word `{files}` and skips a command
+   with no changed file. Must not change: a command without `{files}`.
+4. Node pin (AC-6, AC-7; tests `check_node::a_matching_pin_runs`, `check_node::a_mismatch_refuses`): the
+   GREEN reads the pin under junit, runs `node --version`, prints the `node:` line and refuses a mismatch.
+   Must not change: the cargo runner and `--history`.
+5. Bad pins (AC-8; test `check_node::refuses_a_bad_pin`): the GREEN refuses an alias, two disagreeing
+   files and a failing `node`. Must not change: a matching pin.
+6. History line for tests (AC-9, AC-12; tests `check_history_reason::green_may_change_its_test`,
+   `check_history_reason::an_empty_reason_counts_as_none`): the GREEN parses the history line in
+   `steps.rs` and lets a history commit change a protected test in `outcomes.rs`. Must not change: a
+   commit without the line.
+7. The RED run of a changed test (AC-10; test `check_history_reason::a_weakened_test_is_no_red`): the
+   GREEN runs the step's RED with the test file of the newest history commit. Must not change: a step
+   without a history commit.
+8. History line for build inputs (AC-11; tests `check_history_reason::build_input_with_a_reason`,
+   `check_history_reason::junit_input_with_a_reason`): the GREEN skips history commits in
+   `BuildInputs::changed`, `analyse_junit` and the `--history` mode. Must not change: a later commit
+   without the line.
+9. History record (AC-13, the `history` part of AC-14; test
+   `check_history_reason::the_record_lists_the_reasons`): the GREEN prints the `history:` lines and writes
+   `history` into the record. Must not change: the golden reports without history commits.
+10. Review rounds (AC-15; tests `review::any_round_number`, `review::a_round_needs_the_previous_round`;
+    the RED also changes `review::refuses_bad_rounds` and the precedence tests from round 3): the GREEN
+    accepts any whole round of 1 or more, checks round N−1 and puts its patch findings into the pack.
+    Must not change: rounds 1, 2 and `merge`.
+11. Ledger at the close (AC-16, AC-17; tests `close_ledger::writes_catches_and_deferred`,
+    `close_ledger::no_findings`, `close_ledger::a_refused_close_writes_nothing`,
+    `close_ledger::bad_journals_refuse`): the GREEN builds the records before the grant and appends them
+    before the save. Must not change: the close's other refusals.
+12. Process files (AC-18; test `init_process::starter_names_project_and_history`): the GREEN changes the
+    starter `stapel.toml` and `skill.md` in `crates/stapel-cli/assets/` and runs `stapel init` in the
+    worktree. Must not change: the other process files.
+13. Cache and history (XR1-1, CR1-1, AC-10; test `check_history_reason::a_cached_step_runs_its_red_again`,
+    which fails at the RED because the step is `cached`): the GREEN puts the history text of the step's
+    RED run (`Analysis::red_files`: path, history commit and text hash) into the step cache key, so a
+    changed history text misses the cache. Must not change: the key of a step without history commits.
+14. Only the step's own tests (XR1-3, AC-10; test `check_history_reason::later_tests_stay_out_of_the_red_run`,
+    which fails at the RED because the later step's test does not compile on the RED code and the step
+    reads `pass`): the GREEN builds the RED run's file from the RED commit's text with only the step's
+    test units replaced by their text at the newest history commit, under both runners. Must not change:
+    the GREEN and HEAD runs.
+15. Project range (XR1-2, AC-3; test `check_project::files_without_base`, which fails at the RED because
+    `{files}` lists files from before the ticket): the GREEN takes the changed files from the check's range
+    (`build_inputs::range`). Must not change: the cases with a base.
+16. Limit first (XR1-6, CR1-7, DR1-2, AC-4; test `check_project::the_limit_comes_before_the_skip`): the
+    GREEN looks at the time limit before the checkout and before the `{files}` skip. Must not change: a
+    check with time left.
+17. Project environment and output (XR1-5, XR1-7, AC-2; tests `check_project::cargo_commands_share_the_target`,
+    `check_project::control_characters_are_replaced`): the GREEN gives project commands under the cargo
+    runner the environment of its cargo runs and prints control characters of commands and output as
+    spaces. Must not change: the junit environment.
+18. Project coverage (XR1-4, CR1-2, CR1-8, AC-2, AC-14; tests `check_project::a_non_ascii_command_is_cut`,
+    `check_project::junit_and_full_run_the_commands`): a coverage commit `STP-37 step 18 tests: ...`. If a
+    test fails, it becomes a RED and the GREEN fixes the code. Must not change: any source file.
+19. Node and history coverage (CR1-4, CR1-5, AC-6, AC-9; tests `check_node::a_hanging_node_ends_at_the_limit`,
+    `check_history_reason::the_note_in_full_and_junit`): a coverage commit `STP-37 step 19 tests: ...`. If a
+    test fails, it becomes a RED and the GREEN fixes the code. Must not change: any source file.
+20. History helpers (XR2-1, CR2-1, AC-9; test `check_history_reason::a_history_helper_is_tests_changed`, which fails at the RED because the step
+    reads `pass`): the GREEN gives a history commit that also changes a step's test file outside the step's
+    own tests no excuse for that file, so the step is judged as today, and fixes the doc comment of
+    `Analysis::red_files`. Must not change: a history commit that changes only the step's tests.
+21. Round 2 coverage (XR2-3, XR2-4, AC-4, AC-9; tests `check_history_reason::a_source_file_test_and_the_cargo_note`, `check_project::no_checkout_after_the_limit`):
+    a coverage commit `STP-37 step 21 tests: ...`. If a test fails, it becomes a RED and the GREEN fixes
+    the code. Must not change: any source file.
+22. Junit helper coverage (CR3-1, XR3-3, AC-9; test `check_history_reason::a_junit_history_helper_is_tests_changed`): a coverage commit
+    `STP-37 step 22 tests: ...`: under junit a history commit that adds a helper or an import to the step's
+    test file gives `tests-changed`, in a full check and in `--history`. If the test fails, it becomes a RED
+    and the GREEN fixes the code. Must not change: any source file.
+
+## Review
+
+Reviewers: spec review two rounds before the build (SR1, SR2: one HIGH, fixed); dependency reviews against
+STP-36 in three rounds (DP, DP2, DP3: the same two merge dependencies, lowered by the person's decision to
+build steps 1 to 10 first); a step drift review (DR) before code review; code review rounds 1, 2 and 3, each
+with stapel-reviewer (claude-sonnet-5-5), an external stapel-reviewer (claude-fable-5-1) and stapel-drift on
+the whole ticket. Round 3 ran on the binary of this branch, installed by the person (2026-11-22), because the
+binary of main refused `--round 3`. No screen promise, so no local stand.
+
+- Step drift: 2 LOW (DR-1 recorded in Design, DR-2 no change).
+- Round 1: 1 HIGH, 8 MEDIUM, 14 LOW. XR1-1 and CR1-1 (the step cache skipped the history RED run) fixed by
+  step 13; XR1-3 by step 14; XR1-2 by 15; XR1-6, CR1-7, DR1-2 by 16; XR1-5, XR1-7 by 17; CR1-3, DR1-1 by the
+  AC-14 text; CR1-2, CR1-4, CR1-5, CR1-8, XR1-4 by coverage steps 18 and 19; XR1-8 no change; XR1-9,
+  XR1-10, XR1-11, XR1-12, CR1-6, CR1-9 deferred.
+- Round 2: no HIGH, 3 MEDIUM inside and 1 outside, 13 LOW. XR2-1 and CR2-1 (a helper added by the history
+  commit) fixed by step 20; XR2-2 by Design "as built"; XR2-3, XR2-4 by coverage step 21; XR2-7 by a
+  Decision line; CR2-3, DR2-1 to DR2-3 no change; the other LOW deferred.
+- Round 3: no HIGH, 4 MEDIUM, 5 LOW. CR3-1 and XR3-3 (the junit branch of step 20 untested) closed by
+  coverage step 22; CR3-4, XR3-4 by Design "as built"; XR3-1, XR3-2 deferred as deliberate circumvention
+  outside the threat model; CR3-2, CR3-3, XR3-5 deferred.
+- Merge review (STP-36 merged at 74200d1): no HIGH, no MEDIUM, 6 LOW; XM-4 fixed in this section, the
+  others deferred.
+- Last check: at aa92e61, the 18 steps with a RED and a GREEN pass (steps 18, 19, 21 and 22 are coverage
+  commits), suite 1100 passed, 0 failed.
+
+## Summary
+
+Done: plan item 3b-3 (3.5, 3.6, 3.7b). `[check] project` runs the project's own commands after the suite at
+levels `head` and `full`, with `{files}` as the ticket's changed files; a failure fails the check and the
+close. Under junit the check compares the `.nvmrc` or `.node-version` pin with `node --version` and refuses a
+mismatch. A `history: <reason>` line lets a non-RED commit change its step's test or a build input; the
+step's RED run takes the new test text and must still fail, the cache follows that text, and the report and
+record list the history commits. `stapel review start --round N` takes any N of 1 or more after round N-1.
+`stapel close` appends one `catches` record and one `finding` record per deferred finding to the process
+ledger. The skill and the starter `stapel.toml` name all of it.
+
+For the person to overrule (agent decisions, in Decisions and Design):
+- The Plan has 22 steps, past the 12 of the Size: steps 13 to 22 are the fix steps of three review rounds
+  (XR2-7, CR3-3).
+- Record flags `project_truncated` and `history_truncated`; commands and reasons cut by characters; the
+  printed `history:` line is cut to 200 characters too.
+- The round refusal keeps the full path `.stapel/tickets/<KEY>/findings.jsonl`.
+- A history commit that also changes the test file outside its test functions excuses nothing there.
+- Step 2's RED was rebuilt once before any review (a test depended on the TMPDIR length).
+
+Open for the person (deferred findings, in findings.jsonl and the ledger at the close):
+- XR3-1, XR3-2 (MEDIUM): a deliberate history commit can still weaken a test through a new test function,
+  a common module or an earlier history commit, because a compile failure counts as a failing RED. Proposal:
+  a RED run with history text must fail by an assert, not by a compile failure.
+- XR1-9: nothing mechanical stops round 3 while a HIGH finding of round 2 is open; the skill rule stays.
+- XR1-11 (outside): every close now appends to the tracked ledger (`.gitattributes` has `merge=union`).
+- XR1-10, CR1-9: a `catches` line over 64 KiB refuses the close; a deferred finding without severity.
+- XR1-12: `{files}` inside the command's own quotes breaks the quoting.
+- CR1-6: the skill says a failed close writes nothing; a failed save after the append is not promised.
+- CR2-2, XR2-8: node refusals and `unverified: <why>` lines print raw text.
+- CR2-4: the output tail is stdout then stderr.
+- CR2-5, CR3-2: no unit tests of the test splice; the source-file case is shown by construction.
+- CR2-6: project commands get the allow-listed environment only (no `CI`, `NODE_OPTIONS`, proxies).
+- XR2-5, XR2-6: a misplaced doc line; node pin edges (non-UTF-8 pin, nightly versions).
+- CR3-4, XR3-5: `no_checkout_after_the_limit` uses a 10 s limit; `a_source_file_test_and_the_cargo_note`
+  runs a nested real cargo.
+- Merge review: XM-2 (the skill's code-review line still says "before round 2"), XM-3 (doc comments name
+  rounds 1 and 2), XM-1 (no provisional-permit test for round 3), XM-5 (outside: the close-record refusals
+  come after the dialog), MR-1 (STP-36's close reads `ticket.md` unbounded).
+- From STP-35: XR2-7 (skill and starter now name `project`; `level`, `points`, `suite_exclude` still not).

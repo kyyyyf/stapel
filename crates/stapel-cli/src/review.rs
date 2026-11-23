@@ -21,6 +21,8 @@ use std::process::Command;
 pub enum Round {
     Number(u64),
     Merge,
+    /// Not a whole number of 1 or more; `start` refuses it after the ticket checks.
+    Invalid,
 }
 
 impl std::str::FromStr for Round {
@@ -30,16 +32,17 @@ impl std::str::FromStr for Round {
         if s == "merge" {
             return Ok(Round::Merge);
         }
-        s.parse::<u64>()
-            .map(Round::Number)
-            .map_err(|_| format!("`{s}` is not a number or `merge`"))
+        Ok(match s.parse::<u64>() {
+            Ok(n) if n >= 1 => Round::Number(n),
+            _ => Round::Invalid,
+        })
     }
 }
 
 pub fn start(key: Option<&str>, round: Round) -> Result<(), Fail> {
     let number = match round {
         Round::Number(n) => Some(n),
-        Round::Merge => None,
+        _ => None,
     };
     let (root, config) = repo::open().map_err(Fail::failed)?;
     let ticket = resolve(&root, key).map_err(Fail::refused)?;
@@ -59,9 +62,9 @@ pub fn start(key: Option<&str>, round: Round) -> Result<(), Fail> {
         }
         Status::Unreadable(reason) => return Err(Fail::failed(reason.clone())),
     };
-    if number.is_some_and(|n| !(1..=2).contains(&n)) {
+    if matches!(round, Round::Invalid) {
         return Err(Fail::refused(
-            "--round must be 1 or 2; after round 2 the person decides",
+            "--round must be a whole number of 1 or more, or merge",
         ));
     }
     let dirty = dirty_paths(&root).map_err(Fail::failed)?;
@@ -80,20 +83,21 @@ pub fn start(key: Option<&str>, round: Round) -> Result<(), Fail> {
         )));
     };
     check_base(&root, base, &head).map_err(Fail::failed)?;
-    if number == Some(2) {
+    if let Some(n) = number.filter(|n| *n >= 2) {
         let path = ticket.dir.join("findings.jsonl");
         let entries = journal::read(&path).map_err(Fail::failed)?;
-        let has_round_one = entries.into_iter().any(|(_, entry)| match entry {
+        let has_previous = entries.into_iter().any(|(_, entry)| match entry {
             Entry::V1(map) | Entry::Legacy(map) => {
                 map.get("stage").and_then(|s| s.as_str()) == Some("code-review")
-                    && map.get("round").and_then(whole_round) == Some(1)
+                    && map.get("round").and_then(whole_round) == Some(n - 1)
             }
             Entry::Problem(_) => false,
         });
-        if !has_round_one {
+        if !has_previous {
             return Err(Fail::refused(format!(
-                "round 2 needs the code review findings of round 1 in \
+                "round {n} needs the code review findings of round {} in \
                  .stapel/tickets/{}/findings.jsonl",
+                n - 1,
                 ticket.key
             )));
         }
@@ -213,7 +217,7 @@ fn write_pack(
         stapel_core::ticket::Lookup::Found(body) => body,
         _ => "",
     };
-    let findings = if round == 2 {
+    let findings = if round >= 2 {
         let entries = journal::read(&ticket_dir.join("findings.jsonl")).map_err(Fail::failed)?;
         let records: Vec<_> = entries
             .into_iter()
@@ -222,7 +226,7 @@ fn write_pack(
                 Entry::Problem(_) => None,
             })
             .collect();
-        Some(stapel_core::review::patch_findings(&records))
+        Some(stapel_core::review::patch_findings_of(&records, round - 1))
     } else {
         None
     };

@@ -84,9 +84,11 @@ pub fn run(key: Option<&str>, reason: &str, grant: Option<&str>) -> Result<(), S
             ticket.key
         ));
     }
+    let ledger = stapel_core::close_ledger::close_records(&root, &ticket.dir, &ticket.key)?;
     if let Some(token) = grant {
         consume(&root, token, &close_facts(&ticket.key, reason))?;
     }
+    stapel_core::journal::append_all(&root.join(stapel_core::records::LEDGER), &ledger)?;
     state.closed = Some(Closed {
         by,
         at: now_rfc3339(),
@@ -95,6 +97,7 @@ pub fn run(key: Option<&str>, reason: &str, grant: Option<&str>) -> Result<(), S
     let dropped_flag = state.extra.remove("build").is_some();
     save(&ticket.dir.join("state.json"), &state)?;
     say!("closed: {}", ticket.key);
+    say!("ledger: {} records", ledger.len());
     if dropped_flag {
         say!("removed: build.allowed (phase 0 hand permit)");
     }

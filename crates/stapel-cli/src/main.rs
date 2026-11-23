@@ -244,8 +244,8 @@ enum FindingsAction {
 enum ReviewAction {
     /// Prepare one code review round of a ticket.
     Start {
-        /// The round: 1, 2 or `merge`.
-        #[arg(long)]
+        /// The round: a whole number of 1 or more, or `merge`.
+        #[arg(long, allow_hyphen_values = true)]
         round: review::Round,
         /// The ticket key; without it the ticket of the current branch.
         key: Option<String>,

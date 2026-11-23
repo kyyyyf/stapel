@@ -30,6 +30,11 @@ fn text<'a>(m: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
 /// The finding records with stage `code-review` and whole round 1 whose current state has the fate
 /// `patch` and is not false, in the file order of their first record.
 pub fn patch_findings(records: &[Map<String, Value>]) -> Vec<PatchFinding> {
+    patch_findings_of(records, 1)
+}
+
+/// `patch_findings` for the whole round `round`.
+pub fn patch_findings_of(records: &[Map<String, Value>], round: u64) -> Vec<PatchFinding> {
     let mut seen: Vec<&str> = Vec::new();
     let mut out = Vec::new();
     for m in records.iter().filter(|m| !m.contains_key("kind")) {
@@ -42,9 +47,9 @@ pub fn patch_findings(records: &[Map<String, Value>]) -> Vec<PatchFinding> {
         let Some(finding) = &state.finding else {
             continue;
         };
-        let is_round_one = text(finding, "stage") == Some("code-review")
-            && finding.get("round").and_then(whole_round) == Some(1);
-        if !is_round_one
+        let is_round = text(finding, "stage") == Some("code-review")
+            && finding.get("round").and_then(whole_round) == Some(round);
+        if !is_round
             || state.fate.as_deref() != Some("patch")
             || state.verdict.as_deref() == Some("false")
         {
@@ -154,7 +159,10 @@ pub fn pack_text(p: &Pack) -> String {
         spec = p.spec.trim(),
     );
     if let Some(findings) = p.findings {
-        out.push_str("\n## Findings of round 1 with the fate patch\n\n");
+        out.push_str(&format!(
+            "\n## Findings of round {} with the fate patch\n\n",
+            p.round.saturating_sub(1)
+        ));
         if findings.is_empty() {
             out.push_str("- none\n");
         }

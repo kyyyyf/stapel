@@ -3,6 +3,7 @@ pub mod attention;
 pub mod brief;
 pub mod build_inputs;
 pub mod checkstate;
+pub mod close_ledger;
 pub mod config;
 pub mod confirm;
 pub mod depends;

@@ -60,6 +60,10 @@ pub struct Analysis {
     /// The full id of the commit that made the fixed outcome, or of the `interleaved` RED
     /// (STP-14). `None` for a passing outcome and for a RED with no step commit after it.
     pub fault: Option<String>,
+    /// STP-37 AC-10: the test files in which a history commit changed a step test, each with the
+    /// newest such commit; the RED run takes the step's tests from that file. A history commit that
+    /// also changes the file outside the step's tests is not listed: it excuses nothing there.
+    pub red_files: Vec<(String, String)>,
 }
 
 /// What a RED commit's own changes say: its step tests, its parent and its changes, and
@@ -376,6 +380,25 @@ impl Unit {
     }
 }
 
+/// Whether the commit changes a test file outside its test functions or calls (a helper, an
+/// import). A file that is no test file (a test inside a source file) is judged as before.
+fn changes_file_outside_tests(files: &mut Files, sha: &str, path: &str, mode: &Mode) -> bool {
+    let parent = format!("{sha}^");
+    let text = |files: &mut Files, rev: &str| files.get(rev, path);
+    match mode {
+        Mode::Junit(globs) if is_test_file(path, globs) => {
+            let bare = |s: String| {
+                rest_text(&s).replace(|c: char| c.is_whitespace() || c == ';', "")
+            };
+            text(files, sha).map(bare) != text(files, &parent).map(bare)
+        }
+        Mode::Cargo if under_tests(path) && path.ends_with(".rs") => {
+            text(files, sha).map(|s| helper_text(&s)) != text(files, &parent).map(|s| helper_text(&s))
+        }
+        _ => false,
+    }
+}
+
 /// Commits after `from` up to `head` on the first-parent history that touch `path`, oldest first.
 /// Fields are split on NUL, which a commit message cannot hold; the path is given literally.
 fn touching(
@@ -471,6 +494,7 @@ pub fn analyse_in(
             notes: Vec::new(),
             to_run: Vec::new(),
             fault: None,
+            red_files: Vec::new(),
         };
         let fix = |a: &mut Analysis, o: &str, r: String| a.fixed = Some((o.to_string(), r));
         if reds.is_empty() || greens.is_empty() || pos(greens[0]) < pos(reds[0]) {
@@ -729,6 +753,30 @@ pub fn analyse_in(
                             by: l.clone(),
                             what: unit.name(),
                         });
+                        current = value;
+                    }
+                    // STP-37 AC-9: a history commit may change a protected test; its text is the
+                    // protected text from here on.
+                    // A history commit that also changes the rest of the test file (a helper, an
+                    // import) excuses nothing in that file.
+                    _ if matches!(unit, Unit::Test(_))
+                        && crate::steps::history_reason(&message).is_some()
+                        && !changes_file_outside_tests(&mut files, &sha, &unit.path(), &mode) =>
+                    {
+                        let note = Note {
+                            kind: "history by",
+                            by: label,
+                            what: crate::steps::history_reason(&message).unwrap_or_default(),
+                        };
+                        if !a.notes.contains(&note) {
+                            a.notes.push(note);
+                        }
+                        let path = unit.path();
+                        match a.red_files.iter_mut().find(|(p, _)| *p == path) {
+                            Some(old) if pos_of(&old.1) > pos_of(&sha) => {}
+                            Some(old) => old.1 = sha.clone(),
+                            None => a.red_files.push((path, sha.clone())),
+                        }
                         current = value;
                     }
                     _ => {

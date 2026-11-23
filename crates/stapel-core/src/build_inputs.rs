@@ -5,7 +5,9 @@
 use crate::includes::Includes;
 use crate::outcomes::{red_changes_code, under_tests};
 use crate::rust_tests::{helper_text, test_functions};
-use crate::steps::{Marker, Step, git, parent, show, step_tests};
+use crate::steps::{
+    Marker, Step, git, history_reason, parent, parse_subject, show, step_tests,
+};
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
@@ -125,6 +127,36 @@ pub fn range(root: &Path, key: &str, head: &str, bounds: Bounds) -> Result<Vec<S
         Some(i) if i < end => commits[i..end].iter().map(|(sha, _)| sha.clone()).collect(),
         _ => Vec::new(),
     })
+}
+
+/// STP-37 AC-11: whether `sha` is a history commit: a non-RED commit of the ticket whose message has
+/// a history line. Its build input changes block nothing; the next commit is compared with its text.
+fn history_commit(root: &Path, key: &str, sha: &str) -> bool {
+    history_reason_of(root, key, sha).is_some()
+}
+
+/// The reason of `sha` when it is a history commit (a non-RED commit with a history line).
+fn history_reason_of(root: &Path, key: &str, sha: &str) -> Option<String> {
+    let message = crate::steps::git_text(root, &["log", "-1", "--format=%B", sha]).ok()?;
+    let subject = message.lines().next().unwrap_or("");
+    let red = matches!(parse_subject(key, subject), Some((_, Marker::Red)));
+    if red {
+        return None;
+    }
+    history_reason(&message)
+}
+
+/// STP-37 AC-13: the history commits of the ticket's range as (full id, reason), oldest first.
+pub fn history_commits(
+    root: &Path,
+    key: &str,
+    head: &str,
+    bounds: Bounds,
+) -> Result<Vec<(String, String)>, String> {
+    Ok(range(root, key, head, bounds)?
+        .into_iter()
+        .filter_map(|sha| history_reason_of(root, key, &sha).map(|r| (sha, r)))
+        .collect())
 }
 
 /// The second parent of a merge commit of the Walk that merged the base branch: a second parent
@@ -493,12 +525,13 @@ pub fn analyse(
         if list.is_empty() && !bad {
             continue;
         }
+        let excused = history_commit(root, key, sha);
         let mut builds = reader.build_files(&base)?;
         builds.extend(reader.build_files(sha)?);
         // Fail closed: a malformed diff record counts as a change naming the commit; a manifest that
         // cannot be read hides its `build` key, so a file next to it counts (as an unparsable
         // manifest does in `manifest_hit`).
-        if bad && changed.is_none() {
+        if bad && changed.is_none() && !excused {
             changed = Some(Change {
                 path: format!("diff of {sha}"),
                 sha: sha.clone(),
@@ -565,6 +598,7 @@ pub fn analyse(
             }
             if let Some(path) = hit
                 && changed.is_none()
+                && !excused
             {
                 changed = Some(Change {
                     path,
@@ -603,6 +637,10 @@ pub fn analyse_junit(
 ) -> Result<BuildInputs, String> {
     let mut out = BuildInputs::default();
     for sha in range(root, key, head, bounds)? {
+        // STP-37 AC-11: a history commit blocks nothing.
+        if history_commit(root, key, &sha) {
+            continue;
+        }
         let raw = git(
             root,
             &[

@@ -21,14 +21,18 @@ pub fn starter_toml(prefix: &str, cargo: bool) -> String {
     text.push_str(CHECK_COMMENT);
     if cargo {
         text.push_str("[check]\nrunner = \"cargo\"\ntimeout_secs = 3600\n");
+        text.push_str(PROJECT_COMMENT);
     } else {
         text.push_str(
             "# [check]\n# runner = \"junit\"\n# command = \"npx jest {file} --ci --reporters=jest-junit\"\n# report = \"junit.xml\"\n# tests = [\"**/*.test.*\"]\n",
         );
+        text.push_str(PROJECT_COMMENT);
     }
     text.push_str(PROCESS_COMMENT);
     text
 }
+
+const PROJECT_COMMENT: &str = "# project = [\"npx prettier --check {files}\"]   # shell commands run after the suite; {files} is the ticket's changed files\n";
 
 const PROCESS_COMMENT: &str = "\n# [process]\n# dialogs = \"all\"   # \"close\": a light ticket asks for one stapel ok before the close, after the first\n\n# [worktree]\n# setup = \"...\"   # a shell command that `stapel new` runs in the new worktree\n";
 
@@ -126,6 +130,9 @@ pub struct Check {
     /// The cargo runner (STP-35 AC-12): `--skip` filters for the local suite below `full`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suite_exclude: Option<Vec<String>>,
+    /// Project commands (STP-37 AC-1): shell commands run in the check copy after the suite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<Vec<String>>,
 }
 
 pub const DEFAULT_TEST_GLOBS: [&str; 3] = ["**/*.test.*", "**/*.spec.*", "**/__tests__/**"];
@@ -480,6 +487,11 @@ impl Config {
                 }
                 if exclude.iter().any(|e| e.trim().is_empty()) {
                     return Err("check.suite_exclude has an empty entry".into());
+                }
+            }
+            if let Some(project) = &check.project {
+                if project.iter().any(|c| c.trim().is_empty()) {
+                    return Err("check.project entries must not be empty".into());
                 }
             }
             if !TIMEOUT_RANGE.contains(&check.timeout_secs) {
