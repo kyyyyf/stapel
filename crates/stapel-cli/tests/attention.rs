@@ -480,26 +480,30 @@ fn report_shows_the_attention_lines() {
         .args(["--role", "orchestrator", "--until", "2026-01-02T00:00:00Z"])
         .assert()
         .success();
-    let record = |id: &str, from: &str, to: &str, n: [u64; 6]| {
-        json!({
+    let record = |id: &str, from: &str, to: &str, n: [u64; 6], question_dialogs: Option<u64>| {
+        let mut value = json!({
             "v": 1, "id": id, "at": "2026-01-01T13:00:00.000Z", "ticket": "ABC-1",
             "kind": "attention", "hook": "session-end", "transcript": "s-report",
             "from": from, "to": to,
             "dialogs": n[0], "questions": n[1], "typed": n[2],
             "waited_ms": n[3], "attention_ms": n[4], "long_waits": n[5],
-        })
-        .to_string()
-            + "\n"
+        });
+        if let Some(q) = question_dialogs {
+            value["question_dialogs"] = json!(q);
+        }
+        value.to_string() + "\n"
     };
     let path = tokens_path(dir, "ABC-1");
     let mut text = std::fs::read_to_string(&path).unwrap();
     text += &record(
         "a-one", "2026-01-01T11:00:00.000Z", "2026-01-01T11:40:00.000Z",
-        [2, 1, 3, 1_500_000, 1_200_000, 1],
+        [2, 3, 3, 1_500_000, 1_200_000, 1],
+        Some(2),
     );
     text += &record(
         "a-two", "2026-01-01T11:50:00.000Z", "2026-01-01T12:05:00.000Z",
         [1, 2, 1, 3_900_000, 900_000, 2],
+        None,
     );
     std::fs::write(&path, text).unwrap();
 
@@ -663,10 +667,13 @@ fn report_counts_steps_after_a_merge() {
         "dialogs": "5", "waited_ms": "9",
     });
     let text = report(dir, &[record("a-one", "2026-01-01T11:00:00.000Z", "2026-01-01T11:20:00.000Z"), odd]);
-    assert!(
-        text.contains("attention: 1 dialogs, 2 questions, 3 messages; 1 min attention, 2 min waited (0 over 10 min)"),
-        "{text}"
-    );
+    for line in [
+        "returns: 6 (1 dialogs, 2 question dialogs, 3 messages)",
+        "interaction: 1 min",
+        "waits: 2 min in all, 0 over 10 min",
+    ] {
+        assert!(text.contains(line), "{text}");
+    }
     assert_eq!(steps_line(&text), "steps: 2; wall time: 20 min");
 }
 

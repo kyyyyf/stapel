@@ -1212,3 +1212,126 @@ fn removes_the_elaboration_skill() {
     assert_eq!(tree.get(elaborate), onto.get(elaborate), "{tree:?}");
     assert!(tree.contains_key(".claude/skills/stapel-foo/SKILL.md"));
 }
+
+// STP-38 AC-7: `export` writes `merge-request.md` with the title, the Summary body as it is and the
+// deferred findings that are not false; a second export rewrites it; the guard denies an agent write.
+#[test]
+fn writes_the_merge_request() {
+    let repo = ticket_repo();
+    let dir = repo.path();
+    ticket_branch(dir, "ABC-1", Some("main"), "red");
+    git_n(dir, 1, &["checkout", "-q", "ABC-1"]);
+    let folder = ".stapel/tickets/ABC-1";
+    put(
+        dir,
+        &format!("{folder}/state.json"),
+        "{\"schema_version\":1,\"key\":\"ABC-1\",\"title\":\"Merge text\",\"base_branch\":\"main\"}\n",
+    );
+    let summary = "Line one.\n\nLine two with `code`.\n";
+    put(
+        dir,
+        &format!("{folder}/ticket.md"),
+        &format!("# ABC-1 \u{2014} Merge text\n\n## Spec\n\nThe spec.\n\n## Summary\n\n{summary}"),
+    );
+    let finding = |id: &str, severity: &str, stage: &str, round: u32, claim: &str, fate: &str| {
+        serde_json::json!({
+            "id": id, "ticket": "ABC-1", "stage": stage, "round": round, "role": "reviewer",
+            "severity": severity, "promise": "inside", "claim": claim,
+            "catchable_at": "code", "fate": fate,
+        })
+        .to_string()
+    };
+    let triage = |id: &str, fate: &str, verdict: &str| {
+        serde_json::json!({
+            "kind": "triage", "id": id, "ticket": "ABC-1", "fate": fate, "verdict": verdict,
+        })
+        .to_string()
+    };
+    let lines = [
+        finding("F1", "MEDIUM", "code-review", 1, "first claim", "defer"),
+        finding("F2", "HIGH", "code-review", 1, "second claim", "defer"),
+        finding("F3", "LOW", "spec-review", 2, "third claim", "defer"),
+        finding("F4", "HIGH", "code-review", 1, "fourth claim", "patch"),
+        triage("F2", "defer", "false"),
+        triage("F3", "defer", "high"),
+    ];
+    let jsonl = |lines: &[String]| lines.iter().map(|l| format!("{l}\n")).collect::<String>();
+    put(dir, &format!("{folder}/findings.jsonl"), &jsonl(&lines));
+
+    let tmp = bare_dir();
+    let run = |dir: &Path| {
+        stapel(dir)
+            .env("TMPDIR", tmp.path())
+            .args(["export", "ABC-1", "--onto", "main"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    };
+    let out = String::from_utf8_lossy(&run(dir)).into_owned();
+    let path = format!("{folder}/merge-request.md");
+    assert!(
+        out.lines().any(|l| l == format!("merge request: {path}")),
+        "{out}"
+    );
+    let text = common::read(dir, &path);
+    assert!(text.starts_with("# ABC-1 \u{2014} Merge text\n"), "{text}");
+    let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("no {needle:?} in {text}"));
+    assert!(at(summary) < at("## Deferred findings\n"), "{text}");
+    let tail = &text[at("## Deferred findings\n")..];
+    let items: Vec<&str> = tail.lines().filter(|l| l.starts_with("- ")).collect();
+    assert_eq!(
+        items,
+        [
+            "- F1 MEDIUM code-review round 1: first claim",
+            "- F3 HIGH spec-review round 2: third claim",
+        ],
+        "{text}"
+    );
+
+    // A second export rewrites the file; with no deferred finding it holds `none`.
+    put(
+        dir,
+        &format!("{folder}/findings.jsonl"),
+        &jsonl(&[finding("F4", "HIGH", "code-review", 1, "fourth claim", "patch")]),
+    );
+    run(dir);
+    let text = common::read(dir, &path);
+    let tail = &text[text.find("## Deferred findings\n").unwrap()..];
+    assert!(tail.lines().any(|l| l == "none"), "{text}");
+    assert!(!text.contains("first claim"), "{text}");
+
+    // The guard denies an agent write of the file.
+    let payload = serde_json::json!({
+        "session_id": "test",
+        "hook_event_name": "PreToolUse",
+        "cwd": dir,
+        "tool_name": "Write",
+        "tool_input": { "file_path": dir.join(&path).display().to_string(), "content": "x" },
+    });
+    stapel(dir)
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(payload.to_string())
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("only stapel"));
+}
+
+// STP-38 AC-7: from a checkout without the ticket's state.json the export writes no merge-request.md
+// and prints no `merge request:` line.
+#[test]
+fn without_state_json_no_merge_request() {
+    let repo = ticket_repo();
+    let dir = repo.path();
+    ticket_branch(dir, "ABC-1", Some("main"), "red");
+    let tmp = bare_dir();
+    let out = stapel(dir)
+        .env("TMPDIR", tmp.path())
+        .args(["export", "ABC-1", "--onto", "main"])
+        .assert()
+        .success();
+    let text = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(!text.contains("merge request:"), "{text}");
+    assert!(!dir.join(".stapel/tickets/ABC-1").exists());
+}

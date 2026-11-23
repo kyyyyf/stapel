@@ -13,7 +13,7 @@ pub const MAX_RECORDS: usize = 100;
 /// A findings file is at most this many bytes.
 pub const MAX_BYTES: u64 = 256 * 1024;
 
-const STAGES: [&str; 4] = ["spec-review", "step-drift", "code-review", "after-close"];
+pub const STAGES: [&str; 4] = ["spec-review", "step-drift", "code-review", "after-close"];
 const ROLES: [&str; 7] = [
     "external",
     "drift",

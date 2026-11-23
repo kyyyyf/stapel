@@ -1,7 +1,7 @@
 ---
 name: stapel
 description: "Carries a development ticket from description to merge with the stapel process."
-# stapel: 0.1.0 sha256:2e871335633ce56b2c3413c8853bfcabe6eb3de4069777c331e62a8a9d784df8
+# stapel: 0.1.0 sha256:f811b7cdd329239d2305b9b39cacaeb55bb49055dd4d56d9c01ba1b3714da352
 ---
 # The stapel process
 
@@ -137,7 +137,8 @@ list must not only grow.
 8. **Measures after the close.** Read the measured tokens with stapel tokens KEY; the hooks record them. Compare with the previous ticket: escaped
    defects (found after the close) as the main measure; HIGH and MEDIUM inside-promise findings of code
    review; the size of `ticket.md`; tokens by role; wall time. The summary says what improved and what did
-   not.
+   not. At the measures, run stapel ledger rules: it prints the HIGH and MEDIUM findings per rule and per
+  ticket and marks a rule that caught nothing in the newest three tickets with findings.
 9. **Rules are pruned.** `rule` counts per rule are kept across tickets in `.stapel/process-ledger.jsonl`. A
    rule that caught nothing in three tickets in a row is removed or simplified, with the decision recorded
    there.
@@ -161,6 +162,10 @@ list must not only grow.
   message: `history: <reason>`; stapel check then judges the step by its runs.
 - At the close stapel close appends one `catches` record (counted findings by stage and `rule`) and one
   `finding` record per deferred finding; do not write them by hand. A close that fails writes none.
+- stapel writes the generated block of the Review section (counts, rounds and check runs, between the
+  two `stapel:review` marker lines) at `review start`, `findings import`, `findings triage` and `check`.
+  Do not edit the block by hand; text outside the markers is yours.
+- `stapel export` writes `.stapel/tickets/<KEY>/merge-request.md`: name the path of merge-request.md at the close and commit it.
 - Every code reviewer also does the deletion check, the claims check (falsify each claim of the criteria
   and of Design "as built" against the code) and the verification gap (would an existing test fail if a
   behaviour change were wrong). A test that did not run counts as missing.

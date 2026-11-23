@@ -6,7 +6,8 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// Files of a ticket that tools write; their changes do not make a tree dirty or a check stale.
-pub const MACHINE_FILES: [&str; 5] = [
+pub const MACHINE_FILES: [&str; 6] = [
+    "merge-request.md",
     "state.json",
     "decisions.jsonl",
     "findings.jsonl",
@@ -64,8 +65,33 @@ pub fn dirty_paths(root: &Path) -> Result<Vec<String>, String> {
         }
         i += 1;
     }
-    out.retain(|p| !is_machine_file(p));
+    out.retain(|p| !is_machine_file(p) && !block_only(root, "HEAD", p));
     Ok(out)
+}
+
+/// Whether `path` is the `ticket.md` of a ticket whose only difference from the commit `rev` lies
+/// in the generated block (STP-38 AC-6). A file `rev` cannot show or the disk cannot read is not.
+pub fn block_only(root: &Path, rev: &str, path: &str) -> bool {
+    let parts: Vec<&str> = path.split('/').collect();
+    if !matches!(parts.as_slice(), [".stapel", "tickets", _, "ticket.md"]) {
+        return false;
+    }
+    let Ok(head) = git(root, &["show", &format!("{rev}:{path}")]) else {
+        return false;
+    };
+    let Ok(now) = std::fs::read(root.join(path)) else {
+        return false;
+    };
+    let (Ok(head), Ok(now)) = (String::from_utf8(head), String::from_utf8(now)) else {
+        return false;
+    };
+    match (
+        crate::review_block::without_block(&head),
+        crate::review_block::without_block(&now),
+    ) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
 }
 
 /// The OS lock on `check.lock`; the file holds the pid of its holder.

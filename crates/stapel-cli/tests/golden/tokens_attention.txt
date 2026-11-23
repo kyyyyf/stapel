@@ -4,5 +4,7 @@ author        claude-opus-5-5                     —        —           —  
 builder       claude-sonnet-5-5                  10       20           0            —        70                —
 orchestrator  claude-haiku-4-5-20251001           3        7           0            0         —                —
 orchestrator  claude-opus-5-5                     7     4631         600           30         —                —
-attention: 3 dialogs, 3 questions, 4 messages; 35 min attention, 1 h 30 min waited (3 over 10 min)
+returns: 11 (3 dialogs, 4 question dialogs, 4 messages)
+interaction: 35 min
+waits: 1 h 30 min in all, 3 over 10 min
 steps: —; wall time: 1 h 5 min
