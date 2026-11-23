@@ -329,6 +329,13 @@ Route: full, auto (risk tags `data`, `interface`).
 | 12 | `review_block::fenced_markers_are_text` |
 | 13 | `new_branch::block_and_merge_request_are_not_changes` |
 | 14 | `review_block::check_after_a_block_only_change`, `review_block::no_ticket_md`, `export::without_state_json_no_merge_request`, `ledger_rules::orders_keys_by_number` |
+| 15 | `review_block::unclosed_fence_or_comment_refuses` |
+| 16 | `hook::denies_merge_request_writes`, `review_block::block_of_another_ticket_keeps_the_check` |
+
+15. Unclosed fence or comment (R2-2, XR2-1; test `review_block::unclosed_fence_or_comment_refuses`): a
+    Review section that ends inside an unclosed fence or HTML comment refuses with exit 2 before any write.
+16. Coverage (R2-3, XR2-2; tests `hook::denies_merge_request_writes`,
+    `review_block::block_of_another_ticket_keeps_the_check`): tests of built behaviour in a coverage commit.
 
 ## Review
 
