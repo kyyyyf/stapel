@@ -339,6 +339,7 @@ Findings:
 |---|---|---|---|---|---|---|---|
 | spec-review | 1 | reviewer | 1 | 6 | 2 | 0 | defer 1, patch 8 |
 | spec-review | 2 | reviewer | 0 | 3 | 7 | 0 | patch 10 |
+| dependency | STP-40:4afbf11c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:bd0eb2ad | depends | 0 | 1 | 0 | 0 | patch 1 |
 
 Check runs: none
