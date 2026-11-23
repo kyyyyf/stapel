@@ -496,3 +496,65 @@ fn refuses_unknown_commands() {
         assert!(logged(&notes).is_empty(), "{command} {args}: {notes:?}");
     }
 }
+
+// AC-6: in an agent shell no valid run goes ahead; an invalid one is still refused by AC-5.
+#[test]
+fn refuses_in_an_agent_shell() {
+    let repo = common::repo_with_ticket();
+    let tdir = repo.path().join(".stapel/tickets/ABC-1");
+    let ticket = tdir.join("ticket.md");
+    let page = tdir.join("page.md");
+    std::fs::write(&page, "page\n").unwrap();
+    let state = std::fs::read(tdir.join("state.json")).unwrap();
+    let ticket_uri = file_uri(&ticket);
+    let page_uri = file_uri(&page);
+    let message = "stapel lsp: this editor was started from an agent's shell (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); start it from your own shell to use the buttons";
+    for (name, value) in [("CLAUDECODE", "1"), ("CLAUDE_CODE_ENTRYPOINT", "cli")] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_stapel"))
+            .arg("lsp")
+            .env_remove("CLAUDECODE")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT")
+            .env(name, value)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        let mut c = Client {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+        };
+        c.initialize();
+        c.open(&ticket_uri, &std::fs::read_to_string(&ticket).unwrap());
+        c.open(&page_uri, "page\n");
+
+        let runs = [
+            ("stapel.status", json!([ticket_uri])),
+            ("stapel.next", json!([ticket_uri])),
+            ("stapel.page", json!([page_uri])),
+            ("stapel.ok", json!([page_uri, "0123456789abcdef"])),
+        ];
+        for (command, args) in runs {
+            let (resp, notes) = c.execute(command, args);
+            assert_eq!(resp["result"], Value::Null, "{name} {command}: {resp}");
+            assert!(resp.get("error").is_none(), "{name} {command}: {resp}");
+            assert_eq!(
+                shown(&notes),
+                vec![(1, message.to_string())],
+                "{name} {command}: {notes:?}"
+            );
+            assert!(logged(&notes).is_empty(), "{name} {command}: {notes:?}");
+        }
+        assert_eq!(std::fs::read(tdir.join("state.json")).unwrap(), state);
+        assert_eq!(std::fs::read_to_string(&page).unwrap(), "page\n");
+
+        let (resp, notes) = c.execute("stapel.close", json!([ticket_uri]));
+        assert_eq!(resp["error"]["code"], json!(-32602), "{name}: {resp}");
+        assert!(shown(&notes).is_empty(), "{name}: {notes:?}");
+        let _ = c.child.kill();
+    }
+}
