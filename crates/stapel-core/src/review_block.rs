@@ -193,7 +193,10 @@ struct Spot {
 fn locate(text: &str) -> Result<Option<Spot>, String> {
     let lines: Vec<String> = text.split_inclusive('\n').map(str::to_string).collect();
     let scanned = ticket::scan(text);
-    if scanned.len() < lines.len() {
+    let lone_cr = text
+        .match_indices('\r')
+        .any(|(i, _)| text.as_bytes().get(i + 1) != Some(&b'\n'));
+    if lone_cr || scanned.len() < lines.len() {
         return Err("a carriage return alone ends a line".into());
     }
     let headings: Vec<usize> = (0..lines.len())
