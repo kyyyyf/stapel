@@ -928,3 +928,78 @@ fn a_tightening_commit_keeps_the_check() {
     commit(dir, "ABC-1: a doc");
     assert_eq!(status_line(dir), pass);
 }
+
+// ---- step 12: tightening cases ----
+
+// AC-10: a fixed line that returns after the tightening commit is a new violation; a check whose step
+// fails still tightens a passing guard; a time-limit stop leaves the baseline unchanged.
+#[test]
+fn tightening_edge_cases() {
+    // A fixed line that returns after the tightening commit fails as `1 new`.
+    let out_dir = tempfile::tempdir().unwrap();
+    let out = out_dir.path().join("out.txt");
+    std::fs::write(&out, "a\n").unwrap();
+    let guards = ratchet("back", &format!("cat {}", out.display()), "back.txt");
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "guards/back.txt", "a\nb\n");
+    commit(dir, "ABC-1: baseline");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(read(dir, "guards/back.txt"), "a\n");
+    commit(dir, "ABC-1: tighten the baseline");
+    std::fs::write(&out, "a\nb\n").unwrap();
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        text.lines().any(|l| l.trim() == "guard: back: fail: 1 new"),
+        "{text}"
+    );
+    assert_eq!(read(dir, "guards/back.txt"), "a\n");
+
+    // A check whose step fails still tightens a passing guard.
+    let guards = ratchet("tight", "printf \"a\\n\"", "tight.txt");
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "guards/tight.txt", "a\nfixed\n");
+    write(
+        dir,
+        "crates/tiny/tests/broken.rs",
+        "#[test]\nfn needs_three() {\n    // fake: needs pub fn three\n}\n",
+    );
+    commit(dir, "ABC-1: a failing test and a baseline");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    assert!(text.contains("result: fail"), "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.trim()
+                == "guard: tight: pass, 1 fixed removed from guards/tight.txt; commit it"),
+        "{text}"
+    );
+    assert_eq!(read(dir, "guards/tight.txt"), "a\n");
+
+    // A time-limit stop leaves the baseline unchanged.
+    let guards = ratchet("slow", "echo a; exec sleep 329", "slow.txt");
+    let (repo, _scripts) = guards_repo("", 10, &guards);
+    let dir = repo.path();
+    write(dir, "guards/slow.txt", "a\nfixed\n");
+    commit(dir, "ABC-1: baseline");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.trim() == "guard: slow: unverified: time limit"),
+        "{text}"
+    );
+    assert_eq!(read(dir, "guards/slow.txt"), "a\nfixed\n");
+    let left = std::process::Command::new("pgrep")
+        .args(["-f", "sleep 329"])
+        .output()
+        .unwrap();
+    assert!(
+        left.stdout.is_empty(),
+        "a child survived: {}",
+        String::from_utf8_lossy(&left.stdout)
+    );
+}
