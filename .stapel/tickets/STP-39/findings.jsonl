@@ -104,3 +104,4 @@
 {"kind":"triage","ticket":"STP-39","id":"DR1-4","fate":"patch","note":"fix step 13 (the clearing part); the warning per refresh stays and is deferred with CR1-6","imported_by":{"by":"agent","user":"kyyyyf"}}
 {"kind":"triage","ticket":"STP-39","id":"DR1-5","fate":"defer","note":"outside the promise; Design as built names it; listed in the Summary","imported_by":{"by":"agent","user":"kyyyyf"}}
 {"kind":"triage","ticket":"STP-39","id":"CR1-3","fate":"patch","note":"fix step 14","imported_by":{"by":"agent","user":"kyyyyf"}}
+{"id":"DP3-1","ticket":"STP-39","stage":"dependency","round":"STP-38:ebf9062b:2925e1ad","role":"depends","severity":"LOW","promise":"inside","claim":"no dependency found","catchable_at":"spec","fate":"open","rule":"none","imported_by":{"by":"agent","user":"kyyyyf"}}
