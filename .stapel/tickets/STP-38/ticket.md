@@ -28,7 +28,7 @@ lines outside the block); the Review of closed tickets; the removal of the empty
    lists per stage and round the roles of the findings and the findings by severity after triage and by
    fate, and the newest check run per level with its result, commit and step outcomes. Text outside the
    block is kept byte for byte; a Review section without the markers gets the block at its end; a
-   `ticket.md` without a Review section gets no block.
+   `ticket.md` without a Review section gets no block; `stapel next` ignores the block.
 2. Clean tree: an uncommitted change of `ticket.md` that lies only inside the generated block does not
    count as an uncommitted change for the stapel commands, and does not make a confirmation stale.
 3. Merge request text: `stapel export` writes `.stapel/tickets/<KEY>/merge-request.md` with the title, the
@@ -41,14 +41,13 @@ lines outside the block); the Review of closed tickets; the removal of the empty
 5. Returns: `stapel tokens measure` and the ticket report of `stapel tokens` print the returns to the
    person (permission dialogs, question dialogs and typed messages) with their parts, the interaction
    minutes, and the capped waits, each on its own line.
-6. The skill and `stapel init` name items 1, 3 and 4: the orchestrator does not edit the generated block,
-   gives the path of `merge-request.md` at the close, and runs `stapel ledger rules` at the measures.
+6. The skill and `stapel init` name items 1, 3 and 4: the block is not edited by hand, `merge-request.md`
+   is named at the close, `stapel ledger rules` runs at the measures.
 
 Not promised: a hand edit inside the markers (overwritten); a `ticket.md` with two Review sections or
 broken markers (refused, exit 2); a `rule` spelled two ways (two rules).
 
-**Prior art.** STP-24 (`review start`), STP-29 (`tokens measure`), STP-30 (fates), STP-35 (`runs.jsonl`
-levels), the hand-written Review sections of STP-35 and STP-36.
+**Prior art.** STP-24, STP-29, STP-30, STP-35; the hand-written Review sections of STP-35 and STP-36.
 
 **Size.** About 450 source and 600 test lines; 9 Plan steps. Route: full, auto.
 
@@ -71,6 +70,27 @@ Typed lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Ass
 - 2026-11-22: Decision (dependency on STP-37, the human, recommended): steps 1 and 5 to 8 build now;
   steps 2 to 4 and 9 build after main holds STP-37 and is merged into STP-38 (DP-2, DP-3). Rejected:
   waiting for the close of STP-37; finishing STP-37 first.
+- 2026-11-22: Decision (agent, step 5): an export from a checkout without the ticket's `state.json`
+  writes no `merge-request.md` and prints nothing (the existing export tests run from the base
+  checkout). Rejected: a refusal.
+- 2026-11-22: Decision (agent, step 5): the Summary body in `merge-request.md` has its leading and
+  trailing empty lines trimmed; AC-7 says "as it is" of the text between. Rejected: the raw section.
+- 2026-11-22: Decision (agent, step 7): `ledger_rules::bad_lines_and_last` passed before the code of
+  step 7, because step 6 already held `--last`, the notice and `rules: no findings`; it is a coverage
+  commit (`788453b`).
+- 2026-11-22: Decision (agent, steps 7 and 8): two REDs changed earlier tests to the new behaviour:
+  the step 6 golden `ledger_rules.txt` (`quiet` on four rows) and
+  `attention::report_counts_steps_after_a_merge` (the old `attention:` line).
+- 2026-11-23: Decision (agent): the first suite run at `c13ee4b` failed six old tests. Three in
+  `depends.rs` and `parallel.rs` showed a defect: `stapel next` took the generated block for a written
+  review and skipped `code-review`; AC-14 and Plan step 10 fix it. Three compare `ticket.md` or `git
+  status` before and after a block writer (`check::runs_in_a_worktree_and_leaves_the_tree_alone`,
+  `closed_pipe::closed_output_keeps_every_write`, `review::copy_keeps_the_index`); they leave the block
+  out of the comparison in a test-only commit on main, merged into the branch (no step of STP-38
+  touches those files). Rejected: a block that `stapel check` does not write.
+- 2026-11-23: Decision (agent, steps 2 and 3): untested and left to the review: the case of no
+  `ticket.md` (AC-5), and `stapel check` itself after a block-only change (AC-6 is tested through
+  `dirty_paths` and `stapel next`).
 
 ## Spec
 
@@ -95,17 +115,18 @@ Terms:
 | AC-4 | WHEN the Review section has a generated block THE writer replaces only its lines; WHEN it has none THE block is inserted after the last non-empty line of the section, after one empty line, and the section's trailing empty lines stay after the block, so removing the block gives the text back; the block's lines take the line end of the begin marker, or else of the first line of `ticket.md`; every other byte of `ticket.md` stays. | `review_block::keeps_text_outside` |
 | AC-5 | IF `ticket.md` has two Review sections, a marker without its pair, or two blocks THEN the block writer exits 2 with `stapel: <path>: <reason>` before it writes anything (`review start` before its pack, `stapel check` before any test); IF it has no Review section, or there is no `ticket.md`, THEN the command goes on as today without a block and prints `notice: <path> has no Review section; no generated block`; `stapel check --list` and `--history` do not read the block. | `review_block::broken_markers_refuse` |
 | AC-6 | WHEN the only difference of `ticket.md` from HEAD lies in the generated block (the file with its block removed equals the HEAD text with its block removed, both with CRLF read as LF) THE `worktree::dirty_paths` leaves it out, so `stapel check`, `stapel review start`, `stapel next`, the check freshness of `checkstate` and the tree check of `parallel` do not count it; a change outside the block, or a `ticket.md` that `git show HEAD:<path>` cannot read, counts as today. | `review_block::block_only_change_is_clean` |
-| AC-7 | WHEN `stapel export` succeeds THE file `.stapel/tickets/<KEY>/merge-request.md` holds `# <KEY> — <title>`, the Summary section body as it is, and `## Deferred findings` with one line `- <id> <severity> <stage> round <round>: <claim>` per finding not false whose newest fate is `defer`, or `none`; it is rewritten on every export and the command prints `merge request: <path>`; `merge-request.md` is a machine file (not an uncommitted change, the guard denies an agent write); the orchestrator commits it with the close commit (AC-12). | `export::writes_the_merge_request` |
+| AC-7 | WHEN `stapel export` succeeds THE file `.stapel/tickets/<KEY>/merge-request.md` holds `# <KEY> — <title>`, the Summary section body as it is, and `## Deferred findings` with one line `- <id> <severity> <stage> round <round>: <claim>` per finding not false whose newest fate is `defer`, or `none`; it is rewritten on every export and the command prints `merge request: <path>`; `merge-request.md` is a machine file (not an uncommitted change, the guard denies an agent write); the orchestrator commits it with the close commit (AC-12); from a checkout without the ticket's `state.json` the export writes no file and prints no line. | `export::writes_the_merge_request` |
 | AC-8 | WHEN `stapel ledger rules` runs THE output is a table: a row per `rule` value of any finding, counted or not (trimmed; absent or empty is `none`), sorted by name, a column per ticket with at least one finding (the newest five, ordered by the number of the key, then by its prefix; or `--last <N>`) and a column `total` over every ticket, each cell the number of counted findings; the text matches the golden file `ledger_rules.txt`. It writes nothing. | `ledger_rules::counts_per_rule_and_ticket` |
 | AC-9 | WHEN a rule other than `none` has no counted finding in any of the newest three ticket columns THE row ends with `quiet`; with fewer than three columns (`--last 1` or `2` included) no row is marked. | `ledger_rules::marks_quiet_rules` |
 | AC-10 | IF a line of a `findings.jsonl` does not parse THEN it is skipped and one line `notice: <n> lines of findings.jsonl skipped` goes to stderr; IF `--last` is not a whole number of 1 or more THEN the command exits 2; WHEN no ticket has a finding THE output is `rules: no findings`. | `ledger_rules::bad_lines_and_last` |
 | AC-11 | WHEN `stapel tokens measure` reads a transcript, or `stapel tokens KEY` reports a ticket with attention records, THE line `attention:` is replaced by three lines: `returns: <n> (<d> dialogs, <q> question dialogs, <t> messages)`, `interaction: <capped attention>` and `waits: <waited> in all, <k> over 10 min`, where a question dialog is one `AskUserQuestion` call; attention records get the field `question_dialogs`, and an older record without it counts its `questions`; the text matches the golden files `tokens_measure.txt` and `tokens_attention.txt`. | `attention::measure_prints_tokens_and_attention`, `attention::report_shows_the_attention_lines` |
 | AC-12 | WHEN `stapel init` writes the skill THE skill holds the phrases `stapel writes the generated block of the Review section`, `name the path of merge-request.md at the close and commit it` and `run stapel ledger rules`. | `init_process::names_the_records` |
 | AC-13 | WHEN a block writer writes the block THE new `ticket.md` is written to a temporary file in its folder and renamed over it, after the writer's own records; `review start`, which has no record of its own, writes the block from the records there are. | `review_block::review_start_writes_the_block` |
+| AC-14 | WHEN `stapel next` judges whether the Review section is written THE text of the section without the generated block is judged, so a section of `TODO` and a block names `code-review` as before the block. | `review_block::next_ignores_the_block` |
 
 ### Guarantees
 
-- **Promised:** item 1 by AC-1 to AC-5 and AC-13, item 2 by AC-6 (the Review section is `generated` and
+- **Promised:** item 1 by AC-1 to AC-5, AC-13 and AC-14, item 2 by AC-6 (the Review section is `generated` and
   is never confirmed, so no confirmation can go stale), item 3 by AC-7, item 4 by AC-8 to AC-10, item 5
   by AC-11, item 6 by AC-12. Unchanged: the records each writer appends; the export branch; `stapel
   ledger add`.
@@ -124,6 +145,7 @@ also `--test ticket_drift`.
 | Category | Cases | Tests |
 |---|---|---|
 | Block from findings | import of findings of two stages and two rounds (a LOW, a HIGH regraded `low`, a finding with the verdict `false`, three roles), then a triage: the golden block after each; no finding and no run: both `none` lines | `review_block::import_and_triage_write_the_block` |
+| Next and the block | built steps and a passing check; a Review section of `TODO` and a generated block: `stapel next` names `code-review`; the same with one hand line outside the block: `write-summary` | `review_block::next_ignores_the_block` |
 | Block from review start | a review round 1 on a ticket with spec-review findings: the block is written; no temporary file is left in the ticket folder | `review_block::review_start_writes_the_block` |
 | Block from check | a fake-cargo check at level `steps`, then `head`: two rows, the newest per level; an older record without `level` and without `steps`; `--list`, `--history`: `ticket.md` unchanged | `review_block::check_writes_the_block` |
 | Outside text | hand lines before and after an existing block; a Review section without a block followed by `## Summary`; a CRLF file with an existing block: replaced, CRLF kept | `review_block::keeps_text_outside` |
@@ -215,7 +237,36 @@ HEAD text, so a hand edit inside the block plus a Spec edit is still refused.
 
 ### Decisions (as built)
 
-TODO
+- Build order 1, 8, 5, 6, 7, then, after main with STP-37 was merged in at `ffaf444` (no conflicts), 2,
+  3, 4, 9. `stapel check` does not enforce the Plan order. STP-37 changed four times during the build;
+  each change needed a new `stapel depends` round (four rounds, no dependency for the steps built).
+- Step 1: core `review_block::{render, place, can_place, write}`; `write` goes through a temporary file
+  and a rename and returns `Ok(false)` with no Review section or no `ticket.md`; `records::STAGES` is
+  public. The block begins `Generated by stapel; edits between the markers are overwritten.`, then
+  `Findings:` and the table `| Stage | Round | Roles | HIGH | MEDIUM | LOW | False | Fates |`; roles and
+  fates sorted, fates as `<fate> <n>`. `Findings: none` is tested by a direct `render(&[], &[])` call,
+  since no command imports zero findings.
+- Step 2: `review_block::guard(dir)` (writes nothing) and cli `findings::guard_block`; import and
+  triage call it before the append; `review start` after the round refusals of STP-37, before the pack;
+  `stapel check` after the `--list` and `--history` returns, before the `[check]` load, the dirty tree,
+  the lock and the Node pin of STP-37.
+- Step 3: `review_block::without_block` (CRLF read as LF; the block and the empty line before it
+  removed; `None` on broken markers); `dirty_paths` drops a block-only `ticket.md` against
+  `git show HEAD:<path>`; `review start` writes the block after the pack.
+- Step 4: the check table `| Level | Result | Commit | At | Steps |`, a row only for a level that has a
+  record, in the order `steps`, `head`, `full`; `stapel check` writes the block after the append to
+  `runs.jsonl`.
+- A block write after the writer's own records fails only with a warning (import, triage, review start,
+  check); the placement is refused before any write by `guard`.
+- Step 5: `export.rs::write_merge_request`, temporary file and rename; the title comes from the
+  worktree's `state.json`; `merge-request.md` is in both machine-file lists.
+- Step 6: `ledger.rs::{rules, key_order}`, `LedgerAction::Rules { last }`; `tokens::ticket_folders` is
+  `pub(crate)`. Rows sort by byte order (`Rule 3` before `none`); the rule column is left-aligned, the
+  counts right-aligned, two spaces apart.
+- Step 7: `quiet` is an unpadded last cell; the RED added it to four rows of the step 6 golden file.
+- Step 8: `Sums::question_dialogs`; `tokens.rs::returns_lines` serves `measure` and the ticket report;
+  the attention record gets `question_dialogs`.
+- Step 9: three phrases in `assets/skill.md`, installed by this branch's `stapel init`.
 
 ## Proof
 
@@ -234,6 +285,7 @@ TODO
 | AC-11 | `attention::measure_prints_tokens_and_attention`, `attention::report_shows_the_attention_lines` |
 | AC-12 | `init_process::names_the_records` |
 | AC-13 | `review_block::review_start_writes_the_block` |
+| AC-14 | `review_block::next_ignores_the_block` |
 
 ## Plan
 
@@ -259,6 +311,8 @@ Route: full, auto (risk tags `data`, `interface`).
    `attention::report_shows_the_attention_lines`): `Sums::question_dialogs`, the record field and the three lines
    in both outputs; both golden files change in the RED.
 9. The skill (AC-12; test `init_process::names_the_records`): `assets/skill.md`, then `stapel init`.
+10. Next without the block (AC-14; test `review_block::next_ignores_the_block`): `next` judges whether
+    the Review section is written on its text without the generated block.
 
 ## Review
 
