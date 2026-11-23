@@ -1665,3 +1665,83 @@ page: /w/page.md\n";
     assert!(titles(&resp).is_empty(), "{resp}");
     let _ = c.child.kill();
 }
+
+// STP-40 AC-12: the button `stapel.answer` takes the note from the buffer's entry and runs
+// `stapel answer` in the worktree whose branch names the key.
+#[test]
+fn answers_from_the_inbox() {
+    let pair = common::two_ticket_worktrees();
+    let root = pair.repo.path();
+    let findings = pair.a.join(".stapel/tickets/ABC-1/findings.jsonl");
+    let owed = |id: &str| {
+        json!({
+            "v": 1, "id": id, "stage": "code-review", "round": 2, "severity": "HIGH",
+            "promise": "inside", "claim": format!("claim of {id}"), "fate": "open",
+        })
+        .to_string()
+    };
+    let seeded = format!("{}\n{}\n", owed("F-1"), owed("F-2"));
+    std::fs::write(&findings, &seeded).unwrap();
+    let entry = |id: &str, note: &str| {
+        format!(
+            "### ABC-1 finding {id}\ncode-review round 2, HIGH, inside: claim of {id}\nnote: {note}\n\n"
+        )
+    };
+    let on_disk = format!(
+        "# Inbox\n\n## ABC-1 \u{2014} First\nworktree: {}\n\n{}{}",
+        pair.a.display(),
+        entry("F-1", ""),
+        entry("F-2", "")
+    );
+    let inbox = root.join(".stapel/inbox.md");
+    std::fs::write(&inbox, &on_disk).unwrap();
+    let uri = file_uri(&inbox);
+    // the buffer differs from the disk; its `worktree:` line names another folder
+    let buffer = format!(
+        "# Inbox\n\n## ABC-1 \u{2014} First\nworktree: /nowhere/else\n\n{}{}",
+        entry("F-1", "  ok, fix it  "),
+        entry("F-2", "- later")
+    );
+
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &buffer);
+    let (resp, notes) = c.execute("stapel.answer", json!([uri, "ABC-1", "F-1", "patch"]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    assert!(resp.get("error").is_none(), "{resp}");
+    assert_eq!(
+        shown(&notes),
+        vec![(3, "stapel answer ABC-1 F-1 patch: answered: F-1 of ABC-1: patch".to_string())],
+        "{notes:?}"
+    );
+    assert!(logged(&notes).starts_with("stapel answer ABC-1 F-1 patch\n"), "{notes:?}");
+    assert!(!logged(&notes).contains("ok, fix it"), "{notes:?}");
+
+    let (resp, notes) = c.execute("stapel.answer", json!([uri, "ABC-1", "F-2", "defer"]));
+    assert!(resp.get("error").is_none(), "{resp}");
+    assert_eq!(
+        shown(&notes),
+        vec![(3, "stapel answer ABC-1 F-2 defer: answered: F-2 of ABC-1: defer".to_string())],
+        "{notes:?}"
+    );
+    let _ = c.child.kill();
+
+    let text = std::fs::read_to_string(&findings).unwrap();
+    let appended: Vec<Value> = text
+        .lines()
+        .skip(2)
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(appended.len(), 2, "{text}");
+    for (record, id, fate, note) in [
+        (&appended[0], "F-1", "patch", "ok, fix it"),
+        (&appended[1], "F-2", "defer", "- later"),
+    ] {
+        assert_eq!(record["kind"], json!("triage"), "{record}");
+        assert_eq!(record["ticket"], json!("ABC-1"), "{record}");
+        assert_eq!(record["id"], json!(id), "{record}");
+        assert_eq!(record["fate"], json!(fate), "{record}");
+        assert_eq!(record["note"], json!(note), "{record}");
+        assert_eq!(record["imported_by"]["by"], json!("person"), "{record}");
+    }
+}
