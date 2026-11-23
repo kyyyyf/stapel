@@ -724,3 +724,159 @@ fn fixed_violations_leave_the_baseline() {
     assert!(text.contains("guards/tight.txt"), "{text}");
     assert!(text.contains("uncommitted"), "{text}");
 }
+
+// ---- step 10: check after tightening ----
+
+// AC-15: a passing check stays current across baseline subsets, committed or not; any other change
+// inside the guards folder, `docs/` too, makes it stale.
+#[test]
+fn a_tightening_commit_keeps_the_check() {
+    use std::process::Command;
+
+    /// A repository whose guards folder is `folder`, with a passing head check that has tightened
+    /// the baseline `tight.txt` from "a b" to "a"; the status line of that pass.
+    fn tightened(folder: &str) -> (tempfile::TempDir, tempfile::TempDir, String) {
+        let guards = ratchet("tight", "printf \"a\\n\"", "tight.txt");
+        let (repo, scripts) = guards_repo("", 3600, &guards);
+        let dir = repo.path();
+        if folder != "guards" {
+            let text = read(dir, ".stapel/stapel.toml")
+                .replace("dir = \"guards\"", &format!("dir = \"{folder}\""));
+            write(dir, ".stapel/stapel.toml", &text);
+        }
+        write(dir, &format!("{folder}/tight.txt"), "a\nb\n");
+        write(dir, &format!("{folder}/script.sh"), "echo 1\n");
+        commit(dir, "ABC-1: guards folder");
+        let (code, text) = run(dir, &["--level", "head"]);
+        assert_eq!(code, 0, "{text}");
+        assert_eq!(read(dir, &format!("{folder}/tight.txt")), "a\n");
+        let head = Command::new("git")
+            .args(["rev-parse", "--short=7", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+        (repo, scripts, format!("check: pass at {head}"))
+    }
+
+    fn status_line(dir: &Path) -> String {
+        let out = stapel(dir).args(["status", "ABC-1"]).output().unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find(|l| l.starts_with("check: "))
+            .unwrap_or("(no check line)")
+            .to_string()
+    }
+
+    // (label, folder, what changes after the check, committed, stays current)
+    type Change = fn(&Path, &str);
+    let cases: Vec<(&str, &str, Change, bool, bool)> = vec![
+        ("tightened, uncommitted", "guards", |_, _| {}, false, true),
+        ("tightened, committed", "guards", |_, _| {}, true, true),
+        ("tightened under docs", "docs/guards", |_, _| {}, true, true),
+        (
+            "a line added",
+            "guards",
+            |d, f| write(d, &format!("{f}/tight.txt"), "a\nb\nc\n"),
+            true,
+            false,
+        ),
+        (
+            "a script edited",
+            "guards",
+            |d, f| write(d, &format!("{f}/script.sh"), "echo 2\n"),
+            true,
+            false,
+        ),
+        (
+            "a script edited under docs",
+            "docs/guards",
+            |d, f| write(d, &format!("{f}/script.sh"), "echo 2\n"),
+            true,
+            false,
+        ),
+        (
+            "a script edited, uncommitted",
+            "guards",
+            |d, f| write(d, &format!("{f}/script.sh"), "echo 2\n"),
+            false,
+            false,
+        ),
+        (
+            "the baseline deleted",
+            "guards",
+            |d, f| std::fs::remove_file(d.join(format!("{f}/tight.txt"))).unwrap(),
+            true,
+            false,
+        ),
+        (
+            "a file absent at the record commit",
+            "guards",
+            |d, f| write(d, &format!("{f}/extra.txt"), "a\n"),
+            true,
+            false,
+        ),
+        (
+            "[guards] changed",
+            "guards",
+            |d, _| {
+                let text = read(d, ".stapel/stapel.toml");
+                let text = text.replace("name = \"tight\"", "name = \"tight2\"");
+                write(d, ".stapel/stapel.toml", &text);
+            },
+            true,
+            false,
+        ),
+        (
+            "a path beside the folder",
+            "docs/guards",
+            |d, _| write(d, "docs/guardsx/f", "x\n"),
+            true,
+            true,
+        ),
+    ];
+    for (label, folder, change, committed, current) in cases {
+        let (repo, _scripts, pass) = tightened(folder);
+        let dir = repo.path();
+        change(dir, folder);
+        if committed {
+            commit(dir, "ABC-1: after the check");
+        }
+        let line = status_line(dir);
+        if current {
+            assert_eq!(line, pass, "{label}");
+        } else {
+            assert!(line.starts_with("check: stale"), "{label}: {line}");
+        }
+    }
+
+    // Close accepts the check after the tightened baseline is committed.
+    let (repo, _scripts, pass) = tightened("guards");
+    let dir = repo.path();
+    commit(dir, "ABC-1: tighten the baseline");
+    assert_eq!(status_line(dir), pass);
+    common::confirm_these(
+        dir,
+        "ABC-1",
+        &["description", "spec", "design", "proof", "plan"],
+    );
+    stapel(dir)
+        .args(["close", "ABC-1", "--reason", "done"])
+        .assert()
+        .success();
+
+    // Without `[guards]` a `docs/` change keeps the check.
+    let (repo, _scripts) = guards_repo("", 3600, "");
+    let dir = repo.path();
+    let text = read(dir, ".stapel/stapel.toml");
+    let cut = text.find("\n[guards]").unwrap();
+    write(dir, ".stapel/stapel.toml", &text[..cut]);
+    commit(dir, "ABC-1: no guards");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    let pass = status_line(dir);
+    assert!(pass.starts_with("check: pass at"), "{pass}");
+    write(dir, "docs/note.md", "text\n");
+    commit(dir, "ABC-1: a doc");
+    assert_eq!(status_line(dir), pass);
+}
