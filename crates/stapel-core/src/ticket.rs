@@ -34,6 +34,9 @@ pub struct Scanned {
     pub heading: Option<(usize, String)>,
     /// The line opens, closes or lies inside a fenced code block or an HTML comment block.
     pub in_block: bool,
+    /// The line lies inside a fenced code block, or inside an HTML comment block that began on an
+    /// earlier line; the fence lines and the first line of a comment are not inside.
+    pub inside: bool,
 }
 
 /// The lines of `text` with the heading and block rules of `parse`.
@@ -47,12 +50,15 @@ pub fn scan(text: &str) -> Vec<Scanned> {
     for line in text.split('\n') {
         let line_nl = line.strip_suffix('\r').unwrap_or(line);
         let mut in_block = true;
+        let mut inside = false;
         let heading = if let Some((ch, len)) = fence {
-            if closes_fence(line_nl, ch, len) {
+            inside = !closes_fence(line_nl, ch, len);
+            if !inside {
                 fence = None;
             }
             None
         } else if in_comment {
+            inside = true;
             if line_nl.contains("-->") {
                 in_comment = false;
             }
@@ -71,6 +77,7 @@ pub fn scan(text: &str) -> Vec<Scanned> {
             line: line.to_string(),
             heading,
             in_block,
+            inside,
         });
     }
     out

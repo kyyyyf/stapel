@@ -221,10 +221,10 @@ fn locate(text: &str) -> Result<Option<Spot>, String> {
         .find(|i| *i > heading)
         .unwrap_or(lines.len());
     let begins: Vec<usize> = (heading + 1..end)
-        .filter(|i| is_marker(&lines[*i], BEGIN))
+        .filter(|i| !scanned[*i].inside && is_marker(&lines[*i], BEGIN))
         .collect();
     let ends: Vec<usize> = (heading + 1..end)
-        .filter(|i| is_marker(&lines[*i], END))
+        .filter(|i| !scanned[*i].inside && is_marker(&lines[*i], END))
         .collect();
     let block = match (begins.as_slice(), ends.as_slice()) {
         ([], []) => None,
