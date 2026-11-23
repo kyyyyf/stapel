@@ -552,3 +552,63 @@ fn a_new_violation_fails() {
     );
     assert_eq!(read(dir, "guards/cheat.txt"), "old\n");
 }
+
+// ---- step 5: broken command and cut output ----
+
+// AC-9: a ratchet guard that exits with a code other than 0 and 1 fails as broken, with the tail of
+// its output; the baseline file is not written.
+#[test]
+fn a_broken_ratchet_guard_fails() {
+    let guards = [
+        ratchet("gone", "exit 127", "gone.txt"),
+        ratchet("loud", "echo v1; echo oops >&2; exit 2", "loud.txt"),
+    ]
+    .concat();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "guards/gone.txt", "old\n");
+    write(dir, "guards/loud.txt", "v1\nold\n");
+    commit(dir, "ABC-1: baselines");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert!(lines.contains(&"guard: gone: fail (exit 127)"), "{text}");
+    assert!(lines.contains(&"guard: loud: fail (exit 2)"), "{text}");
+    assert!(lines.contains(&"v1") && lines.contains(&"oops"), "{text}");
+    assert!(text.contains("result: fail"), "{text}");
+    assert_eq!(read(dir, "guards/gone.txt"), "old\n");
+    assert_eq!(read(dir, "guards/loud.txt"), "v1\nold\n");
+    let record = last_check_record(dir);
+    for i in 0..2 {
+        assert_eq!(record["guards"][i]["outcome"], "fail", "{record}");
+        assert_eq!(record["guards"][i]["new"], 0, "{record}");
+        assert_eq!(record["guards"][i]["removed"], 0, "{record}");
+    }
+}
+
+// AC-16: a ratchet guard whose standard output passes the output limit is unverified and writes
+// nothing; an exit-code guard with the same output and exit 0 passes.
+#[test]
+fn a_cut_output_is_unverified() {
+    let flood = "yes violation | head -c 17000000";
+    let guards = [ratchet("cut", flood, "cut.txt"), guard("plain", flood)].concat();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "guards/cut.txt", "violation\nfixed\n");
+    commit(dir, "ABC-1: baseline");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert!(
+        lines.contains(&"guard: cut: unverified: output cut"),
+        "{text}"
+    );
+    assert!(lines.contains(&"guard: plain: pass"), "{text}");
+    assert!(text.contains("result: fail"), "{text}");
+    assert_eq!(read(dir, "guards/cut.txt"), "violation\nfixed\n");
+    let record = last_check_record(dir);
+    assert_eq!(record["guards"][0]["outcome"], "unverified", "{record}");
+    assert_eq!(record["guards"][0]["new"], 0, "{record}");
+    assert_eq!(record["guards"][0]["removed"], 0, "{record}");
+    assert_eq!(record["guards"][1]["outcome"], "pass", "{record}");
+}
