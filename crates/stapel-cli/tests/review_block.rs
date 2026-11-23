@@ -665,3 +665,110 @@ fn fenced_markers_are_text() {
         format!("\n{quote}")
     );
 }
+
+// STP-38 AC-6: a tree whose only change is the generated block does not stop `check` or `review
+// start`, and once the block is committed the check is still current.
+#[test]
+fn check_after_a_block_only_change() {
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    common::set_section(dir, "ABC-1", "Spec", SPEC);
+    let base = git(dir, &["rev-parse", "HEAD~2"]).trim().to_string();
+    let mut state = common::state_json(dir, "ABC-1");
+    state["base"] = json!(base);
+    put(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &serde_json::to_string_pretty(&state).unwrap(),
+    );
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1: base"]);
+    check(dir, &["--level", "steps"]);
+    assert!(common::read(dir, TICKET).contains(BEGIN), "the check wrote the block");
+    assert!(dirty(dir).is_empty(), "{:?}", dirty(dir));
+
+    // Only the block changed: check and review start do not refuse.
+    check(dir, &["--level", "steps"]);
+    let out = stapel(dir)
+        .args(["review", "start", "ABC-1", "--round", "1"])
+        .output()
+        .unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "{said}");
+    assert!(!said.contains("uncommitted"), "{said}");
+
+    // The block committed: the check stays current.
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1: block"]);
+    let said = next_said(dir);
+    assert!(!said.contains("run-check"), "{said}");
+    assert!(!said.contains("uncommitted"), "{said}");
+}
+
+// STP-38 AC-5: with no ticket.md `findings import` goes on with the notice; with no Review section
+// `check` and `review start` print it too.
+#[test]
+fn no_ticket_md() {
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let path = dir.join(TICKET);
+    let notice = format!(
+        "notice: {} has no Review section; no generated block",
+        path.display()
+    );
+    common::set_section(dir, "ABC-1", "Spec", SPEC);
+    let base = git(dir, &["rev-parse", "HEAD~2"]).trim().to_string();
+    let mut state = common::state_json(dir, "ABC-1");
+    state["base"] = json!(base);
+    put(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &serde_json::to_string_pretty(&state).unwrap(),
+    );
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1: base"]);
+    let plain = common::read(dir, TICKET).replace("## Review\n", "## Reviews\n");
+    std::fs::remove_file(&path).unwrap();
+    put(
+        dir,
+        "in.jsonl",
+        &lines(&[finding("F-1", "spec-review", 1, "reviewer", "HIGH", "open")]),
+    );
+    let out = stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success();
+    let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(err.contains(&notice), "{err}");
+    assert!(!path.exists());
+    assert_eq!(records(dir).len(), 1);
+
+    // A renamed Review section: `review start` and `check` print the notice.
+    put(dir, TICKET, &plain);
+    std::fs::remove_file(dir.join("in.jsonl")).unwrap();
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "ABC-1: no Review section"]);
+    let out = stapel(dir)
+        .args(["review", "start", "ABC-1", "--round", "1"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(out.status.success(), "{err}");
+    assert!(err.contains(&notice), "{err}");
+    let bin = tempfile::tempdir().unwrap();
+    common::fake_cargo(bin.path());
+    let mut paths = vec![bin.path().to_path_buf()];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let out = stapel(dir)
+        .args(["check", "ABC-1", "--level", "steps"])
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(err.contains(&notice), "{err}");
+    assert_eq!(common::read(dir, TICKET), plain);
+}

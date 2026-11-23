@@ -198,3 +198,20 @@ fn marks_quiet_rules() {
     std::fs::remove_dir_all(dir.join(".stapel/tickets/ABC-4")).unwrap();
     assert!(!rules_output(dir).contains("quiet"));
 }
+
+// STP-38 AC-8: the columns come in key-number order, then prefix order, not lexical order.
+#[test]
+fn orders_keys_by_number() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    for key in ["ABC-10", "XYZ-9", "ABC-9"] {
+        put(
+            dir,
+            &format!(".stapel/tickets/{key}/findings.jsonl"),
+            &lines(&[finding(key, "F-1", "HIGH", json!({"rule": "r"}))]),
+        );
+    }
+    let text = rules_output(dir);
+    let head: Vec<&str> = text.lines().next().unwrap().split_whitespace().collect();
+    assert_eq!(head, ["rule", "ABC-9", "XYZ-9", "ABC-10", "total"], "{text}");
+}

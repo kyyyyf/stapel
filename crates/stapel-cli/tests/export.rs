@@ -1317,3 +1317,21 @@ fn writes_the_merge_request() {
         .code(2)
         .stderr(predicates::str::contains("only stapel"));
 }
+
+// STP-38 AC-7: from a checkout without the ticket's state.json the export writes no merge-request.md
+// and prints no `merge request:` line.
+#[test]
+fn without_state_json_no_merge_request() {
+    let repo = ticket_repo();
+    let dir = repo.path();
+    ticket_branch(dir, "ABC-1", Some("main"), "red");
+    let tmp = bare_dir();
+    let out = stapel(dir)
+        .env("TMPDIR", tmp.path())
+        .args(["export", "ABC-1", "--onto", "main"])
+        .assert()
+        .success();
+    let text = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(!text.contains("merge request:"), "{text}");
+    assert!(!dir.join(".stapel/tickets/ABC-1").exists());
+}
