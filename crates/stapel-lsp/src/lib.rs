@@ -144,7 +144,13 @@ fn serve(connection: &Connection) -> i32 {
                     };
                     match button_args(&docs, &params) {
                         Ok((args, doc)) => {
-                            if params.command == "stapel.ok" {
+                            if agent_shell() {
+                                show(
+                                    connection,
+                                    MessageType::ERROR,
+                                    "stapel lsp: this editor was started from an agent's shell (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); start it from your own shell to use the buttons".to_string(),
+                                );
+                            } else if params.command == "stapel.ok" {
                                 // The `ok` run comes with its page check (steps 7 and 8).
                                 let text = format!(
                                     "stapel lsp: page.md is not current; run stapel page {} and read it again",
@@ -248,6 +254,11 @@ fn button_args(
         _ => vec!["ok".to_string(), doc.key.clone()],
     };
     Ok((args, doc))
+}
+
+/// True when the server's environment says it was started from an agent's shell.
+fn agent_shell() -> bool {
+    std::env::var_os("CLAUDECODE").is_some() || std::env::var_os("CLAUDE_CODE_ENTRYPOINT").is_some()
 }
 
 fn show(connection: &Connection, typ: MessageType, message: String) {
