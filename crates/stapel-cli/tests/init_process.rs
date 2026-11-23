@@ -2082,3 +2082,22 @@ fn starter_names_project_and_history() {
         assert!(flat.contains(want), "the skill lacks {want}");
     }
 }
+
+/// STP-38 AC-12: the skill names the generated block, the merge request text and the rule counts.
+#[test]
+fn names_the_records() {
+    let repo = git_repo();
+    stapel(repo.path())
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let skill = read(repo.path(), SKILL);
+    let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+    for want in [
+        "stapel writes the generated block of the Review section",
+        "name the path of merge-request.md at the close and commit it",
+        "run stapel ledger rules",
+    ] {
+        assert!(flat.contains(want), "the skill lacks {want}");
+    }
+}
