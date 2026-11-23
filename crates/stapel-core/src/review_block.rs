@@ -50,9 +50,53 @@ struct Row {
     fates: BTreeMap<String, u64>,
 }
 
+/// The check runs: one row per level with the newest record of that level, or `Check runs: none`.
+/// A record without `level` is of level `head`.
+fn run_rows(runs: &[Map<String, Value>]) -> String {
+    let mut newest: [Option<&Map<String, Value>>; 3] = [None; 3];
+    for m in runs.iter().filter(|m| text(m, "kind") == Some("check")) {
+        let level = text(m, "level").unwrap_or("head");
+        if let Some(i) = LEVELS.iter().position(|l| *l == level) {
+            newest[i] = Some(m);
+        }
+    }
+    if newest.iter().all(Option::is_none) {
+        return "Check runs: none\n".to_string();
+    }
+    let mut out = String::from("Check runs:\n\n| Level | Result | Commit | At | Steps |\n|---|---|---|---|---|\n");
+    for (level, m) in LEVELS.iter().zip(newest) {
+        let Some(m) = m else { continue };
+        let commit: String = text(m, "head").unwrap_or("").chars().take(7).collect();
+        let mut counts: BTreeMap<&str, u64> = BTreeMap::new();
+        if let Some(steps) = m.get("steps").and_then(Value::as_array) {
+            for s in steps {
+                let outcome = s.get("outcome").and_then(Value::as_str).unwrap_or("");
+                *counts.entry(outcome).or_insert(0) += 1;
+            }
+        }
+        let steps = if counts.is_empty() {
+            "—".to_string()
+        } else {
+            let parts: Vec<String> = counts.iter().map(|(o, n)| format!("{o} {n}")).collect();
+            parts.join(", ")
+        };
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            level,
+            cell(text(m, "result").unwrap_or("")),
+            cell(&commit),
+            cell(text(m, "at").unwrap_or("")),
+            cell(&steps),
+        ));
+    }
+    out
+}
+
+const LEVELS: [&str; 3] = ["steps", "head", "full"];
+
 /// The block for the findings and the check runs of a ticket: both marker lines included, every
-/// line ending in `\n`. The check runs are not listed yet.
-pub fn render(findings: &[Map<String, Value>], _runs: &[Map<String, Value>]) -> String {
+/// line ending in `\n`.
+pub fn render(findings: &[Map<String, Value>], runs: &[Map<String, Value>]) -> String {
     let mut rows: BTreeMap<(usize, String, (u8, u64, String)), Row> = BTreeMap::new();
     let mut seen: Vec<&str> = Vec::new();
     for m in findings.iter().filter(|m| !m.contains_key("kind")) {
@@ -116,7 +160,8 @@ pub fn render(findings: &[Map<String, Value>], _runs: &[Map<String, Value>]) -> 
             ));
         }
     }
-    out.push_str("\nCheck runs: none\n");
+    out.push('\n');
+    out.push_str(&run_rows(runs));
     out.push_str(END);
     out.push('\n');
     out

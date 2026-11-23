@@ -745,6 +745,9 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         warn!("stapel: the check record was not written: {e}");
         return ExitCode::from(1);
     }
+    if let Err(e) = stapel_core::review_block::write(&ticket.dir) {
+        warn!("stapel: review block not updated: {e}");
+    }
     if let Ok(now) = git_text(&root, &["rev-parse", "--verify", "HEAD"])
         && now.trim() != head
     {
