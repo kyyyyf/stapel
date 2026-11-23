@@ -9,7 +9,7 @@ use stapel_core::tickets::{Status, Ticket, branch_ticket, key_number};
 use std::path::{Path, PathBuf};
 
 /// The owed decisions of the open ticket of the checkout at `path`; one unreadable entry when its
-/// files, its `stapel.toml` or its `stapel next` cannot be read.
+/// files, its `stapel.toml` or a line of its `findings.jsonl` cannot be read.
 fn entries_of(path: &Path, worktree: &str, ticket: &Ticket) -> Vec<Entry> {
     let (key, title) = match &ticket.status {
         Status::Open(state) => (ticket.key.clone(), state.title.clone()),
@@ -47,6 +47,7 @@ fn read_entries(
     for (n, e) in lines {
         match e {
             Line::V1(m) | Line::Legacy(m) => records.push(m),
+            Line::Problem(reason) if journal::is_unknown_version(&reason) => {}
             Line::Problem(reason) => {
                 return Err(format!("findings.jsonl line {n}: {reason}"));
             }
