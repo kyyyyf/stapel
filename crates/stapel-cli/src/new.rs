@@ -200,7 +200,10 @@ fn dirty_paths(root: &Path) -> Result<Vec<String>, String> {
             parts.next();
         }
         let path = entry[3..].to_string();
-        if !is_machine_file(&path) {
+        if !is_machine_file(&path)
+            && !stapel_core::worktree::is_machine_file(&path)
+            && !stapel_core::worktree::block_only(root, "HEAD", &path)
+        {
             paths.push(path);
         }
     }

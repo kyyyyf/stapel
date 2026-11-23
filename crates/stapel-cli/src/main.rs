@@ -268,6 +268,12 @@ enum LedgerAction {
         #[arg(long, hide = true)]
         grant: Option<String>,
     },
+    /// Count, per rule and ticket, the findings inside the promise; writes nothing.
+    Rules {
+        /// How many of the newest tickets get a column; default 5.
+        #[arg(long, allow_hyphen_values = true)]
+        last: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -385,6 +391,9 @@ fn main() -> ExitCode {
             grant,
         }) => {
             return fail::finish(ledger::add(&kind, &note, key.as_deref(), grant.as_deref()));
+        }
+        Command::Ledger(LedgerAction::Rules { last }) => {
+            return fail::finish(ledger::rules(last.as_deref()));
         }
         Command::Hook(HookCommand::PreToolUse) => return hook::pre_tool_use(),
         Command::Hook(HookCommand::PostToolUse) => return hook::post_tool_use(),

@@ -477,8 +477,22 @@ struct Row {
 #[derive(Default)]
 struct AttentionSum {
     counts: [u64; 6],
+    question_dialogs: u64,
     from: Option<u64>,
     to: Option<u64>,
+}
+
+/// The three lines of the returns to the person: returns, interaction and waits.
+fn returns_lines(counts: [u64; 3], attention_ms: u64, waited_ms: u64, long: u64) -> Vec<String> {
+    let [dialogs, question_dialogs, typed] = counts;
+    let total = dialogs.saturating_add(question_dialogs).saturating_add(typed);
+    vec![
+        format!(
+            "returns: {total} ({dialogs} dialogs, {question_dialogs} question dialogs, {typed} messages)"
+        ),
+        format!("interaction: {}", duration(attention_ms)),
+        format!("waits: {} in all, {long} over 10 min", duration(waited_ms)),
+    ]
 }
 
 /// Milliseconds as whole minutes: `35 min`, `1 h 5 min`, `2 h 0 min`.
@@ -839,14 +853,11 @@ pub fn measure(file: &Path) -> Result<(), crate::fail::Fail> {
     table.extend(measure_rows("subagents", subagent_messages.iter()));
     let mut out = vec![format!("transcript: {session}")];
     out.extend(render(&table));
-    out.push(format!(
-        "attention: {} dialogs, {} questions, {} messages; {} attention, {} waited ({} over 10 min)",
-        sums.dialogs,
-        sums.questions,
-        sums.typed,
-        duration(sums.attention_ms),
-        duration(sums.waited_ms),
-        sums.long_waits
+    out.extend(returns_lines(
+        [sums.dialogs.into(), sums.question_dialogs.into(), sums.typed.into()],
+        sums.attention_ms,
+        sums.waited_ms,
+        sums.long_waits.into(),
     ));
     let wall = timed_span(file).map_or(0, |(a, b)| b.saturating_sub(a));
     out.push(format!("wall time: {}", duration(wall)));
@@ -855,7 +866,7 @@ pub fn measure(file: &Path) -> Result<(), crate::fail::Fail> {
 }
 
 /// Ticket folders in key order, read without their `state.json`.
-fn ticket_folders(root: &Path) -> Vec<(String, std::path::PathBuf)> {
+pub(crate) fn ticket_folders(root: &Path) -> Vec<(String, std::path::PathBuf)> {
     let mut out: Vec<_> = std::fs::read_dir(tickets_dir(root))
         .into_iter()
         .flatten()
@@ -910,6 +921,12 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
                     ]) {
                         *slot = slot.saturating_add(num(k));
                     }
+                    // An older record without `question_dialogs` counts its `questions`.
+                    let q = m
+                        .get("question_dialogs")
+                        .and_then(Value::as_u64)
+                        .unwrap_or_else(|| num("questions"));
+                    sum.question_dialogs = sum.question_dialogs.saturating_add(q);
                     let time = |k: &str| m.get(k).and_then(Value::as_str).and_then(parse_cli_time);
                     if let Some(f) = time("from") {
                         sum.from = Some(sum.from.map_or(f, |c| c.min(f)));
@@ -1001,12 +1018,12 @@ pub fn report(key: Option<&str>) -> Result<std::process::ExitCode, String> {
         let mut block = vec![format!("ticket: {ticket_key}")];
         block.extend(render(&table));
         if let Some(a) = attention {
-            let [dialogs, questions, typed, attention_ms, waited_ms, long] = a.counts;
-            block.push(format!(
-                "attention: {dialogs} dialogs, {questions} questions, {typed} messages; \
-                 {} attention, {} waited ({long} over 10 min)",
-                duration(attention_ms),
-                duration(waited_ms)
+            let [dialogs, _questions, typed, attention_ms, waited_ms, long] = a.counts;
+            block.extend(returns_lines(
+                [dialogs, a.question_dialogs, typed],
+                attention_ms,
+                waited_ms,
+                long,
             ));
             let wall = a.from.zip(a.to).map_or(0, |(f, t)| t.saturating_sub(f));
             block.push(format!(
@@ -1364,6 +1381,7 @@ pub fn hook_records(
             "from": rfc3339_millis(from),
             "to": rfc3339_millis(to),
             "questions": sums.questions,
+            "question_dialogs": sums.question_dialogs,
             "dialogs": sums.dialogs,
             "typed": sums.typed,
             "waited_ms": sums.waited_ms,

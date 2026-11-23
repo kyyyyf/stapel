@@ -102,6 +102,7 @@ pub fn start(key: Option<&str>, round: Round) -> Result<(), Fail> {
             )));
         }
     }
+    crate::findings::guard_block(&ticket.dir)?;
     let ticket_text =
         stapel_core::ticket::read(&ticket.dir.join("ticket.md")).map_err(Fail::failed)?;
     let ticket_sections = stapel_core::ticket::parse(&ticket_text);
@@ -140,6 +141,9 @@ pub fn start(key: Option<&str>, round: Round) -> Result<(), Fail> {
         };
         copy_head(&root, &ticket.key, &label)?;
         write_merge_pack(&root, &ticket.key, &ticket.dir, base_branch, &merge, &head)?;
+    }
+    if let Err(e) = stapel_core::review_block::write(&ticket.dir) {
+        warn!("stapel: review block not updated: {e}");
     }
     let folder = format!(".stapel/scratch/review/{}-{label}/", ticket.key);
     say!("copy: {folder}tree (HEAD {})", &head[..head.len().min(12)]);

@@ -611,3 +611,39 @@ fn failed_setup_keeps_the_worktree() {
         assert!(!String::from_utf8_lossy(&out.stdout).contains("setup: ok"));
     }
 }
+
+// STP-38 XR1-3: the generated Review block and `merge-request.md` are not changes for `stapel new`.
+#[test]
+fn block_and_merge_request_are_not_changes() {
+    let repo = stapel_repo();
+    let dir = repo.path();
+    git(dir, &["branch", "-m", "main"]);
+    let folder = dir.join(".stapel/tickets/ABC-9");
+    std::fs::create_dir_all(&folder).unwrap();
+    let ticket = folder.join("ticket.md");
+    let base = "# ABC-9\n\n## Review\n\nhand line\n";
+    std::fs::write(&ticket, base).unwrap();
+    commit_all(dir);
+
+    // A merge request text and a block-only change of `ticket.md` do not count.
+    std::fs::write(folder.join("merge-request.md"), "# title\n").unwrap();
+    std::fs::write(
+        &ticket,
+        format!("{base}\n<!-- stapel:review:begin -->\ngenerated\n<!-- stapel:review:end -->\n"),
+    )
+    .unwrap();
+    stapel(dir).args(["new", "First"]).assert().success();
+
+    // A change of `ticket.md` outside the block still refuses.
+    std::fs::write(
+        &ticket,
+        format!("{base}more\n\n<!-- stapel:review:begin -->\ngenerated\n<!-- stapel:review:end -->\n"),
+    )
+    .unwrap();
+    stapel(dir)
+        .args(["new", "Second"])
+        .assert()
+        .code(2)
+        .stderr(contains(".stapel/tickets/ABC-9/ticket.md"))
+        .stderr(contains("commit the changes of"));
+}

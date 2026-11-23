@@ -145,7 +145,8 @@ pub fn stapel_root(start: &Path) -> Option<PathBuf> {
 }
 
 /// Files under `.stapel/tickets/<key>/` that only `stapel` itself writes.
-const MACHINE_FILES: [&str; 5] = [
+const MACHINE_FILES: [&str; 6] = [
+    "merge-request.md",
     "state.json",
     "decisions.jsonl",
     "findings.jsonl",

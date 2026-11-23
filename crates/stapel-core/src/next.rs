@@ -147,6 +147,16 @@ fn written(sections: &[Section], title: &str) -> bool {
         .is_some_and(|body| !matches!(body.trim(), "" | "TODO"))
 }
 
+/// `written` for the Review section, judged on its text without the generated block.
+fn review_written(sections: &[Section], title: &str) -> bool {
+    find(sections, title).found().is_some_and(|body| {
+        !matches!(
+            crate::review_block::body_without_block(body).trim(),
+            "" | "TODO"
+        )
+    })
+}
+
 /// The label of a Plan step line: digits, at most one lowercase letter, `.` and a space, at the
 /// first column. `1c.` gives `step 1c`.
 pub fn step_label(line: &str) -> Option<String> {
@@ -426,7 +436,11 @@ fn after_the_steps(
             }
         }
         if let Some(def) = f.config.section(id)
-            && !written(f.sections, &def.title)
+            && !(if id == "review" {
+                review_written(f.sections, &def.title)
+            } else {
+                written(f.sections, &def.title)
+            })
         {
             let target = match (id, crate::review::next_round(f.review_round, f.patch_finding)) {
                 ("review", Some(round)) => {

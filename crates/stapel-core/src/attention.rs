@@ -201,6 +201,8 @@ pub struct Sums {
     pub long_waits: u32,
     /// Questions asked (a call with several questions counts each).
     pub questions: u32,
+    /// Question dialogs: `AskUserQuestion` calls.
+    pub question_dialogs: u32,
     /// Dialogs the person answered.
     pub dialogs: u32,
     /// Messages the person typed.
@@ -234,7 +236,10 @@ pub fn sum_events(events: &[Event]) -> Sums {
             sums.long_waits += 1;
         }
         match e.kind {
-            EventKind::Question(n) => sums.questions = sums.questions.saturating_add(n),
+            EventKind::Question(n) => {
+                sums.questions = sums.questions.saturating_add(n);
+                sums.question_dialogs = sums.question_dialogs.saturating_add(1);
+            }
             EventKind::Dialog => sums.dialogs += 1,
             EventKind::Typed => sums.typed += 1,
         }
