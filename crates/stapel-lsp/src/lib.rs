@@ -64,7 +64,7 @@ fn locate(uri: &Uri) -> Option<TicketDoc> {
 
 /// The Information diagnostics on the heading of each waiting section of `text`, or the cause
 /// (naming the file) when `stapel.toml` or `state.json` cannot be read.
-fn waiting_diagnostics(doc: &TicketDoc, text: &str) -> Result<Option<Vec<Diagnostic>>, String> {
+fn waiting_diagnostics(doc: &TicketDoc, text: &str) -> Result<Option<Computed>, String> {
     let toml = doc.root.join(".stapel/stapel.toml");
     let source = std::fs::read_to_string(&toml)
         .map_err(|e| format!("cannot read {}: {e}", toml.display()))?;
@@ -85,9 +85,14 @@ fn waiting_diagnostics(doc: &TicketDoc, text: &str) -> Result<Option<Vec<Diagnos
     let sections = stapel_core::ticket::parse(text);
     let scanned = stapel_core::ticket::scan(text);
     let mut out = Vec::new();
+    let mut logs = Vec::new();
     for def in config.sections.iter().filter(|s| s.owner != "generated") {
         if stapel_core::stage::is_fresh(&config, &sections, &state, &def.id) {
             continue;
+        }
+        if let Some(hints) = changed_lines(&scanned, &sections, &state, &def.id, &def.title, &mut logs)
+        {
+            out.extend(hints);
         }
         for (line, s) in scanned.iter().enumerate() {
             let Some((2, title)) = &s.heading else { continue };
@@ -107,7 +112,86 @@ fn waiting_diagnostics(doc: &TicketDoc, text: &str) -> Result<Option<Vec<Diagnos
             });
         }
     }
-    Ok(Some(out))
+    Ok(Some(Computed { list: out, logs }))
+}
+
+/// The diagnostics of a buffer and the lines for the log.
+struct Computed {
+    list: Vec<Diagnostic>,
+    logs: Vec<String>,
+}
+
+/// The longest body or confirmed text that gets Hints, in lines.
+const MAX_HINT_LINES: usize = 5000;
+
+/// The Hints on the lines of a changed section that the line diff marks inserted against its
+/// confirmed text; none for a fresh section, a section without a stored text, a missing or
+/// duplicated heading, or a text of more than `MAX_HINT_LINES` lines (logged).
+fn changed_lines(
+    scanned: &[stapel_core::ticket::Scanned],
+    sections: &[stapel_core::ticket::Section],
+    state: &stapel_core::state::State,
+    id: &str,
+    title: &str,
+    logs: &mut Vec<String>,
+) -> Option<Vec<Diagnostic>> {
+    let confirmed = stapel_core::stage::latest(state, id)?;
+    let old_text = confirmed.text.as_deref()?;
+    let body = match stapel_core::ticket::find(sections, title) {
+        stapel_core::ticket::Lookup::Found(body) => body,
+        _ => return None,
+    };
+    if stapel_core::hash::section_hash(body) == confirmed.hash {
+        return None;
+    }
+    let heading = scanned.iter().position(|s| {
+        matches!(&s.heading, Some((2, t)) if t.trim().eq_ignore_ascii_case(title.trim()))
+    })?;
+    let end = scanned[heading + 1..]
+        .iter()
+        .position(|s| matches!(s.heading, Some((2, _))))
+        .map_or(scanned.len(), |i| heading + 1 + i);
+    let first = heading + 1;
+    let new_lines: Vec<String> = scanned[first..end]
+        .iter()
+        .map(|s| stapel_core::hash::normal_form(&s.line))
+        .collect();
+    let old_lines: Vec<String> = old_text
+        .split(['\n', '\r'])
+        .map(stapel_core::hash::normal_form)
+        .collect();
+    if new_lines.len() > MAX_HINT_LINES || old_lines.len() > MAX_HINT_LINES {
+        logs.push(format!(
+            "stapel lsp: section {id} has more than {MAX_HINT_LINES} lines; no changed-line hints"
+        ));
+        return None;
+    }
+    let old_refs: Vec<&str> = old_lines.iter().map(String::as_str).collect();
+    let new_refs: Vec<&str> = new_lines.iter().map(String::as_str).collect();
+    let diff = similar::TextDiff::from_slices(&old_refs, &new_refs);
+    let mut out = Vec::new();
+    for change in diff.iter_all_changes() {
+        if change.tag() != similar::ChangeTag::Insert {
+            continue;
+        }
+        let Some(index) = change.new_index() else { continue };
+        if new_lines[index].is_empty() {
+            continue;
+        }
+        let line = first + index;
+        let width = scanned[line].line.trim_end_matches('\r').encode_utf16().count();
+        out.push(Diagnostic {
+            range: Range::new(
+                Position::new(line as u32, 0),
+                Position::new(line as u32, width as u32),
+            ),
+            severity: Some(DiagnosticSeverity::HINT),
+            source: Some("stapel".to_string()),
+            message: "changed since the last confirmation".to_string(),
+            ..Default::default()
+        });
+    }
+    Some(out)
 }
 
 /// What the server knows about the diagnostics it sent.
@@ -136,7 +220,17 @@ fn refresh(connection: &Connection, docs: &HashMap<Uri, String>, uri: &Uri, sent
         return;
     };
     match waiting_diagnostics(&doc, text) {
-        Ok(Some(list)) => {
+        Ok(Some(Computed { list, logs })) => {
+            for message in logs {
+                let note = Notification::new(
+                    "window/logMessage".to_string(),
+                    LogMessageParams {
+                        typ: MessageType::WARNING,
+                        message,
+                    },
+                );
+                let _ = connection.sender.send(Message::Notification(note));
+            }
             sent.bad.remove(uri);
             if list.is_empty() {
                 sent.shown.remove(uri);
@@ -316,6 +410,10 @@ fn serve(connection: &Connection) -> i32 {
                                 );
                             } else {
                                 run_button(connection, &doc, &args);
+                                let open: Vec<Uri> = docs.keys().cloned().collect();
+                                for uri in open {
+                                    refresh(connection, &docs, &uri, &mut sent);
+                                }
                             }
                             let _ = connection
                                 .sender
