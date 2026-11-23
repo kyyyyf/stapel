@@ -396,8 +396,55 @@ No `ok` button exists before step 7; until then a valid `stapel.ok` run gets the
 
 ## Review
 
-TODO
+- Spec review: two rounds of `stapel-spec-reviewer` (SR1: 17 findings, two HIGH; SR2: 12 findings, no
+  HIGH). Dependency review with STP-38: three rounds of `stapel-depends`, each `no dependency found`.
+- Drift review before code review: `stapel-drift` on the steps that touch a criterion (DR-1 to DR-5).
+- Code review round 1 at `ab290e2`: `stapel-reviewer` (role reviewer, CR1), an external
+  `stapel-reviewer` (XR1, one HIGH: the `only` filter) and `stapel-drift` on the whole ticket (DR1); fix
+  steps 12 to 16.
+- main, holding the close of STP-38, was merged into the branch at `4df5d82` before round 2.
+- Code review round 2 at `e107601`: the same three roles (CR2, XR2, DR2; no HIGH, two MEDIUM); fix steps
+  17 to 19. No HIGH finding inside the promise is left, so no round 3 runs.
+- Check runs (`stapel check STP-39`, a case-sensitive `TMPDIR` on macOS): head at `ab290e2` passed with
+  1117 tests; at `e107601` after the merge with 1146; at `326869f` with 1149. Each builder commit was
+  followed by a steps-level check.
+- Stand (item 6): Zed with the dev extension of `editors/zed/` and the `stapel` binary of this branch on
+  `PATH`; the person's report is recorded here at the close.
 
 ## Summary
 
-TODO
+The language server `stapel lsp` offers `stapel status`, `stapel next` and `stapel page` as code actions on
+the documents of a ticket, and `stapel ok` only on a current `page.md` with its hash; every run is the
+`stapel` binary itself, refused in an agent shell. Diagnostics show the waiting headings (Information) and
+the changed lines (Hint). A small Zed extension in `editors/zed/` starts it. The empty crates
+`stapel-agent` and `stapel-forge` are gone.
+
+Agent decisions to overrule (all 2026-11-23):
+
+- The key and the root come only from the URI path; a button cannot name another ticket.
+- In an agent shell the buttons are offered and their run is refused with a message.
+- The `ok` button carries the offered page hash; a page regenerated after the offer is refused.
+- The changed lines come from their own `similar` line diff, so the page and the editor may mark other
+  lines.
+- A `state.json` without `schema_version` counts as no state and is not logged (AC-13).
+- The 5000-line limit of AC-11 does not count blank lines at the edges of a side; its Warning comes once
+  per document and section.
+- The `done` and bare `exit N` forms of AC-4 and non-UTF-8 child output are not tested: every button
+  prints a line, and the server runs its own executable.
+
+Deferred for the person or a later ticket:
+
+- SR1-11: watch the files on disk instead of reading them at each event.
+- SR1-17: narrow the Zed matcher to ticket files instead of all Markdown.
+- SR2-10: plan 3c.1 says "above each section"; the ticket gives per-ticket buttons anywhere in the file.
+- DR-2 to DR-5, DR1-1, DR1-3, DR1-5, XR1-8: wording and coverage gaps of the drift and first review.
+- CR2-2: the window between the hash check and the child `stapel ok`, which does not take the hash.
+- CR2-3: a hung child blocks the server; no time limit on a run.
+- XR2-4: parameters that do not deserialize get the serde text, not the AC-5 text.
+- XR2-7: `stapel review start` should diff from the merge-base with main, not the old base.
+- XR2-8, DR2-1: `didClose` sends an empty list for any path shaped like a `ticket.md`.
+- XR2-9: the page check runs git on each code action request; cache it by file times.
+- LOW leftovers: CR1-4 (serde text of `InvalidParams`), CR1-5 (a test name), XR1-9.
+
+Measures: 19 Plan steps; three HIGH findings inside the promise, all before the code (SR1-1, SR1-2) or
+fixed in round 1 (XR1-1); 23 MEDIUM inside; `ticket.md` 41 KB; wall time 8 h, attention 48 min.
