@@ -393,3 +393,56 @@ fn time_limit_stops_a_guard() {
         "{text}"
     );
 }
+
+// AC-11: the record lists the guards (name, outcome, new, removed), the name cut to 200 characters,
+// at most 20 of them with `guards_truncated`; without `[guards]` entries there is no `guards` key.
+#[test]
+fn the_record_lists_the_guards() {
+    fn last_record(dir: &Path) -> serde_json::Value {
+        let text = read(dir, ".stapel/tickets/ABC-1/runs.jsonl");
+        let line = text
+            .lines()
+            .rfind(|l| l.contains("\"kind\":\"check\""))
+            .unwrap();
+        serde_json::from_str(line).unwrap()
+    }
+
+    let guards = format!("{}{}", guard("good", "true"), guard("bad", "exit 3"));
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let (code, text) = run(repo.path(), &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    let record = last_record(repo.path());
+    assert_eq!(
+        record["guards"],
+        serde_json::json!([
+            {"name": "good", "outcome": "pass", "new": 0, "removed": 0},
+            {"name": "bad", "outcome": "fail", "new": 0, "removed": 0},
+        ]),
+        "{record}"
+    );
+    assert!(record.get("guards_truncated").is_none(), "{record}");
+
+    // 22 guards, the first named with 300 characters.
+    let long = "ж".repeat(300);
+    let mut all = guard(&long, "true");
+    for i in 1..22 {
+        all.push_str(&guard(&format!("g{i}"), "true"));
+    }
+    let (repo, _scripts) = guards_repo("", 3600, &all);
+    let (code, text) = run(repo.path(), &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    let record = last_record(repo.path());
+    let list = record["guards"].as_array().expect("guards");
+    assert_eq!(list.len(), 20, "{record}");
+    assert_eq!(list[0]["name"], "ж".repeat(200), "{record}");
+    assert_eq!(list[19]["name"], "g19", "{record}");
+    assert_eq!(record["guards_truncated"], true, "{record}");
+
+    // No guard entries: no `guards` key.
+    let (repo, _scripts) = guards_repo("", 3600, "");
+    let (code, text) = run(repo.path(), &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    let record = last_record(repo.path());
+    assert!(record.get("guards").is_none(), "{record}");
+    assert!(record.get("guards_truncated").is_none(), "{record}");
+}
