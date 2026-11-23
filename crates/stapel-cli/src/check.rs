@@ -693,12 +693,16 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         if level_now == "steps" {
             say!("guards: skipped: level steps");
         } else {
-            for (entry, outcome) in guard_entries.iter().zip(runner.guards(guard_entries)) {
+            let guards_dir = config.guards.as_ref().map_or("", |g| g.dir.as_str());
+            for (entry, (outcome, new)) in guard_entries
+                .iter()
+                .zip(runner.guards(guards_dir, guard_entries))
+            {
                 ok &= outcome == "pass";
                 guards_json.push(serde_json::json!({
                     "name": cut_chars(&entry.name, MAX_COMMAND),
                     "outcome": outcome,
-                    "new": 0,
+                    "new": new,
                     "removed": 0,
                 }));
             }
@@ -1610,8 +1614,18 @@ impl Runner<'_> {
     /// Runs the guards in order with `sh -c` in the check copy, each after its tracked files were set
     /// to HEAD (untracked files stay), with the environment of the project commands, under the time
     /// limit; prints a line for each and returns the outcomes (STP-41 AC-3, AC-5).
-    fn guards(&self, entries: &[stapel_core::config::GuardEntry]) -> Vec<&'static str> {
-        let mut done: Vec<&'static str> = Vec::new();
+    fn guards(
+        &self,
+        dir: &str,
+        entries: &[stapel_core::config::GuardEntry],
+    ) -> Vec<(&'static str, usize)> {
+        let mut done: Vec<(&'static str, usize)> = Vec::new();
+        let lines_of = |text: &str| -> std::collections::BTreeSet<String> {
+            text.lines()
+                .map(|l| l.trim_end().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
         let mut stop: Option<String> = None;
         for entry in entries {
             let shown = printable(&entry.name);
@@ -1639,9 +1653,14 @@ impl Runner<'_> {
             }
             if let Some(why) = &stop {
                 say!("guard: {shown}: unverified: {why}");
-                done.push("unverified");
+                done.push(("unverified", 0));
                 continue;
             }
+            // The baseline of a ratchet guard is the file at HEAD, read before the command runs.
+            let baseline: Option<Option<String>> = entry.baseline.as_ref().map(|b| {
+                let path = format!("{}:{}/{}", self.head, dir.strip_suffix('/').unwrap_or(dir), b);
+                git_text(self.root, &["show", &path]).ok()
+            });
             let left = self.left().unwrap_or_default();
             let target = self.target.to_string_lossy().into_owned();
             let env: Vec<(&str, &str)> = if self.junit.is_some() {
@@ -1659,17 +1678,47 @@ impl Runner<'_> {
             match run {
                 Err(e) => {
                     say!("guard: {shown}: unverified: {e}");
-                    done.push("unverified");
+                    done.push(("unverified", 0));
                 }
                 Ok(run) if run.timed_out => {
                     stop = Some("time limit".to_string());
                     say!("guard: {shown}: unverified: time limit");
-                    done.push("unverified");
+                    done.push(("unverified", 0));
+                }
+                Ok(run) if baseline.is_some() && matches!(run.exit, Some(0 | 1)) => {
+                    if run.stdout_cut {
+                        say!("guard: {shown}: unverified: output cut");
+                        done.push(("unverified", 0));
+                        continue;
+                    }
+                    let Some(base) = baseline.flatten() else {
+                        say!("guard: {shown}: fail: no baseline");
+                        done.push(("fail", 0));
+                        continue;
+                    };
+                    let known = lines_of(&base);
+                    let mut seen = std::collections::BTreeSet::new();
+                    let fresh: Vec<String> = run
+                        .stdout
+                        .lines()
+                        .map(|l| l.trim_end().to_string())
+                        .filter(|l| !l.is_empty() && !known.contains(l) && seen.insert(l.clone()))
+                        .collect();
+                    if fresh.is_empty() {
+                        say!("guard: {shown}: pass");
+                        done.push(("pass", 0));
+                    } else {
+                        say!("guard: {shown}: fail: {} new", fresh.len());
+                        for l in fresh.iter().take(PROJECT_TAIL) {
+                            say!("  {}", printable(l));
+                        }
+                        done.push(("fail", fresh.len()));
+                    }
                 }
                 Ok(run) => match run.exit {
                     Some(0) => {
                         say!("guard: {shown}: pass");
-                        done.push("pass");
+                        done.push(("pass", 0));
                     }
                     Some(code) => {
                         say!("guard: {shown}: fail (exit {code})");
@@ -1678,11 +1727,11 @@ impl Runner<'_> {
                         for l in &lines[lines.len().saturating_sub(PROJECT_TAIL)..] {
                             say!("{}", printable(l));
                         }
-                        done.push("fail");
+                        done.push(("fail", 0));
                     }
                     None => {
                         say!("guard: {shown}: unverified: ended by a signal");
-                        done.push("unverified");
+                        done.push(("unverified", 0));
                     }
                 },
             }

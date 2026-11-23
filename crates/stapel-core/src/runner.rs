@@ -181,6 +181,10 @@ pub struct RunResult {
     pub timed_out: bool,
     /// stdout, then stderr.
     pub output: String,
+    /// The standard output alone.
+    pub stdout: String,
+    /// The standard output reached `MAX_OUTPUT` bytes and was cut.
+    pub stdout_cut: bool,
 }
 
 /// Reads a stream into a shared buffer, keeping at most `MAX_OUTPUT` bytes; says when done.
@@ -444,12 +448,17 @@ fn run_child(mut cmd: Command, what: &str, timeout: Duration) -> Result<RunResul
     // Children of the test that outlive it would keep the pipes open; the group goes too.
     kill_group(child.id());
     let drain = Instant::now() + Duration::from_secs(2);
-    let mut output = String::from_utf8_lossy(&collect(out, drain)).into_owned();
+    let out_bytes = collect(out, drain);
+    let stdout_cut = out_bytes.len() >= MAX_OUTPUT;
+    let stdout = String::from_utf8_lossy(&out_bytes).into_owned();
+    let mut output = stdout.clone();
     output.push('\n');
     output.push_str(&String::from_utf8_lossy(&collect(err, drain)));
     Ok(RunResult {
         exit: status.and_then(|s| s.code()),
         timed_out,
         output,
+        stdout,
+        stdout_cut,
     })
 }
