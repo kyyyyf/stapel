@@ -306,6 +306,18 @@ pub fn without_block(text: &str) -> Option<String> {
     Some(lines.concat())
 }
 
+/// The body of a Review section without its generated block; the body itself when the markers are
+/// broken.
+pub fn body_without_block(body: &str) -> String {
+    let wrapped = format!("## Review\n{body}");
+    match without_block(&wrapped) {
+        Some(text) => text
+            .strip_prefix("## Review\n")
+            .map_or_else(|| body.to_string(), str::to_string),
+        None => body.to_string(),
+    }
+}
+
 /// Whether the block of the ticket folder `dir` can be written: `Ok(true)` with a Review section and
 /// whole markers, `Ok(false)` with no `ticket.md` or no Review section, `Err` with `<path>: <reason>`
 /// for broken markers or two Review sections. It writes nothing.

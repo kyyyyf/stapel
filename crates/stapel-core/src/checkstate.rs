@@ -84,10 +84,12 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
         Ok(raw) => raw,
         Err(e) => return CheckLine::Stale(format!("cannot read the tree: {e}")),
     };
+    // A `ticket.md` that differs from the checked commit only inside the generated block is not a change.
     let mut changed: Vec<String> = diff
         .split(|b| *b == 0)
         .filter(|p| !p.is_empty())
         .map(|p| String::from_utf8_lossy(p).into_owned())
+        .filter(|p| !crate::worktree::block_only(root, &head, p))
         .collect();
     match dirty_paths(root) {
         Ok(d) => changed.extend(d),

@@ -65,18 +65,18 @@ pub fn dirty_paths(root: &Path) -> Result<Vec<String>, String> {
         }
         i += 1;
     }
-    out.retain(|p| !is_machine_file(p) && !block_only(root, p));
+    out.retain(|p| !is_machine_file(p) && !block_only(root, "HEAD", p));
     Ok(out)
 }
 
-/// Whether `path` is the `ticket.md` of a ticket whose only difference from HEAD lies in the
-/// generated block (STP-38 AC-6). A file HEAD cannot show or the disk cannot read is not.
-fn block_only(root: &Path, path: &str) -> bool {
+/// Whether `path` is the `ticket.md` of a ticket whose only difference from the commit `rev` lies
+/// in the generated block (STP-38 AC-6). A file `rev` cannot show or the disk cannot read is not.
+pub fn block_only(root: &Path, rev: &str, path: &str) -> bool {
     let parts: Vec<&str> = path.split('/').collect();
     if !matches!(parts.as_slice(), [".stapel", "tickets", _, "ticket.md"]) {
         return false;
     }
-    let Ok(head) = git(root, &["show", &format!("HEAD:{path}")]) else {
+    let Ok(head) = git(root, &["show", &format!("{rev}:{path}")]) else {
         return false;
     };
     let Ok(now) = std::fs::read(root.join(path)) else {
