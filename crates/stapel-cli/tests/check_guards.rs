@@ -115,3 +115,281 @@ fn refuses_bad_entries() {
         "{err}"
     );
 }
+
+// ---- step 2: exit-code guards ----
+
+fn git(dir: &Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "test-user")
+        .env("GIT_AUTHOR_EMAIL", "test-user.invalid")
+        .env("GIT_COMMITTER_NAME", "test-user")
+        .env("GIT_COMMITTER_EMAIL", "test-user.invalid")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn write(dir: &Path, rel: &str, text: &str) {
+    let path = dir.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+}
+
+fn commit(dir: &Path, message: &str) {
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "--allow-empty", "-m", message]);
+}
+
+/// A repository with a one-crate workspace, ticket ABC-1 and one passing step, all committed, and a
+/// tracked `notes.txt` ("head"). The fake cargo is its `[check] cargo`; `timeout` is its time limit,
+/// `extra` more `[check]` lines and `guards` the text of the `[guards]` tables at the end of the file.
+fn guards_repo(extra: &str, timeout: u32, guards: &str) -> (tempfile::TempDir, tempfile::TempDir) {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = common::git_repo();
+    let dir = repo.path();
+    write(
+        dir,
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/tiny\"]\nresolver = \"2\"\n",
+    );
+    write(
+        dir,
+        "crates/tiny/Cargo.toml",
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write(dir, "crates/tiny/src/lib.rs", "pub fn one() {}\n");
+    write(
+        dir,
+        "Cargo.lock",
+        "version = 3\n\n[[package]]\nname = \"tiny\"\nversion = \"0.1.0\"\n",
+    );
+    write(dir, ".gitignore", "/target\n");
+    write(dir, "notes.txt", "head\n");
+    stapel(dir)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    stapel(dir).args(["new", "First"]).assert().success();
+    commit(dir, "initial");
+    write(
+        dir,
+        "crates/tiny/tests/basic.rs",
+        "#[test]\nfn needs_two() {\n    // fake: needs pub fn two\n}\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: two is missing");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        "pub fn one() {}\npub fn two() {}\n",
+    );
+    commit(dir, "ABC-1 step 1 GREEN: two");
+
+    let scripts = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(scripts.path().join("real")).unwrap();
+    let real = common::fake_cargo(&scripts.path().join("real"));
+    let path = scripts.path().join("cargo");
+    std::fs::write(&path, format!("#!/bin/sh\nexec {real} \"$@\"\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut text: String = read(dir, ".stapel/stapel.toml")
+        .lines()
+        .map(|l| {
+            if l.starts_with("timeout_secs = ") {
+                format!(
+                    "timeout_secs = {timeout}\ncargo = \"{}\"\n{extra}\n",
+                    path.display()
+                )
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    text.push_str(&format!("\n[guards]\ndir = \"guards\"\n{guards}\n"));
+    write(dir, ".stapel/stapel.toml", &text);
+    commit(dir, "ABC-1: the check keys");
+    (repo, scripts)
+}
+
+/// One `[[guards.check]]` entry with a literal-string command.
+fn guard(name: &str, command: &str) -> String {
+    format!("[[guards.check]]\nname = \"{name}\"\ncommand = '{command}'\n")
+}
+
+/// Exit code and the text of stdout and stderr of `stapel check ABC-1` with the args.
+fn run(dir: &Path, args: &[&str]) -> (i32, String) {
+    let out = stapel(dir)
+        .args(["check", "ABC-1"])
+        .args(args)
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+// AC-3: guards run in order after the project commands in the check copy, each on the HEAD text.
+#[test]
+fn exit_code_guards() {
+    let log_dir = tempfile::tempdir().unwrap();
+    let log = log_dir.path().join("log");
+    let l = log.display();
+    let project = format!("echo changed > notes.txt; echo project >> {l}");
+    let g1 = format!("pwd >> {l}; cat notes.txt >> {l}; echo scribble > notes.txt; touch keep");
+    let g2 = format!("cat notes.txt >> {l}; test -f keep");
+    let guards = format!(
+        "{}{}{}",
+        guard("one", &g1),
+        guard("two", &g2),
+        "[[guards.check]]\nname = \"a\\nb\"\ncommand = 'true'\n"
+    );
+    let (repo, _scripts) = guards_repo(&format!("project = ['{project}']"), 3600, &guards);
+    let dir = repo.path();
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let at = |needle: &str| lines.iter().position(|l| *l == needle).expect(&text);
+    let (p, g1, g2, g3) = (
+        at(&format!("project: {project}: pass")),
+        at("guard: one: pass"),
+        at("guard: two: pass"),
+        at("guard: a b: pass"),
+    );
+    assert!(p < g1 && g1 < g2 && g2 < g3, "{text}");
+    assert!(text.contains("result: pass"), "{text}");
+    let logged = std::fs::read_to_string(&log).unwrap();
+    let logged: Vec<&str> = logged.lines().collect();
+    assert_eq!(&logged[0], &"project", "{logged:?}");
+    assert_eq!(&logged[2..], ["head", "head"], "{logged:?}");
+    let root = std::fs::canonicalize(dir).unwrap();
+    assert!(Path::new(logged[1]).is_absolute(), "{logged:?}");
+    assert_ne!(Path::new(logged[1]), root, "{logged:?}");
+    assert_eq!(read(dir, "notes.txt"), "head\n");
+
+    // No project command: the guards run at `head` and at `full`.
+    for level in ["head", "full"] {
+        let (repo, _scripts) = guards_repo("", 3600, &guard("only", "true"));
+        let (code, text) = run(repo.path(), &["--level", level]);
+        assert_eq!(code, 0, "{level}: {text}");
+        assert!(
+            text.lines().any(|l| l.trim() == "guard: only: pass"),
+            "{text}"
+        );
+    }
+}
+
+// AC-3: a failing guard prints its last 20 lines and fails the check; the close refuses it.
+#[test]
+fn a_failing_guard_fails_the_check() {
+    let bad = "i=1; while [ $i -le 30 ]; do echo out$i; i=$((i+1)); done; exit 3";
+    let (repo, _scripts) = guards_repo("", 3600, &guard("bad", bad));
+    let dir = repo.path();
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.trim() == "guard: bad: fail (exit 3)"),
+        "{text}"
+    );
+    let has = |s: &str| text.lines().any(|l| l.trim() == s);
+    assert!(has("out30") && has("out11"), "{text}");
+    assert!(!has("out10") && !has("out1"), "{text}");
+    assert!(text.contains("result: fail"), "{text}");
+    let out = stapel(dir)
+        .args(["close", "ABC-1", "--reason", "done"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("current passing check"), "{err}");
+}
+
+// AC-4: at level `steps` no guard runs.
+#[test]
+fn steps_level_skips() {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let marker = marker_dir.path().join("ran");
+    let guards = format!(
+        "{}{}",
+        guard("one", &format!("touch {}", marker.display())),
+        guard("two", "true")
+    );
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let (code, text) = run(repo.path(), &["--level", "steps"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.trim() == "guards: skipped: level steps"),
+        "{text}"
+    );
+    assert!(!text.contains("guard: one"), "{text}");
+    assert!(!marker.exists(), "{text}");
+
+    let (code, text) = run(repo.path(), &["--level", "full"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        text.lines().any(|l| l.trim() == "guard: one: pass"),
+        "{text}"
+    );
+    assert!(marker.exists(), "{text}");
+}
+
+// AC-5: the time limit kills a running guard and its child; the later guards are unverified too; a
+// guard ended by a signal is unverified.
+#[test]
+fn time_limit_stops_a_guard() {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let marker = marker_dir.path().join("second-ran");
+    let guards = format!(
+        "{}{}",
+        guard("slow", "sleep 327 & sleep 328"),
+        guard("second", &format!("touch {}", marker.display()))
+    );
+    let (repo, _scripts) = guards_repo("", 10, &guards);
+    let started = std::time::Instant::now();
+    let (code, text) = run(repo.path(), &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(60),
+        "{text}"
+    );
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert!(
+        lines.contains(&"guard: slow: unverified: time limit"),
+        "{text}"
+    );
+    assert!(
+        lines.contains(&"guard: second: unverified: time limit"),
+        "{text}"
+    );
+    assert!(!marker.exists(), "{text}");
+    assert!(text.contains("result: fail"), "{text}");
+    let left = std::process::Command::new("pgrep")
+        .args(["-f", "sleep 32[78]"])
+        .output()
+        .unwrap();
+    assert!(
+        left.stdout.is_empty(),
+        "a child survived: {}",
+        String::from_utf8_lossy(&left.stdout)
+    );
+
+    let (repo, _scripts) = guards_repo("", 3600, &guard("killed", "kill -9 $$"));
+    let (code, text) = run(repo.path(), &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.trim() == "guard: killed: unverified: ended by a signal"),
+        "{text}"
+    );
+}
