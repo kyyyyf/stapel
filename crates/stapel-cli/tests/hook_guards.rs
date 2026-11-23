@@ -104,3 +104,106 @@ fn guards_folder_edit_asks() {
     assert_eq!(read(root, "checks/base.txt"), "a\n");
     assert!(!root.join("checks/x").exists());
 }
+
+// AC-13: a subagent and the modes without the dialog are denied; a broken `stapel.toml` and a path
+// beside the folder follow the old write rules.
+#[test]
+fn guards_folder_refusals() {
+    let repo = git_repo();
+    let root = repo.path();
+    stapel(root)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let config = read(root, ".stapel/stapel.toml");
+    let config = config.replace(
+        "always_writable = [\".stapel/\", \"docs/\"]",
+        "always_writable = [\".stapel/\", \"docs/\", \"checks/\"]",
+    );
+    assert!(config.contains("\"checks/\""));
+    let config = if config.lines().any(|l| l.trim() == "[check]") {
+        config
+    } else {
+        format!("{config}\n[check]\nrunner = \"cargo\"\ntimeout_secs = 3600\n")
+    };
+    let good = format!("{config}\n[guards]\ndir = \"checks\"\n");
+    std::fs::write(root.join(".stapel/stapel.toml"), &good).unwrap();
+    std::fs::create_dir_all(root.join("checks")).unwrap();
+    std::fs::write(root.join("checks/base.txt"), "a\n").unwrap();
+
+    // A denial is exit code 2 with the reason on standard error; the reason is returned.
+    let deny = |path: &str, mode: &str, agent: Option<&str>| -> String {
+        let mut payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "cwd": root,
+            "permission_mode": mode,
+            "tool_name": "Write",
+            "tool_input": { "file_path": path, "content": "new\n" },
+        });
+        if let Some(agent) = agent {
+            payload["agent_id"] = json!(agent);
+        }
+        let out = stapel(root)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+            .code(2)
+            .get_output()
+            .stderr
+            .clone();
+        let text = String::from_utf8_lossy(&out).to_string();
+        text.strip_prefix("stapel: ")
+            .unwrap_or_else(|| panic!("no stapel prefix for {path} in {mode}: {text}"))
+            .trim_end()
+            .to_string()
+    };
+
+    // A subagent is denied in every mode.
+    for mode in ["default", "acceptEdits", "auto", "plan"] {
+        let reason = deny("checks/x", mode, Some("agent-1"));
+        assert_eq!(
+            reason,
+            "only the main agent writes into the guards folder checks, through the person's dialog",
+            "subagent in {mode}"
+        );
+    }
+    // The main agent without the dialog is denied.
+    for mode in ["bypassPermissions", "dontAsk"] {
+        let reason = deny("checks/x", mode, None);
+        assert_eq!(
+            reason,
+            format!(
+                "a write into the guards folder checks needs the permission dialog, which Claude \
+                 Code does not show in permission mode \"{mode}\""
+            ),
+            "{mode}"
+        );
+    }
+    // A path beside the folder follows the old rules: no ask, no guards text.
+    let reason = deny("checksx/f", "default", None);
+    assert!(
+        reason.starts_with("writing checksx/f is denied: the build is not allowed"),
+        "{reason}"
+    );
+    assert!(!reason.contains("guards folder"), "{reason}");
+    // A broken stapel.toml has no guards folder: the old rules stand.
+    std::fs::write(
+        root.join(".stapel/stapel.toml"),
+        format!("{good}\n[guards\n"),
+    )
+    .unwrap();
+    for (mode, agent) in [
+        ("default", None),
+        ("bypassPermissions", None),
+        ("default", Some("agent-1")),
+    ] {
+        let reason = deny("checks/x", mode, agent);
+        assert!(
+            reason.starts_with("writing checks/x is denied:") && reason.contains("is invalid"),
+            "{reason}"
+        );
+        assert!(!reason.contains("guards folder"), "{reason}");
+    }
+    assert!(!root.join("checks/x").exists());
+}
