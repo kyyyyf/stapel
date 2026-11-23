@@ -87,7 +87,7 @@ Terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | IF `[guards] dir` is not a relative path (`""`, `/abs`, `.`, `a/../b`, `a//b`, `a/./b`, `a\b`), or starts with `.stapel`, `.git` or `.claude` in any case THEN loading `stapel.toml` fails with `guards.dir must be a relative folder of the repository outside .stapel, .git and .claude: <dir>`; IF `[guards]` is present without `[check]` THEN it fails with `guards need [check]`. | `check_guards::refuses_a_bad_dir` |
+| AC-1 | IF `[guards] dir` is not a relative path (`""`, `/abs`, `.`, `a/../b`, `a//b`, `a/./b`, `a\b`), or its first part is `.stapel`, `.git` or `.claude` in any case (`.github/g` loads) THEN loading `stapel.toml` fails with `guards.dir must be a relative folder of the repository outside .stapel, .git and .claude: <dir>`; IF `[guards]` is present without `[check]` THEN it fails with `guards need [check]`. | `check_guards::refuses_a_bad_dir` |
 | AC-2 | IF a guard's `name` or `command` is empty or whitespace THEN loading fails with `guards.check entries need a name and a command`; IF two guards share a name THEN with `guards.check name is used twice: <name>`; IF a `baseline` is not a relative path THEN with `guards.check baseline must be a relative path inside guards.dir: <baseline>`. | `check_guards::refuses_bad_entries` |
 | AC-3 | WHEN the level is `head` or `full` and guards are declared THE check runs each in order with `sh -c` in the check copy, after setting it to HEAD with tracked changes discarded before each guard (untracked files stay), with the environment of the project commands, after them; an exit-code guard prints `guard: <name>: pass` on exit 0, or `guard: <name>: fail (exit <n>)` and the last 20 lines of its standard output and error; names and lines are printed with control characters as spaces; a fail makes the result `fail`, exit 1, and the close refuses it as any failing check. | `check_guards::exit_code_guards`, `check_guards::a_failing_guard_fails_the_check` |
 | AC-4 | WHEN the level is `steps` and guards are declared THE check runs none and prints `guards: skipped: level steps`. | `check_guards::steps_level_skips` |
@@ -96,13 +96,13 @@ Terms:
 | AC-7 | IF a ratchet guard has new violations THEN it prints `guard: <name>: fail: <n> new` (`n` distinct lines), then the first 20 new violations in output order, each as `  <line>` with control characters printed as spaces; the result is `fail` and the baseline file is not written; a command that rewrites its baseline file in the copy changes nothing, because the baseline was read from git. | `check_guards::a_new_violation_fails` |
 | AC-8 | IF the baseline path of a ratchet guard is no file in the HEAD commit, and AC-9 does not apply, THEN the guard prints `guard: <name>: fail: no baseline <dir>/<baseline>`, then the first 20 violations as in AC-7; the result is `fail` and nothing is written. | `check_guards::a_missing_baseline_fails` |
 | AC-9 | IF a ratchet guard's command exits with a code other than 0 and 1 (checked before AC-8) THEN it prints `guard: <name>: fail (exit <n>)` and the last 20 lines of its output, the result is `fail` and the baseline file is not written. | `check_guards::a_broken_ratchet_guard_fails` |
-| AC-10 | WHEN a ratchet guard passes and its baseline file has fixed lines THE check writes `<root>/<dir>/<baseline>` in the working tree it was started in as the baseline's lines that are still violations, in their order, the first of equal lines only, each ending with `\n`, and prints `guard: <name>: pass, <n> fixed removed from <dir>/<baseline>; commit it`; IF the write fails THEN it prints `guard: <name>: pass; baseline not written: <reason>` and the guard stays `pass`; after the change is committed, a fixed line that comes back is a new violation. | `check_guards::fixed_violations_leave_the_baseline` |
+| AC-10 | WHEN a ratchet guard passes and its baseline file has fixed lines THE check writes `<root>/<dir>/<baseline>` in the working tree it was started in as the baseline's lines that are still violations, in their order, the first of equal lines only, each ending with `\n` (a baseline with no fixed line is not written), and prints `guard: <name>: pass, <n> fixed removed from <dir>/<baseline>; commit it`; IF the write fails THEN it prints `guard: <name>: pass; baseline not written: <reason>` and the guard stays `pass`; after the change is committed, a fixed line that comes back is a new violation. | `check_guards::fixed_violations_leave_the_baseline`, `check_guards::tightening_edge_cases` |
 | AC-11 | WHEN a check ran guards THE record holds `guards`: one `{name, outcome, new, removed}` per guard, with the outcome `pass`, `fail` or `unverified`, `new` and `removed` counts (0 for an exit-code, broken or unverified guard; `new` is every distinct violation when the baseline is missing), the name cut to 200 characters; past 20 guards the rest are left out with `guards_truncated: true`. | `check_guards::the_record_lists_the_guards`, `check_guards::known_violations_pass`, `check_guards::a_new_violation_fails`, `check_guards::fixed_violations_leave_the_baseline` |
 | AC-12 | WHEN the main agent makes a guards folder write in a dialog permission mode THE guard answers `ask` with the reason `a write into the guards folder <dir>: the person confirms it in this dialog`, whatever `always_writable` and the build permit say. | `hook_guards::guards_folder_edit_asks` |
 | AC-13 | IF a subagent makes a guards folder write THEN the guard denies it with `only the main agent writes into the guards folder <dir>, through the person's dialog`; IF the main agent makes one in a permission mode without the dialog THEN it denies with `a write into the guards folder <dir> needs the permission dialog, which Claude Code does not show in permission mode "<mode>"`; IF `stapel.toml` does not load THEN no guards folder exists and the write rules of today apply. | `hook_guards::guards_folder_refusals` |
 | AC-14 | WHEN `stapel init` writes the starter `stapel.toml` and the skill THE starter holds a commented `[guards]` example with `dir` and one `[[guards.check]]` with a `baseline`, and the skill names the guards folder, the dialog of a write into it and the commit of a tightened baseline with a `history:` line. | `init_process::starter_names_guards` |
 | AC-15 | WHEN the newest check record passed and every path that differs from its commit (committed or not) is a baseline path whose lines are a subset of its lines at that commit THE check stays current for `stapel status`, `stapel next` and `stapel close`; IF any other path inside the guards folder differs, or a baseline path is no regular file at that commit or is missing or no regular file now, THEN the check is stale, under `docs/` too. | `check_guards::a_tightening_commit_keeps_the_check` |
-| AC-16 | IF a ratchet guard's standard output reached the output limit or was still open at the drain deadline THEN its line says `guard: <name>: unverified: output cut`, the result is `fail` and no baseline is written; an exit-code guard with a cut output is judged by its exit code. | `check_guards::a_cut_output_is_unverified` |
+| AC-16 | IF a ratchet guard's standard output reached the output limit or was still open at the drain deadline THEN its line says `guard: <name>: unverified: output cut`, the result is `fail` and no baseline is written; an exit-code guard with a cut output is judged by its exit code. | `check_guards::a_cut_output_is_unverified`, `check_guards::a_held_output_is_unverified` |
 
 ### Guarantees
 
@@ -160,7 +160,8 @@ before each GREEN also `--test ticket_drift`.
 | Record | two guards, one passing and one failing exit-code guard (`fail`, `new` 0); 22 guards and a name of 300 `ж`: cut and `guards_truncated`; no `[guards]`: no `guards` key | `check_guards::the_record_lists_the_guards` |
 | Hook ask | Write, Edit, MultiEdit and NotebookEdit into `<dir>/x` by the main agent in `default`, `acceptEdits`, `auto` and `plan`; an absolute path, `./a/../<dir>/x`, a symlink to the folder, another case of `<dir>`; a `dir` listed in `always_writable`; a ticket without a build permit | `hook_guards::guards_folder_edit_asks` |
 | Hook refusals | a subagent's Write into `<dir>/x`; the main agent in `bypassPermissions` and `dontAsk`; a broken `stapel.toml`: the old rules (denied without a build permit); a path beside the folder (`<dir>x/f`) follows the old rules | `hook_guards::guards_folder_refusals` |
-| Check after tightening | a passing check, the tightened baseline committed: `stapel status` shows the check current and `stapel close` accepts it; the same with the change uncommitted; a commit that adds a line to the baseline, one that edits a guard script, one that edits a guard script under a guards folder in `docs/`, one that deletes the baseline, one that adds a baseline absent at the record commit, and one that changes `[guards]` with a subset baseline: stale; a path beside the folder (`docs/guardsx/f`) and, without `[guards]`, a `docs/` change: current | `check_guards::a_tightening_commit_keeps_the_check` |
+| Check after tightening | a passing check, the tightened baseline committed: `stapel status` shows the check current and `stapel close` accepts it; the same with the change uncommitted; a commit that adds a line to the baseline, one that edits a guard script, one that edits a guard script under a guards folder in `docs/`, one that deletes the baseline, one that adds a baseline absent at the record commit, and one that changes `[guards]` with a subset baseline: stale; a path beside the folder (docs/guardsx/f) and, without `[guards]`, a `docs/` change: current | `check_guards::a_tightening_commit_keeps_the_check` |
+| Drift fixes | a ratchet guard with fixed lines whose detached child (`setsid`, outside the group) holds standard output open past the drain: `unverified: output cut`, baseline unchanged; a fixed line that returns after the tightening commit: `1 new`; a check whose step fails still tightens a passing guard; a ratchet guard with fixed lines stopped by the time limit: baseline unchanged | `check_guards::a_held_output_is_unverified`, `check_guards::tightening_edge_cases` |
 | Process files | the starter `stapel.toml` and the skill | `init_process::starter_names_guards` |
 
 ### Inputs
@@ -268,6 +269,30 @@ one baseline file (each judged alone; the second write wins; not promised); a gu
 - 2026-11-23, agent: the hook's guards folder rule needs no build permit and ignores `always_writable`,
   as the `stapel.toml` dialog does, so the person can change a guard outside a build.
 
+### Decisions (as built)
+
+All dated 2026-11-23, mark `agent`; the person may overrule them at the close.
+
+- Step 1 (5fb7160): `Config.guards: Option<Guards>` with `deny_unknown_fields`; the first part of `dir`
+  is compared without case to `.stapel`, `.git` and `.claude`, so `.github/g` loads; the order of the
+  load errors is `dir`, then `guards need [check]`, then the entries; a missing `dir` is the parser's
+  `missing field` error.
+- Step 2 (647b8b8): `Worktree::reset_tracked` (`git checkout --detach --force` without a clean) runs
+  before each guard; `Runner::guards` runs after `Runner::project`.
+- Steps 4 and 5 (09d61ef, 7b9f097): `RunResult` gained `stdout` and `stdout_cut`; the baseline is read
+  with `git cat-file blob <head>:<dir>/<baseline>` with the head id resolved at the start, so a folder
+  counts as missing. Step 4 already made AC-9 and AC-16 pass, so their tests are a coverage commit
+  (c76a427, with a `history:` line) and step 5's RED holds only the AC-8 test.
+- Step 6 (b1f4bb7): the tightened baseline is written into the working tree with `std::fs::write`; a
+  failed write prints `baseline not written: <error>`.
+- Step 8: step 7's GREEN (ee83773) already denies a subagent and the modes without the dialog, so step 8
+  is one coverage commit (bc1e8ab, with a `history:` line).
+- Step 9 (5c80eea): `GUARDS_COMMENT` after the other comments of `starter_toml`; one skill line before the
+  close lines; the installed skill was written by `stapel init` of this branch.
+- Step 10 (cf1da5c): `checkstate::current` takes the changed paths inside the guards folder out before the
+  `changed.retain` filter, drops a baseline path whose lines (`line_set`) are a subset at the record
+  commit and now (`baseline_subset`), and adds every other one back after the filter.
+
 ## Proof
 
 | Criterion | Test |
@@ -281,13 +306,13 @@ one baseline file (each judged alone; the second write wins; not promised); a gu
 | AC-7 | `check_guards::a_new_violation_fails` |
 | AC-8 | `check_guards::a_missing_baseline_fails` |
 | AC-9 | `check_guards::a_broken_ratchet_guard_fails` |
-| AC-10 | `check_guards::fixed_violations_leave_the_baseline` |
+| AC-10 | `check_guards::fixed_violations_leave_the_baseline`, `check_guards::tightening_edge_cases` |
 | AC-11 | `check_guards::the_record_lists_the_guards`, `check_guards::known_violations_pass`, `check_guards::a_new_violation_fails`, `check_guards::fixed_violations_leave_the_baseline` |
 | AC-12 | `hook_guards::guards_folder_edit_asks` |
 | AC-13 | `hook_guards::guards_folder_refusals` |
 | AC-14 | `init_process::starter_names_guards` |
 | AC-15 | `check_guards::a_tightening_commit_keeps_the_check` |
-| AC-16 | `check_guards::a_cut_output_is_unverified` |
+| AC-16 | `check_guards::a_cut_output_is_unverified`, `check_guards::a_held_output_is_unverified` |
 
 ## Plan
 
@@ -306,25 +331,29 @@ Route: full (tags `guard`, `interface`, `data`), auto.
    the GREEN adds `stdout` and `stdout_cut` to `RunResult`, reads the baseline from git, splits the
    standard output into lines, compares them and writes `new` into the record. Must not change: exit-code
    guards and the `output` of every other run.
-5. Missing baseline, broken command and cut output (AC-8, AC-9, AC-16; tests
-   `check_guards::a_missing_baseline_fails`, `check_guards::a_broken_ratchet_guard_fails`,
-   `check_guards::a_cut_output_is_unverified`): the GREEN fails the first two and makes a cut output
-   `unverified`, each without a write. Must not change: the ratchet pass.
+5. Missing baseline (AC-8; test `check_guards::a_missing_baseline_fails`): the GREEN prints the baseline
+   path and the violations and counts `new`. The tests of AC-9 and AC-16 passed before this step, because
+   step 4 already made them pass; they are a coverage commit of their own before the RED (c76a427). Must
+   not change: the ratchet pass.
 6. Tightening (AC-10; test `check_guards::fixed_violations_leave_the_baseline`): the GREEN writes the
    baseline without the fixed lines into the working tree, prints the count and writes `removed`; a failed
    write prints its line. Must not change: a guard without fixed lines writes nothing.
 7. Hook dialog (AC-12; test `hook_guards::guards_folder_edit_asks`): the RED adds `tests/hook_guards.rs`;
    the GREEN adds `guards_write_ask` beside `toml_edit_ask` in `guard.rs` and calls it in `decide`. Must not change: the write rules outside the guards folder and the
    `stapel.toml` dialog.
-8. Hook refusals (AC-13; test `hook_guards::guards_folder_refusals`, which fails at the RED because step 7 asks
-   for a subagent and in every mode): the GREEN denies a subagent and the modes without the dialog. Must
-   not change: the ask of step 7.
+8. Hook refusals (AC-13): a coverage commit only (bc1e8ab), no RED and no GREEN, because step 7's
+   `guards_write_ask` already denies a subagent and the modes without the dialog.
 9. Starter and skill (AC-14; test `init_process::starter_names_guards`): the GREEN adds the comment to
    `starter_toml`, the guards lines to `assets/skill.md`, and runs `stapel init` so that
    `init_process::this_repository_has_the_current_files` passes. Must not change: the other starter lines.
 10. Check after tightening (AC-15; test `check_guards::a_tightening_commit_keeps_the_check`): the GREEN
    lets `checkstate::current` keep a check across baseline subsets and makes other guards folder changes
    stale. Must not change: the other kept paths.
+11. Held output (DR1-1, AC-16; test `check_guards::a_held_output_is_unverified`): the GREEN makes
+   `runner.rs::run_child` set `stdout_cut` when standard output was still open at the drain deadline.
+   Must not change: the `output` of every run.
+12. Tightening cases (DR1-4, AC-10; test `check_guards::tightening_edge_cases`): a coverage commit of the
+   three Tightening cases the step 6 test left out, with a `history:` line; no GREEN.
 
 ## Review
 
@@ -339,6 +368,7 @@ Findings:
 |---|---|---|---|---|---|---|---|
 | spec-review | 1 | reviewer | 1 | 6 | 2 | 0 | defer 1, patch 8 |
 | spec-review | 2 | reviewer | 0 | 3 | 7 | 0 | patch 10 |
+| step-drift | 1 | drift | 0 | 1 | 3 | 0 | no-change 1, patch 3 |
 | dependency | STP-40:00d8a34c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:bd0eb2ad | depends | 0 | 1 | 0 | 0 | patch 1 |
