@@ -558,3 +558,140 @@ fn refuses_in_an_agent_shell() {
         let _ = c.child.kill();
     }
 }
+
+// AC-7: on a current page the `ok` button is last, with the hash of `page.md`; its run confirms
+// every waiting section as a terminal run does.
+#[test]
+fn ok_on_a_current_page() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    common::stapel(dir).args(["page", "ABC-1"]).assert().success();
+    let page = dir.join(".stapel/tickets/ABC-1/page.md");
+    let bytes = std::fs::read(&page).unwrap();
+    let hash = stapel_core::page::page_hash(&bytes);
+    let uri = file_uri(&page);
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &String::from_utf8(bytes).unwrap());
+
+    for line in [0, 2] {
+        let (resp, _) = c.code_action(&uri, line);
+        assert_eq!(
+            titles(&resp),
+            [
+                "stapel status ABC-1",
+                "stapel next",
+                "stapel page ABC-1",
+                "stapel ok ABC-1"
+            ]
+        );
+        let last = &resp["result"][3];
+        assert_eq!(last["command"]["command"], json!("stapel.ok"));
+        assert_eq!(last["command"]["arguments"], json!([uri, hash]));
+    }
+
+    let (resp, notes) = c.execute("stapel.ok", json!([uri, hash]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    assert!(resp.get("error").is_none(), "{resp}");
+    let msgs = shown(&notes);
+    assert_eq!(msgs.len(), 1, "{notes:?}");
+    assert_eq!(msgs[0].0, 3, "{msgs:?}");
+    assert!(msgs[0].1.starts_with("stapel ok ABC-1: "), "{msgs:?}");
+    let state = common::state_json(dir, "ABC-1");
+    let confirmations = state["confirmations"].as_array().unwrap();
+    let mut sections: Vec<&str> = confirmations
+        .iter()
+        .map(|c| c["section"].as_str().unwrap())
+        .collect();
+    sections.sort();
+    assert_eq!(sections, ["design", "plan", "proof", "spec"]);
+    assert!(confirmations.iter().all(|c| c["via"] == json!("terminal")));
+}
+
+// AC-8: no `ok` button on a page that is not current, nor on `ticket.md`.
+#[test]
+fn no_ok_on_a_stale_page() {
+    fn has_ok(c: &mut Client, uri: &str) -> bool {
+        let (resp, _) = c.code_action(uri, 0);
+        let got = titles(&resp);
+        assert!(got.len() >= 3, "{resp}");
+        got.iter().any(|t| t.starts_with("stapel ok"))
+    }
+    fn fresh_page() -> (tempfile::TempDir, std::path::PathBuf) {
+        let repo = common::repo_with_ticket();
+        common::stapel(repo.path())
+            .args(["page", "ABC-1"])
+            .assert()
+            .success();
+        let page = repo.path().join(".stapel/tickets/ABC-1/page.md");
+        (repo, page)
+    }
+    let mut c = Client::start();
+    c.initialize();
+
+    // control: the page as written is current
+    let (_repo, page) = fresh_page();
+    let uri = file_uri(&page);
+    c.open(&uri, &std::fs::read_to_string(&page).unwrap());
+    assert!(has_ok(&mut c, &uri));
+
+    // one byte changed on disk, the buffer equal to the disk
+    let (_repo, page) = fresh_page();
+    let mut text = std::fs::read_to_string(&page).unwrap();
+    text.push('x');
+    std::fs::write(&page, &text).unwrap();
+    let uri = file_uri(&page);
+    c.open(&uri, &text);
+    assert!(!has_ok(&mut c, &uri), "one byte changed");
+
+    // written before a later edit of the Spec
+    let (repo, page) = fresh_page();
+    common::set_section(repo.path(), "ABC-1", "Spec", "The spec, revised.");
+    let uri = file_uri(&page);
+    c.open(&uri, &std::fs::read_to_string(&page).unwrap());
+    assert!(!has_ok(&mut c, &uri), "older than the ticket text");
+
+    // buffer changed, not saved
+    let (_repo, page) = fresh_page();
+    let mut text = std::fs::read_to_string(&page).unwrap();
+    text.push('x');
+    let uri = file_uri(&page);
+    c.open(&uri, &text);
+    assert!(!has_ok(&mut c, &uri), "unsaved buffer");
+
+    // no page.md
+    let (_repo, page) = fresh_page();
+    let text = std::fs::read_to_string(&page).unwrap();
+    std::fs::remove_file(&page).unwrap();
+    let uri = file_uri(&page);
+    c.open(&uri, &text);
+    assert!(!has_ok(&mut c, &uri), "no page.md");
+
+    // no waiting section
+    let repo = common::confirmed_repo_with_ticket();
+    let page = repo.path().join(".stapel/tickets/ABC-1/page.md");
+    std::fs::write(&page, "nothing to confirm\n").unwrap();
+    let uri = file_uri(&page);
+    c.open(&uri, "nothing to confirm\n");
+    assert!(!has_ok(&mut c, &uri), "no waiting section");
+
+    // a page of a ticket that is not the branch's
+    let pair = common::two_ticket_worktrees();
+    common::stapel(&pair.b).args(["page", "ABC-2"]).assert().success();
+    let from = pair.b.join(".stapel/tickets/ABC-2");
+    let to = pair.a.join(".stapel/tickets/ABC-2");
+    std::fs::create_dir_all(&to).unwrap();
+    for name in ["ticket.md", "state.json", "page.md"] {
+        std::fs::copy(from.join(name), to.join(name)).unwrap();
+    }
+    let uri = file_uri(&to.join("page.md"));
+    c.open(&uri, &std::fs::read_to_string(to.join("page.md")).unwrap());
+    assert!(!has_ok(&mut c, &uri), "another ticket's page");
+
+    // ticket.md of a ticket whose page is current
+    let (_repo, page) = fresh_page();
+    let ticket = page.with_file_name("ticket.md");
+    let uri = file_uri(&ticket);
+    c.open(&uri, &std::fs::read_to_string(&ticket).unwrap());
+    assert!(!has_ok(&mut c, &uri), "ticket.md");
+}
