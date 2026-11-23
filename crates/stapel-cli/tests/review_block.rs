@@ -616,6 +616,32 @@ fn lone_carriage_return_refuses() {
 }
 
 #[test]
+fn lone_carriage_return_without_review_refuses() {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    let text = "a\rb\n## Spec\nx\n";
+    put(dir, TICKET, text);
+    put(
+        dir,
+        "in.jsonl",
+        &lines(&[finding("F-1", "spec-review", 1, "reviewer", "HIGH", "open")]),
+    );
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "a lone carriage return, no Review section"]);
+    let before = common::snapshot(dir);
+    let out = stapel(dir).args(["findings", "import", "in.jsonl"]).assert().code(2);
+    let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(
+        err.starts_with("stapel: ") && err.contains("ticket.md: "),
+        "{err}"
+    );
+    assert!(!err.contains("notice:") && !stdout.contains("notice:"), "{err}{stdout}");
+    assert_eq!(common::snapshot(dir), before, "files changed");
+    assert_eq!(common::read(dir, TICKET), text);
+}
+
+#[test]
 fn fenced_markers_are_text() {
     let import = |dir: &Path| {
         put(
