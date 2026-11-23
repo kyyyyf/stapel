@@ -547,7 +547,7 @@ fn serve(connection: &Connection) -> i32 {
                                 show(
                                     connection,
                                     MessageType::ERROR,
-                                    "stapel lsp: this editor was started from an agent's shell (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); start it from your own shell to use the buttons".to_string(),
+                                    AGENT_SHELL.to_string(),
                                 );
                             } else if params.command == "stapel.ok" && !offered_page_is_current(&docs, &params, &doc) {
                                 show(
@@ -569,7 +569,13 @@ fn serve(connection: &Connection) -> i32 {
                                 .sender
                                 .send(Message::Response(Response::new_ok(req.id, ())));
                         }
-                        Err(text) => {
+                        Err(Fail::Refuse(text)) => {
+                            show(connection, MessageType::ERROR, text);
+                            let _ = connection
+                                .sender
+                                .send(Message::Response(Response::new_ok(req.id, ())));
+                        }
+                        Err(Fail::Invalid(text)) => {
                             reply_error(connection, req.id, ErrorCode::InvalidParams, &text)
                         }
                     }
@@ -641,23 +647,32 @@ fn reply_error(connection: &Connection, id: lsp_server::RequestId, code: ErrorCo
     let _ = connection.sender.send(Message::Response(resp));
 }
 
+const AGENT_SHELL: &str = "stapel lsp: this editor was started from an agent's shell (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); start it from your own shell to use the buttons";
+
+/// Why a command does not run: wrong arguments (InvalidParams) or a state that refuses it (an
+/// Error message and `null`).
+enum Fail {
+    Invalid(String),
+    Refuse(String),
+}
+
 /// The `stapel` arguments and the document of a button command on an open ticket document.
 fn button_args(
     docs: &HashMap<Uri, String>,
     params: &ExecuteCommandParams,
-) -> Result<(Vec<String>, TicketDoc, Option<String>), String> {
+) -> Result<(Vec<String>, TicketDoc, Option<String>), Fail> {
     let command = params.command.as_str();
     if !COMMANDS.contains(&command) {
-        return Err(format!("stapel lsp: unknown command {command}"));
+        return Err(Fail::Invalid(format!("stapel lsp: unknown command {command}")));
     }
     if command == "stapel.answer" {
         return answer_args(docs, params);
     }
     // The run of `stapel.inbox` comes with a later step; until then no ticket form maps to it.
     if command == "stapel.inbox" {
-        return Err(format!("stapel lsp: {command} runs only from an inbox document"));
+        return Err(Fail::Invalid(format!("stapel lsp: {command} runs only from an inbox document")));
     }
-    let bad = || "stapel lsp: the arguments must be the URI of an open ticket.md or page.md".to_string();
+    let bad = || Fail::Invalid("stapel lsp: the arguments must be the URI of an open ticket.md or page.md".to_string());
     let want = if command == "stapel.ok" { 2 } else { 1 };
     if params.arguments.len() != want {
         return Err(bad());
@@ -705,10 +720,13 @@ fn entry_note(text: &str, key: &str, id: &str) -> Option<String> {
             *level == 3 && title.split_whitespace().collect::<Vec<_>>() == [key, "finding", id]
         })
     })?;
-    scanned[heading + 1..]
-        .iter()
-        .take_while(|s| s.heading.is_none())
-        .find_map(|s| s.line.strip_prefix("note:").map(|n| n.trim().to_string()))
+    Some(
+        scanned[heading + 1..]
+            .iter()
+            .take_while(|s| s.heading.is_none())
+            .find_map(|s| s.line.strip_prefix("note:").map(|n| n.trim().to_string()))
+            .unwrap_or_default(),
+    )
 }
 
 /// The run of `stapel.answer`: `[inbox URI, KEY, ID, FATE]`, the note from the buffer, the run in
@@ -716,8 +734,8 @@ fn entry_note(text: &str, key: &str, id: &str) -> Option<String> {
 fn answer_args(
     docs: &HashMap<Uri, String>,
     params: &ExecuteCommandParams,
-) -> Result<(Vec<String>, TicketDoc, Option<String>), String> {
-    let bad = || "stapel lsp: the arguments must be the URI of an open inbox.md, a key, a finding id and a fate".to_string();
+) -> Result<(Vec<String>, TicketDoc, Option<String>), Fail> {
+    let bad = || Fail::Invalid("stapel lsp: the arguments must be the URI of an open inbox.md, a key, an id and one of patch, bad_plan, defer, no-change".to_string());
     let strings: Vec<&str> = params.arguments.iter().filter_map(|a| a.as_str()).collect();
     if params.arguments.len() != 4 || strings.len() != 4 {
         return Err(bad());
@@ -729,10 +747,24 @@ fn answer_args(
     if !PERSON_FATES.contains(&fate) {
         return Err(bad());
     }
-    let note = entry_note(text, key, id)
-        .ok_or_else(|| format!("stapel lsp: no entry `### {key} finding {id}` with a note: line in the buffer"))?;
+    if agent_shell() {
+        return Err(Fail::Refuse(AGENT_SHELL.to_string()));
+    }
+    let note = match entry_note(text, key, id) {
+        None => {
+            return Err(Fail::Refuse(format!(
+                "stapel lsp: {key} {id} is not in this inbox; run stapel inbox"
+            )));
+        }
+        Some(n) if n.is_empty() => {
+            return Err(Fail::Refuse(format!(
+                "stapel lsp: write the note after note: in the entry of {key} {id} first"
+            )));
+        }
+        Some(n) => n,
+    };
     let worktree = worktree_of(&root, key)
-        .ok_or_else(|| format!("stapel lsp: no live worktree whose branch names {key}"))?;
+        .ok_or_else(|| Fail::Refuse(format!("stapel lsp: no worktree has the branch of {key}")))?;
     let args = ["answer", "--", key, id, fate, note.as_str()]
         .iter()
         .map(|a| a.to_string())
