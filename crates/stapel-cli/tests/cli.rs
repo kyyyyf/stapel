@@ -13,6 +13,18 @@ const MEMBERS: [&str; 7] = [
     "stapel-cli",
 ];
 
+// STP-39 AC-15: the two empty crates are removed.
+#[test]
+fn no_empty_crates() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for name in ["agent", "forge"] {
+        assert!(
+            !root.join(format!("crates/stapel-{name}")).exists(),
+            "crates/stapel-{name} still exists"
+        );
+    }
+}
+
 #[test]
 fn workspace_has_seven_members() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
