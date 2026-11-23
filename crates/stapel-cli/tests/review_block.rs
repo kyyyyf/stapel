@@ -288,3 +288,110 @@ fn broken_markers_refuse() {
     assert_eq!(common::read(dir, TICKET), plain);
     assert_eq!(records(dir).len(), 1);
 }
+
+#[test]
+fn review_start_writes_the_block() {
+    let repo = built();
+    let dir = repo.path();
+    // Take the block out and commit, so the tree is clean and the block comes from review start.
+    let text = common::read(dir, TICKET);
+    let bare = text.replace(&format!("\n{}", block_of(&text)), "");
+    assert!(!bare.contains(BEGIN));
+    put(dir, TICKET, &bare);
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "drop the block"]);
+    stapel(dir)
+        .args(["review", "start", "ABC-1", "--round", "1"])
+        .assert()
+        .success();
+    let new = common::read(dir, TICKET);
+    assert_eq!(
+        block_of(&new),
+        stapel_core::review_block::render(&records(dir), &[])
+    );
+    let placed = stapel_core::review_block::place(&bare, &block_of(&new)).unwrap();
+    assert_eq!(new, placed);
+    let folder = dir.join(".stapel/tickets/ABC-1");
+    for entry in std::fs::read_dir(folder).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        assert!(!name.ends_with(".tmp"), "left over: {name}");
+    }
+}
+
+/// A repository whose committed `ticket.md` is `text`, with one finding imported afterwards (the
+/// block is written, uncommitted).
+fn imported_over(text: &str) -> tempfile::TempDir {
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(dir, TICKET, text);
+    git(dir, &["add", "-A"]);
+    git(dir, &["commit", "-q", "-m", "initial"]);
+    put(
+        dir,
+        "in.jsonl",
+        &lines(&[finding("F-1", "spec-review", 1, "reviewer", "HIGH", "open")]),
+    );
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success();
+    std::fs::remove_file(dir.join("in.jsonl")).unwrap();
+    repo
+}
+
+fn dirty(dir: &Path) -> Vec<String> {
+    stapel_core::worktree::dirty_paths(dir).unwrap()
+}
+
+fn next_said(dir: &Path) -> String {
+    let out = stapel(dir).args(["next", "ABC-1"]).output().unwrap();
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+#[test]
+fn block_only_change_is_clean() {
+    for eol in ["\n", "\r\n"] {
+        let repo = imported_over(&ticket_with("Hand line.\n\n", eol));
+        let dir = repo.path();
+        assert!(common::read(dir, TICKET).contains(BEGIN), "the block is written");
+        assert!(dirty(dir).is_empty(), "{eol:?}: {:?}", dirty(dir));
+    }
+
+    // The Review section ends in two empty lines before the next heading.
+    let repo = imported_over(&ticket_with("Hand line.\n\n\n", "\n"));
+    let dir = repo.path();
+    assert!(dirty(dir).is_empty(), "{:?}", dirty(dir));
+    assert!(!next_said(dir).contains("uncommitted changes"));
+
+    // An untracked merge-request.md does not count.
+    put(dir, ".stapel/tickets/ABC-1/merge-request.md", "text\n");
+    assert!(dirty(dir).is_empty(), "{:?}", dirty(dir));
+
+    // A hand change of the Spec beside the block counts.
+    let text = common::read(dir, TICKET).replace("The spec.", "The spec, changed.");
+    put(dir, TICKET, &text);
+    assert!(
+        dirty(dir).iter().any(|p| p.ends_with("ABC-1/ticket.md")),
+        "{:?}",
+        dirty(dir)
+    );
+
+    // A ticket.md that HEAD does not hold counts.
+    let repo = repo_with_ticket();
+    let dir = repo.path();
+    put(
+        dir,
+        "in.jsonl",
+        &lines(&[finding("F-1", "spec-review", 1, "reviewer", "HIGH", "open")]),
+    );
+    stapel(dir)
+        .args(["findings", "import", "in.jsonl"])
+        .assert()
+        .success();
+    assert!(common::read(dir, TICKET).contains(BEGIN));
+    assert!(dirty(dir).iter().any(|p| p.ends_with("ABC-1/ticket.md")));
+}
