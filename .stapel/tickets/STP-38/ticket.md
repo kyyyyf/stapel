@@ -323,6 +323,13 @@ Route: full, auto (risk tags `data`, `interface`).
     `review_block::no_ticket_md`, `export::without_state_json_no_merge_request`,
     `ledger_rules::orders_keys_by_number`): tests of built behaviour, each in a coverage commit.
 
+| Fix step | Tests |
+|---|---|
+| 11 | `review_block::lone_carriage_return_refuses` |
+| 12 | `review_block::fenced_markers_are_text` |
+| 13 | `new_branch::block_and_merge_request_are_not_changes` |
+| 14 | `review_block::check_after_a_block_only_change`, `review_block::no_ticket_md`, `export::without_state_json_no_merge_request`, `ledger_rules::orders_keys_by_number` |
+
 ## Review
 
 TODO
