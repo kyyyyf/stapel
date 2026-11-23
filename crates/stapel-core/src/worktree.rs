@@ -65,8 +65,33 @@ pub fn dirty_paths(root: &Path) -> Result<Vec<String>, String> {
         }
         i += 1;
     }
-    out.retain(|p| !is_machine_file(p));
+    out.retain(|p| !is_machine_file(p) && !block_only(root, p));
     Ok(out)
+}
+
+/// Whether `path` is the `ticket.md` of a ticket whose only difference from HEAD lies in the
+/// generated block (STP-38 AC-6). A file HEAD cannot show or the disk cannot read is not.
+fn block_only(root: &Path, path: &str) -> bool {
+    let parts: Vec<&str> = path.split('/').collect();
+    if !matches!(parts.as_slice(), [".stapel", "tickets", _, "ticket.md"]) {
+        return false;
+    }
+    let Ok(head) = git(root, &["show", &format!("HEAD:{path}")]) else {
+        return false;
+    };
+    let Ok(now) = std::fs::read(root.join(path)) else {
+        return false;
+    };
+    let (Ok(head), Ok(now)) = (String::from_utf8(head), String::from_utf8(now)) else {
+        return false;
+    };
+    match (
+        crate::review_block::without_block(&head),
+        crate::review_block::without_block(&now),
+    ) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
 }
 
 /// The OS lock on `check.lock`; the file holds the pid of its holder.

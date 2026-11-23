@@ -241,6 +241,26 @@ pub fn place(ticket_text: &str, block: &str) -> Result<String, String> {
     Ok(lines.concat())
 }
 
+/// The text with CRLF read as LF and its generated block removed, with the one empty line right
+/// before the begin marker; `None` when the markers are broken or the text has two Review sections.
+pub fn without_block(text: &str) -> Option<String> {
+    let text = text.replace("\r\n", "\n");
+    let Some(spot) = locate(&text).ok()? else {
+        return Some(text);
+    };
+    let Some((begin, last)) = spot.block else {
+        return Some(text);
+    };
+    let from = if begin > spot.heading + 1 && spot.lines[begin - 1].trim().is_empty() {
+        begin - 1
+    } else {
+        begin
+    };
+    let mut lines = spot.lines;
+    lines.drain(from..=last);
+    Some(lines.concat())
+}
+
 /// Whether the block of the ticket folder `dir` can be written: `Ok(true)` with a Review section and
 /// whole markers, `Ok(false)` with no `ticket.md` or no Review section, `Err` with `<path>: <reason>`
 /// for broken markers or two Review sections. It writes nothing.
