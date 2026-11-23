@@ -1479,3 +1479,18 @@ fn refusals_beyond_the_first_cases() {
         let _ = c.child.kill();
     }
 }
+
+// AC-1: the initialize answer names open/close and save notifications.
+#[test]
+fn capabilities_name_open_close_and_save() {
+    let mut c = Client::start();
+    let resp = c.initialize();
+    let sync = &resp["result"]["capabilities"]["textDocumentSync"];
+    assert_eq!(sync["openClose"], json!(true), "{sync}");
+    assert_eq!(sync["change"], json!(1), "{sync}");
+    assert!(
+        sync["save"] == json!(true) || sync["save"].is_object(),
+        "save not named: {sync}"
+    );
+    let _ = c.child.kill();
+}
