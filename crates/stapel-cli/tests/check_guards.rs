@@ -553,6 +553,58 @@ fn a_new_violation_fails() {
     assert_eq!(read(dir, "guards/cheat.txt"), "old\n");
 }
 
+// ---- step 5: missing baseline ----
+
+// AC-8: no baseline file at HEAD (missing, a folder, only in the working tree) fails with the path
+// and the violations; every distinct violation is new; nothing is written.
+#[test]
+fn a_missing_baseline_fails() {
+    let command = "printf \"v1\\nv2\\nv3\\n\"";
+    let guards = [
+        ratchet("missing", command, "missing.txt"),
+        ratchet("folder", command, "folder"),
+        ratchet("untracked", command, "untracked.txt"),
+    ]
+    .concat();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "guards/folder/inner.txt", "v1\n");
+    commit(dir, "ABC-1: a folder");
+    // Present in the working tree, ignored by git, so the check accepts the tree but HEAD lacks it.
+    write(dir, ".gitignore", "/target\n/guards/untracked.txt\n");
+    commit(dir, "ABC-1: ignore a file");
+    write(dir, "guards/untracked.txt", "v1\nv2\nv3\n");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    for (name, path) in [
+        ("missing", "missing.txt"),
+        ("folder", "folder"),
+        ("untracked", "untracked.txt"),
+    ] {
+        let want = format!("guard: {name}: fail: no baseline guards/{path}");
+        assert!(lines.contains(&want.as_str()), "{want}: {text}");
+    }
+    assert!(lines.contains(&"v1") && lines.contains(&"v3"), "{text}");
+    assert!(text.contains("result: fail"), "{text}");
+    assert!(!dir.join("guards/missing.txt").exists());
+    assert_eq!(read(dir, "guards/untracked.txt"), "v1\nv2\nv3\n");
+    let record = last_check_record(dir);
+    for i in 0..3 {
+        assert_eq!(record["guards"][i]["outcome"], "fail", "{record}");
+        assert_eq!(record["guards"][i]["new"], 3, "{record}");
+        assert_eq!(record["guards"][i]["removed"], 0, "{record}");
+    }
+
+    // Exit 2 with no baseline: the line of AC-9.
+    let (repo, _scripts) = guards_repo("", 3600, &ratchet("broken", "echo v1; exit 2", "none.txt"));
+    let (code, text) = run(repo.path(), &["--level", "head"]);
+    assert_eq!(code, 1, "{text}");
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert!(lines.contains(&"guard: broken: fail (exit 2)"), "{text}");
+    assert!(!text.contains("no baseline"), "{text}");
+}
+
 // ---- step 5: broken command and cut output ----
 
 // AC-9: a ratchet guard that exits with a code other than 0 and 1 fails as broken, with the tail of
