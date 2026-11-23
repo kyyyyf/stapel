@@ -422,7 +422,7 @@ Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| head | pass | 57bc362 | 2026-11-23T18:34:35Z | cached 13, pass 2 |
+| head | pass | 5d901b9 | 2026-11-23T19:13:50Z | cached 15, pass 1 |
 <!-- stapel:review:end -->
 
 ## Summary
