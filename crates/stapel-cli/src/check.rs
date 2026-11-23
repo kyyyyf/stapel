@@ -6,7 +6,9 @@ use stapel_core::build_inputs;
 use stapel_core::build_inputs::{Bounds, BuildInputs, Change};
 use stapel_core::config::{Check, validate_cargo, validate_path_cargo};
 use stapel_core::journal::{append, new_id};
-use stapel_core::junit::{MAX_REPORT, OVER_SIZE, Outcome as CaseOutcome, read_open_report, read_report};
+use stapel_core::junit::{
+    MAX_REPORT, OVER_SIZE, Outcome as CaseOutcome, read_open_report, read_report,
+};
 use stapel_core::outcomes::{
     Analysis, MAX_NAMED, Mode, analyse_in, history_outcome, named, open_red, passing,
 };
@@ -190,12 +192,7 @@ pub(crate) fn base_branch_of(ticket: &Ticket) -> Option<String> {
 }
 
 /// The steps of the ticket on the first-parent history of `head`.
-fn read_steps(
-    root: &Path,
-    key: &str,
-    head: &str,
-    base: Option<&str>,
-) -> Result<Vec<Step>, String> {
+fn read_steps(root: &Path, key: &str, head: &str, base: Option<&str>) -> Result<Vec<Step>, String> {
     step_commits(root, key, head, base).map(steps)
 }
 
@@ -226,7 +223,11 @@ fn sha256_hex(parts: &[&str]) -> String {
     for part in parts {
         digest.update(part.as_bytes());
     }
-    digest.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    digest
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// The test hash of a step: SHA-256 of its sorted test ids, one per line.
@@ -260,8 +261,7 @@ fn step_key(root: &Path, a: &Analysis) -> String {
 fn lock_hash(root: &Path, commit: &str, junit: bool) -> String {
     let mut paths: Vec<String> = Vec::new();
     if junit {
-        let listing =
-            git_text(root, &["ls-tree", "-r", "--name-only", commit]).unwrap_or_default();
+        let listing = git_text(root, &["ls-tree", "-r", "--name-only", commit]).unwrap_or_default();
         for path in listing.lines() {
             let name = path.rsplit('/').next().unwrap_or(path);
             if matches!(name, "package-lock.json" | "yarn.lock" | "pnpm-lock.yaml") {
@@ -531,7 +531,10 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         say!("cargo: {cargo_text}");
     }
     // The level follows the `cargo:` line (AC-11).
-    let level_now = level.or(check.level.as_deref()).unwrap_or("head").to_string();
+    let level_now = level
+        .or(check.level.as_deref())
+        .unwrap_or("head")
+        .to_string();
     say!("level: {level_now}");
     // Under junit a Node pin of the checked commit is compared with `node --version` (STP-37 AC-6, AC-7).
     let pin = if junit {
@@ -694,7 +697,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
             say!("guards: skipped: level steps");
         } else {
             let guards_dir = config.guards.as_ref().map_or("", |g| g.dir.as_str());
-            for (entry, (outcome, new)) in guard_entries
+            for (entry, (outcome, new, removed)) in guard_entries
                 .iter()
                 .zip(runner.guards(guards_dir, guard_entries))
             {
@@ -703,7 +706,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
                     "name": cut_chars(&entry.name, MAX_COMMAND),
                     "outcome": outcome,
                     "new": new,
-                    "removed": 0,
+                    "removed": removed,
                 }));
             }
         }
@@ -847,7 +850,11 @@ fn node_pin(root: &Path, at: &str) -> Result<Option<Pin>, String> {
             continue;
         };
         let text = text.trim();
-        let numbers = if text.contains('\n') { None } else { version_numbers(text) };
+        let numbers = if text.contains('\n') {
+            None
+        } else {
+            version_numbers(text)
+        };
         let Some(numbers) = numbers else {
             return Err(format!("{file}: not a version: {text}"));
         };
@@ -879,7 +886,11 @@ fn printable(text: &str) -> String {
 }
 
 fn shell_word(path: &str) -> String {
-    let path = if path.starts_with('-') { format!("./{path}") } else { path.to_string() };
+    let path = if path.starts_with('-') {
+        format!("./{path}")
+    } else {
+        path.to_string()
+    };
     format!("'{}'", path.replace('\'', "'\\''"))
 }
 
@@ -1335,7 +1346,10 @@ impl Runner<'_> {
             }
             // A file that does not load: every case has the classname jest gives a failed suite.
             let cases = &suites[0].cases;
-            if !cases.is_empty() && cases.iter().all(|c| c.classname == "Test suite failed to run")
+            if !cases.is_empty()
+                && cases
+                    .iter()
+                    .all(|c| c.classname == "Test suite failed to run")
             {
                 for name in names {
                     out.insert(
@@ -1618,8 +1632,8 @@ impl Runner<'_> {
         &self,
         dir: &str,
         entries: &[stapel_core::config::GuardEntry],
-    ) -> Vec<(&'static str, usize)> {
-        let mut done: Vec<(&'static str, usize)> = Vec::new();
+    ) -> Vec<(&'static str, usize, usize)> {
+        let mut done: Vec<(&'static str, usize, usize)> = Vec::new();
         let lines_of = |text: &str| -> std::collections::BTreeSet<String> {
             text.lines()
                 .map(|l| l.trim_end().to_string())
@@ -1653,12 +1667,17 @@ impl Runner<'_> {
             }
             if let Some(why) = &stop {
                 say!("guard: {shown}: unverified: {why}");
-                done.push(("unverified", 0));
+                done.push(("unverified", 0, 0));
                 continue;
             }
             // The baseline of a ratchet guard is the file at HEAD, read before the command runs.
             let baseline: Option<Option<String>> = entry.baseline.as_ref().map(|b| {
-                let path = format!("{}:{}/{}", self.head, dir.strip_suffix('/').unwrap_or(dir), b);
+                let path = format!(
+                    "{}:{}/{}",
+                    self.head,
+                    dir.strip_suffix('/').unwrap_or(dir),
+                    b
+                );
                 // `cat-file blob` refuses a folder, which counts as no baseline.
                 git_text(self.root, &["cat-file", "blob", &path]).ok()
             });
@@ -1679,21 +1698,22 @@ impl Runner<'_> {
             match run {
                 Err(e) => {
                     say!("guard: {shown}: unverified: {e}");
-                    done.push(("unverified", 0));
+                    done.push(("unverified", 0, 0));
                 }
                 Ok(run) if run.timed_out => {
                     stop = Some("time limit".to_string());
                     say!("guard: {shown}: unverified: time limit");
-                    done.push(("unverified", 0));
+                    done.push(("unverified", 0, 0));
                 }
                 Ok(run) if baseline.is_some() && matches!(run.exit, Some(0 | 1)) => {
                     if run.stdout_cut {
                         say!("guard: {shown}: unverified: output cut");
-                        done.push(("unverified", 0));
+                        done.push(("unverified", 0, 0));
                         continue;
                     }
                     let missing = baseline.as_ref().is_some_and(Option::is_none);
-                    let known = lines_of(&baseline.flatten().unwrap_or_default());
+                    let base_text = baseline.flatten().unwrap_or_default();
+                    let known = lines_of(&base_text);
                     let mut seen = std::collections::BTreeSet::new();
                     let fresh: Vec<String> = run
                         .stdout
@@ -1702,8 +1722,41 @@ impl Runner<'_> {
                         .filter(|l| !l.is_empty() && !known.contains(l) && seen.insert(l.clone()))
                         .collect();
                     if fresh.is_empty() && !missing {
-                        say!("guard: {shown}: pass");
-                        done.push(("pass", 0));
+                        // Tighten: the baseline's lines that are still violations, in order, once.
+                        let live: std::collections::BTreeSet<String> = run
+                            .stdout
+                            .lines()
+                            .map(|l| l.trim_end().to_string())
+                            .collect();
+                        let mut kept: Vec<String> = Vec::new();
+                        for l in base_text.lines() {
+                            let l = l.trim_end().to_string();
+                            if live.contains(&l) && !l.is_empty() && !kept.contains(&l) {
+                                kept.push(l);
+                            }
+                        }
+                        let fixed = known.len() - kept.len();
+                        if fixed == 0 {
+                            say!("guard: {shown}: pass");
+                            done.push(("pass", 0, 0));
+                            continue;
+                        }
+                        let base = entry.baseline.as_deref().unwrap_or_default();
+                        let rel = format!("{}/{}", dir.strip_suffix('/').unwrap_or(dir), base);
+                        let text: String = kept.iter().map(|l| format!("{l}\n")).collect();
+                        match std::fs::write(self.root.join(&rel), text) {
+                            Ok(()) => {
+                                say!(
+                                    "guard: {shown}: pass, {fixed} fixed removed from {}; commit it",
+                                    printable(&rel)
+                                );
+                                done.push(("pass", 0, fixed));
+                            }
+                            Err(e) => {
+                                say!("guard: {shown}: pass; baseline not written: {e}");
+                                done.push(("pass", 0, 0));
+                            }
+                        }
                     } else {
                         if missing {
                             let base = entry.baseline.as_deref().unwrap_or_default();
@@ -1715,13 +1768,13 @@ impl Runner<'_> {
                         for l in fresh.iter().take(PROJECT_TAIL) {
                             say!("  {}", printable(l));
                         }
-                        done.push(("fail", fresh.len()));
+                        done.push(("fail", fresh.len(), 0));
                     }
                 }
                 Ok(run) => match run.exit {
                     Some(0) => {
                         say!("guard: {shown}: pass");
-                        done.push(("pass", 0));
+                        done.push(("pass", 0, 0));
                     }
                     Some(code) => {
                         say!("guard: {shown}: fail (exit {code})");
@@ -1730,11 +1783,11 @@ impl Runner<'_> {
                         for l in &lines[lines.len().saturating_sub(PROJECT_TAIL)..] {
                             say!("{}", printable(l));
                         }
-                        done.push(("fail", 0));
+                        done.push(("fail", 0, 0));
                     }
                     None => {
                         say!("guard: {shown}: unverified: ended by a signal");
-                        done.push(("unverified", 0));
+                        done.push(("unverified", 0, 0));
                     }
                 },
             }
@@ -1755,14 +1808,25 @@ impl Runner<'_> {
             }
         }
         let commits = kept.join("\n");
-        let existing = git_text(self.root, &["ls-tree", "-r", "-z", "--name-only", self.head])?;
+        let existing = git_text(
+            self.root,
+            &["ls-tree", "-r", "-z", "--name-only", self.head],
+        )?;
         let existing: std::collections::BTreeSet<&str> =
             existing.split('\0').filter(|p| !p.is_empty()).collect();
         let mut files: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for sha in commits.lines() {
             let out = git_text(
                 self.root,
-                &["diff-tree", "-z", "--no-renames", "--name-only", "-r", "--root", sha],
+                &[
+                    "diff-tree",
+                    "-z",
+                    "--no-renames",
+                    "--name-only",
+                    "-r",
+                    "--root",
+                    sha,
+                ],
             )?;
             // With a commit argument, the first item is the commit id.
             for path in out.split('\0').filter(|p| !p.is_empty() && *p != sha) {
@@ -1856,8 +1920,8 @@ fn short(sha: &str) -> &str {
 /// `the suite`). The kind and the size are checked before the read, so a FIFO does not block it.
 fn read_report_file(path: &Path, name: &str, what: &str) -> Result<Vec<u8>, String> {
     use std::os::unix::fs::FileTypeExt;
-    let meta = std::fs::symlink_metadata(path)
-        .map_err(|e| format!("no report {name} for {what}: {e}"))?;
+    let meta =
+        std::fs::symlink_metadata(path).map_err(|e| format!("no report {name} for {what}: {e}"))?;
     let kind = meta.file_type();
     let not_regular = if kind.is_symlink() {
         Some("a symbolic link")
@@ -1880,7 +1944,10 @@ fn read_report_file(path: &Path, name: &str, what: &str) -> Result<Vec<u8>, Stri
         return Err(format!("the report {name} of {what} is {what_it_is}"));
     }
     if meta.len() > MAX_REPORT as u64 {
-        return Err(format!("the report of {what} is over {} MiB", MAX_REPORT / 1024 / 1024));
+        return Err(format!(
+            "the report of {what} is over {} MiB",
+            MAX_REPORT / 1024 / 1024
+        ));
     }
     // One open decides: no link is followed and a FIFO swapped in after the check does not block;
     // the open file must be regular and its read is bounded.
@@ -1898,7 +1965,10 @@ fn read_report_file(path: &Path, name: &str, what: &str) -> Result<Vec<u8>, Stri
     }
     read_open_report(&mut file).map_err(|e| {
         if e == OVER_SIZE {
-            format!("the report of {what} is over {} MiB", MAX_REPORT / 1024 / 1024)
+            format!(
+                "the report of {what} is over {} MiB",
+                MAX_REPORT / 1024 / 1024
+            )
         } else {
             format!("no report {name} for {what}: {e}")
         }
@@ -1956,10 +2026,16 @@ pub(crate) fn history_report(
     bounds: Bounds,
 ) -> Result<HistoryReport, String> {
     let globs = junit_globs_at(root)?;
-    let analyses = analyse_in(root, key, at, steps, bounds.base, bounds.base_branch, mode_of(&globs))?;
-    let junit_check = repo::load(root)?
-        .check
-        .filter(|c| c.runner == "junit");
+    let analyses = analyse_in(
+        root,
+        key,
+        at,
+        steps,
+        bounds.base,
+        bounds.base_branch,
+        mode_of(&globs),
+    )?;
+    let junit_check = repo::load(root)?.check.filter(|c| c.runner == "junit");
     let (inputs, walk) = match &junit_check {
         Some(check) => (
             junit_inputs(root, key, at, bounds, check)?,
