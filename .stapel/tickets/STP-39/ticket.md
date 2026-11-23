@@ -405,6 +405,8 @@ No `ok` button exists before step 7; until then a valid `stapel.ok` run gets the
 - main, holding the close of STP-38, was merged into the branch at `4df5d82` before round 2.
 - Code review round 2 at `e107601`: the same three roles (CR2, XR2, DR2; no HIGH, two MEDIUM); fix steps
   17 to 19. No HIGH finding inside the promise is left, so no round 3 runs.
+- Merge review `merge:4df5d823` at `daa676e`: the same three roles (MR, MX, MD; eight LOW, none caused
+  by the merge).
 - Check runs (`stapel check STP-39`, a case-sensitive `TMPDIR` on macOS): head at `ab290e2` passed with
   1117 tests; at `e107601` after the merge with 1146; at `326869f` with 1149. Each builder commit was
   followed by a steps-level check.
@@ -444,6 +446,10 @@ Deferred for the person or a later ticket:
 - XR2-7: `stapel review start` should diff from the merge-base with main, not the old base.
 - XR2-8, DR2-1: `didClose` sends an empty list for any path shaped like a `ticket.md`.
 - XR2-9: the page check runs git on each code action request; cache it by file times.
+- MR-1, MX-1: a Review section with a human owner would wait after each rewrite of the generated block.
+- MD-2: the shown first line is trimmed and the log text starts with the label.
+- MD-3: a bad file whose cause text changes is logged again; MD-4: the order of the AC-6 and AC-9
+  refusals is not tested.
 - LOW leftovers: CR1-4 (serde text of `InvalidParams`), CR1-5 (a test name), XR1-9.
 
 Measures: 19 Plan steps; three HIGH findings inside the promise, all before the code (SR1-1, SR1-2) or
