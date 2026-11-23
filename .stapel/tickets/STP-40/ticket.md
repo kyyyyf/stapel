@@ -82,9 +82,10 @@ Terms:
   `tickets::branch_ticket`; a prunable worktree or a missing folder is skipped).
 - **Owed finding**: a finding of an inbox ticket's `findings.jsonl` for which `triage::State::is_persons`
   holds, the rule by which `stapel next` names `ask-human`.
-- **Owed confirmation**: an inbox ticket whose `stapel next` action, computed in its worktree, is none of
-  `write-frame`, `write-section` and `spec-review`, and for which `confirm::prepare_waiting` gives at least
-  one waiting section; its **waiting ids** are the ids of those sections in the order of `stapel.toml`.
+- **Owed confirmation**: an inbox ticket past its spec review (its Frame and every section not owned by
+  `generated` written, its Plan with steps, and the ticket light, confirmed once, or holding a spec-review
+  finding: the facts by which `stapel next` leaves `write-frame`, `write-section` and `spec-review`) with
+  at least one waiting section; its **waiting ids** are the ids of those sections in the order of `stapel.toml`.
 - **Person's fate**: one of `patch`, `bad_plan`, `defer`, `no-change`.
 - **Agent shell**: `identity::in_agent_shell` holds (`CLAUDECODE` or `CLAUDE_CODE_ENTRYPOINT` is set).
 - **Inbox document**: a `file:` URI whose path is `<root>/.stapel/inbox.md` where
@@ -273,7 +274,41 @@ arguments must be the URI of an open inbox.md, a key, an id and one of patch, ba
 - 2026-11-23, agent: the server takes the worktree of a key from git, so an edited `worktree:` line
   points nowhere.
 
+### Decisions (during the build)
+
+- 2026-11-23, agent: the guard reads the program name in lower case, so an upper-case `STAPEL` before
+  `ok` or the hook entry point is checked as the lower-case name; before, it passed the guard.
+- 2026-11-23, agent: an owed confirmation is computed from the ticket's facts, not from its next action,
+  so a finding that waits for the person does not hide a waiting section of the same ticket.
+- 2026-11-23, agent: the inbox title is `# Inbox`; an entry's `worktree:` line holds the canonical path.
+- 2026-11-23, agent: in `stapel.answer` the agent shell is checked before the entry and the note, so an
+  agent gets the agent message whatever the buffer holds.
+- 2026-11-23, agent: the rewrite of AC-15 also follows `stapel.page` and `stapel.inbox`, so the
+  `stapel.inbox` button runs `stapel inbox` twice; the step 11 test now expects the file after a page run.
+
 ### As built
+
+Notes of the build, dated 2026-11-23, agent.
+
+- `stapel-core::inbox`: `one_line`, `owed_findings`, `waiting_sections`, `render`; `Kind` is `Finding`,
+  `Confirmation` or `Unreadable`. An unreadable ticket (state, findings, `ticket.md`, `stapel.toml` or
+  the next action fails) gets an `unreadable:` line; a ticket without a title gets the heading `## KEY`.
+  Waiting ids are joined by `, `.
+- `stapel-cli/src/inbox.rs` walks the worktrees and drops a repeated canonical path.
+  `findings::answer` writes one serde line with `records::importer_json(false, user)`, then the generated
+  Review block and the dependency stops, as `findings triage` does. A missing `user.name` exits 2. The
+  note of `stapel answer` takes `allow_hyphen_values`.
+- `stapel-lsp`: `inbox_root` classifies the inbox document. `inbox_entry` finds the nearest `###`
+  heading at or above the range start. `button_args` sends `stapel.answer` to `answer_args`, `stapel.page`
+  with an inbox URI to `page_args`, and `stapel.inbox` to `inbox_args`. Each returns `Fail::Invalid`
+  (`InvalidParams`) or `Fail::Refuse` (Error message, `null`). `answer_args` checks the form, the agent
+  shell, the entry, the note (an entry without a `note:` line counts as an empty note), then
+  `worktree_of`. The answer runs `stapel answer -- KEY ID FATE NOTE` with the label without the note.
+  `rewrite_inbox` runs `stapel inbox` silently after each run that ran and carries non-empty buffer notes
+  by heading; a failed `stapel inbox` leaves the file as it was.
+- History lines: step 7's GREEN (`.gitignore` of this repository). Tests: the RED of step 7 changed
+  `init::appends_to_existing_gitignore`; the RED of step 12 changed one line of
+  `lsp::inbox_page_and_inbox_buttons`.
 
 ## Proof
 
@@ -324,8 +359,8 @@ merge into main.
    lines and runs `stapel init` in this repository (message line `history: the installed .gitignore gains
    the inbox`). Must not change: the other installed files.
 8. Inbox buttons (AC-11; test `lsp::inbox_buttons`): the GREEN classifies the inbox document and offers
-   its buttons; the RED also adds the two names to the list of STP-39's
-   `lsp::capabilities_name_open_close_and_save`. Must not change: the buttons of ticket documents.
+   its buttons; the RED also adds the two names to the command list of STP-39's
+   `lsp::initialize_and_shutdown`. Must not change: the buttons of ticket documents.
 9. Answer from the inbox (AC-12; test `lsp::answers_from_the_inbox`): the GREEN runs `stapel answer` in
    the worktree of the key with the buffer's note. Must not change: the run report of STP-39.
 10. Inbox refusals (AC-13; test `lsp::inbox_refusals`, which fails at the RED because the run goes ahead):
