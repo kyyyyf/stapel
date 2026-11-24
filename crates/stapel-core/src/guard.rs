@@ -133,8 +133,21 @@ fn toml_edit_ask(input: &HookInput, target: &Path) -> Option<Decision> {
 /// The dialog for a write into the guards folder `[guards] dir` (STP-41 AC-12): the main agent in
 /// a dialog mode is asked, a subagent or another mode is denied. A write outside the folder, or a
 /// repository without `[guards]`, is `None`: the other write rules stand.
-fn guards_write_ask(input: &HookInput, target: &Path) -> Option<Decision> {
-    let root = stapel_root(target)?;
+fn guards_write_ask(input: &HookInput, written: &Path, target: &Path) -> Option<Decision> {
+    // The root comes from the written path as given, then from the resolved target: a guards
+    // folder linked outside the root resolves the target out of it (STP-41 XR2-4).
+    let mut roots: Vec<PathBuf> = stapel_root(written).into_iter().collect();
+    if let Some(root) = stapel_root(target)
+        && !roots.contains(&root)
+    {
+        roots.push(root);
+    }
+    roots
+        .iter()
+        .find_map(|root| guards_write_ask_in(input, root, target))
+}
+
+fn guards_write_ask_in(input: &HookInput, root: &Path, target: &Path) -> Option<Decision> {
     let config = std::fs::read_to_string(root.join(".stapel/stapel.toml")).ok()?;
     let guards = Config::parse(&config).ok()?.guards?;
     let dir = guards
@@ -147,12 +160,8 @@ fn guards_write_ask(input: &HookInput, target: &Path) -> Option<Decision> {
             .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
             .collect()
     };
-    let rel = lower(target.strip_prefix(&root).ok()?);
-    let folder = lower(
-        resolve(&root.join(&dir))
-            .strip_prefix(&root)
-            .unwrap_or(Path::new(&dir)),
-    );
+    let rel = lower(target);
+    let folder = lower(&resolve(&root.join(&dir)));
     if rel.len() < folder.len() || rel[..folder.len()] != folder[..] {
         return None;
     }
@@ -276,7 +285,8 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
             let Some(path) = input.tool_input[field].as_str() else {
                 return Decision::Deny(format!("hook input has no tool_input.{field}"));
             };
-            let target = resolve(&cwd.join(path));
+            let written = cwd.join(path);
+            let target = resolve(&written);
             if hook_root.is_some() && is_global_config(&target) {
                 return Decision::Deny(format!(
                     "only stapel or the human writes {}, not an agent's write tool \
@@ -309,7 +319,7 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
             {
                 return deny;
             }
-            if let Some(ask) = guards_write_ask(input, &target) {
+            if let Some(ask) = guards_write_ask(input, &written, &target) {
                 return ask;
             }
             decide_write(&target)
