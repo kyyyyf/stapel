@@ -86,8 +86,9 @@ fn last_record(dir: &Path) -> serde_json::Value {
     serde_json::from_str(line).unwrap()
 }
 
-/// A `[check] cargo` stand-in: a whole-suite run (`--workspace`) prints the file `canned` and exits
-/// with the code in the file `code`; every other run goes to the fake cargo.
+/// A `[check] cargo` stand-in: a whole-suite run (`--workspace`) prints the file `canned` as real cargo
+/// does (the `Compiling`, `Running`, `Doc-tests` and `error` lines on standard error, the rest on
+/// standard output) and exits with the code in the file `code`; every other run goes to the fake cargo.
 fn canned_cargo(scripts: &Path) -> String {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(scripts.join("real")).unwrap();
@@ -96,7 +97,7 @@ fn canned_cargo(scripts: &Path) -> String {
     std::fs::write(
         &path,
         format!(
-            "#!/bin/sh\ncase \"$*\" in\n*--workspace*)\n  cat {dir}/canned\n  exit $(cat {dir}/code)\n  ;;\nesac\nexec {real} \"$@\"\n",
+            "#!/bin/sh\ncase \"$*\" in\n*--workspace*)\n  awk '/^ *(Running|Doc-tests|Compiling) |^error/ {{ print > \"/dev/stderr\"; next }} {{ print }}' {dir}/canned\n  exit $(cat {dir}/code)\n  ;;\nesac\nexec {real} \"$@\"\n",
             dir = scripts.display()
         ),
     )
@@ -194,20 +195,44 @@ test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; 
     let (lines, record) = check_with(dir, s, two_targets, 101);
     assert_eq!(
         after_suite(&lines),
-        Some("failing: src/lib.rs alpha::first, tests/basic.rs beta::second, tests/basic.rs beta::third"),
+        Some("failing: tiny alpha::first, basic beta::second, basic beta::third"),
         "{lines:?}"
     );
     assert_eq!(
         record["suite"]["failing"],
-        serde_json::json!([
-            "src/lib.rs alpha::first",
-            "tests/basic.rs beta::second",
-            "tests/basic.rs beta::third"
-        ]),
+        serde_json::json!(["tiny alpha::first", "basic beta::second", "basic beta::third"]),
         "{record}"
     );
     assert_eq!(record["suite"]["failing_more"], 0, "{record}");
     assert_eq!(record["suite"]["failed"], 3, "{record}");
+
+    // `tests::x` failing in two crates: two names, each with its binary name.
+    let two_crates = "\
+     Running unittests src/lib.rs (target/debug/deps/stapel_core-0123abcd)
+
+running 1 test
+test tests::x ... FAILED
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/check_junit.rs (target/debug/deps/check_junit-4567ef01)
+
+running 1 test
+test tests::x ... FAILED
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+";
+    let (lines, record) = check_with(dir, s, two_crates, 101);
+    assert_eq!(
+        after_suite(&lines),
+        Some("failing: stapel_core tests::x, check_junit tests::x"),
+        "{lines:?}"
+    );
+    assert_eq!(
+        record["suite"]["failing"],
+        serde_json::json!(["stapel_core tests::x", "check_junit tests::x"]),
+        "{record}"
+    );
 
     // A failing doc test after a `Doc-tests tiny` line.
     let doc = "\
@@ -246,7 +271,7 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; 
         many.push_str(&format!("test t{i:02} ... FAILED\n"));
     }
     many.push_str("\ntest result: FAILED. 0 passed; 25 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n");
-    let first_20: Vec<String> = (1..=20).map(|i| format!("src/lib.rs t{i:02}")).collect();
+    let first_20: Vec<String> = (1..=20).map(|i| format!("tiny t{i:02}")).collect();
     let (lines, record) = check_with(dir, s, &many, 101);
     assert_eq!(
         after_suite(&lines),
@@ -271,8 +296,8 @@ running 1 test
 test same ... FAILED
 ";
     let (lines, record) = check_with(dir, s, twice, 101);
-    assert_eq!(after_suite(&lines), Some("failing: src/lib.rs same"), "{lines:?}");
-    assert_eq!(record["suite"]["failing"], serde_json::json!(["src/lib.rs same"]), "{record}");
+    assert_eq!(after_suite(&lines), Some("failing: tiny same"), "{lines:?}");
+    assert_eq!(record["suite"]["failing"], serde_json::json!(["tiny same"]), "{record}");
     assert_eq!(record["suite"]["failing_more"], 0, "{record}");
 
     // A compile failure names no test: no line, no key.

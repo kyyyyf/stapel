@@ -120,8 +120,11 @@ if [ "$1" = --workspace ]; then
         fi
     done
     # Like cargo, stop after the first test file with a failure.
+    # Like cargo, the `Running` line of each test binary goes to standard error (STP-42 XR1-1).
     for file in crates/*/tests/*.rs; do
         [ -f "$file" ] || continue
+        name=$(basename "$file" .rs)
+        echo "     Running tests/$name.rs (target/debug/deps/$name-0000000000000000)" >&2
         run_file "$file" "" || exit 101
     done
     exit 0
@@ -155,6 +158,7 @@ if ! compiles "$file"; then
     echo "error: could not compile \`$package\` (test \"$target\") due to 1 previous error" >&2
     exit 101
 fi
+echo "     Running tests/$target.rs (target/debug/deps/$target-0000000000000000)" >&2
 if run_file "$file" "$names"; then
     exit 0
 fi
