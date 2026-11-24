@@ -156,7 +156,14 @@ fn command_words(command: &str) -> Vec<(String, bool)> {
         }
         *starts = *next_starts;
     };
+    let mut previous = ' ';
     for c in command.chars() {
+        let after_redirect = matches!(previous, '<' | '>');
+        previous = c;
+        if c == '&' && after_redirect {
+            // The `&` of `2>&1` is part of the redirection and starts no word.
+            continue;
+        }
         if c.is_whitespace() {
             flush(&mut piece, &mut starts, &mut next_starts);
         } else if matches!(c, ';' | '|' | '&' | '(' | '`') {
@@ -221,7 +228,7 @@ pub(crate) fn guard_reach(
                 after_interpreter = false;
                 reach.push(word);
             }
-            if INTERPRETERS.contains(&word.as_str()) {
+            if *starts && INTERPRETERS.contains(&word.as_str()) {
                 after_interpreter = true;
             }
             if let Some(option) = word.strip_prefix('-') {
