@@ -183,6 +183,8 @@ pub struct RunResult {
     pub output: String,
     /// The standard output alone.
     pub stdout: String,
+    /// The standard error alone.
+    pub stderr: String,
     /// The standard output reached `MAX_OUTPUT` bytes and was cut.
     pub stdout_cut: bool,
 }
@@ -463,12 +465,14 @@ fn run_child(mut cmd: Command, what: &str, timeout: Duration) -> Result<RunResul
     let stdout = String::from_utf8_lossy(&out_bytes).into_owned();
     let mut output = stdout.clone();
     output.push('\n');
-    output.push_str(&String::from_utf8_lossy(&collect(err, drain).0));
+    let stderr = String::from_utf8_lossy(&collect(err, drain).0).into_owned();
+    output.push_str(&stderr);
     Ok(RunResult {
         exit: status.and_then(|s| s.code()),
         timed_out,
         output,
         stdout,
+        stderr,
         stdout_cut,
     })
 }

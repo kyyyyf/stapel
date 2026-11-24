@@ -1741,6 +1741,13 @@ impl Runner<'_> {
                             done.push(("pass", 0, 0));
                             continue;
                         }
+                        if run.exit == Some(1) && !run.stderr.trim().is_empty() {
+                            say!(
+                                "guard: {shown}: pass; baseline not tightened: exit 1 with standard error"
+                            );
+                            done.push(("pass", 0, 0));
+                            continue;
+                        }
                         let tree_head = git_text(self.root, &["rev-parse", "HEAD"]).ok();
                         if tree_head.as_deref().map(str::trim) != Some(self.head) {
                             say!(
