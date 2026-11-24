@@ -136,7 +136,7 @@ fn toml_edit_ask(input: &HookInput, target: &Path) -> Option<Decision> {
 fn guards_write_ask(input: &HookInput, target: &Path) -> Option<Decision> {
     let root = stapel_root(target)?;
     let config = std::fs::read_to_string(root.join(".stapel/stapel.toml")).ok()?;
-    let guards = Config::parse_at(&config, &root).ok()?.guards?;
+    let guards = Config::parse(&config).ok()?.guards?;
     let dir = guards
         .dir
         .strip_suffix('/')
@@ -148,7 +148,11 @@ fn guards_write_ask(input: &HookInput, target: &Path) -> Option<Decision> {
             .collect()
     };
     let rel = lower(target.strip_prefix(&root).ok()?);
-    let folder = lower(Path::new(&dir));
+    let folder = lower(
+        resolve(&root.join(&dir))
+            .strip_prefix(&root)
+            .unwrap_or(Path::new(&dir)),
+    );
     if rel.len() < folder.len() || rel[..folder.len()] != folder[..] {
         return None;
     }
