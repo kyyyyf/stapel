@@ -432,6 +432,15 @@ impl Config {
                     guards.dir
                 ));
             }
+            if matches!(
+                dir.to_lowercase().as_str(),
+                "src" | "tests" | "test" | "docs" | "lib" | "crates" | "app" | "packages" | "spec"
+            ) {
+                return Err(format!(
+                    "guards.dir {} is a folder that agents write: name a folder of its own, such as guards",
+                    guards.dir
+                ));
+            }
             if self.check.is_none() {
                 return Err("guards need [check]".into());
             }
