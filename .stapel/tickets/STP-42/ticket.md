@@ -308,11 +308,12 @@ Route: full (tag `interface`), auto.
 9. Texts (AC-10; test `init_process::builder_runs_the_privacy_test`): the RED adds the test; the GREEN changes the builder asset
    and the skill, runs `stapel init`, and changes the CLAUDE.md line on cargo runs. Must not change: the
    other rules.
-10. Drift coverage of the slots (DR1-1, DR1-2; AC-1, AC-3, AC-4; tests
-   `cargo_lock::default_slots_are_three`, `cargo_lock::two_waiting_lines`,
-   `cargo_lock::worktree_lock_outlives_its_holder`): a coverage commit only, no RED and no GREEN, because
-   steps 1 to 3 already do this.
+10. Drift coverage of the slots (DR1-1; AC-1, AC-3; tests `cargo_lock::default_slots_are_three`,
+   `cargo_lock::two_waiting_lines`): a coverage commit only, no RED and no GREEN, because steps 1 to 3
+   already do this.
 11. Drift coverage of the pack base (DR1-3; AC-7; test `review::pack_base_edges`): a coverage commit only.
+12. Drift coverage of the worktree lock (DR1-2; AC-4; test `cargo_lock::worktree_lock_outlives_its_holder`):
+   a coverage commit only.
 
 ## Review
 
