@@ -179,6 +179,10 @@ fn check_repo() -> tempfile::TempDir {
         .args(["init", "--prefix", "ABC"])
         .assert()
         .success();
+    // One slot keeps the STP-27 tests to one run at a time.
+    let config = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, format!("{text}\n[cargo]\nslots = 1\n")).unwrap();
     stapel(dir).args(["new", "First"]).assert().success();
     commit_all(dir, "initial");
     std::fs::create_dir_all(dir.join("crates/tiny/tests")).unwrap();
@@ -753,4 +757,85 @@ fn junit_lock_edges() {
         .open(lock_dir.join("cargo.lock"))
         .unwrap();
     assert!(file.try_lock().is_ok(), "the lock is still held");
+}
+
+// STP-42 AC-1: `[cargo] slots` is a whole number from 1 to 16; absent is 3; an unknown key fails.
+#[test]
+fn slots_setting() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    let path = dir.join(".stapel/stapel.toml");
+    let base = std::fs::read_to_string(&path).unwrap();
+
+    for table in [
+        String::new(),
+        "\n[cargo]\n".to_string(),
+        "\n[cargo]\nslots = 1\n".to_string(),
+        "\n[cargo]\nslots = 16\n".to_string(),
+    ] {
+        std::fs::write(&path, format!("{base}{table}")).unwrap();
+        let out = stapel(dir).arg("status").output().unwrap();
+        assert!(out.status.success(), "{table:?}: {out:?}");
+    }
+
+    for value in ["0", "17", "-1", "2.5", "\"3\""] {
+        std::fs::write(&path, format!("{base}\n[cargo]\nslots = {value}\n")).unwrap();
+        let out = stapel(dir).arg("status").output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "slots = {value}: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("cargo.slots must be a whole number from 1 to 16"),
+            "slots = {value}: {stderr}"
+        );
+    }
+
+    std::fs::write(&path, format!("{base}\n[cargo]\nx = 1\n")).unwrap();
+    let out = stapel(dir).arg("status").output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unknown field"),
+        "{out:?}"
+    );
+}
+
+// STP-42 AC-11: a `stapel.toml` that fails loading stops `stapel cargo` before cargo runs; outside any
+// stapel repository the run goes on with N = 3.
+#[test]
+fn a_bad_config_refuses() {
+    let root = tempfile::tempdir().unwrap();
+    let standin = Standin::new(root.path());
+    let home = root.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let repo = stapel_repo();
+    let dir = repo.path();
+    let path = dir.join(".stapel/stapel.toml");
+    let base = std::fs::read_to_string(&path).unwrap();
+
+    for (text, expect) in [
+        (
+            format!("{base}\n[cargo]\nslots = 0\n"),
+            "cargo.slots must be a whole number from 1 to 16",
+        ),
+        ("this is = [not toml\n".to_string(), ""),
+    ] {
+        std::fs::write(&path, text).unwrap();
+        let out = standin
+            .command(dir, &home, &["cargo", "print"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.starts_with("stapel: "), "{stderr}");
+        assert!(stderr.contains(expect), "{stderr}");
+        assert_eq!(standin.log(), "", "cargo ran with a bad config");
+    }
+
+    let outside = root.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    let out = standin
+        .command(&outside, &home, &["cargo", "print"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+    assert_eq!(standin.runs("print"), 1);
 }
