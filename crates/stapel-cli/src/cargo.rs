@@ -24,13 +24,31 @@ impl Drop for CargoLock {
     }
 }
 
-fn lock_path() -> Result<PathBuf, String> {
+/// The lock folder `~/.cache/stapel`.
+fn lock_dir() -> Result<PathBuf, String> {
     match std::env::var_os("HOME") {
-        Some(home) if !home.is_empty() => {
-            Ok(PathBuf::from(home).join(".cache/stapel/cargo.lock"))
-        }
+        Some(home) if !home.is_empty() => Ok(PathBuf::from(home).join(".cache/stapel")),
         _ => Err("no folder for the cargo lock: HOME is not set".into()),
     }
+}
+
+/// The lock file of slot `i` (from 1): `cargo.lock`, then `cargo-<i>.lock`.
+fn slot_path(dir: &std::path::Path, i: u32) -> PathBuf {
+    if i == 1 {
+        dir.join("cargo.lock")
+    } else {
+        dir.join(format!("cargo-{i}.lock"))
+    }
+}
+
+/// N: `[cargo] slots` of the repository of the current folder, 3 outside a repository.
+fn slot_count() -> u32 {
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| stapel_core::guard::stapel_root(&cwd))
+        .and_then(|root| crate::repo::load(&root).ok())
+        .map(|c| c.cargo_slots())
+        .unwrap_or(stapel_core::config::DEFAULT_CARGO_SLOTS)
 }
 
 fn mark_is_set() -> bool {
@@ -53,40 +71,61 @@ pub fn take(command: &str) -> Result<Option<CargoLock>, String> {
     if mark_is_set() {
         return Ok(None);
     }
-    let path = lock_path()?;
-    let dir = path.parent().expect("the lock path has a folder");
-    std::fs::create_dir_all(dir)
+    let dir = lock_dir()?;
+    std::fs::create_dir_all(&dir)
         .map_err(|e| format!("cannot make the folder of the cargo lock {}: {e}", dir.display()))?;
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(&path)
-        .map_err(|e| format!("cannot open the cargo lock {}: {e}", path.display()))?;
-    match file.try_lock() {
-        Ok(()) => {}
-        Err(TryLockError::WouldBlock) => {
-            let holder = std::fs::read_to_string(&path).unwrap_or_default();
-            let holder = holder.trim();
-            warn!(
-                "waiting for the cargo lock: held by {}",
-                if holder.is_empty() {
-                    "an unknown holder (a process started by an earlier cargo run may hold it)"
-                } else {
-                    holder
-                }
-            );
-            file.lock()
-                .map_err(|e| format!("cannot take the cargo lock {}: {e}", path.display()))?;
-        }
-        Err(TryLockError::Error(e)) => {
-            return Err(format!(
-                "cannot take the cargo lock {}: {e}",
-                path.display()
-            ));
-        }
+    let mut slots = Vec::new();
+    for i in 1..=slot_count() {
+        let path = slot_path(&dir, i);
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|e| format!("cannot open the cargo lock {}: {e}", path.display()))?;
+        slots.push((path, file));
     }
+    let mut warned = false;
+    let (path, file) = loop {
+        let mut taken = None;
+        for (n, (path, file)) in slots.iter().enumerate() {
+            match file.try_lock() {
+                Ok(()) => {
+                    taken = Some(n);
+                    break;
+                }
+                Err(TryLockError::WouldBlock) => {}
+                Err(TryLockError::Error(e)) => {
+                    return Err(format!(
+                        "cannot take the cargo lock {}: {e}",
+                        path.display()
+                    ));
+                }
+            }
+        }
+        if let Some(n) = taken {
+            break slots.swap_remove(n);
+        }
+        if !warned {
+            warned = true;
+            let holders: Vec<String> = slots
+                .iter()
+                .map(|(path, _)| {
+                    let holder = std::fs::read_to_string(path).unwrap_or_default();
+                    let holder = holder.trim();
+                    if holder.is_empty() {
+                        "an unknown holder (a process started by an earlier cargo run may hold it)"
+                            .to_string()
+                    } else {
+                        holder.to_string()
+                    }
+                })
+                .collect();
+            warn!("waiting for the cargo lock: held by {}", holders.join("; "));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
     let line = format!(
         "{}, pid {}, since {}, {command}",
         branch_ticket_key(),
