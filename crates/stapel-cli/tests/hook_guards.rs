@@ -207,3 +207,108 @@ fn guards_folder_refusals() {
     }
     assert!(!root.join("checks/x").exists());
 }
+
+// XR1-2 (AC-12): a `[check] cargo` pin that fails validation does not hide the guards folder from
+// the hook: the dialog stays.
+#[test]
+fn a_bad_cargo_pin_keeps_the_dialog() {
+    let repo = git_repo();
+    let root = repo.path();
+    stapel(root)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let config = read(root, ".stapel/stapel.toml").replace(
+        "always_writable = [\".stapel/\", \"docs/\"]",
+        "always_writable = [\".stapel/\", \"docs/\", \"checks/\"]",
+    );
+    assert!(config.contains("\"checks/\""));
+    let pin = "cargo = \"/nonexistent/stapel-test/cargo\"";
+    let config = if config.lines().any(|l| l.trim() == "[check]") {
+        config.replacen("[check]\n", &format!("[check]\n{pin}\n"), 1)
+    } else {
+        format!("{config}\n[check]\nrunner = \"cargo\"\ntimeout_secs = 3600\n{pin}\n")
+    };
+    std::fs::write(
+        root.join(".stapel/stapel.toml"),
+        format!("{config}\n[guards]\ndir = \"checks\"\n"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("checks")).unwrap();
+    let payload = json!({
+        "session_id": "test",
+        "hook_event_name": "PreToolUse",
+        "cwd": root,
+        "permission_mode": "default",
+        "tool_name": "Write",
+        "tool_input": { "file_path": "checks/x", "content": "new\n" },
+    });
+    let out = stapel(root)
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(payload.to_string())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: serde_json::Value = serde_json::from_slice(&out).expect("a JSON answer");
+    let h = &v["hookSpecificOutput"];
+    assert_eq!(h["permissionDecision"], "ask");
+    assert_eq!(
+        h["permissionDecisionReason"],
+        "a write into the guards folder checks: the person confirms it in this dialog"
+    );
+}
+
+// XR1-4 (AC-12): a guards folder that is a link inside the repository is the folder its target
+// names: a write through the link and a write to the target both ask.
+#[test]
+fn a_linked_guards_folder_asks() {
+    let repo = git_repo();
+    let root = repo.path();
+    stapel(root)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let config = read(root, ".stapel/stapel.toml");
+    let config = if config.lines().any(|l| l.trim() == "[check]") {
+        config
+    } else {
+        format!("{config}\n[check]\nrunner = \"cargo\"\ntimeout_secs = 3600\n")
+    };
+    std::fs::write(
+        root.join(".stapel/stapel.toml"),
+        format!("{config}\n[guards]\ndir = \"tests/guards\"\n"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("ci/guards")).unwrap();
+    std::fs::create_dir_all(root.join("tests")).unwrap();
+    std::os::unix::fs::symlink(root.join("ci/guards"), root.join("tests/guards")).unwrap();
+    for path in ["tests/guards/check.sh", "ci/guards/check.sh"] {
+        let payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "cwd": root,
+            "permission_mode": "default",
+            "tool_name": "Write",
+            "tool_input": { "file_path": path, "content": "new\n" },
+        });
+        let out = stapel(root)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let v: serde_json::Value = serde_json::from_slice(&out)
+            .unwrap_or_else(|e| panic!("no JSON answer for {path}: {e}"));
+        let h = &v["hookSpecificOutput"];
+        assert_eq!(h["permissionDecision"], "ask", "{path}");
+        assert_eq!(
+            h["permissionDecisionReason"],
+            "a write into the guards folder tests/guards: the person confirms it in this dialog",
+            "{path}"
+        );
+    }
+}
