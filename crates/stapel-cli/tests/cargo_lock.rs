@@ -1177,3 +1177,197 @@ fn one_run_per_worktree() {
     wait_exit(&mut second, "the second run");
     assert_eq!(standin_b.runs("second"), 1, "{}", standin_b.log());
 }
+
+// STP-42 AC-1 (DR1-1): with no `[cargo]` table, and outside any stapel repository, N is 3: three runs
+// from three folders hold at once and a fourth waits until one ends.
+#[test]
+fn default_slots_are_three() {
+    /// Ends every run it holds on drop, also when an assertion failed: it releases every stand-in
+    /// `cargo` and waits for each `stapel cargo` to end, so no stand-in is left holding a slot.
+    struct Reaper {
+        releases: Vec<PathBuf>,
+        children: Vec<Child>,
+    }
+    impl Drop for Reaper {
+        fn drop(&mut self) {
+            for path in &self.releases {
+                let _ = std::fs::write(path, "");
+            }
+            let end = Instant::now() + Duration::from_secs(20);
+            for child in &mut self.children {
+                while child.try_wait().ok().flatten().is_none() && Instant::now() < end {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let outside: Vec<PathBuf> = (0..4)
+        .map(|i| {
+            let dir = root.path().join(format!("outside-{i}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        })
+        .collect();
+    let repos: Vec<tempfile::TempDir> = (0..4).map(|_| stapel_repo()).collect();
+    let inside: Vec<PathBuf> = repos.iter().map(|r| r.path().to_path_buf()).collect();
+    let text = std::fs::read_to_string(inside[0].join(".stapel/stapel.toml")).unwrap();
+    assert!(!text.contains("[cargo]"), "{text}");
+
+    for (setting, dirs) in [("repository", inside), ("no repository", outside)] {
+        let home = root.path().join(format!("home-{setting}"));
+        std::fs::create_dir_all(&home).unwrap();
+        let mut reaper = Reaper {
+            releases: Vec::new(),
+            children: Vec::new(),
+        };
+        let mut standins = Vec::new();
+        for (i, dir) in dirs.iter().take(3).enumerate() {
+            let standin = holding_standin(root.path(), &format!("{}-{i}", setting.replace(' ', "-")));
+            reaper.releases.push(standin.ctl.join("release"));
+            let err = root.path().join(format!("{setting}-{i}.err"));
+            let child = spawn_to(standin.command(dir, &home, &["cargo", "hold"]), &err);
+            reaper.children.push(child);
+            wait_until(&format!("run {i} to hold ({setting})"), || {
+                standin.ctl.join("started").exists()
+            });
+            let text = std::fs::read_to_string(&err).unwrap_or_default();
+            assert!(!text.contains(WAIT_LINE), "{setting} run {i}: {text}");
+            standins.push(standin);
+        }
+        for slot in 1..=3 {
+            assert!(
+                slot_text(&home, slot).contains("stapel cargo hold"),
+                "{setting}: slot {slot}: {:?}",
+                slot_text(&home, slot)
+            );
+        }
+
+        // A fourth run waits.
+        let fourth = holding_standin(root.path(), &format!("{}-4", setting.replace(' ', "-")));
+        reaper.releases.push(fourth.ctl.join("release"));
+        let err = root.path().join(format!("{setting}-4.err"));
+        let child = spawn_to(fourth.command(&dirs[3], &home, &["cargo", "hold"]), &err);
+        reaper.children.push(child);
+        wait_until(&format!("the fourth wait line ({setting})"), || {
+            std::fs::read_to_string(&err)
+                .unwrap_or_default()
+                .contains(WAIT_LINE)
+        });
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(
+            !fourth.ctl.join("started").exists(),
+            "{setting}: the fourth run started with three holders"
+        );
+        assert!(
+            reaper.children[3].try_wait().unwrap().is_none(),
+            "{setting}: the fourth run ended"
+        );
+
+        // One run ends: the fourth goes on.
+        standins[0].touch("release");
+        wait_until(&format!("the fourth run ({setting})"), || {
+            fourth.ctl.join("started").exists()
+        });
+        drop(reaper);
+    }
+}
+
+// STP-42 AC-3 (DR1-1): a run that waits for its worktree lock and then for the slots prints two waiting
+// lines, the first with the worktree holder and the second with the slot holder.
+#[test]
+fn two_waiting_lines() {
+    /// Kills the waiting run on drop, also when an assertion failed.
+    struct Reaper(Child);
+    impl Drop for Reaper {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let lock_dir = home.join(".cache/stapel");
+    std::fs::create_dir_all(&home).unwrap();
+    let repo = slot_repo(1);
+    let dir = repo.path();
+    let standin = Standin::new(root.path());
+
+    // A first run makes the worktree lock file; then both locks are held by foreign processes.
+    let out = standin
+        .command(dir, &home, &["cargo", "discover"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let worktree_lock: Vec<PathBuf> = std::fs::read_dir(&lock_dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("worktree-")
+        })
+        .collect();
+    assert_eq!(worktree_lock.len(), 1, "{worktree_lock:?}");
+    let open = |path: &Path| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(path)
+            .unwrap()
+    };
+    let foreign_worktree = open(&worktree_lock[0]);
+    foreign_worktree.lock().unwrap();
+    std::fs::write(
+        &worktree_lock[0],
+        "XYZ-1, pid 1111, since 2026-01-01T00:00:00Z, cargo build",
+    )
+    .unwrap();
+    let foreign_slot = open(&slot_file(&home, 1));
+    foreign_slot.lock().unwrap();
+    std::fs::write(
+        slot_file(&home, 1),
+        "XYZ-2, pid 2222, since 2026-01-01T00:00:00Z, cargo test",
+    )
+    .unwrap();
+
+    let err = root.path().join("run.err");
+    let child = spawn_to(standin.command(dir, &home, &["cargo", "waits"]), &err);
+    let mut run = Reaper(child);
+    let lines = |n: usize| {
+        let text = std::fs::read_to_string(&err).unwrap_or_default();
+        text.matches(WAIT_LINE).count() >= n
+    };
+    wait_until("the first wait line", || lines(1));
+    let text = std::fs::read_to_string(&err).unwrap();
+    let first = text.lines().find(|l| l.contains(WAIT_LINE)).unwrap();
+    assert!(first.contains("XYZ-1, pid 1111"), "{first}");
+    assert!(!first.contains("XYZ-2"), "{first}");
+
+    // The worktree lock is freed: the run waits for the slot, with a second line.
+    drop(foreign_worktree);
+    wait_until("the second wait line", || lines(2));
+    let text = std::fs::read_to_string(&err).unwrap();
+    let waits: Vec<&str> = text.lines().filter(|l| l.contains(WAIT_LINE)).collect();
+    assert_eq!(waits.len(), 2, "{text}");
+    assert!(waits[1].contains("XYZ-2, pid 2222"), "{}", waits[1]);
+    assert!(!waits[1].contains("XYZ-1"), "{}", waits[1]);
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(run.0.try_wait().unwrap().is_none(), "the run did not wait");
+    assert_eq!(standin.runs("waits"), 0, "{}", standin.log());
+
+    // The slot is freed: the run goes on, with no third line.
+    drop(foreign_slot);
+    let status = wait_exit(&mut run.0, "the run");
+    assert!(status.success(), "{status:?}");
+    assert_eq!(standin.runs("waits"), 1, "{}", standin.log());
+    let text = std::fs::read_to_string(&err).unwrap();
+    assert_eq!(text.matches(WAIT_LINE).count(), 2, "{text}");
+}
