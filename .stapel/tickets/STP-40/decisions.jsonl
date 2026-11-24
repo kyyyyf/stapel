@@ -29,3 +29,4 @@
 {"v":1,"id":"d-88ff538fd57f","at":"2026-11-24T09:20:03Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:f9b9a551cbe3685f384e87d8debbd8b4909f9a2cd87f731d32eb748ffdc30a2f","via":"grant"}
 {"v":1,"id":"d-0bd162ffab9c","at":"2026-11-24T09:20:03Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:7b6cc93ed6c74d512475fcc5eaeddc8d9658c6fd7581c8e205a6cef3786967f2","via":"grant"}
 {"v":1,"id":"d-ede4e448eedc","at":"2026-11-24T09:20:03Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:8fb2a317d921377e9ee4b6247e048163844c4b85d03879a4ffeb49de4e823552","via":"grant"}
+{"v":1,"id":"d-8045c36f1600","at":"2026-11-24T09:22:37Z","by":"kyyyyf","action":"close","reason":"stapel inbox lists the person's owed decisions of every live worktree, stapel answer records a person's fate outside an agent shell, and the Zed buttons answer from inbox.md, all checked by 16 RED/GREEN steps, three code review rounds, a merge review and a Zed stand"}
