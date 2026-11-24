@@ -1328,3 +1328,64 @@ fn warns_about_a_file_outside_dir() {
         "{err}"
     );
 }
+
+// DR2-1, XR2-1, XR2-5 (AC-3): every command start and interpreter warns; a folder does not; the record is unchanged.
+#[test]
+fn reach_word_coverage() {
+    let cases = [
+        ("pipe", "true | scripts/pipe.sh || true", "scripts/pipe.sh"),
+        ("and", "true && scripts/and.sh || true", "scripts/and.sh"),
+        ("paren", "(scripts/paren.sh) || true", "scripts/paren.sh"),
+        ("tick", "echo `scripts/tick.sh` || true", "scripts/tick.sh"),
+        ("node", "node scripts/n.js || true", "scripts/n.js"),
+        ("py", "python scripts/p.py || true", "scripts/p.py"),
+        ("py3", "python3 scripts/p3.py || true", "scripts/p3.py"),
+        ("ruby", "ruby scripts/r.rb || true", "scripts/r.rb"),
+        ("opt", "sh -e scripts/cov.sh", "scripts/cov.sh"),
+        ("folder", "sh src || true", ""),
+    ];
+    let guards: String = cases.iter().map(|(n, c, _)| guard(n, c)).collect();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    for f in [
+        "pipe.sh", "and.sh", "paren.sh", "tick.sh", "n.js", "p.py", "p3.py", "r.rb", "cov.sh",
+    ] {
+        write(dir, &format!("scripts/{f}"), "exit 0\n");
+    }
+    write(dir, "src/lib.rs", "\n");
+    commit(dir, "ABC-1: guard files");
+
+    let out = stapel(dir)
+        .args(["check", "ABC-1", "--level", "head"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    let seen: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("warning: guard "))
+        .collect();
+    let expected: Vec<String> = cases
+        .iter()
+        .filter(|(_, _, w)| !w.is_empty())
+        .map(|(n, _, w)| {
+            format!(
+                "warning: guard {n} reads {w} outside guards; a guard's scripts and configs belong in guards"
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        expected.iter().map(String::as_str).collect::<Vec<_>>(),
+        "{err}"
+    );
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let with_outside = last_check_record(dir)["guards"].clone();
+
+    // The same guard names with no outside file: the same record part.
+    let plain: String = cases.iter().map(|(n, _, _)| guard(n, "true")).collect();
+    let (repo, _scripts) = guards_repo("", 3600, &plain);
+    let (code, text) = run(repo.path(), &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(!text.contains("warning: guard"), "{text}");
+    assert_eq!(last_check_record(repo.path())["guards"], with_outside);
+}
