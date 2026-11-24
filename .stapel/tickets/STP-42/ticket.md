@@ -337,7 +337,7 @@ Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| head | fail | 0c57a51 | 2026-11-24T13:18:02Z | no-red 1, pass 8 |
+| head | pass | c4b0c6e | 2026-11-24T13:51:51Z | pass 9 |
 <!-- stapel:review:end -->
 
 ## Summary
