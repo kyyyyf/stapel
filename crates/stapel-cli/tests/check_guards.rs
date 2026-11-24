@@ -1003,3 +1003,50 @@ fn tightening_edge_cases() {
         String::from_utf8_lossy(&left.stdout)
     );
 }
+
+// ---- step 13: off-HEAD baseline ----
+
+// AC-10: a closed ticket is checked at its end commit; a check of a commit that is not HEAD writes no
+// baseline into the working tree.
+#[test]
+fn no_tightening_off_head() {
+    let guards = ratchet("tight", "printf \"a\\n\"", "tight.txt");
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "guards/tight.txt", "a\nfixed\n");
+    commit(dir, "ABC-1: baseline");
+    let mut state = common::state_json(dir, "ABC-1");
+    state["closed"] =
+        serde_json::json!({"by": "test-user", "at": "2026-01-02T00:00:00Z", "reason": "done"});
+    write(
+        dir,
+        ".stapel/tickets/ABC-1/state.json",
+        &format!("{}\n", serde_json::to_string_pretty(&state).unwrap()),
+    );
+    commit(dir, "ABC-1: close");
+    let short = |rev: &str| {
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "--short=7", rev])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    let end = short("HEAD");
+    // A later commit of another ticket: the person adds a line to the baseline.
+    write(dir, "guards/tight.txt", "a\nfixed\nadded\n");
+    commit(dir, "XYZ-2: a later baseline");
+    assert_ne!(short("HEAD"), end);
+
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    let want = format!("guard: tight: pass; baseline not tightened: checked {end} is not HEAD");
+    assert!(text.lines().any(|l| l.trim() == want), "{text}");
+    assert_eq!(read(dir, "guards/tight.txt"), "a\nfixed\nadded\n");
+    let status = std::process::Command::new("git")
+        .args(["status", "--porcelain", "--", "guards"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(status.stdout.is_empty(), "the guards folder changed");
+}
