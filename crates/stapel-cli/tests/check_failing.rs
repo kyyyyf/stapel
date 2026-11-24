@@ -297,3 +297,102 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
     assert!(record["suite"].get("failing").is_none(), "{record}");
     assert!(record["suite"].get("failing_more").is_none(), "{record}");
 }
+
+// AC-9: the failing names of a failing junit suite, `<suite> <case>` of each failed case in report
+// order, distinct; no line and no key without a failed case.
+#[test]
+fn junit_names_failing_tests() {
+    let repo = common::junit_repo();
+    let dir = repo.dir();
+    let t = repo.tools.path();
+    // The Per-file run (one argument) passes after the GREEN; the suite run prints `canned`.
+    std::fs::write(
+        t.join("suite.sh"),
+        format!(
+            "if [ \"$#\" = 1 ]; then\n  if [ -e src/ok.ts ]; then printf '%s' '<testsuites><testsuite name=\"s\"><testcase classname=\"\" name=\" one\"/></testsuite></testsuites>' > junit.xml; exit 0; fi\n  printf '%s' '<testsuites><testsuite name=\"s\"><testcase classname=\"\" name=\" one\"><failure message=\"x\"/></testcase></testsuite></testsuites>' > junit.xml\n  exit 1\nfi\ncat '{t}/canned' > junit.xml\nexit $(cat '{t}/code')\n",
+            t = t.display()
+        ),
+    )
+    .unwrap();
+    let config = read(dir, ".stapel/stapel.toml");
+    let config: String = config
+        .lines()
+        .map(|l| {
+            if l.starts_with("command = ") {
+                format!("command = \"sh {} {{file}}\"\n", t.join("suite.sh").display())
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    write(dir, ".stapel/stapel.toml", &config);
+    commit(dir, "ABC-1: a suite command");
+    write(
+        dir,
+        "__tests__/x.test.ts",
+        "it(\"one\", () => { /* needs src/ok.ts */ });\n",
+    );
+    commit(dir, "ABC-1 step 1 RED: one");
+    write(dir, "src/ok.ts", "export const ok = 1;\n");
+    commit(dir, "ABC-1 step 1 GREEN: one");
+
+    let report = |suites: &[(&str, Vec<(String, bool)>)]| {
+        let mut xml = String::from("<testsuites>");
+        for (suite, cases) in suites {
+            xml.push_str(&format!("<testsuite name=\"{suite}\">"));
+            for (name, failed) in cases {
+                let body = if *failed { "<failure message=\"x\"/>" } else { "" };
+                xml.push_str(&format!(
+                    "<testcase classname=\"\" name=\" {name}\">{body}</testcase>"
+                ));
+            }
+            xml.push_str("</testsuite>");
+        }
+        xml.push_str("</testsuites>\n");
+        xml
+    };
+    let c = |name: &str, failed: bool| (name.to_string(), failed);
+
+    // Two failed cases and one passed, in two suites.
+    let xml = report(&[
+        ("a", vec![c("first", true), c("fine", false)]),
+        ("b", vec![c("second", true)]),
+    ]);
+    let (lines, record) = check_with(dir, t, &xml, 1);
+    assert_eq!(after_suite(&lines), Some("failing: a first, b second"), "{lines:?}");
+    assert_eq!(
+        record["suite"]["failing"],
+        serde_json::json!(["a first", "b second"]),
+        "{record}"
+    );
+    assert_eq!(record["suite"]["failing_more"], 0, "{record}");
+    assert_eq!(record["suite"]["failed"], 2, "{record}");
+
+    // One failed case named twice is one name.
+    let xml = report(&[("a", vec![c("same", true), c("same", true)])]);
+    let (lines, record) = check_with(dir, t, &xml, 1);
+    assert_eq!(after_suite(&lines), Some("failing: a same"), "{lines:?}");
+    assert_eq!(record["suite"]["failing"], serde_json::json!(["a same"]), "{record}");
+    assert_eq!(record["suite"]["failed"], 2, "{record}");
+
+    // 25 failed cases: the first 20 and `and 5 more`.
+    let many: Vec<(String, bool)> = (1..=25).map(|i| (format!("t{i:02}"), true)).collect();
+    let xml = report(&[("a", many)]);
+    let first_20: Vec<String> = (1..=20).map(|i| format!("a t{i:02}")).collect();
+    let (lines, record) = check_with(dir, t, &xml, 1);
+    assert_eq!(
+        after_suite(&lines),
+        Some(format!("failing: {} and 5 more", first_20.join(", ")).as_str()),
+        "{lines:?}"
+    );
+    assert_eq!(record["suite"]["failing"], serde_json::json!(first_20), "{record}");
+    assert_eq!(record["suite"]["failing_more"], 5, "{record}");
+
+    // A passing report: no line, no key.
+    let xml = report(&[("a", vec![c("fine", false)])]);
+    let (lines, record) = check_with(dir, t, &xml, 0);
+    assert_eq!(failing_lines(&lines), 0, "{lines:?}");
+    assert_eq!(record["suite"]["outcome"], "pass", "{record}");
+    assert!(record["suite"].get("failing").is_none(), "{record}");
+    assert!(record["suite"].get("failing_more").is_none(), "{record}");
+}
