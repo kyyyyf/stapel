@@ -1201,3 +1201,83 @@ fn a_silent_or_masked_crash_keeps_the_baseline() {
     assert_eq!(read(dir, "guards/silent.txt"), "a\nb\n");
     assert_eq!(read(dir, "guards/control.txt"), "a\n");
 }
+
+// STP-43 AC-3: a guard's command that reads an existing file outside `dir` makes one warning line on
+// standard error; the run goes on with the same outcomes.
+#[test]
+fn warns_about_a_file_outside_dir() {
+    let guards = [
+        guard("a", "sh scripts/cov.sh; ./scripts/cov.sh; sh scripts/cov.sh"),
+        guard("b", "true --config=clippy.toml"),
+        guard("c", "true --config=\"clippy.toml\" --config=clippy.toml"),
+        guard("d", "true --config clippy.toml"),
+        guard("e", "sh guards/run.sh"),
+        guard("f", "grep -rn TODO src || true; grep TODO README.md || true"),
+        guard(
+            "g",
+            "missing/x.sh || true; target/dangling.sh || true; $HOME/x || true; *.rs || true; /abs/x || true; ../x || true; scripts/./cov.sh || true",
+        ),
+        guard("h", "sh target/l.sh || true"),
+    ]
+    .concat();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "scripts/cov.sh", "exit 0\n");
+    write(dir, "guards/run.sh", "exit 0\n");
+    write(dir, "clippy.toml", "\n");
+    write(dir, "README.md", "readme\n");
+    write(dir, "src/lib.rs", "\n");
+    commit(dir, "ABC-1: guard files");
+    // An ignored folder holds the links: a link in the tracked tree stops the check.
+    std::fs::create_dir_all(dir.join("target")).unwrap();
+    std::os::unix::fs::symlink("../scripts/cov.sh", dir.join("target/l.sh")).unwrap();
+    std::os::unix::fs::symlink("no-such-target", dir.join("target/dangling.sh")).unwrap();
+
+    let warning = |name: &str, word: &str| {
+        format!(
+            "warning: guard {name} reads {word} outside guards; a guard's scripts and configs belong in guards"
+        )
+    };
+    let expected = [
+        warning("a", "scripts/cov.sh"),
+        warning("b", "clippy.toml"),
+        warning("c", "clippy.toml"),
+        warning("d", "clippy.toml"),
+        warning("h", "target/l.sh"),
+    ];
+    let both = |level: &str| {
+        let out = stapel(dir)
+            .args(["check", "ABC-1", "--level", level])
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    for level in ["head", "full"] {
+        let (code, out, err) = both(level);
+        let seen: Vec<&str> = err
+            .lines()
+            .filter(|l| l.starts_with("warning: guard "))
+            .collect();
+        assert_eq!(
+            seen,
+            expected.iter().map(String::as_str).collect::<Vec<_>>(),
+            "{level}: {err}"
+        );
+        assert_eq!(code, 0, "{level}: {out}{err}");
+        for name in ["a", "b", "c", "d", "e", "f", "g", "h"] {
+            assert!(
+                out.lines()
+                    .any(|l| l.trim() == format!("guard: {name}: pass")),
+                "{level} {name}: {out}"
+            );
+        }
+        assert!(!out.contains("warning: guard"), "{level}: {out}");
+    }
+    let (code, out, err) = both("steps");
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!err.contains("warning: guard"), "{err}");
+}
