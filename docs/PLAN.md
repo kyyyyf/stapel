@@ -173,13 +173,18 @@ that Zed, VS Code and every editor that speaks the protocol get the same.
   now"); `stapel check` and the CI run them. The folder adopts the project's existing guards as they are
   (the pilot repository has a `tests/guards/` folder with a coverage floor, a bundle ceiling and forbidden
   colours) and does not impose a format of its own.
-- 5.1b the guards folder after its pilot (ledger 2026-11-24; taken after 3b-5 and before 5.2):
+- 5.1b the guards folder and the external reviewer after their pilots (ledger 2026-11-24, widened the
+  same day; taken after 3b-5 and before 5.2):
   - 5.1b-1 a `[guards] dir` that overlaps the project's source or test folders (`src`, `tests`, `docs`)
     is refused or warned about at load, because every builder write under it is denied and every edit of
     the main agent asks (STP-41 SR1-7, SR2-10);
   - 5.1b-2 a guard's command that reads scripts or tool configs outside the guards folder (`.eslintrc`,
     `clippy.toml`, `.rgignore`) is warned about, and the skill and the starter say that they belong in the
-    folder (STP-41 XR1-5).
+    folder (STP-41 XR1-5);
+  - 5.1b-3 the agent `stapel-external-reviewer` writes the role `external` in its findings, through a
+    body of its own or a role that `stapel init` fills in (STP-42 XR1-3);
+  - 5.1b-4 the `[models] external` binding of the starter `stapel.toml` says `provider = "claude-code"`,
+    and `stapel init` checks that every agent role is bound to `claude-code` (STP-42 CR1-4).
 - 5.2 the structural index and `stapel q`: a tree-sitter parse of every tracked file gives symbols, the
   import graph and the test files of a module; it lives in `.stapel/index/`, outside git. Queries: `symbol`,
   `refs`, `tests`, `impact` (the blast radius of a set of files and their tests). The index trusts the
