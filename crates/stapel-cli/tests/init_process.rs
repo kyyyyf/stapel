@@ -916,7 +916,7 @@ fn guard_reach_text() {
     let repo = git_repo();
     let dir = repo.path();
     init_in(dir);
-    let line = "# a guard's scripts and configs belong in dir: an agent edits a file outside it with no dialog";
+    let line = "# [guards]   # a guard's scripts and configs belong in dir: an agent edits a file outside it with no dialog";
     let starter = read(dir, ".stapel/stapel.toml");
     assert!(starter.lines().any(|l| l == line), "no starter line");
     let sentence = "A guard's scripts and configs belong in the guards folder; an agent edits a file outside it with no dialog.";
