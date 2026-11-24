@@ -1058,32 +1058,40 @@ fn no_tightening_off_head() {
 #[test]
 fn a_linked_baseline_is_not_written() {
     use std::os::unix::fs::symlink;
+    // A symlink is committed as a blob holding its target text, so that text is the baseline: the
+    // targets carry a second line ("\nfixed") so that one baseline line is fixed and one still prints.
+    let other = tempfile::tempdir().unwrap();
+    let far_path = other.path().join("far.txt");
+    let far = other.path().join("far.txt\nfixed");
     let guards = [
-        ratchet("inside", "true", "inside.txt"),
-        ratchet("outside", "true", "outside.txt"),
+        ratchet("inside", "printf \"../notes.txt\\n\"", "inside.txt"),
+        ratchet(
+            "outside",
+            &format!("printf \"{}\\n\"", far_path.display()),
+            "outside.txt",
+        ),
     ]
     .concat();
     let (repo, _scripts) = guards_repo("", 3600, &guards);
     let dir = repo.path();
-    let other = tempfile::tempdir().unwrap();
-    let far = other.path().join("far.txt");
     std::fs::write(&far, "far\n").unwrap();
+    write(dir, "notes.txt\nfixed", "notes\n");
     std::fs::create_dir_all(dir.join("guards")).unwrap();
     // One link to a file outside the guards folder, one to a file outside the repository.
-    symlink("../notes.txt", dir.join("guards/inside.txt")).unwrap();
+    symlink("../notes.txt\nfixed", dir.join("guards/inside.txt")).unwrap();
     symlink(&far, dir.join("guards/outside.txt")).unwrap();
     commit(dir, "ABC-1: linked baselines");
-    let notes = read(dir, "notes.txt");
+    let notes = read(dir, "notes.txt\nfixed");
     let (_code, text) = run(dir, &["--level", "head"]);
     let lines: Vec<&str> = text.lines().map(str::trim).collect();
     for name in ["inside", "outside"] {
         let want = format!("guard: {name}: pass; baseline not written: a symlink");
         assert!(lines.contains(&want.as_str()), "{text}");
     }
-    assert_eq!(read(dir, "notes.txt"), notes);
+    assert_eq!(read(dir, "notes.txt\nfixed"), notes);
     assert_eq!(std::fs::read_to_string(&far).unwrap(), "far\n");
     let link = |rel: &str| std::fs::read_link(dir.join(rel)).unwrap();
-    assert_eq!(link("guards/inside.txt"), Path::new("../notes.txt"));
+    assert_eq!(link("guards/inside.txt"), Path::new("../notes.txt\nfixed"));
     assert_eq!(link("guards/outside.txt"), far);
 }
 
@@ -1113,8 +1121,7 @@ fn a_crashing_guard_keeps_the_baseline() {
     assert_eq!(code, 0, "{text}");
     let lines: Vec<&str> = text.lines().map(str::trim).collect();
     for name in ["crash", "crashone"] {
-        let want =
-            format!("guard: {name}: pass; baseline not tightened: exit 1 with standard error");
+        let want = format!("guard: {name}: pass; baseline not tightened: standard error");
         assert!(lines.contains(&want.as_str()), "{text}");
     }
     assert!(

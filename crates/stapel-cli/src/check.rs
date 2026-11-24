@@ -1741,10 +1741,13 @@ impl Runner<'_> {
                             done.push(("pass", 0, 0));
                             continue;
                         }
-                        if run.exit == Some(1) && !run.stderr.trim().is_empty() {
-                            say!(
-                                "guard: {shown}: pass; baseline not tightened: exit 1 with standard error"
-                            );
+                        if !run.stderr.trim().is_empty() {
+                            say!("guard: {shown}: pass; baseline not tightened: standard error");
+                            done.push(("pass", 0, 0));
+                            continue;
+                        }
+                        if !run.stdout.lines().any(|l| !l.trim().is_empty()) {
+                            say!("guard: {shown}: pass; baseline not tightened: no output");
                             done.push(("pass", 0, 0));
                             continue;
                         }
