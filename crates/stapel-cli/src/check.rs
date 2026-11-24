@@ -663,12 +663,22 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
             outcome: "skipped".into(),
             detail: "level steps".into(),
             counts: (0, 0, 0),
+            failing: Vec::new(),
+            failing_more: 0,
         }
     } else {
         runner.suite(&excluded)
     };
     ok &= suite.outcome == "pass" || suite.outcome == "skipped";
     say!("suite: {}: {}", suite.outcome, suite.detail);
+    if !suite.failing.is_empty() {
+        let more = if suite.failing_more > 0 {
+            format!(" and {} more", suite.failing_more)
+        } else {
+            String::new()
+        };
+        say!("failing: {}{more}", suite.failing.join(", "));
+    }
     // The project commands run after the suite, at `head` and `full` (STP-37 AC-2, AC-4, AC-5).
     let project_commands: &[String] = check.project.as_deref().unwrap_or(&[]);
     let mut project_json: Vec<serde_json::Value> = Vec::new();
@@ -740,6 +750,10 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         "failed": suite.counts.1,
         "ignored": suite.counts.2,
     });
+    if !suite.failing.is_empty() {
+        record["suite"]["failing"] = serde_json::json!(suite.failing);
+        record["suite"]["failing_more"] = serde_json::json!(suite.failing_more);
+    }
     if !project_json.is_empty() {
         // Past MAX_PROJECT entries the rest are left out; the record says `project_truncated: true`.
         if project_json.len() > MAX_PROJECT {
@@ -805,6 +819,45 @@ struct Suite {
     outcome: String,
     detail: String,
     counts: (u64, u64, u64),
+    /// The first failing names (at most `MAX_FAILING`) and how many more distinct ones there are.
+    failing: Vec<String>,
+    failing_more: usize,
+}
+
+/// At most this many failing names are printed and recorded.
+const MAX_FAILING: usize = 20;
+
+/// The distinct failing names of cargo output, in output order: `<target> <name>` for each
+/// `test <name> ... FAILED` line, `doc <crate> <name>` after a `Doc-tests <crate>` line.
+fn cargo_failing_names(output: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut target = String::new();
+    for line in output.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("Running ") {
+            let rest = rest.strip_prefix("unittests ").unwrap_or(rest);
+            let path = match rest.find(" (") {
+                Some(at) if rest.ends_with(')') => &rest[..at],
+                _ => rest,
+            };
+            target = path.trim().to_string();
+        } else if let Some(rest) = trimmed.strip_prefix("Doc-tests ") {
+            target = format!("doc {}", rest.trim());
+        } else if let Some(name) = line
+            .strip_prefix("test ")
+            .and_then(|r| r.strip_suffix(" ... FAILED"))
+        {
+            let full = if target.is_empty() {
+                name.to_string()
+            } else {
+                format!("{target} {name}")
+            };
+            if !names.contains(&full) {
+                names.push(full);
+            }
+        }
+    }
+    names
 }
 
 /// At most this many steps go into a record, and this many bytes of a label.
@@ -1199,6 +1252,8 @@ impl Runner<'_> {
             outcome: "unverified".into(),
             detail: reason,
             counts: (0, 0, 0),
+            failing: Vec::new(),
+            failing_more: 0,
         };
         if let Err(e) = self.wt.checkout(self.head) {
             return unverified(e);
@@ -1267,6 +1322,8 @@ impl Runner<'_> {
             outcome: outcome.into(),
             detail,
             counts: (p, f, i),
+            failing: Vec::new(),
+            failing_more: 0,
         }
     }
 
@@ -1876,6 +1933,8 @@ impl Runner<'_> {
             outcome: "unverified".into(),
             detail: reason,
             counts: (0, 0, 0),
+            failing: Vec::new(),
+            failing_more: 0,
         };
         if let Some(why) = self.outside.borrow().clone() {
             return unverified(why);
@@ -1932,10 +1991,15 @@ impl Runner<'_> {
         } else {
             ("fail", detail)
         };
+        let mut failing = cargo_failing_names(&run.output);
+        let failing_more = failing.len().saturating_sub(MAX_FAILING);
+        failing.truncate(MAX_FAILING);
         Suite {
             outcome: outcome.into(),
             detail,
             counts: (p, f, i),
+            failing,
+            failing_more,
         }
     }
 }
