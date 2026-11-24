@@ -36,6 +36,36 @@ fn short(sha: &str) -> String {
     sha.chars().take(7).collect()
 }
 
+/// The lines of a text: split at `\n`, trailing whitespace removed, empty lines left out.
+fn line_set(text: &str) -> std::collections::HashSet<String> {
+    text.split('\n')
+        .map(|l| l.trim_end().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// Whether `path` is a regular file at `head` and now, and its lines now are a subset of its lines at `head`.
+fn baseline_subset(root: &Path, head: &str, path: &str) -> bool {
+    let regular_at_head = git(root, &["ls-tree", head, "--", path])
+        .map(|o| String::from_utf8_lossy(&o).starts_with("100"))
+        .unwrap_or(false);
+    if !regular_at_head {
+        return false;
+    }
+    let Ok(old) = git(root, &["show", &format!("{head}:{path}")]) else {
+        return false;
+    };
+    let full = root.join(path);
+    if !std::fs::symlink_metadata(&full).is_ok_and(|m| m.is_file()) {
+        return false;
+    }
+    let Ok(now) = std::fs::read(&full) else {
+        return false;
+    };
+    let old = line_set(&String::from_utf8_lossy(&old));
+    line_set(&String::from_utf8_lossy(&now)).is_subset(&old)
+}
+
 /// The newest well-formed check record of a ticket, judged against the working tree.
 pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
     if config.check.is_none() {
@@ -120,6 +150,28 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
             .iter()
             .any(|g| crate::config::glob_matches(g, p))
     };
+    // A path inside the guards folder stays a change, under `docs/` too, unless it is a baseline
+    // path whose lines now are a subset of its lines at the checked commit (STP-41 AC-15).
+    let mut guarded: Vec<String> = Vec::new();
+    if let Some(guards) = &config.guards {
+        let dir = guards.dir.strip_suffix('/').unwrap_or(&guards.dir);
+        let prefix = format!("{dir}/");
+        let baselines: Vec<String> = guards
+            .check
+            .iter()
+            .filter_map(|g| g.baseline.as_ref())
+            .map(|b| format!("{prefix}{b}"))
+            .collect();
+        changed.retain(|p| {
+            if !p.starts_with(&prefix) {
+                return true;
+            }
+            if !(baselines.contains(p) && baseline_subset(root, &head, p)) {
+                guarded.push(p.clone());
+            }
+            false
+        });
+    }
     changed.retain(|p| {
         !is_machine_file(p)
             && (!p.starts_with("docs/") || globbed(p))
@@ -127,6 +179,7 @@ pub fn current(root: &Path, config: &Config, ticket_dir: &Path) -> CheckLine {
                 && own_folder.as_deref().is_some_and(|f| p.starts_with(f))
                 && !globbed(p))
     });
+    changed.extend(guarded);
     changed.sort();
     changed.dedup();
     if !changed.is_empty() {

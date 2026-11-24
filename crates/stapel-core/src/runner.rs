@@ -181,6 +181,12 @@ pub struct RunResult {
     pub timed_out: bool,
     /// stdout, then stderr.
     pub output: String,
+    /// The standard output alone.
+    pub stdout: String,
+    /// The standard error alone.
+    pub stderr: String,
+    /// The standard output reached `MAX_OUTPUT` bytes and was cut.
+    pub stdout_cut: bool,
 }
 
 /// Reads a stream into a shared buffer, keeping at most `MAX_OUTPUT` bytes; says when done.
@@ -207,10 +213,20 @@ fn read_capped(mut r: impl Read + Send + 'static) -> (Arc<Mutex<Vec<u8>>>, mpsc:
 
 /// What a reader has read: it gets until `deadline` to reach the end of its stream, since a
 /// process outside the group may hold the stream open for ever.
-fn collect(reader: (Arc<Mutex<Vec<u8>>>, mpsc::Receiver<()>), deadline: Instant) -> Vec<u8> {
+/// The flag is false when the stream was still open at the deadline.
+fn collect(
+    reader: (Arc<Mutex<Vec<u8>>>, mpsc::Receiver<()>),
+    deadline: Instant,
+) -> (Vec<u8>, bool) {
     let (kept, finished) = reader;
-    let _ = finished.recv_timeout(deadline.saturating_duration_since(Instant::now()));
-    kept.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    let ended = !matches!(
+        finished.recv_timeout(deadline.saturating_duration_since(Instant::now())),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    );
+    (
+        kept.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        ended,
+    )
 }
 
 #[cfg(unix)]
@@ -444,12 +460,19 @@ fn run_child(mut cmd: Command, what: &str, timeout: Duration) -> Result<RunResul
     // Children of the test that outlive it would keep the pipes open; the group goes too.
     kill_group(child.id());
     let drain = Instant::now() + Duration::from_secs(2);
-    let mut output = String::from_utf8_lossy(&collect(out, drain)).into_owned();
+    let (out_bytes, out_ended) = collect(out, drain);
+    let stdout_cut = out_bytes.len() >= MAX_OUTPUT || !out_ended;
+    let stdout = String::from_utf8_lossy(&out_bytes).into_owned();
+    let mut output = stdout.clone();
     output.push('\n');
-    output.push_str(&String::from_utf8_lossy(&collect(err, drain)));
+    let stderr = String::from_utf8_lossy(&collect(err, drain).0).into_owned();
+    output.push_str(&stderr);
     Ok(RunResult {
         exit: status.and_then(|s| s.code()),
         timed_out,
         output,
+        stdout,
+        stderr,
+        stdout_cut,
     })
 }

@@ -29,8 +29,11 @@ pub fn starter_toml(prefix: &str, cargo: bool) -> String {
         text.push_str(PROJECT_COMMENT);
     }
     text.push_str(PROCESS_COMMENT);
+    text.push_str(GUARDS_COMMENT);
     text
 }
+
+const GUARDS_COMMENT: &str = "\n# [guards]\n# dir = \"guards\"   # a write into this folder asks the person\n#\n# [[guards.check]]\n# name = \"no-todo\"\n# command = \"grep -rn TODO src\"   # each output line is a violation\n# baseline = \"no-todo.txt\"   # read as <dir>/<baseline>; stapel check removes fixed lines\n";
 
 const PROJECT_COMMENT: &str = "# project = [\"npx prettier --check {files}\"]   # shell commands run after the suite; {files} is the ticket's changed files\n";
 
@@ -58,6 +61,37 @@ pub struct Config {
     /// `[worktree]` (STP-36 AC-10); absent means no setup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<Worktree>,
+    /// `[guards]` (STP-41 AC-1): machine checks in a folder the agent cannot write unseen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guards: Option<Guards>,
+}
+
+/// `[guards]`: the folder of guard files and the guard entries.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Guards {
+    /// A relative folder of the repository outside `.stapel`, `.git` and `.claude`.
+    pub dir: String,
+    /// `[[guards.check]]`; absent means none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub check: Vec<GuardEntry>,
+}
+
+/// One `[[guards.check]]` entry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuardEntry {
+    pub name: String,
+    /// Run with `sh -c`.
+    pub command: String,
+    /// A relative path inside `dir`; absent means an exit-code guard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<String>,
+}
+
+/// A relative path: no empty, `.` or `..` part, no leading `/`, no backslash, no NUL.
+fn is_relative_path(path: &str) -> bool {
+    !path.contains(['\\', '\0']) && path.split('/').all(|p| !matches!(p, "" | "." | ".."))
 }
 
 /// `[worktree]`: what `stapel new` does in a new worktree.
@@ -355,6 +389,35 @@ impl Config {
                     "process.dialogs must be all or close: {}",
                     process.dialogs
                 ));
+            }
+        }
+        if let Some(guards) = &self.guards {
+            let dir = guards.dir.strip_suffix('/').unwrap_or(&guards.dir);
+            let first = dir.split('/').next().unwrap_or("").to_lowercase();
+            if !is_relative_path(dir) || matches!(first.as_str(), ".stapel" | ".git" | ".claude") {
+                return Err(format!(
+                    "guards.dir must be a relative folder of the repository outside .stapel, .git and .claude: {}",
+                    guards.dir
+                ));
+            }
+            if self.check.is_none() {
+                return Err("guards need [check]".into());
+            }
+            let mut names = std::collections::HashSet::new();
+            for entry in &guards.check {
+                if entry.name.trim().is_empty() || entry.command.trim().is_empty() {
+                    return Err("guards.check entries need a name and a command".into());
+                }
+                if !names.insert(entry.name.as_str()) {
+                    return Err(format!("guards.check name is used twice: {}", entry.name));
+                }
+                if let Some(base) = &entry.baseline {
+                    if !is_relative_path(base) {
+                        return Err(format!(
+                            "guards.check baseline must be a relative path inside guards.dir: {base}"
+                        ));
+                    }
+                }
             }
         }
         if let Some(setup) = self.worktree.as_ref().and_then(|w| w.setup.as_ref()) {

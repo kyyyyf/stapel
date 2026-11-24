@@ -130,6 +130,68 @@ fn toml_edit_ask(input: &HookInput, target: &Path) -> Option<Decision> {
     Some(Decision::AskEdit(TOML_ASK_REASON.into()))
 }
 
+/// The dialog for a write into the guards folder `[guards] dir` (STP-41 AC-12): the main agent in
+/// a dialog mode is asked, a subagent or another mode is denied. A write outside the folder, or a
+/// repository without `[guards]`, is `None`: the other write rules stand.
+fn guards_write_ask(
+    input: &HookInput,
+    written: &Path,
+    target: &Path,
+    hook_root: Option<&Path>,
+) -> Option<Decision> {
+    // The root comes from the written path as given, then from the resolved target: a guards
+    // folder linked outside the root resolves the target out of it (STP-41 XR2-4). The hook root
+    // comes last: the real target of a linked folder, written directly, has no root of its own
+    // (STP-41 XR3-1).
+    let mut roots: Vec<PathBuf> = stapel_root(written).into_iter().collect();
+    for root in [stapel_root(target), hook_root.map(Path::to_path_buf)]
+        .into_iter()
+        .flatten()
+    {
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    roots
+        .iter()
+        .find_map(|root| guards_write_ask_in(input, root, target))
+}
+
+fn guards_write_ask_in(input: &HookInput, root: &Path, target: &Path) -> Option<Decision> {
+    let config = std::fs::read_to_string(root.join(".stapel/stapel.toml")).ok()?;
+    let guards = Config::parse(&config).ok()?.guards?;
+    let dir = guards
+        .dir
+        .strip_suffix('/')
+        .unwrap_or(&guards.dir)
+        .to_string();
+    let lower = |path: &Path| -> Vec<String> {
+        path.components()
+            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+            .collect()
+    };
+    let rel = lower(target);
+    let folder = lower(&resolve(&root.join(&dir)));
+    if rel.len() < folder.len() || rel[..folder.len()] != folder[..] {
+        return None;
+    }
+    if input.agent_id.as_deref().is_some_and(|id| !id.is_empty()) {
+        return Some(Decision::Deny(format!(
+            "only the main agent writes into the guards folder {dir}, through the person's dialog"
+        )));
+    }
+    let mode = input.permission_mode.as_deref().unwrap_or("");
+    if !crate::dialog::DIALOG_MODES.contains(&mode) {
+        return Some(Decision::Deny(format!(
+            "a write into the guards folder {dir} needs the permission dialog, which Claude \
+             Code does not show in permission mode \"{mode}\""
+        )));
+    }
+    Some(Decision::AskEdit(format!(
+        "a write into the guards folder {dir}: the person confirms it in this dialog"
+    )))
+}
+
 impl HookInput {
     pub fn parse(text: &str) -> Result<HookInput, String> {
         serde_json::from_str(text).map_err(|e| format!("hook input could not be parsed: {e}"))
@@ -235,7 +297,8 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
             let Some(path) = input.tool_input[field].as_str() else {
                 return Decision::Deny(format!("hook input has no tool_input.{field}"));
             };
-            let target = resolve(&cwd.join(path));
+            let written = cwd.join(path);
+            let target = resolve(&written);
             if hook_root.is_some() && is_global_config(&target) {
                 return Decision::Deny(format!(
                     "only stapel or the human writes {}, not an agent's write tool \
@@ -261,6 +324,14 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
                 }
             }
             if let Some(ask) = toml_edit_ask(input, &target) {
+                return ask;
+            }
+            if let Some(root) = stapel_root(&target)
+                && let Some(deny) = hard_denial(&root, &target)
+            {
+                return deny;
+            }
+            if let Some(ask) = guards_write_ask(input, &written, &target, hook_root.as_deref()) {
                 return ask;
             }
             decide_write(&target)
@@ -293,6 +364,20 @@ fn is_global_config(target: &Path) -> bool {
     files.iter().any(|f| resolve(f) == target)
 }
 
+/// The hard denials of the write rules: machine files, `.git`, `.claude`, the git hooks folder.
+/// They come before the guards dialog (STP-41 XR2-3).
+fn hard_denial(root: &Path, target: &Path) -> Option<Decision> {
+    let rel = target.strip_prefix(root).ok()?;
+    if is_machine_file(rel) || is_git_or_claude_config(rel) || in_hooks_dir(root, target) {
+        return Some(Decision::Deny(format!(
+            "only stapel or the human writes {}, not an agent's write tool \
+             (a stapel, git or Claude Code file)",
+            rel.display()
+        )));
+    }
+    None
+}
+
 /// `target` is absolute with symlinks resolved; the repository is the one that contains it.
 fn decide_write(target: &Path) -> Decision {
     let Some(root) = stapel_root(target) else {
@@ -302,12 +387,8 @@ fn decide_write(target: &Path) -> Decision {
         .strip_prefix(&root)
         .expect("root is an ancestor of target");
 
-    if is_machine_file(rel) || is_git_or_claude_config(rel) || in_hooks_dir(&root, target) {
-        return Decision::Deny(format!(
-            "only stapel or the human writes {}, not an agent's write tool \
-             (a stapel, git or Claude Code file)",
-            rel.display()
-        ));
+    if let Some(deny) = hard_denial(&root, target) {
+        return deny;
     }
     let config = std::fs::read_to_string(root.join(".stapel/stapel.toml"))
         .ok()
@@ -625,7 +706,8 @@ fn subagent_git_args(args: &[String], root: &Path, at: &Path) -> bool {
             let Some(path) = args.get(i + 1) else {
                 return false;
             };
-            if path.contains('$') || path.starts_with('~') || !in_own_worktree(&at.join(path), root) {
+            if path.contains('$') || path.starts_with('~') || !in_own_worktree(&at.join(path), root)
+            {
                 return false;
             }
             // A later `-C` is relative to this one; keep it simple and refuse a chain.
@@ -1508,9 +1590,7 @@ pub fn plain_invocation(command: &str) -> Option<Invocation> {
         .cloned()
         .collect();
     let (program, rest) = match words.first().map(|w| base_name(w)) {
-        Some("stapel")
-            if words.get(1).is_some_and(|w| w == "cargo") && cargo_runs(&words[2..]) =>
-        {
+        Some("stapel") if words.get(1).is_some_and(|w| w == "cargo") && cargo_runs(&words[2..]) => {
             let sep = words.iter().position(|w| w == "--")?;
             (words[..=sep].to_vec(), &words[sep + 1..])
         }
