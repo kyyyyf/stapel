@@ -186,6 +186,12 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
         junit_note = plan_workflow(&config, &root, &mut plan, &mut kept);
     }
 
+    if let Some(guards) = &config.guards {
+        for line in crate::check::guard_reach(&root, &guards.dir, &guards.check) {
+            warn!("{line}");
+        }
+    }
+
     for step in &plan {
         let path = root.join(&step.rel);
         if let Some(parent) = path.parent() {

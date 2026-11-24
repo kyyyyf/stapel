@@ -157,6 +157,7 @@ list must not only grow.
 - A commit that must change its step's test file or a build input after a RED says so in a line of its
   message: `history: <reason>`; stapel check then judges the step by its runs.
 - The guards folder `[guards] dir` holds the machine checks; an agent's write into it asks the person in a dialog.
+  A guard's scripts and configs belong in the guards folder; an agent edits a file outside it with no dialog.
   `stapel check` writes a tightened baseline into it; the orchestrator commits it, with a `history:` line in the
   commit message.
 - At the close stapel close appends one `catches` record (counted findings by stage and `rule`) and one
