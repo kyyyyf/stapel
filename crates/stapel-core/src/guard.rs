@@ -304,6 +304,11 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
             if let Some(ask) = toml_edit_ask(input, &target) {
                 return ask;
             }
+            if let Some(root) = stapel_root(&target)
+                && let Some(deny) = hard_denial(&root, &target)
+            {
+                return deny;
+            }
             if let Some(ask) = guards_write_ask(input, &target) {
                 return ask;
             }
@@ -337,6 +342,20 @@ fn is_global_config(target: &Path) -> bool {
     files.iter().any(|f| resolve(f) == target)
 }
 
+/// The hard denials of the write rules: machine files, `.git`, `.claude`, the git hooks folder.
+/// They come before the guards dialog (STP-41 XR2-3).
+fn hard_denial(root: &Path, target: &Path) -> Option<Decision> {
+    let rel = target.strip_prefix(root).ok()?;
+    if is_machine_file(rel) || is_git_or_claude_config(rel) || in_hooks_dir(root, target) {
+        return Some(Decision::Deny(format!(
+            "only stapel or the human writes {}, not an agent's write tool \
+             (a stapel, git or Claude Code file)",
+            rel.display()
+        )));
+    }
+    None
+}
+
 /// `target` is absolute with symlinks resolved; the repository is the one that contains it.
 fn decide_write(target: &Path) -> Decision {
     let Some(root) = stapel_root(target) else {
@@ -346,12 +365,8 @@ fn decide_write(target: &Path) -> Decision {
         .strip_prefix(&root)
         .expect("root is an ancestor of target");
 
-    if is_machine_file(rel) || is_git_or_claude_config(rel) || in_hooks_dir(&root, target) {
-        return Decision::Deny(format!(
-            "only stapel or the human writes {}, not an agent's write tool \
-             (a stapel, git or Claude Code file)",
-            rel.display()
-        ));
+    if let Some(deny) = hard_denial(&root, target) {
+        return deny;
     }
     let config = std::fs::read_to_string(root.join(".stapel/stapel.toml"))
         .ok()
