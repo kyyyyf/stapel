@@ -1129,3 +1129,37 @@ fn a_crashing_guard_keeps_the_baseline() {
     assert_eq!(record["guards"][1]["removed"], 0, "{record}");
     assert_eq!(record["guards"][2]["removed"], 1, "{record}");
 }
+
+#[test]
+fn a_silent_or_masked_crash_keeps_the_baseline() {
+    let guards = [
+        ratchet("masked", "grep -rn x srcx | sort", "masked.txt"),
+        ratchet("silent", "[ -x tools/lint ] || exit 1", "silent.txt"),
+        ratchet("control", "printf \"a\\n\"; exit 0", "control.txt"),
+    ]
+    .concat();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "guards/masked.txt", "a\nb\n");
+    write(dir, "guards/silent.txt", "a\nb\n");
+    write(dir, "guards/control.txt", "a\nb\n");
+    commit(dir, "ABC-1: baselines");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert!(
+        lines.contains(&"guard: masked: pass; baseline not tightened: standard error"),
+        "{text}"
+    );
+    assert!(
+        lines.contains(&"guard: silent: pass; baseline not tightened: no output"),
+        "{text}"
+    );
+    assert!(
+        lines.contains(&"guard: control: pass, 1 fixed removed from guards/control.txt; commit it"),
+        "{text}"
+    );
+    assert_eq!(read(dir, "guards/masked.txt"), "a\nb\n");
+    assert_eq!(read(dir, "guards/silent.txt"), "a\nb\n");
+    assert_eq!(read(dir, "guards/control.txt"), "a\n");
+}
