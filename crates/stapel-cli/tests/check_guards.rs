@@ -69,6 +69,37 @@ fn refuses_a_bad_dir() {
     }
 }
 
+// STP-43 AC-1: a dir that is a work folder is refused; a nested or another name loads.
+#[test]
+fn refuses_an_overlapping_dir() {
+    for dir in ["tests", "Tests/", "src", "docs", "crates", "packages"] {
+        for with_check in [true, false] {
+            let repo = stapel_repo();
+            add_config(
+                repo.path(),
+                with_check,
+                &format!("[guards]\ndir = \"{dir}\"\n"),
+            );
+            let (code, err) = check(repo.path());
+            let refusal = format!(
+                "guards.dir {dir} is a folder that agents write: name a folder of its own, such as guards"
+            );
+            assert_eq!(code, 2, "{dir}: {err}");
+            assert!(err.contains(&refusal), "{dir}: {err}");
+        }
+    }
+
+    for dir in ["tests/guards", "src/x", "guards", "testing"] {
+        let repo = stapel_repo();
+        add_config(repo.path(), true, &format!("[guards]\ndir = \"{dir}\"\n"));
+        let (_, err) = check(repo.path());
+        assert!(
+            !err.contains("stapel.toml") && !err.contains("guards"),
+            "{dir}: {err}"
+        );
+    }
+}
+
 // AC-2: a guard needs a name and a command, a unique name and a relative baseline.
 #[test]
 fn refuses_bad_entries() {
