@@ -1753,7 +1753,16 @@ impl Runner<'_> {
                         let base = entry.baseline.as_deref().unwrap_or_default();
                         let rel = format!("{}/{}", dir.strip_suffix('/').unwrap_or(dir), base);
                         let text: String = kept.iter().map(|l| format!("{l}\n")).collect();
-                        match std::fs::write(self.root.join(&rel), text) {
+                        let target = self.root.join(&rel);
+                        let linked = std::fs::symlink_metadata(&target)
+                            .map(|m| m.file_type().is_symlink())
+                            .unwrap_or(false);
+                        if linked {
+                            say!("guard: {shown}: pass; baseline not written: a symlink");
+                            done.push(("pass", 0, 0));
+                            continue;
+                        }
+                        match std::fs::write(&target, text) {
                             Ok(()) => {
                                 say!(
                                     "guard: {shown}: pass, {fixed} fixed removed from {}; commit it",
