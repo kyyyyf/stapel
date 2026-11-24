@@ -1331,3 +1331,55 @@ fn a_round_needs_the_previous_round() {
     );
     start(dir, &["ABC-1", "--round", "3"]).code(0);
 }
+
+#[test]
+fn pack_base_after_a_main_merge() {
+    let repo = built_with_spec(&[]);
+    let dir = repo.path();
+    let main = git(dir, &["branch", "--show-current"]).trim().to_string();
+    let ticket_base = state_json(dir, "ABC-1")["base"].as_str().unwrap().to_string();
+    git(dir, &["checkout", "-q", "-b", "work"]);
+    git(dir, &["checkout", "-q", &main]);
+    std::fs::write(dir.join("other.txt"), "other\n").unwrap();
+    commit_all(dir, "a later main commit");
+    let pack_base = git(dir, &["rev-parse", "HEAD"]).trim().to_string();
+    git(dir, &["checkout", "-q", "work"]);
+    std::fs::write(dir.join("mine.txt"), "mine\n").unwrap();
+    commit_all(dir, "ABC-1 step 2 GREEN: mine");
+    git(dir, &["merge", "-q", "--no-edit", &main]);
+    let read = |name: &str| {
+        std::fs::read_to_string(dir.join(format!(".stapel/scratch/review/ABC-1-r1/{name}")))
+            .unwrap()
+    };
+
+    // No base branch in state.json: the ticket base, no `ticket base` line.
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    let pack = read("pack.md");
+    assert!(pack.contains(&format!("\n- base: {ticket_base}\n")), "{pack}");
+    assert!(!pack.contains("ticket base"), "{pack}");
+    assert!(read("diff.patch").contains("other.txt"));
+
+    // A base branch that does not exist: the same.
+    let mut state = state_json(dir, "ABC-1");
+    state["base_branch"] = serde_json::json!("gone");
+    write_state(dir, "ABC-1", &state);
+    commit_all(dir, "state with a missing base branch");
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    let pack = read("pack.md");
+    assert!(pack.contains(&format!("\n- base: {ticket_base}\n")), "{pack}");
+    assert!(!pack.contains("ticket base"), "{pack}");
+
+    // The base branch after a merge of main: the merge base, and both base lines.
+    state["base_branch"] = serde_json::json!(main);
+    write_state(dir, "ABC-1", &state);
+    commit_all(dir, "state with the base branch");
+    start(dir, &["ABC-1", "--round", "1"]).code(0);
+    let pack = read("pack.md");
+    assert!(pack.contains(&format!("\n- base: {pack_base}\n")), "{pack}");
+    assert!(pack.contains(&format!("\n- ticket base: {ticket_base}\n")), "{pack}");
+    let patch = read("diff.patch");
+    assert!(patch.contains("mine.txt"), "{patch}");
+    assert!(!patch.contains("other.txt"), "{patch}");
+    assert!(pack.contains("mine.txt"), "{pack}");
+    assert!(!pack.contains("other.txt"), "{pack}");
+}
