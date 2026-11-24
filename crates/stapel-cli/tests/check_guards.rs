@@ -1086,3 +1086,46 @@ fn a_linked_baseline_is_not_written() {
     assert_eq!(link("guards/inside.txt"), Path::new("../notes.txt"));
     assert_eq!(link("guards/outside.txt"), far);
 }
+
+// ---- step 15: crashing guard ----
+
+// AC-10: a ratchet guard that exits 1 with standard error is a crash, not a clean list: the baseline
+// stays; exit 1 with empty standard error (a linter) still tightens.
+#[test]
+fn a_crashing_guard_keeps_the_baseline() {
+    let guards = [
+        ratchet("crash", "echo Traceback >&2; exit 1", "crash.txt"),
+        ratchet(
+            "crashone",
+            "printf \"a\\n\"; echo boom >&2; exit 1",
+            "crashone.txt",
+        ),
+        ratchet("linter", "printf \"a\\n\"; exit 1", "linter.txt"),
+    ]
+    .concat();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "guards/crash.txt", "a\nb\nc\n");
+    write(dir, "guards/crashone.txt", "a\nb\nc\n");
+    write(dir, "guards/linter.txt", "a\nfixed\n");
+    commit(dir, "ABC-1: baselines");
+    let (code, text) = run(dir, &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    for name in ["crash", "crashone"] {
+        let want =
+            format!("guard: {name}: pass; baseline not tightened: exit 1 with standard error");
+        assert!(lines.contains(&want.as_str()), "{text}");
+    }
+    assert!(
+        lines.contains(&"guard: linter: pass, 1 fixed removed from guards/linter.txt; commit it"),
+        "{text}"
+    );
+    assert_eq!(read(dir, "guards/crash.txt"), "a\nb\nc\n");
+    assert_eq!(read(dir, "guards/crashone.txt"), "a\nb\nc\n");
+    assert_eq!(read(dir, "guards/linter.txt"), "a\n");
+    let record = last_check_record(dir);
+    assert_eq!(record["guards"][0]["removed"], 0, "{record}");
+    assert_eq!(record["guards"][1]["removed"], 0, "{record}");
+    assert_eq!(record["guards"][2]["removed"], 1, "{record}");
+}
