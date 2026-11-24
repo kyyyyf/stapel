@@ -13,6 +13,7 @@ pub mod guard;
 pub mod hash;
 pub mod identity;
 pub mod includes;
+pub mod inbox;
 pub mod journal;
 pub mod junit;
 pub mod next;

@@ -117,7 +117,7 @@ fn appends_to_existing_gitignore() {
 
     assert_eq!(
         read(repo.path(), ".gitignore"),
-        "/target\n/.stapel/index/\n/.claude/worktrees/\n/.stapel/tickets/*/page.md\n"
+        "/target\n/.stapel/index/\n/.claude/worktrees/\n/.stapel/tickets/*/page.md\n/.stapel/inbox.md\n"
     );
 }
 
@@ -571,6 +571,24 @@ fn page_is_ignored_in_both_modes() {
         std::fs::write(dir.join(".stapel/tickets/ABC-1/page.md"), "# page\n").unwrap();
         let status = common::git_in(dir, &["status", "--porcelain", "-uall"]);
         assert!(!status.contains("page.md"), "{status}");
+    }
+    let own = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.gitignore")).unwrap();
+    assert!(own.lines().any(|l| l == LINE), "{own}");
+}
+
+// STP-40 AC-10: the inbox file is ignored in both modes, and in this repository.
+#[test]
+fn ignores_the_inbox() {
+    const LINE: &str = "/.stapel/inbox.md";
+    for (args, file) in [
+        (vec!["init", "--prefix", "ABC"], ".gitignore"),
+        (vec!["init", "--local", "--prefix", "ABC"], ".git/info/exclude"),
+    ] {
+        let repo = git_repo();
+        let dir = repo.path();
+        stapel(dir).args(&args).assert().success();
+        let lines = read(dir, file);
+        assert!(lines.lines().any(|l| l == LINE), "{file}: {lines}");
     }
     let own = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.gitignore")).unwrap();
     assert!(own.lines().any(|l| l == LINE), "{own}");
