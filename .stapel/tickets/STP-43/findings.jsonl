@@ -28,3 +28,5 @@
 {"kind":"triage","ticket":"STP-43","id":"SR2-4","fate":"patch","note":"Frame aligned with the term; the two-guard case is tested","imported_by":{"by":"agent","user":"kyyyyf"}}
 {"kind":"triage","ticket":"STP-43","id":"SR2-5","fate":"patch","note":"the order claim is dropped; the warning is on standard error","imported_by":{"by":"agent","user":"kyyyyf"}}
 {"kind":"triage","ticket":"STP-43","id":"SR2-6","fate":"patch","note":"a first word that names a root file warns; stated in Not promised","imported_by":{"by":"agent","user":"kyyyyf"}}
+{"id":"DR1-1","ticket":"STP-43","stage":"code-review","round":1,"role":"drift","severity":"LOW","promise":"inside","claim":"guard_reach compares the reach word with dir case-sensitively, though the term Covers compares in lower case: dir = Guards and sh guards/run.sh warns; no test sets a mixed-case dir.","catchable_at":"code","fate":"open","rule":"none","imported_by":{"by":"agent","user":"kyyyyf"}}
+{"kind":"triage","ticket":"STP-43","id":"DR1-1","fate":"patch","note":"step 7: guard_reach compares in lower case; a mixed-case dir case in the test","imported_by":{"by":"agent","user":"kyyyyf"}}

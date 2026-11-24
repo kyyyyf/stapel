@@ -7,12 +7,10 @@ STP-41 SR1-7, SR2-10 and XR1-5, STP-42 XR1-3 and CR1-4.
 
 ### Frame
 
-**Problem.** A `[guards] dir` such as `tests` or `src` loads today, and then every builder write under it is
-denied and every edit of the main agent asks. A guard's command can read a script or a config outside the
-guards folder, which an agent edits with no dialog, so the guard is weaker than it looks. The agent
-`stapel-external-reviewer` has the body of the reviewer, whose finding template says the role `reviewer`,
-so its findings are recorded under the wrong role. The starter binds `external` to the provider
-`anthropic-api`, though the model goes into a Claude Code agent header.
+**Problem.** A `[guards] dir` such as `tests` loads, and then every builder write under it is denied. A
+guard can read a script outside the folder, which an agent edits with no dialog. The external reviewer's
+findings say the role `reviewer`. The starter binds `external` to `anthropic-api`, though the model goes
+into a Claude Code agent header.
 
 **Plan item:** 5.1b.
 
@@ -104,7 +102,7 @@ Terms:
 | AC-2 | IF an agent's edit of `stapel.toml` sets `dir` to a work folder THEN the hook denies it with `.stapel/stapel.toml would not load: ` and the AC-1 message. | `hook_guards::an_overlapping_dir_edit_is_denied` |
 | AC-3 | WHEN `stapel check` runs its guards (levels `head` and `full`) THE it prints the reach warnings on standard error and the run goes on with the same outcomes and record; at level `steps` it prints none; a command with no outside file prints none. | `check_guards::warns_about_a_file_outside_dir` |
 | AC-4 | WHEN `stapel init` runs in a repository whose `stapel.toml` has guards THE, after every refusal check and before it writes, it prints the reach warnings on standard error and writes as before; IF init refuses (a binding, a directory at a process path) THEN no reach warning is printed. | `init_process::guard_reach_warning` |
-| AC-5 | WHEN `stapel init` writes the starter and the skill THE the starter's `[guards]` comment holds the line `# a guard's scripts and configs belong in dir: an agent edits a file outside it with no dialog` and the skill's line on the guards folder holds the sentence `A guard's scripts and configs belong in the guards folder; an agent edits a file outside it with no dialog.` | `init_process::guard_reach_text` |
+| AC-5 | WHEN `stapel init` writes the starter and the skill THE the starter's line `# [guards]` ends with the comment `# a guard's scripts and configs belong in dir: an agent edits a file outside it with no dialog`, so the starter stays valid TOML when its commented lines are uncommented, and the skill's line on the guards folder holds the sentence `A guard's scripts and configs belong in the guards folder; an agent edits a file outside it with no dialog.` | `init_process::guard_reach_text` |
 | AC-6 | WHEN `stapel init` writes the reviewer body for an agent THE the finding template holds `"role":"<role>"` with the agent's role: `reviewer` for `stapel-reviewer`, `external` for `stapel-external-reviewer`; the two bodies differ only there; the asset holds one body. | `init_process::reviewer_role_in_the_finding_template`, `init_process::external_reviewer_agent` |
 | AC-7 | IF an agent role (`builder`, `drift`, `reviewer`, `depends`, `external`) of `[models]` has a provider other than `claude-code` THEN `stapel init` exits 1 with `stapel: [models] <role>: provider "<p>" is not claude-code: an agent role runs as a Claude Code agent; set provider = "claude-code"` and writes nothing; the provider of a role is checked before its mode and model, and the roles in the order of that list; a role without an agent file (`author`, `cheap`) is not checked. | `init_process::refuses_a_foreign_provider` |
 | AC-8 | WHEN `stapel init` writes a new `stapel.toml` THE its `external` binding has `provider = "claude-code"`. | `init_process::starter_binds_claude_code` |
@@ -140,7 +138,7 @@ also `--test ticket_drift` and `--test fixtures`.
 | Hook edit | the main agent in a dialog mode edits `stapel.toml` to `dir = "tests"`: denied with the load message; to `dir = "tests/guards"`: asks as now | `hook_guards::an_overlapping_dir_edit_is_denied` |
 | Reach in check | `sh scripts/cov.sh`: one warning; `./scripts/cov.sh`: warns for `scripts/cov.sh`; `cargo clippy --config=clippy.toml`, `--config="clippy.toml"` and `--config clippy.toml`: warn for `clippy.toml`; the same file twice in one command: one line; the same file in two guards: one line each; `sh guards/run.sh`: none; `grep -rn TODO src` (a folder) and `grep TODO README.md` (a subject file): none; a missing file, a dangling link, `$HOME/x`, `*.rs`, `/abs/x`, `../x`, `scripts/./cov.sh`: none; a link `scripts/l.sh` to a file: warns; level `steps`: none; outcomes and the record are those without the warning | `check_guards::warns_about_a_file_outside_dir` |
 | Reach in init | a guard reading `scripts/cov.sh`: init prints the warning and writes its files; the same repository with `external` on `anthropic-api`, and with a directory at `.claude/skills/stapel/SKILL.md`: the refusal and no warning | `init_process::guard_reach_warning` |
-| Texts | the starter comment line and the skill sentence, installed and in the assets | `init_process::guard_reach_text` |
+| Texts | the starter's `# [guards]` line with its comment, and the skill sentence, installed and in the assets | `init_process::guard_reach_text` |
 | Role | the installed `stapel-reviewer.md` holds `"role":"reviewer"`, `stapel-external-reviewer.md` holds `"role":"external"`, and the two bodies are equal after that one replacement | `init_process::reviewer_role_in_the_finding_template`, `init_process::external_reviewer_agent` |
 | Provider | `external` and `builder` with `anthropic-api`: refused, nothing written; `reviewer` with `anthropic-api` and a bad mode: the provider message; `author` with `anthropic-api`: init runs | `init_process::refuses_a_foreign_provider` |
 | Starter | a new `stapel.toml`: the `external` line holds `provider = "claude-code"` and `model = "claude-opus-5-5"` | `init_process::starter_binds_claude_code` |
@@ -219,6 +217,30 @@ init refuses, `init_process::refuses_a_bad_permission_mode` covers the path).
   `external` from the orchestrator through its dialog before the GREEN of step 5, because a builder may
   not edit it and `stapel init` refuses without it.
 
+### Decisions (as built)
+
+- Step 1 (defb165, 58bbe4b): the work-folder check sits in `Config::validate` after the lexical check
+  and before `guards need [check]`; it compares the lower-cased `dir` without its trailing `/`.
+- Step 2 (6b0d3cb, 14be84b): `command_words` and `guard_reach(root, dir, entries)` live in
+  `crates/stapel-cli/src/check.rs` as `pub(crate)`, not in `stapel-core`, because only the binary uses
+  them; check prints the lines with `warn!` before the guards run.
+- 2026-11-24, agent: the link cases of `check_guards::warns_about_a_file_outside_dir` live in the
+  ignored `target/` folder, because `stapel check` refuses an untracked link in the working tree; the
+  link guard runs `sh target/l.sh || true`, as ignored files are absent from the check copy.
+- Step 3 (f56326e, 01cf32f): init prints the reach warnings after every refusal check, right before its
+  write loop.
+- 2026-11-24, agent: at step 3 `init_process::guard_reach_warning` tested the refusal with
+  `permission_mode bypassPermissions`, because the provider check came only in step 5; the step 5 RED
+  added the `anthropic-api` case with a `history:` line.
+- Step 4 (0ef3ada, 0d05333): `"role":"@ROLE@"` in the reviewer asset, replaced with `agent.role` in
+  `plan_process_files`.
+- 9319e25: this repository's `[models] external` gets `provider = "claude-code"`.
+- Step 5 (d4b6688, 96b6926): `check_bindings` checks the provider of each role before its mode and
+  model.
+- 2026-11-24, agent: the check of 96b6926 failed the suite test `init::writes_commented_check_otherwise`:
+  it uncomments every starter line after `# [check]`, and the own line of step 3 then is no TOML. AC-5
+  now puts the comment at the end of the line `# [guards]` (step 6).
+
 ## Proof
 
 | Criterion | Test |
@@ -255,6 +277,13 @@ Route: full (tags `guard`, `interface`), auto.
    `init_process::starter_binds_claude_code`): the RED adds both tests; the orchestrator changes this
    repository's binding before the GREEN; the GREEN adds the check to `check_bindings` and the starter
    line. Must not change: `init_process::refusals_on_every_checked_role`.
+6. Fix of the starter line (the suite test `init::writes_commented_check_otherwise`; AC-5; test
+   `init_process::guard_reach_text`): the RED changes the test to expect the comment at the end of the
+   line `# [guards]`, with a `history:` line; the GREEN moves it there in `GUARDS_COMMENT`. Must not
+   change: `init::writes_commented_check_otherwise`, `init_process::starter_names_guards`.
+7. Case of `dir` (DR1-1; AC-3; test `check_guards::warns_about_a_file_outside_dir`): the RED adds
+   `dir = "Guards"` with `sh guards/run.sh`: no warning (`history:` line); the GREEN compares in lower
+   case.
 
 ## Review
 
@@ -267,8 +296,13 @@ Findings:
 |---|---|---|---|---|---|---|---|
 | spec-review | 1 | external | 1 | 4 | 4 | 0 | defer 1, patch 8 |
 | spec-review | 2 | external | 0 | 1 | 5 | 0 | patch 6 |
+| code-review | 1 | drift | 0 | 0 | 1 | 0 | patch 1 |
 
-Check runs: none
+Check runs:
+
+| Level | Result | Commit | At | Steps |
+|---|---|---|---|---|
+| head | fail | 96b6926 | 2026-11-24T20:09:58Z | pass 5 |
 <!-- stapel:review:end -->
 
 ## Summary
