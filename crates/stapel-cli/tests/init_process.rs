@@ -2330,6 +2330,48 @@ fn refuses_a_foreign_provider() {
     stapel(repo.path()).arg("init").assert().success();
 }
 
+/// STP-43 AC-7: with two foreign agent roles the first of the list is named; `drift` and `depends`
+/// alone are refused.
+#[test]
+fn first_foreign_role_is_named() {
+    let foreign = "{ provider = \"anthropic-api\", model = \"claude-opus-5-5\" }";
+    let run = |roles: &[&str]| -> String {
+        let repo = repo_with_config(|t| {
+            roles.iter().fold(t, |t, role| {
+                if *role == "depends" {
+                    // the starter has no `depends` line: add one after `cheap`
+                    replace_line(
+                        t,
+                        "cheap",
+                        &format!(
+                            "cheap = {{ provider = \"claude-code\", model = \"claude-haiku-4-5\" }}\n{role} = {foreign}"
+                        ),
+                    )
+                } else {
+                    replace_line(t, role, &format!("{role} = {foreign}"))
+                }
+            })
+        });
+        let dir = repo.path();
+        let before = snapshot(dir);
+        let out = stapel(dir).arg("init").assert().code(1);
+        assert_eq!(snapshot(dir), before, "{roles:?}");
+        String::from_utf8_lossy(&out.get_output().stderr).to_string()
+    };
+    let both = run(&["external", "builder"]);
+    assert!(both.contains("[models] builder: provider"), "{both}");
+    assert!(!both.contains("[models] external:"), "{both}");
+    for role in ["drift", "depends"] {
+        let text = run(&[role]);
+        assert!(
+            text.contains(&format!(
+                "stapel: [models] {role}: provider \"anthropic-api\" is not claude-code"
+            )),
+            "{text}"
+        );
+    }
+}
+
 /// STP-43 AC-8: the starter binds `external` to Claude Code.
 #[test]
 fn starter_binds_claude_code() {
