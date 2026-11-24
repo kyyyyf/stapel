@@ -557,7 +557,8 @@ fn plan_process_files(
             .and_then(|b| b.permission_mode.as_deref())
             .unwrap_or(agent.default_mode);
         lines.push(format!("permissionMode: {mode}"));
-        let text = process_text(&lines, agent.body);
+        let body = agent.body.replace("@ROLE@", agent.role);
+        let text = process_text(&lines, &body);
         plan_create_text(
             root,
             format!(".claude/agents/stapel-{}.md", agent.name),
