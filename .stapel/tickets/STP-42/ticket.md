@@ -101,16 +101,20 @@ Terms:
 | AC-7 | WHEN `stapel review start --round N` runs and the pack base differs from the ticket base THE `diff.patch` and the stat of `pack.md` are of `<pack base>..HEAD`, `pack.md` names `- base: <pack base>` and the line `- ticket base: <ticket base>`; WHEN the two are equal THE `pack.md` has the one base line, as now; IF `state.json` has no base branch, the branch is missing or git finds no merge base THEN the ticket base, as now, with no `ticket base` line. | `review::pack_base_after_a_main_merge` |
 | AC-8 | WHEN the suite of `stapel check` fails under the cargo runner THE the line after the suite line is `failing: <names>` with the first 20 distinct failing names in output order joined by `, `, and ` and <n> more` when there are more distinct names; the record's `suite` gets `failing` (the same list) and `failing_more` (n); a passing suite or one with no failing name prints no such line and writes no such key. | `check_failing::cargo_names_failing_tests` |
 | AC-9 | WHEN the suite fails under the junit runner THE the same line and record keys are made from the distinct failing names of the failed cases of the report, in report order. | `check_failing::junit_names_failing_tests` |
-| AC-11 | IF the `stapel.toml` of the current repository fails loading (a bad `[cargo] slots` among other causes) THEN `stapel cargo` prints `stapel: ` and the load error, exits 1 and runs no cargo, as `stapel check` does; WHEN the current folder is in no stapel repository THE `stapel cargo` takes N = 3. | `cargo_lock::a_bad_config_refuses` |
 | AC-10 | WHEN `stapel init` installs the builder agent and the skill THE the builder text says to run the private-data test of the project with the ticket lint before each GREEN, and the skill's rule 6 says the Test plan names both. | `init_process::builder_runs_the_privacy_test` |
+| AC-11 | IF the `stapel.toml` of the current repository fails loading (a bad `[cargo] slots` among other causes) THEN `stapel cargo` prints `stapel: ` and the load error, exits 1 and runs no cargo, as `stapel check` does; WHEN the current folder is in no stapel repository THE `stapel cargo` takes N = 3. | `cargo_lock::a_bad_config_refuses` |
 
 ### Guarantees
 
 - **Promised:** the Frame's promise items: item 1 by AC-1 to AC-3 and AC-11, item 2 by AC-4, item 3 by AC-3, item 4
   by AC-2, item 5 by AC-5 and AC-6, item 6 by AC-7, item 7 by AC-8 and AC-9, item 8 by AC-10.
   Unchanged: the held mark (`cargo_lock::held_mark_takes_no_lock`); a killed holder frees its locks
-  (`cargo_lock::killed_holder_frees_the_lock`); the exit codes of `stapel cargo`; the merge round pack;
-  the check base of `stapel check`; the counts of the suite line.
+  (`cargo_lock::killed_holder_frees_the_lock`); the exit codes of `stapel cargo` when its `stapel.toml`
+  loads; the merge round pack; the check base of `stapel check`; the counts of the suite line.
+  Changed on purpose: a `stapel.toml` that fails loading now stops `stapel cargo` (AC-11), as it stops
+  `stapel check`; with `external` among the agent roles, an `[models] external` binding that cannot go
+  into an agent file makes `stapel init` refuse, and an absent binding gives the header no model, as for
+  the other agent roles.
 - **Not promised:** the Frame's list; test names under a cargo `--format` other than the default; a slot
   freed between the read of its holder line and the print of the waiting line (the line may name an old
   holder); two worktrees whose roots hash to the same 16 digits.
@@ -133,10 +137,10 @@ init_process`); before each GREEN also `--test ticket_drift` and `--test fixture
 | Category | Cases | Tests |
 |---|---|---|
 | Slots value | `0`, `17`, `-1`, `2.5`, `"3"`, an unknown key `[cargo] x = 1`: load error; `1` and `16` load; absent table: 3 | `cargo_lock::slots_setting` |
-| Parallel | N = 2, two repositories: both stand-in cargos hold at once and slots 1 and 2 hold their holder lines; `stapel check` while one `stapel cargo` holds: runs on slot 2 | `cargo_lock::runs_in_parallel_up_to_slots` |
+| Parallel | every run of the tests of AC-2 and AC-3 starts from a worktree of its own; N = 2, two repositories: both stand-in cargos hold at once and slots 1 and 2 hold their holder lines; `stapel check` while one `stapel cargo` holds: runs on slot 2 | `cargo_lock::runs_in_parallel_up_to_slots` |
 | All held | N = 2, both slots held by foreign processes with and without holder lines: the waiting line names both, once; slot 2 freed: the run starts on slot 2; a third run from a third worktree waits while two runs hold | `cargo_lock::all_slots_held_waits` |
-| Same worktree | N = 3, one run holds in a worktree: its worktree lock holds its holder line; a second run from a subfolder of that worktree waits with the holder's line and holds no slot; the first ends: the second runs; a run from another worktree of the same repository runs at once; a run waiting first for its worktree and then for the slots prints two lines |
-| Bad config | `slots = 0` and a broken `stapel.toml`: `stapel cargo` exits 1 with the load error and the stand-in cargo did not run; a folder outside any stapel repository: runs | `cargo_lock::a_bad_config_refuses` | `cargo_lock::one_run_per_worktree` |
+| Same worktree | N = 3, one run holds in a worktree: its worktree lock holds its holder line; a second run from a subfolder of that worktree waits with the holder's line and holds no slot; the first ends: the second runs; a run from another worktree of the same repository runs at once; a run waiting first for its worktree and then for the slots prints two lines | `cargo_lock::one_run_per_worktree` |
+| Bad config | `slots = 0` and a broken `stapel.toml`: `stapel cargo` exits 1 with the load error and the stand-in cargo did not run; a folder outside any stapel repository: runs | `cargo_lock::a_bad_config_refuses` |
 | Agent file | the installed file's header (name, tools, model of `external`), its body equals the reviewer's; the starter `[models]` and `[roles]`; a token record of the agent type without `[roles]` | `init_process::external_reviewer_agent` |
 | Reviewers | a full tagged ticket: the three lines; light and untagged tickets unchanged | `review::reviewers_by_route_and_tags` |
 | Pack base | a ticket branch with a merge of a later main commit: diff and stat hold only the ticket's files, both base lines; no merge: one base line; no base branch in `state.json`; a deleted base branch | `review::pack_base_after_a_main_merge` |
@@ -248,25 +252,29 @@ Route: full (tag `interface`), auto.
    the RED adds the tests and `[cargo] slots = 1` to the fixture `check_repo`; the GREEN adds `[cargo]` to
    `Config` and makes `stapel cargo` load the config. Must not change: a config without `[cargo]`.
 2. Slots (AC-2, AC-3; tests `cargo_lock::runs_in_parallel_up_to_slots`, `cargo_lock::all_slots_held_waits`):
-   the GREEN makes `take` try N slots and poll them when all are held. Must not change: the STP-27 tests.
-3. Worktree lock (AC-4; test `cargo_lock::one_run_per_worktree`): the GREEN takes the worktree lock
-   before a slot. Must not change: the held mark.
+   the RED adds both tests, each run from a worktree of its own; the GREEN makes `take` try N slots and
+   poll them when all are held. Must not change: the STP-27 tests.
+3. Worktree lock (AC-4; test `cargo_lock::one_run_per_worktree`): the RED adds the test; the GREEN takes
+   the worktree lock before a slot. Must not change: the held mark and the tests of step 2.
 4. External agent (AC-5; test `init_process::external_reviewer_agent`): the RED also changes the old
    expectations the new agent breaks (`tests/golden/init_agent_frontmatter.txt`, the agent list and the
-   `[roles]` rows of `init_process.rs`, `DEFAULT_ROLES` of `hook_tokens.rs`); the GREEN adds the agent
+   `[roles]` rows of `init_process.rs`, `DEFAULT_ROLES` of `hook_tokens.rs`, the starter model of
+   `external` in `crates/stapel-core/tests/config.rs`); the GREEN adds the agent
    file, the role, the `hook.rs` default row and the starter lines, and runs `stapel init`; the
    orchestrator adds the `[roles]` row of this repository before it. Must not change: the other agent
    files.
 5. Reviewer lines (AC-6; test `review::reviewers_by_route_and_tags`): the RED changes the expected
    external line there and in the other test of `review.rs` that expects it; the GREEN names the agent in `reviewers`. Must not change: the other lines.
-6. Pack base (AC-7; test `review::pack_base_after_a_main_merge`): the GREEN computes the pack base in
-   `write_pack`. Must not change: the pack without a main merge and the merge round pack.
+6. Pack base (AC-7; test `review::pack_base_after_a_main_merge`): the RED adds the test; the GREEN
+   computes the pack base in `write_pack`. Must not change: the pack without a main merge and the merge
+   round pack.
 7. Cargo failing names (AC-8; test `check_failing::cargo_names_failing_tests`): the RED adds
-   `tests/check_failing.rs`; the GREEN parses the names and prints and records them. Must not change: the
-   suite line.
-8. Junit failing names (AC-9; test `check_failing::junit_names_failing_tests`): the GREEN fills the names
-   from the report. Must not change: the junit counts.
-9. Texts (AC-10; test `init_process::builder_runs_the_privacy_test`): the GREEN changes the builder asset
+   `tests/check_failing.rs` with the cargo test only; the GREEN parses the names and prints and records
+   them. Must not change: the suite line.
+8. Junit failing names (AC-9; test `check_failing::junit_names_failing_tests`): the RED adds the junit
+   test to `tests/check_failing.rs`; the GREEN fills the names from the report. Must not change: the
+   junit counts.
+9. Texts (AC-10; test `init_process::builder_runs_the_privacy_test`): the RED adds the test; the GREEN changes the builder asset
    and the skill, runs `stapel init`, and changes the CLAUDE.md line on cargo runs. Must not change: the
    other rules.
 
@@ -282,6 +290,7 @@ Findings:
 | Stage | Round | Roles | HIGH | MEDIUM | LOW | False | Fates |
 |---|---|---|---|---|---|---|---|
 | spec-review | 1 | external | 1 | 5 | 3 | 0 | defer 1, no-change 1, patch 7 |
+| spec-review | 2 | external | 0 | 4 | 3 | 0 | patch 7 |
 
 Check runs: none
 <!-- stapel:review:end -->
