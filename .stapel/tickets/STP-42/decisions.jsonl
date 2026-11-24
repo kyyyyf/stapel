@@ -25,3 +25,4 @@
 {"v":1,"id":"d-c812271b31ae","at":"2026-11-24T16:29:36Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:e31952a8e55829b95ff6040f645f6ab66df98af29dee02725e3ee5205f80aaec","via":"grant"}
 {"v":1,"id":"d-e878db500e21","at":"2026-11-24T16:29:36Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:ac8f537a2f6e49d5ded37fb30e1540c92f541c363217632f8ba691cf30af7cb5","via":"grant"}
 {"v":1,"id":"d-db8510f4aad0","at":"2026-11-24T16:29:36Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:10b2f27532693218d8d52008b1fa971dc5a58ff1e86056b0cdd8f85d4a98b47a","via":"grant"}
+{"v":1,"id":"d-00c282a8403c","at":"2026-11-24T17:35:43Z","by":"kyyyyf","action":"close","reason":"The cargo slots, the external reviewer agent on Opus, the pack base after a main merge, the failing test names and the builder privacy rule are built with passing check run 5 and two code review rounds with no open HIGH or MEDIUM finding."}
