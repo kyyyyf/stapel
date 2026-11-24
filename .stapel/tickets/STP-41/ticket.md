@@ -453,7 +453,7 @@ Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| head | pass | aabd431 | 2026-11-24T08:03:44Z | cached 17, pass 1 |
+| head | pass | c93967a | 2026-11-24T09:50:22Z | cached 18 |
 <!-- stapel:review:end -->
 
 ## Summary
