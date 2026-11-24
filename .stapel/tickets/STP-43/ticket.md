@@ -41,7 +41,8 @@ Not promised: a path in a variable, a glob or a command substitution of a guard'
 path or a path with an empty, `.` or `..` part; a script that a named script calls; a file or folder
 named as the subject of a check (`grep -rn TODO src`, `grep TODO README.md`); a config named other than
 by an option whose name holds `config`; a script behind a wrapper (`FOO=1 x.sh`, `env`, `time`, `exec`,
-`xargs`, `if … then`); a first word naming a root file (`make`) warns, which is accepted; the content of the check copy at HEAD when it differs from the
+`xargs`, `if … then`); a first word naming a root file (`make`) warns, which is accepted; one file
+spelled in two letter cases; control characters in `<word>` and `<dir>`; the content of the check copy at HEAD when it differs from the
 working tree; the roles of findings already written; a provider check of roles that have no agent file
 (`author`, `cheap` and others).
 
@@ -49,7 +50,7 @@ working tree; the roles of findings already written; a provider check of roles t
 `stapel-external-reviewer`, `AGENT_ROLES`, `check_bindings`); STP-26 (`[roles]`); STP-22 (the model of
 a role written whatever its provider).
 
-**Size.** About 150 source lines and 300 test lines; 5 Plan steps. Route: full, auto.
+**Size.** About 150 source lines and 300 test lines; 5 Plan steps, 11 after the fix and coverage steps. Route: full, auto.
 
 ### Decisions
 
@@ -83,28 +84,31 @@ Terms:
   B; a trailing `/` of either is ignored.
 - **Command word**: a piece of a guard's command after it is split at white space and at each of
   `; | & ( ) < >` and a backtick, with every `'` and `"` then removed from it (`--config="clippy.toml"`
-  is the word `--config=clippy.toml`).
+  is the word `--config=clippy.toml`); an `&` right after `>` or `<` (`2>&1`) is part of the
+  redirection and starts no word.
 - **Reach word**: a command word that is (a) the first word of the command or the first word after `;`,
-  `|`, `&`, `(` or a backtick; (b) the first word not starting with `-` after one of the interpreters
-  `sh`, `bash`, `zsh`, `node`, `python`, `python3`, `ruby`, `perl`; or (c) the value of an option whose
+  `|`, `&`, `(` or a backtick; (b) the first word not starting with `-` after a word of kind (a) that is
+  one of the interpreters `sh`, `bash`, `zsh`, `node`, `python`, `python3`, `ruby`, `perl` (`grep -w sh
+  x.sh` has none); or (c) the value of an option whose
   name holds `config`, given as `--<name>=<value>` or as the next word.
 - **Outside file**: a reach word, with a leading `./` removed, that is a relative path (no empty, `.` or
   `..` part, no leading `/`, no `$`, `*`, `?`, `~`, `{`), names a regular file under the root of the git
   working tree of the current folder (links followed; a path whose metadata cannot be read is no file),
   and is not covered by `[guards] dir`.
 - **Reach warning**: `warning: guard <name> reads <word> outside <dir>; a guard's scripts and configs belong in <dir>`,
-  with `<word>` without its leading `./` and `<dir>` as written in `stapel.toml`; one line per distinct
+  with `<name>` printed as stapel prints names (control characters escaped), `<word>` without its
+  leading `./` and `<dir>` as written in `stapel.toml`; one line per distinct
   outside file of each guard, in command order, guards in their order.
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | IF `[guards] dir` is one part that is a work folder (any letter case, with or without a trailing `/`) THEN loading `stapel.toml` fails with `guards.dir <dir> is a folder that agents write: name a folder of its own, such as guards`, `<dir>` as written; the lexical check of STP-41 runs first and the `[check]` check after; WHEN `dir` has two or more parts (`tests/guards`, `src/x`) or another name THE it loads as now. | `check_guards::refuses_an_overlapping_dir` |
+| AC-1 | IF `[guards] dir` is one part that is a work folder (any letter case, with or without a trailing `/`) THEN loading `stapel.toml` fails with `guards.dir <dir> is a folder that agents write: name a folder of its own, such as guards`, `<dir>` as written; the lexical check of STP-41 runs first and the `[check]` check after; WHEN `dir` has two or more parts (`tests/guards`, `src/x`) or another name THE it loads as now. | `check_guards::refuses_an_overlapping_dir`, `check_guards::all_work_folders_refused` |
 | AC-2 | IF an agent's edit of `stapel.toml` sets `dir` to a work folder THEN the hook denies it with `.stapel/stapel.toml would not load: ` and the AC-1 message. | `hook_guards::an_overlapping_dir_edit_is_denied` |
-| AC-3 | WHEN `stapel check` runs its guards (levels `head` and `full`) THE it prints the reach warnings on standard error and the run goes on with the same outcomes and record; at level `steps` it prints none; a command with no outside file prints none. | `check_guards::warns_about_a_file_outside_dir` |
+| AC-3 | WHEN `stapel check` runs its guards (levels `head` and `full`) THE it prints the reach warnings on standard error and the run goes on with the same outcomes and record; at level `steps` it prints none; a command with no outside file prints none. | `check_guards::warns_about_a_file_outside_dir`, `check_guards::reach_word_coverage`, `check_guards::interpreter_only_at_command_start` |
 | AC-4 | WHEN `stapel init` runs in a repository whose `stapel.toml` has guards THE, after every refusal check and before it writes, it prints the reach warnings on standard error and writes as before; IF init refuses (a binding, a directory at a process path) THEN no reach warning is printed. | `init_process::guard_reach_warning` |
 | AC-5 | WHEN `stapel init` writes the starter and the skill THE the starter's line `# [guards]` ends with the comment `# a guard's scripts and configs belong in dir: an agent edits a file outside it with no dialog`, so the starter stays valid TOML when its commented lines are uncommented, and the skill's line on the guards folder holds the sentence `A guard's scripts and configs belong in the guards folder; an agent edits a file outside it with no dialog.` | `init_process::guard_reach_text` |
 | AC-6 | WHEN `stapel init` writes the reviewer body for an agent THE the finding template holds `"role":"<role>"` with the agent's role: `reviewer` for `stapel-reviewer`, `external` for `stapel-external-reviewer`; the two bodies differ only there; the asset holds one body. | `init_process::reviewer_role_in_the_finding_template`, `init_process::external_reviewer_agent` |
-| AC-7 | IF an agent role (`builder`, `drift`, `reviewer`, `depends`, `external`) of `[models]` has a provider other than `claude-code` THEN `stapel init` exits 1 with `stapel: [models] <role>: provider "<p>" is not claude-code: an agent role runs as a Claude Code agent; set provider = "claude-code"` and writes nothing; the provider of a role is checked before its mode and model, and the roles in the order of that list; a role without an agent file (`author`, `cheap`) is not checked. | `init_process::refuses_a_foreign_provider` |
+| AC-7 | IF an agent role (`builder`, `drift`, `reviewer`, `depends`, `external`) of `[models]` has a provider other than `claude-code` THEN `stapel init` exits 1 with `stapel: [models] <role>: provider "<p>" is not claude-code: an agent role runs as a Claude Code agent; set provider = "claude-code"` and writes nothing; the provider of a role is checked before its mode and model, and the roles in the order of that list; a role without an agent file (`author`, `cheap`) is not checked. | `init_process::refuses_a_foreign_provider`, `init_process::first_foreign_role_is_named` |
 | AC-8 | WHEN `stapel init` writes a new `stapel.toml` THE its `external` binding has `provider = "claude-code"`. | `init_process::starter_binds_claude_code` |
 
 ### Guarantees
@@ -142,6 +146,10 @@ also `--test ticket_drift` and `--test fixtures`.
 | Role | the installed `stapel-reviewer.md` holds `"role":"reviewer"`, `stapel-external-reviewer.md` holds `"role":"external"`, and the two bodies are equal after that one replacement | `init_process::reviewer_role_in_the_finding_template`, `init_process::external_reviewer_agent` |
 | Provider | `external` and `builder` with `anthropic-api`: refused, nothing written; `reviewer` with `anthropic-api` and a bad mode: the provider message; `author` with `anthropic-api`: init runs | `init_process::refuses_a_foreign_provider` |
 | Starter | a new `stapel.toml`: the `external` line holds `provider = "claude-code"` and `model = "claude-opus-5-5"` | `init_process::starter_binds_claude_code` |
+| All folders | each of the nine work folders refused; `tests/guards`, `src/x`, `guards` load with no error at all | `check_guards::all_work_folders_refused` |
+| Reach coverage | a script after `\|`, `&&`, `(` and a backtick warns; `node`, `python`, `ruby` scripts warn; `sh -e scripts/cov.sh` warns; `sh src` (a folder) gives none; the guard part of the `runs.jsonl` record equals that of a run without outside files | `check_guards::reach_word_coverage` |
+| Interpreter place | `grep -w sh scripts/x.sh` and `grep TODO 2>&1` with a root file `1`: no warning | `check_guards::interpreter_only_at_command_start` |
+| Role order | `builder` and `external` both on `anthropic-api`: the message names `builder`; `drift` alone and `depends` alone: refused | `init_process::first_foreign_role_is_named` |
 
 ### Inputs
 
@@ -197,8 +205,9 @@ init refuses, `init_process::refuses_a_bad_permission_mode` covers the path).
 ### Shape
 
 - `stapel-core::config`: `WORK_FOLDERS` and a check in `validate` between the lexical one and the
-  `[check]` one; a function `guard_reach(root, guards) -> Vec<String>` that returns the reach warnings,
-  used by `check.rs` and `init.rs`.
+  `[check]` one.
+- `check.rs`: a private `command_words` and a `pub(crate)` function `guard_reach(root, dir, entries) ->
+  Vec<String>` that returns the reach warnings, used by `check.rs` and `init.rs`.
 - `check.rs`: before the guards run, print each line of `guard_reach` for the root of the working tree.
 - `init.rs`: print each line of `guard_reach` after the whole plan is checked, right before the first
   write; `plan_process_files` replaces
@@ -221,9 +230,9 @@ init refuses, `init_process::refuses_a_bad_permission_mode` covers the path).
 
 - Step 1 (defb165, 58bbe4b): the work-folder check sits in `Config::validate` after the lexical check
   and before `guards need [check]`; it compares the lower-cased `dir` without its trailing `/`.
-- Step 2 (6b0d3cb, 14be84b): `command_words` and `guard_reach(root, dir, entries)` live in
-  `crates/stapel-cli/src/check.rs` as `pub(crate)`, not in `stapel-core`, because only the binary uses
-  them; check prints the lines with `warn!` before the guards run.
+- Step 2 (6b0d3cb, 14be84b): `command_words` (private) and `guard_reach(root, dir, entries)`
+  (`pub(crate)`) live in `crates/stapel-cli/src/check.rs`, not in `stapel-core`, because only the binary
+  uses them; check prints the lines with `warn!` before the guards run.
 - 2026-11-24, agent: the link cases of `check_guards::warns_about_a_file_outside_dir` live in the
   ignored `target/` folder, because `stapel check` refuses an untracked link in the working tree; the
   link guard runs `sh target/l.sh || true`, as ignored files are absent from the check copy.
@@ -240,18 +249,24 @@ init refuses, `init_process::refuses_a_bad_permission_mode` covers the path).
 - 2026-11-24, agent: the check of 96b6926 failed the suite test `init::writes_commented_check_otherwise`:
   it uncomments every starter line after `# [check]`, and the own line of step 3 then is no TOML. AC-5
   now puts the comment at the end of the line `# [guards]` (step 6).
+- Step 6 (1154bf5, 8e0549f): `GUARDS_COMMENT` ends its `# [guards]` line with the AC-5 comment.
+- Step 7 (58960ba, 5cacf2a): `guard_reach` lower-cases both the reach word and `dir` before the Covers
+  test.
+- 2026-11-24, agent (code review round 2): rule (b) now needs the interpreter at a command start, and
+  `2>&1` starts no word (step 11, CR2-1, XR2-6, XR2-7); the test gaps of the round are coverage steps 8
+  to 10.
 
 ## Proof
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `check_guards::refuses_an_overlapping_dir` |
+| AC-1 | `check_guards::refuses_an_overlapping_dir`, `check_guards::all_work_folders_refused` |
 | AC-2 | `hook_guards::an_overlapping_dir_edit_is_denied` |
-| AC-3 | `check_guards::warns_about_a_file_outside_dir` |
+| AC-3 | `check_guards::warns_about_a_file_outside_dir`, `check_guards::reach_word_coverage`, `check_guards::interpreter_only_at_command_start` |
 | AC-4 | `init_process::guard_reach_warning` |
 | AC-5 | `init_process::guard_reach_text` |
 | AC-6 | `init_process::reviewer_role_in_the_finding_template`, `init_process::external_reviewer_agent` |
-| AC-7 | `init_process::refuses_a_foreign_provider` |
+| AC-7 | `init_process::refuses_a_foreign_provider`, `init_process::first_foreign_role_is_named` |
 | AC-8 | `init_process::starter_binds_claude_code` |
 
 ## Plan
@@ -284,6 +299,14 @@ Route: full (tags `guard`, `interface`), auto.
 7. Case of `dir` (DR1-1; AC-3; test `check_guards::warns_about_a_file_outside_dir`): the RED adds
    `dir = "Guards"` with `sh guards/run.sh`: no warning (`history:` line); the GREEN compares in lower
    case.
+8. Coverage of the work folders (CR2-3, XR2-4; AC-1; test `check_guards::all_work_folders_refused`): a
+   coverage commit only.
+9. Coverage of the reach words (DR2-1, XR2-1, XR2-5; AC-3; test `check_guards::reach_word_coverage`): a
+   coverage commit only.
+10. Coverage of the role order (CR2-2, DR2-2, XR2-5; AC-7; test
+   `init_process::first_foreign_role_is_named`): a coverage commit only.
+11. Interpreter place (CR2-1, XR2-6, XR2-7; AC-3; test `check_guards::interpreter_only_at_command_start`):
+   the RED adds the test; the GREEN changes `command_words` and `guard_reach`.
 
 ## Review
 
@@ -297,12 +320,13 @@ Findings:
 | spec-review | 1 | external | 1 | 4 | 4 | 0 | defer 1, patch 8 |
 | spec-review | 2 | external | 0 | 1 | 5 | 0 | patch 6 |
 | code-review | 1 | drift | 0 | 0 | 1 | 0 | patch 1 |
+| code-review | 2 | drift, external, reviewer | 0 | 2 | 14 | 0 | defer 2, no-change 1, patch 13 |
 
 Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| head | fail | 96b6926 | 2026-11-24T20:09:58Z | pass 5 |
+| head | pass | 5cacf2a | 2026-11-24T20:53:28Z | pass 7 |
 <!-- stapel:review:end -->
 
 ## Summary
