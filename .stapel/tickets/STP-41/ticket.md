@@ -433,6 +433,7 @@ Findings:
 | code-review | 3 | drift, external, reviewer | 0 | 3 | 2 | 0 | no-change 4, patch 1 |
 | code-review | 4 | external, reviewer | 0 | 2 | 1 | 0 | no-change 3 |
 | dependency | STP-40:00d8a34c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
+| dependency | STP-40:2e2191d7:f6466b4a | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:bd0eb2ad | depends | 0 | 1 | 0 | 0 | patch 1 |
 | dependency | STP-40:796eb16c:0646a136 | depends | 0 | 0 | 1 | 0 | open 1 |
