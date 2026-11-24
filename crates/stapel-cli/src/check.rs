@@ -1741,6 +1741,15 @@ impl Runner<'_> {
                             done.push(("pass", 0, 0));
                             continue;
                         }
+                        let tree_head = git_text(self.root, &["rev-parse", "HEAD"]).ok();
+                        if tree_head.as_deref().map(str::trim) != Some(self.head) {
+                            say!(
+                                "guard: {shown}: pass; baseline not tightened: checked {} is not HEAD",
+                                short(self.head)
+                            );
+                            done.push(("pass", 0, 0));
+                            continue;
+                        }
                         let base = entry.baseline.as_deref().unwrap_or_default();
                         let rel = format!("{}/{}", dir.strip_suffix('/').unwrap_or(dir), base);
                         let text: String = kept.iter().map(|l| format!("{l}\n")).collect();
