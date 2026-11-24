@@ -1280,4 +1280,19 @@ fn warns_about_a_file_outside_dir() {
     let (code, out, err) = both("steps");
     assert_eq!(code, 0, "{out}{err}");
     assert!(!err.contains("warning: guard"), "{err}");
+
+    // DR1-1: `dir` is compared in lower case, so `dir = "Guards"` covers `guards/run.sh`.
+    let toml = read(dir, ".stapel/stapel.toml").replace("dir = \"guards\"", "dir = \"Guards\"");
+    write(dir, ".stapel/stapel.toml", &toml);
+    commit(dir, "ABC-1: dir in capitals");
+    let (code, out, err) = both("head");
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        !err.contains("guard e reads"),
+        "dir = Guards covers guards/run.sh: {err}"
+    );
+    assert!(
+        err.contains("warning: guard a reads scripts/cov.sh outside Guards;"),
+        "{err}"
+    );
 }
