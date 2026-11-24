@@ -146,7 +146,8 @@ init_process`); before each GREEN also `--test ticket_drift` and `--test fixture
 | Bad config | `slots = 0` and a broken `stapel.toml`: `stapel cargo` exits 1 with the load error and the stand-in cargo did not run; a folder outside any stapel repository: runs | `cargo_lock::a_bad_config_refuses` |
 | Agent file | the installed file's header (name, tools, model of `external`), its body equals the reviewer's; the starter `[models]` and `[roles]`; a token record of the agent type without `[roles]` | `init_process::external_reviewer_agent` |
 | Reviewers | a full tagged ticket: the three lines; light and untagged tickets unchanged | `review::reviewers_by_route_and_tags` |
-| Review fixes | a stand-in that prints `Running` and `Doc-tests` lines on standard error and the libtest blocks on standard output, with `tests::x` failing in two crates: two names with their binary names; N = 1, slot 1 held by a foreign holder, run A of a worktree waits for the slot: run B of that worktree names A's holder line | `check_failing::cargo_names_failing_tests`, `cargo_lock::worktree_holder_named_during_slot_wait` |
+| Stream split | targets on standard error, test blocks on standard output; `tests::x` failing in two crates: two names | `check_failing::cargo_names_failing_tests` |
+| Holder while waiting | N = 1, slot 1 held by a foreign holder, run A of a worktree waits for the slot: run B of that worktree names A's holder line | `cargo_lock::worktree_holder_named_during_slot_wait` |
 | Drift cases | no `[cargo]` table: three runs from three worktrees hold at once and a fourth waits; a run that waits for its worktree lock and then for the slots prints two waiting lines; the holder `stapel cargo` killed while its cargo child runs: the worktree lock stays held until the child ends; a run with the held mark takes no worktree lock | `cargo_lock::default_slots_are_three`, `cargo_lock::two_waiting_lines`, `cargo_lock::worktree_lock_outlives_its_holder` |
 | Pack base edges | a base branch whose merge base is the ticket base: one base line; a base branch with no common history: the ticket base, one base line | `review::pack_base_edges` |
 | Pack base | a ticket branch with a merge of a later main commit: diff and stat hold only the ticket's files, both base lines; no merge: one base line; no base branch in `state.json`; a deleted base branch | `review::pack_base_after_a_main_merge` |
@@ -325,9 +326,8 @@ Route: full (tag `interface`), auto.
 11. Drift coverage of the pack base (DR1-3; AC-7; test `review::pack_base_edges`): a coverage commit only.
 12. Drift coverage of the worktree lock (DR1-2; AC-4; test `cargo_lock::worktree_lock_outlives_its_holder`):
    a coverage commit only.
-13. Fix of the failing names (XR1-1, CR1-1; AC-8; test `check_failing::cargo_names_failing_tests`): the
-   RED makes the stand-in print the target lines on standard error, adds a test failing in two crates
-   and expects binary names; the GREEN pairs the streams by order. Must not change: the junit names.
+13. Fix of the failing names (XR1-1; AC-8; test `check_failing::cargo_names_failing_tests`): the RED
+   splits the stand-in's streams and expects binary names; the GREEN pairs the streams by order.
 14. Fix of the worktree holder (XR1-2; AC-4; test `cargo_lock::worktree_holder_named_during_slot_wait`):
    the RED adds the test; the GREEN writes the holder line into the worktree lock before the slot wait.
    Must not change: the tests of steps 2, 3, 10 and 12.
