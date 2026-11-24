@@ -1076,3 +1076,104 @@ fn all_slots_held_waits() {
     wait_exit(&mut waiter, "the second run");
     wait_exit(&mut third, "the third run");
 }
+
+// STP-42 AC-4: a run takes the worktree lock before a slot and writes its holder line into it; a second
+// run from a subfolder of that worktree waits with the holder's line and holds no slot while free slots
+// exist; a run from another worktree of the same repository runs at once.
+#[test]
+fn one_run_per_worktree() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let lock_dir = home.join(".cache/stapel");
+    std::fs::create_dir_all(&home).unwrap();
+    let repo = slot_repo(3);
+    let dir = repo.path();
+    commit_all(dir, "base");
+    stapel(dir).args(["new", "First"]).assert().success();
+    let wt = dir.join(".claude/worktrees/ABC-1");
+    let sub = dir.join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    let standin_a = holding_standin(root.path(), "a");
+    let standin_b = Standin::new(&root.path().join("b"));
+    let standin_c = holding_standin(root.path(), "c");
+
+    let mut first = standin_a
+        .command(dir, &home, &["cargo", "hold-a"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_until("the first cargo", || standin_a.ctl.join("started").exists());
+    let worktree_locks = || -> Vec<PathBuf> {
+        std::fs::read_dir(&lock_dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("worktree-")
+            })
+            .collect()
+    };
+    let locks = worktree_locks();
+    assert_eq!(locks.len(), 1, "{locks:?}");
+    let line = std::fs::read_to_string(&locks[0]).unwrap();
+    assert!(
+        line.contains(&format!("pid {}", first.id())) && line.contains("stapel cargo hold-a"),
+        "worktree lock: {line:?}"
+    );
+
+    // A second run from a subfolder of the same worktree waits, holding no slot.
+    let err = root.path().join("b.err");
+    let mut second = spawn_to(standin_b.command(&sub, &home, &["cargo", "second"]), &err);
+    wait_until("the wait line", || {
+        std::fs::read_to_string(&err)
+            .unwrap_or_default()
+            .contains(WAIT_LINE)
+    });
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(second.try_wait().unwrap().is_none(), "the run did not wait");
+    assert_eq!(standin_b.runs("second"), 0, "{}", standin_b.log());
+    let text = std::fs::read_to_string(&err).unwrap();
+    assert_eq!(text.matches(WAIT_LINE).count(), 1, "{text}");
+    let wait = text.lines().find(|l| l.contains(WAIT_LINE)).unwrap();
+    assert!(
+        wait.contains(&format!("pid {}", first.id())) && wait.contains("stapel cargo hold-a"),
+        "{wait}"
+    );
+    assert!(
+        slot_text(&home, 1).contains(&format!("pid {}", first.id())),
+        "slot 1: {:?}",
+        slot_text(&home, 1)
+    );
+    for slot in [2, 3] {
+        assert_eq!(slot_text(&home, slot), "", "slot {slot} has a holder line");
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(slot_file(&home, slot))
+            .unwrap();
+        assert!(file.try_lock().is_ok(), "the waiter holds slot {slot}");
+    }
+
+    // Another worktree of the same repository runs at once.
+    let mut other = standin_c
+        .command(&wt, &home, &["cargo", "hold-c"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_until("the run in the other worktree", || {
+        standin_c.ctl.join("started").exists()
+    });
+    assert_eq!(worktree_locks().len(), 2, "{:?}", worktree_locks());
+    standin_c.touch("release");
+    wait_exit(&mut other, "the other worktree's run");
+
+    // The first run ends: the second goes on.
+    standin_a.touch("release");
+    wait_exit(&mut first, "the first run");
+    wait_exit(&mut second, "the second run");
+    assert_eq!(standin_b.runs("second"), 1, "{}", standin_b.log());
+}
