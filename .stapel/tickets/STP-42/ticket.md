@@ -233,29 +233,32 @@ the CLAUDE.md line on cargo runs (text only, not tested).
   `DEFAULT_CARGO_SLOTS` is 3 and `Config::cargo_slots()` returns N; `cargo.rs::run` loads the config with
   `repo::load` and refuses on a load error. Before the code an unknown `[cargo]` table loaded, so the
   fixture change of `check_repo` alone did not fail at RED; the two new tests did.
-- Step 2 (06ed3b9, a400b0e): `take` opens N slot files, takes the first free one, prints one waiting line
+- Step 2 (fb6c158, 0688399): `take` opens N slot files, takes the first free one, prints one waiting line
   with every holder joined by `; ` and polls each 100 ms.
-- 2026-11-24, agent: `cargo_lock::junit_check_takes_the_lock` (STP-28) gets `[cargo] slots = 1` inside
-  the test, amended into the step 2 RED, as the Test plan does for `check_repo`; with 3 slots it took
-  slot 2 and never waited.
-- Step 3 (4a8819e, ca5da16): the worktree lock `worktree-<h>.lock` hashes the canonical root that
+- 2026-11-24, agent: `cargo_lock::junit_check_takes_the_lock` (STP-28) runs with `[cargo] slots = 2`,
+  holds both slots with holder lines and asserts that the waiting line names both, in the step 2 RED.
+  The first version set `slots = 1` and passed before the code, so `stapel check` gave step 2 `no-red`;
+  the RED was rebuilt and the later commits replayed on it, which changed every later commit id.
+- Step 3 (b0f162d, 8e3912e): the worktree lock `worktree-<h>.lock` hashes the canonical root that
   `git rev-parse --show-toplevel` prints; each wait prints its own line.
-- 5b7c038: this repository's `.stapel/stapel.toml` gets `stapel-external-reviewer = "external"` and
+- 5c436b2: this repository's `.stapel/stapel.toml` gets `stapel-external-reviewer = "external"` and
   `[cargo] slots = 3`.
-- Step 4 (997fb72, f5dd71b): the sixth `AgentFile` `external-reviewer`; `AGENT_ROLES` holds `external`;
+- Step 4 (a5f3413, 0106ed8): the sixth `AgentFile` `external-reviewer`; `AGENT_ROLES` holds `external`;
   `hook.rs::DEFAULT_ROLES` has the row; the starter binds `claude-opus-5-5`; `stapel init` installed
   `.claude/agents/stapel-external-reviewer.md`.
-- Step 5 (8d76561, 952142c): `reviewers()` names `stapel-external-reviewer`; the RED also changed the
+- Step 5 (a6ffce6, 47630e6): `reviewers()` names `stapel-external-reviewer`; the RED also changed the
   external line of `review.rs`'s test without a model and the expected model from fable to opus.
-- Step 6 (92a357b, ebaf187): `Pack.ticket_base: Option<&str>`; `write_pack` takes the merge base of
+- Step 6 (46ded2c, 31a752b): `Pack.ticket_base: Option<&str>`; `write_pack` takes the merge base of
   `refs/heads/<base branch>` and HEAD and falls back to the ticket base; the case with no merge is the
   existing goldens of rounds one and two.
-- Step 7 (a245f3f, d227970): `Suite.failing`, `Suite.failing_more`, `cargo_failing_names` and
+- Step 7 (c415ca9, e1ae4bf): `Suite.failing`, `Suite.failing_more`, `cargo_failing_names` and
   `MAX_FAILING` = 20; the keys are written only when a name exists.
-- Step 8 (66302cb, b73e607): `suite_junit` collects `<suite> <case>` with the case name trimmed, because
+- Step 8 (1e29e36, 880f301): `suite_junit` collects `<suite> <case>` with the case name trimmed, because
   jest-junit puts a leading space on top-level names.
-- Step 9 (2a6ce01, 9605360): the builder asset, the skill's rule 6 and the CLAUDE.md rule on cargo runs;
+- Step 9 (f752f54, b86d4fe): the builder asset, the skill's rule 6 and the CLAUDE.md rule on cargo runs;
   `stapel init` installed the copies.
+- Steps 10 to 12 (bf1b0ff, d1619a5, 861fb3f): coverage commits of the drift review; every test passed
+  against the code, and each lock test reaps its holder processes on every exit.
 - 2026-11-24, agent: the tests of `check_junit` with an absolute script path fail without a case-sensitive
   TMPDIR on this machine and pass with it; they are outside this ticket.
 
