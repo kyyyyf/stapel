@@ -2218,6 +2218,21 @@ fn names_the_records() {
     }
 }
 
+// STP-43 AC-6: the finding template of the reviewer body holds the role of the agent that carries it.
+#[test]
+fn reviewer_role_in_the_finding_template() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    let reviewer = body_of(dir, AGENTS[2]);
+    let external = body_of(dir, AGENTS[4]);
+    assert!(reviewer.contains("\"role\":\"reviewer\""), "{reviewer}");
+    assert!(!reviewer.contains("@ROLE@"), "{reviewer}");
+    assert!(external.contains("\"role\":\"external\""), "{external}");
+    assert!(!external.contains("\"role\":\"reviewer\""), "{external}");
+    assert!(!external.contains("@ROLE@"), "{external}");
+    assert_eq!(reviewer.replace("\"role\":\"reviewer\"", "\"role\":\"external\""), external);
+}
+
 // STP-42 AC-5: the external reviewer agent has the reviewer's body and the model of `external`; the
 // starter binds `external` to Opus and maps the agent type; without `[roles]` its records get `external`.
 #[test]
@@ -2229,7 +2244,10 @@ fn external_reviewer_agent() {
     assert_eq!(fm[1], "name: stapel-external-reviewer", "{fm:?}");
     assert!(fm.contains(&"tools: Read, Grep, Glob".to_string()), "{fm:?}");
     assert!(fm.contains(&"model: \"claude-opus-5-5\"".to_string()), "{fm:?}");
-    assert_eq!(body_of(dir, rel), body_of(dir, AGENTS[2]));
+    assert_eq!(
+        body_of(dir, rel),
+        body_of(dir, AGENTS[2]).replace("\"role\":\"reviewer\"", "\"role\":\"external\"")
+    );
 
     let text = read(dir, ".stapel/stapel.toml");
     let lines: Vec<&str> = text.lines().collect();
