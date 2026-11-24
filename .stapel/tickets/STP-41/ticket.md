@@ -365,6 +365,15 @@ Route: full (tags `guard`, `interface`, `data`), auto.
 16. Hook config and linked folder (XR1-2, XR1-4, AC-12): the GREEN loads the config in `guards_write_ask`
    with `Config::parse` and resolves `<root>/<dir>` before the compare. Must not change: the other write
    rules.
+17. Silent or masked crash (XR2-1, AC-10): the GREEN tightens only when standard error is empty and
+   standard output is not empty; otherwise `pass; baseline not tightened: standard error` or `pass;
+   baseline not tightened: no output`. Must not change: the pass or fail of the guard.
+18. Hard denials first (XR2-3, AC-12): the GREEN applies the hard denials of the old write rules (machine
+   files, `.git`, `.claude`, `.stapel`, the git hooks folder) before the guards dialog. Must not change:
+   the dialog for any other path in the folder.
+19. Folder outside the root (XR2-4, AC-12): the GREEN compares the resolved absolute target with the
+   resolved absolute folder, so a folder linked outside the root still asks. Must not change: the old
+   write rules outside the folder.
 
 | Fix step | Tests |
 |---|---|
@@ -372,6 +381,9 @@ Route: full (tags `guard`, `interface`, `data`), auto.
 | 14 | `check_guards::a_linked_baseline_is_not_written` |
 | 15 | `check_guards::a_crashing_guard_keeps_the_baseline` |
 | 16 | `hook_guards::a_bad_cargo_pin_keeps_the_dialog`, `hook_guards::a_linked_guards_folder_asks` |
+| 17 | `check_guards::a_silent_or_masked_crash_keeps_the_baseline` |
+| 18 | `hook_guards::hard_denials_win_in_the_guards_folder` |
+| 19 | `hook_guards::a_folder_outside_the_root_asks` |
 
 ## Review
 
@@ -388,6 +400,7 @@ Findings:
 | spec-review | 2 | reviewer | 0 | 3 | 7 | 0 | patch 10 |
 | step-drift | 1 | drift | 0 | 1 | 3 | 0 | no-change 1, patch 3 |
 | code-review | 1 | external, reviewer | 1 | 7 | 1 | 0 | defer 1, no-change 1, patch 7 |
+| code-review | 2 | drift, external, reviewer | 0 | 10 | 1 | 0 | no-change 2, patch 9 |
 | dependency | STP-40:00d8a34c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:bd0eb2ad | depends | 0 | 1 | 0 | 0 | patch 1 |
