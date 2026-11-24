@@ -88,17 +88,18 @@ Terms:
   base branch and git finds one; otherwise the ticket base `state.json` `base`.
 - **Failing name**: under the cargo runner, `<target> <name>` for each line `test <name> ... FAILED` of
   the suite output, where `<target>` is the path of the last `Running` line before it (`unittests ` and
-  the ` (<binary>)` part removed), or `doc <crate>` after a `Doc-tests <crate>` line; under junit, `<suite> <case>` for each failed case of the report.
+  the ` (<binary>)` part removed), or `doc <crate>` after a `Doc-tests <crate>` line; under junit, `<suite> <case>` for each failed case of the report, the case name with outer
+  whitespace removed (jest-junit puts a space before top-level names).
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | IF `[cargo] slots` is not a whole number from 1 to 16 (`0`, `17`, `-1`, `2.5`, `"3"`) THEN loading `stapel.toml` fails with `cargo.slots must be a whole number from 1 to 16`; WHEN the key or the table is absent THE N is 3; an unknown key under `[cargo]` fails as in other tables. | `cargo_lock::slots_setting` |
+| AC-1 | IF `[cargo] slots` is not a whole number from 1 to 16 (`0`, `17`, `-1`, `2.5`, `"3"`) THEN loading `stapel.toml` fails with `cargo.slots must be a whole number from 1 to 16`; WHEN the key or the table is absent THE N is 3; an unknown key under `[cargo]` fails as in other tables. | `cargo_lock::slots_setting`, `cargo_lock::default_slots_are_three` |
 | AC-2 | WHEN fewer than N slots are held THE `stapel cargo` and `stapel check` take the first free slot, write the holder line into it and run at once; the held mark and the inherited descriptor cover it, as STP-27 does for one lock. | `cargo_lock::runs_in_parallel_up_to_slots` |
-| AC-3 | WHEN every slot of 1 to N is held THE run prints the waiting line with the N holder lines once, waits with no time limit and takes the first slot that is freed; with N = 1 the behaviour is that of STP-27. A run prints at most two waiting lines: one for its worktree lock (AC-4), then one for the slots. | `cargo_lock::all_slots_held_waits` |
-| AC-4 | WHEN `stapel cargo` or `stapel check` runs THE it takes the worktree lock before a slot and writes its holder line into it, and the held mark and the inherited descriptors cover both locks; WHEN the worktree lock is held THE a second run from that worktree prints the waiting line with that holder, waits, and holds no slot while it waits, even when slots are free. | `cargo_lock::one_run_per_worktree` |
+| AC-3 | WHEN every slot of 1 to N is held THE run prints the waiting line with the N holder lines once, waits with no time limit and takes the first slot that is freed; with N = 1 the behaviour is that of STP-27. A run prints at most two waiting lines: one for its worktree lock (AC-4), then one for the slots. | `cargo_lock::all_slots_held_waits`, `cargo_lock::two_waiting_lines` |
+| AC-4 | WHEN `stapel cargo` or `stapel check` runs THE it takes the worktree lock before a slot and writes its holder line into it, and the held mark and the inherited descriptors cover both locks; WHEN the worktree lock is held THE a second run from that worktree prints the waiting line with that holder, waits, and holds no slot while it waits, even when slots are free. | `cargo_lock::one_run_per_worktree`, `cargo_lock::worktree_lock_outlives_its_holder` |
 | AC-5 | WHEN `stapel init` runs THE it writes `.claude/agents/stapel-external-reviewer.md` with the body of the reviewer agent, the read-only tools and the model of `[models] external`; the starter `stapel.toml` binds `external` to `claude-opus-5-5` and maps `stapel-external-reviewer = "external"` under `[roles]`; with `[roles]` absent the agent's records get the role `external`. | `init_process::external_reviewer_agent` |
 | AC-6 | WHEN `stapel review start` prints the reviewers of a full ticket with a risk tag THE the external line is `reviewer: stapel-external-reviewer, model <m> (role external)`; the other lines stay. | `review::reviewers_by_route_and_tags` |
-| AC-7 | WHEN `stapel review start --round N` runs and the pack base differs from the ticket base THE `diff.patch` and the stat of `pack.md` are of `<pack base>..HEAD`, `pack.md` names `- base: <pack base>` and the line `- ticket base: <ticket base>`; WHEN the two are equal THE `pack.md` has the one base line, as now; IF `state.json` has no base branch, the branch is missing or git finds no merge base THEN the ticket base, as now, with no `ticket base` line. | `review::pack_base_after_a_main_merge` |
+| AC-7 | WHEN `stapel review start --round N` runs and the pack base differs from the ticket base THE `diff.patch` and the stat of `pack.md` are of `<pack base>..HEAD`, `pack.md` names `- base: <pack base>` and the line `- ticket base: <ticket base>`; WHEN the two are equal THE `pack.md` has the one base line, as now; IF `state.json` has no base branch, the branch is missing or git finds no merge base THEN the ticket base, as now, with no `ticket base` line. | `review::pack_base_after_a_main_merge`, `review::pack_base_edges` |
 | AC-8 | WHEN the suite of `stapel check` fails under the cargo runner THE the line after the suite line is `failing: <names>` with the first 20 distinct failing names in output order joined by `, `, and ` and <n> more` when there are more distinct names; the record's `suite` gets `failing` (the same list) and `failing_more` (n); a passing suite or one with no failing name prints no such line and writes no such key. | `check_failing::cargo_names_failing_tests` |
 | AC-9 | WHEN the suite fails under the junit runner THE the same line and record keys are made from the distinct failing names of the failed cases of the report, in report order. | `check_failing::junit_names_failing_tests` |
 | AC-10 | WHEN `stapel init` installs the builder agent and the skill THE the builder text says to run the private-data test of the project with the ticket lint before each GREEN, and the skill's rule 6 says the Test plan names both. | `init_process::builder_runs_the_privacy_test` |
@@ -143,6 +144,8 @@ init_process`); before each GREEN also `--test ticket_drift` and `--test fixture
 | Bad config | `slots = 0` and a broken `stapel.toml`: `stapel cargo` exits 1 with the load error and the stand-in cargo did not run; a folder outside any stapel repository: runs | `cargo_lock::a_bad_config_refuses` |
 | Agent file | the installed file's header (name, tools, model of `external`), its body equals the reviewer's; the starter `[models]` and `[roles]`; a token record of the agent type without `[roles]` | `init_process::external_reviewer_agent` |
 | Reviewers | a full tagged ticket: the three lines; light and untagged tickets unchanged | `review::reviewers_by_route_and_tags` |
+| Drift cases | no `[cargo]` table: three runs from three worktrees hold at once and a fourth waits; a run that waits for its worktree lock and then for the slots prints two waiting lines; the holder `stapel cargo` killed while its cargo child runs: the worktree lock stays held until the child ends; a run with the held mark takes no worktree lock | `cargo_lock::default_slots_are_three`, `cargo_lock::two_waiting_lines`, `cargo_lock::worktree_lock_outlives_its_holder` |
+| Pack base edges | a base branch whose merge base is the ticket base: one base line; a base branch with no common history: the ticket base, one base line | `review::pack_base_edges` |
 | Pack base | a ticket branch with a merge of a later main commit: diff and stat hold only the ticket's files, both base lines; no merge: one base line; no base branch in `state.json`; a deleted base branch | `review::pack_base_after_a_main_merge` |
 | Cargo failing | 3 failing tests in two targets; a failing doc test after a `Doc-tests tiny` line: `doc tiny <name>`; 25 failing: 20 and `and 5 more`; one name printed twice; a compile failure; a passing suite: no line, no key | `check_failing::cargo_names_failing_tests` |
 | Junit failing | two failed cases and one passed; one failed case named twice; a passing report | `check_failing::junit_names_failing_tests` |
@@ -260,13 +263,13 @@ the CLAUDE.md line on cargo runs (text only, not tested).
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `cargo_lock::slots_setting` |
+| AC-1 | `cargo_lock::slots_setting`, `cargo_lock::default_slots_are_three` |
 | AC-2 | `cargo_lock::runs_in_parallel_up_to_slots` |
-| AC-3 | `cargo_lock::all_slots_held_waits` |
-| AC-4 | `cargo_lock::one_run_per_worktree` |
+| AC-3 | `cargo_lock::all_slots_held_waits`, `cargo_lock::two_waiting_lines` |
+| AC-4 | `cargo_lock::one_run_per_worktree`, `cargo_lock::worktree_lock_outlives_its_holder` |
 | AC-5 | `init_process::external_reviewer_agent` |
 | AC-6 | `review::reviewers_by_route_and_tags` |
-| AC-7 | `review::pack_base_after_a_main_merge` |
+| AC-7 | `review::pack_base_after_a_main_merge`, `review::pack_base_edges` |
 | AC-8 | `check_failing::cargo_names_failing_tests` |
 | AC-9 | `check_failing::junit_names_failing_tests` |
 | AC-10 | `init_process::builder_runs_the_privacy_test` |
@@ -305,6 +308,11 @@ Route: full (tag `interface`), auto.
 9. Texts (AC-10; test `init_process::builder_runs_the_privacy_test`): the RED adds the test; the GREEN changes the builder asset
    and the skill, runs `stapel init`, and changes the CLAUDE.md line on cargo runs. Must not change: the
    other rules.
+10. Drift coverage of the slots (DR1-1, DR1-2; AC-1, AC-3, AC-4; tests
+   `cargo_lock::default_slots_are_three`, `cargo_lock::two_waiting_lines`,
+   `cargo_lock::worktree_lock_outlives_its_holder`): a coverage commit only, no RED and no GREEN, because
+   steps 1 to 3 already do this.
+11. Drift coverage of the pack base (DR1-3; AC-7; test `review::pack_base_edges`): a coverage commit only.
 
 ## Review
 
@@ -319,6 +327,7 @@ Findings:
 |---|---|---|---|---|---|---|---|
 | spec-review | 1 | external | 1 | 5 | 3 | 0 | defer 1, no-change 1, patch 7 |
 | spec-review | 2 | external | 0 | 4 | 3 | 0 | patch 7 |
+| step-drift | 1 | drift | 0 | 1 | 4 | 0 | no-change 1, patch 4 |
 
 Check runs: none
 <!-- stapel:review:end -->
