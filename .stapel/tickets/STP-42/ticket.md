@@ -48,7 +48,7 @@ its children left holding a slot; the merge base when the base branch was rewrit
 **Prior art.** STP-27 (the cargo lock and `stapel cargo`); STP-28 (junit reports); STP-39 and STP-40
 (merge rounds); the jobserver of GNU make (slots as tokens).
 
-**Size.** About 300 source lines and 400 test lines; 8 Plan steps. Route: full, auto.
+**Size.** About 300 source lines and 400 test lines; 9 Plan steps. Route: full, auto.
 
 ### Decisions
 
@@ -180,7 +180,7 @@ the CLAUDE.md line on cargo runs (text only, not tested).
 
 ### Facts
 
-- F-1: `crates/stapel-cli/src/cargo.rs::take` opens `~/.cache/stapel/cargo.lock`, tries the OS lock,
+- F-1: `take` in `crates/stapel-cli/src/cargo.rs` opens `~/.cache/stapel/cargo.lock`, tries the OS lock,
   prints the waiting line with the holder line, waits, writes the holder line and clears close-on-exec;
   `check.rs` (about line 467) calls it as `take("stapel check")` and sets the held mark.
 - F-2: `init.rs::AGENT_FILES` lists the agent files with name, role, tools and body; the model of the
@@ -201,7 +201,7 @@ the CLAUDE.md line on cargo runs (text only, not tested).
 - `stapel-cli::cargo::take`: reads N from the config of the current repository (3 outside one; a load
   error is returned as the refusal of AC-11), takes
   the worktree lock, then tries the slots in order and, when all are held, waits on any slot by polling
-  `try_lock` each 200 ms; the returned `CargoLock` holds both files.
+  `try_lock` each 100 ms; the returned `CargoLock` holds both files.
 - `stapel-core::review::reviewers`: the external entry gets the agent `stapel-external-reviewer`.
 - `init.rs`: a sixth `AgentFile` `external-reviewer`, role `external`, body of `reviewer.md`; `external`
   joins `AGENT_ROLES`. `hook.rs::DEFAULT_ROLES` gains the row `stapel-external-reviewer` to `external`,
@@ -226,7 +226,35 @@ the CLAUDE.md line on cargo runs (text only, not tested).
 
 ### Decisions (as built)
 
-None yet.
+- Step 1 (67a8c02, 105eb08): `Config.cargo: Option<CargoSettings>` keeps `slots` as a raw `toml::Value`;
+  `DEFAULT_CARGO_SLOTS` is 3 and `Config::cargo_slots()` returns N; `cargo.rs::run` loads the config with
+  `repo::load` and refuses on a load error. Before the code an unknown `[cargo]` table loaded, so the
+  fixture change of `check_repo` alone did not fail at RED; the two new tests did.
+- Step 2 (06ed3b9, a400b0e): `take` opens N slot files, takes the first free one, prints one waiting line
+  with every holder joined by `; ` and polls each 100 ms.
+- 2026-11-24, agent: `cargo_lock::junit_check_takes_the_lock` (STP-28) gets `[cargo] slots = 1` inside
+  the test, amended into the step 2 RED, as the Test plan does for `check_repo`; with 3 slots it took
+  slot 2 and never waited.
+- Step 3 (4a8819e, ca5da16): the worktree lock `worktree-<h>.lock` hashes the canonical root that
+  `git rev-parse --show-toplevel` prints; each wait prints its own line.
+- 5b7c038: this repository's `.stapel/stapel.toml` gets `stapel-external-reviewer = "external"` and
+  `[cargo] slots = 3`.
+- Step 4 (997fb72, f5dd71b): the sixth `AgentFile` `external-reviewer`; `AGENT_ROLES` holds `external`;
+  `hook.rs::DEFAULT_ROLES` has the row; the starter binds `claude-opus-5-5`; `stapel init` installed
+  `.claude/agents/stapel-external-reviewer.md`.
+- Step 5 (8d76561, 952142c): `reviewers()` names `stapel-external-reviewer`; the RED also changed the
+  external line of `review.rs`'s test without a model and the expected model from fable to opus.
+- Step 6 (92a357b, ebaf187): `Pack.ticket_base: Option<&str>`; `write_pack` takes the merge base of
+  `refs/heads/<base branch>` and HEAD and falls back to the ticket base; the case with no merge is the
+  existing goldens of rounds one and two.
+- Step 7 (a245f3f, d227970): `Suite.failing`, `Suite.failing_more`, `cargo_failing_names` and
+  `MAX_FAILING` = 20; the keys are written only when a name exists.
+- Step 8 (66302cb, b73e607): `suite_junit` collects `<suite> <case>` with the case name trimmed, because
+  jest-junit puts a leading space on top-level names.
+- Step 9 (2a6ce01, 9605360): the builder asset, the skill's rule 6 and the CLAUDE.md rule on cargo runs;
+  `stapel init` installed the copies.
+- 2026-11-24, agent: the tests of `check_junit` with an absolute script path fail without a case-sensitive
+  TMPDIR on this machine and pass with it; they are outside this ticket.
 
 ## Proof
 
