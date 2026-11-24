@@ -268,10 +268,14 @@ the CLAUDE.md line on cargo runs (text only, not tested).
   the two streams are read apart; a binary name, not a path, tells two crates apart.
 - 2026-11-24, agent (XR1-2): the holder line goes into the worktree lock as soon as it is held, before
   the wait for a slot.
-- Step 13 (d00ad39, 01adcc0): `cargo_failing_names(stdout, stderr)`; the stand-in of the test sends
+- Step 13 (2bda8b4, 19ea379): `cargo_failing_names(stdout, stderr)`; the stand-in of the test sends
   `Compiling`, `Running`, `Doc-tests` and `error` lines to standard error; a block starts at `running 1
-  test` too.
-- Step 14 (fb14c4f, 59d600b): `take` writes the holder line into the worktree lock right after taking
+  test` too. The RED also makes the shared fake cargo (`tests/common/fake_cargo.sh`) print the
+  `Running` line of each test binary on standard error, because `check::fake_cargo_matches_real_cargo`
+  compares its report with real cargo's. A first version of that change was a commit of its own with a
+  `history:` line; a `history:` line excuses only a test function, not a helper file, so `stapel check`
+  gave every step `tests-changed`, and the change moved into this RED (the later commit ids changed).
+- Step 14 (b292c51, 63242bb): `take` writes the holder line into the worktree lock right after taking
   it (`write_line`), then into the slot; both descriptors are inherited after both lines are written.
 - 2026-11-24, agent: the tests of `check_junit` with an absolute script path fail without a case-sensitive
   TMPDIR on this machine and pass with it; they are outside this ticket.
