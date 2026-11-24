@@ -1050,3 +1050,39 @@ fn no_tightening_off_head() {
         .unwrap();
     assert!(status.stdout.is_empty(), "the guards folder changed");
 }
+
+// ---- step 14: linked baseline ----
+
+// AC-10: a baseline that is a symlink in the working tree is not written; neither the link nor its
+// target changes.
+#[test]
+fn a_linked_baseline_is_not_written() {
+    use std::os::unix::fs::symlink;
+    let guards = [
+        ratchet("inside", "true", "inside.txt"),
+        ratchet("outside", "true", "outside.txt"),
+    ]
+    .concat();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    let other = tempfile::tempdir().unwrap();
+    let far = other.path().join("far.txt");
+    std::fs::write(&far, "far\n").unwrap();
+    std::fs::create_dir_all(dir.join("guards")).unwrap();
+    // One link to a file outside the guards folder, one to a file outside the repository.
+    symlink("../notes.txt", dir.join("guards/inside.txt")).unwrap();
+    symlink(&far, dir.join("guards/outside.txt")).unwrap();
+    commit(dir, "ABC-1: linked baselines");
+    let notes = read(dir, "notes.txt");
+    let (_code, text) = run(dir, &["--level", "head"]);
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    for name in ["inside", "outside"] {
+        let want = format!("guard: {name}: pass; baseline not written: a symlink");
+        assert!(lines.contains(&want.as_str()), "{text}");
+    }
+    assert_eq!(read(dir, "notes.txt"), notes);
+    assert_eq!(std::fs::read_to_string(&far).unwrap(), "far\n");
+    let link = |rel: &str| std::fs::read_link(dir.join(rel)).unwrap();
+    assert_eq!(link("guards/inside.txt"), Path::new("../notes.txt"));
+    assert_eq!(link("guards/outside.txt"), far);
+}
