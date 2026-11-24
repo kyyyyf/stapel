@@ -1499,3 +1499,74 @@ fn worktree_lock_outlives_its_holder() {
     assert_eq!(standin_b.runs("second"), 1, "{}", standin_b.log());
     wait_until("the worktree lock to be free", || !is_held(&lock));
 }
+
+// STP-42 AC-4 (XR1-2): with N = 1 and slot 1 held by a foreign holder, run A of a worktree waits for the
+// slot; run B of that worktree waits for the worktree lock and names the holder line of run A.
+#[test]
+fn worktree_holder_named_during_slot_wait() {
+    /// Kills every waiting run on drop, also when an assertion failed.
+    struct Reaper(Vec<Child>);
+    impl Drop for Reaper {
+        fn drop(&mut self) {
+            for child in &mut self.0 {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    std::fs::create_dir_all(home.join(".cache/stapel")).unwrap();
+    let repo = slot_repo(1);
+    let dir = repo.path();
+    let standin_a = Standin::new(&root.path().join("a"));
+    let standin_b = Standin::new(&root.path().join("b"));
+
+    let foreign = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .open(slot_file(&home, 1))
+        .unwrap();
+    foreign.lock().unwrap();
+    std::fs::write(
+        slot_file(&home, 1),
+        "XYZ-9, pid 4242, since 2026-01-01T00:00:00Z, cargo test",
+    )
+    .unwrap();
+
+    let mut reaper = Reaper(Vec::new());
+    let err_a = root.path().join("a.err");
+    reaper.0.push(spawn_to(
+        standin_a.command(dir, &home, &["cargo", "first"]),
+        &err_a,
+    ));
+    let pid_a = reaper.0[0].id();
+    wait_until("the wait line of run A", || {
+        std::fs::read_to_string(&err_a)
+            .unwrap_or_default()
+            .contains(WAIT_LINE)
+    });
+
+    let err_b = root.path().join("b.err");
+    reaper.0.push(spawn_to(
+        standin_b.command(dir, &home, &["cargo", "second"]),
+        &err_b,
+    ));
+    wait_until("the wait line of run B", || {
+        std::fs::read_to_string(&err_b)
+            .unwrap_or_default()
+            .contains(WAIT_LINE)
+    });
+    let text = std::fs::read_to_string(&err_b).unwrap();
+    let wait = text.lines().find(|l| l.contains(WAIT_LINE)).unwrap();
+    assert!(
+        wait.contains(&format!("pid {pid_a}")) && wait.contains("stapel cargo first"),
+        "{wait}"
+    );
+    assert!(!wait.contains("an unknown holder"), "{wait}");
+    assert_eq!(standin_a.runs("first"), 0, "{}", standin_a.log());
+    assert_eq!(standin_b.runs("second"), 0, "{}", standin_b.log());
+}
