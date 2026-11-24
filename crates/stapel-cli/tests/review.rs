@@ -842,7 +842,7 @@ fn reviewers_by_route_and_tags() {
         "{top}reviewer: stapel-reviewer, model claude-sonnet-5-5 (role reviewer)\n"
     );
     let three = format!(
-        "{one}reviewer: stapel-reviewer, model claude-fable-5-1 (role external)\n\
+        "{one}reviewer: stapel-external-reviewer, model claude-opus-5-5 (role external)\n\
          reviewer: stapel-drift, model claude-sonnet-5-5 (role drift), on the whole ticket\n"
     );
     let full = "Route: full, auto.";
@@ -894,7 +894,7 @@ fn reviewer_without_a_model() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines.len(), 5, "{stdout}");
-    assert_eq!(lines[3], "reviewer: stapel-reviewer, no model (role external)");
+    assert_eq!(lines[3], "reviewer: stapel-external-reviewer, no model (role external)");
     assert!(lines[2].ends_with("(role reviewer)"), "{stdout}");
     assert!(lines[4].ends_with("(role drift), on the whole ticket"), "{stdout}");
 }
