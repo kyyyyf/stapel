@@ -827,30 +827,51 @@ struct Suite {
 /// At most this many failing names are printed and recorded.
 const MAX_FAILING: usize = 20;
 
-/// The distinct failing names of cargo output, in output order: `<target> <name>` for each
-/// `test <name> ... FAILED` line, `doc <crate> <name>` after a `Doc-tests <crate>` line.
-fn cargo_failing_names(output: &str) -> Vec<String> {
+/// The distinct failing names of a cargo run, in output order: `<target> <name>` for each
+/// `test <name> ... FAILED` line of `stdout`, `doc <crate> <name>` for a doc test. The k-th block of
+/// `stdout` that starts with `running <n> tests` belongs to the k-th `Running` or `Doc-tests` line of
+/// `stderr`; a block without such a line gives a bare name.
+fn cargo_failing_names(stdout: &str, stderr: &str) -> Vec<String> {
+    let targets: Vec<String> = stderr
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("Running ") {
+                let path = match rest.find(" (") {
+                    Some(at) if rest.ends_with(')') => &rest[at + 2..rest.len() - 1],
+                    _ => rest,
+                };
+                let file = path.trim().rsplit('/').next().unwrap_or("");
+                let name = match file.rsplit_once('-') {
+                    Some((head, hash))
+                        if !head.is_empty()
+                            && !hash.is_empty()
+                            && hash.bytes().all(|b| b.is_ascii_hexdigit()) =>
+                    {
+                        head
+                    }
+                    _ => file,
+                };
+                Some(name.to_string())
+            } else {
+                trimmed
+                    .strip_prefix("Doc-tests ")
+                    .map(|rest| format!("doc {}", rest.trim()))
+            }
+        })
+        .collect();
     let mut names: Vec<String> = Vec::new();
-    let mut target = String::new();
-    for line in output.lines() {
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("Running ") {
-            let rest = rest.strip_prefix("unittests ").unwrap_or(rest);
-            let path = match rest.find(" (") {
-                Some(at) if rest.ends_with(')') => &rest[..at],
-                _ => rest,
-            };
-            target = path.trim().to_string();
-        } else if let Some(rest) = trimmed.strip_prefix("Doc-tests ") {
-            target = format!("doc {}", rest.trim());
+    let mut block: Option<usize> = None;
+    for line in stdout.lines() {
+        if line.starts_with("running ") && line.ends_with(" tests") || line == "running 1 test" {
+            block = Some(block.map_or(0, |b| b + 1));
         } else if let Some(name) = line
             .strip_prefix("test ")
             .and_then(|r| r.strip_suffix(" ... FAILED"))
         {
-            let full = if target.is_empty() {
-                name.to_string()
-            } else {
-                format!("{target} {name}")
+            let full = match block.and_then(|b| targets.get(b)) {
+                Some(target) if !target.is_empty() => format!("{target} {name}"),
+                _ => name.to_string(),
             };
             if !names.contains(&full) {
                 names.push(full);
@@ -2002,7 +2023,7 @@ impl Runner<'_> {
         } else {
             ("fail", detail)
         };
-        let mut failing = cargo_failing_names(&run.output);
+        let mut failing = cargo_failing_names(&run.stdout, &run.stderr);
         let failing_more = failing.len().saturating_sub(MAX_FAILING);
         failing.truncate(MAX_FAILING);
         Suite {
