@@ -458,4 +458,38 @@ Check runs:
 
 ## Summary
 
-TODO
+A project declares its machine checks in `stapel.toml` as `[guards] dir` and `[[guards.check]]` entries.
+`stapel check` runs them at levels `head` and `full` after the project commands, and a failing guard fails
+the check. A guard with a `baseline` is a ratchet: each output line is a violation, a line outside the
+baseline fails, and a fixed line is removed from the baseline in the working tree, which the orchestrator
+commits without losing the passing check. An agent's write into the guards folder asks the person; a
+subagent, or a mode without the dialog, is denied. The starter `stapel.toml` and the skill name the folder.
+
+Agent decisions to overrule (2026-11-23 and 2026-11-24):
+
+- Guards run at `head` and `full` only, after the project commands, even when a step failed.
+- Exit codes 0 and 1 of a ratchet guard mean "the list"; a broken command must exit 2 or more (XR2-2). A
+  crash with exit 0 or 1 still passes; AC-17 only keeps its baseline.
+- A guard whose last violations are fixed prints nothing, so the check never empties its baseline; the
+  person removes those lines (CR3-1).
+- A linter that writes to standard error never tightens (AC-17 order: standard error, no output, not
+  HEAD, symlink).
+- A closed ticket checked later never writes a baseline (XR1-1).
+- A commit that only tightens baselines keeps the passing check (SR1-5).
+- The guards folder is compared without case and resolved, also outside the repository; the hard
+  denials of the old write rules come first.
+- Not promised: a guards folder linked outside the repository written from another repository's working
+  folder or through a firmlink or bind mount (XR4-1, XR4-2); a symlinked parent of a baseline (CR3-2).
+- The step 14 test uses symlinks with two-line targets so that one line stays fixed (step 17).
+- The briefs of the built hook steps 16, 18, 19 and 20 are 1608 to 1709 tokens, over the limit of 1600,
+  because the criteria grew after they were built.
+- The guards loop copies the run part of `Runner::project` instead of sharing it; builders' `rustfmt`
+  reflowed unrelated lines of `check.rs` and `guard.rs`.
+
+Deferred for the person or a later ticket:
+
+- SR1-7 and SR2-10: a guards folder such as `tests`, `src` or `docs` makes every builder write under it a
+  denial and every main-agent edit a dialog; refuse or warn about such a folder.
+- XR1-5: a guard's command can read scripts or tool configs outside the guards folder (`.eslintrc`,
+  `clippy.toml`, `.rgignore`) that an agent edits freely; warn, or say in the skill that they belong in
+  the folder.
