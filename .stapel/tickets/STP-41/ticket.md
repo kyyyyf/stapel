@@ -397,9 +397,7 @@ Route: full (tags `guard`, `interface`, `data`), auto.
 19. Folder outside the root (XR2-4, AC-12): the GREEN compares the resolved absolute target with the
    resolved absolute folder, so a folder linked outside the root still asks. Must not change: the old
    write rules outside the folder.
-20. Linked target written directly (XR3-1, AC-12): the GREEN also tries the hook root in
-   `guards_write_ask`, so a write to the real place of a folder linked outside the root asks. Must not
-   change: writes outside every guards folder.
+20. Linked target (XR3-1, AC-12): `guards_write_ask` also tries the hook root.
 
 | Fix step | Tests |
 |---|---|
