@@ -428,6 +428,7 @@ Findings:
 | step-drift | 1 | drift | 0 | 1 | 3 | 0 | no-change 1, patch 3 |
 | code-review | 1 | external, reviewer | 1 | 7 | 1 | 0 | defer 1, no-change 1, patch 7 |
 | code-review | 2 | drift, external, reviewer | 0 | 10 | 1 | 0 | no-change 2, patch 9 |
+| code-review | 3 | drift, external, reviewer | 0 | 3 | 2 | 0 | no-change 4, patch 1 |
 | dependency | STP-40:00d8a34c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:bd0eb2ad | depends | 0 | 1 | 0 | 0 | patch 1 |
