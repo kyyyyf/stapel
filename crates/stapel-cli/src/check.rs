@@ -192,9 +192,10 @@ pub(crate) fn guard_reach(
         {
             return None;
         }
-        let covered = rel == inside
-            || rel
-                .strip_prefix(inside)
+        let (rel_lower, inside_lower) = (rel.to_lowercase(), inside.to_lowercase());
+        let covered = rel_lower == inside_lower
+            || rel_lower
+                .strip_prefix(&inside_lower)
                 .is_some_and(|rest| rest.starts_with('/'));
         if covered || !std::fs::metadata(root.join(rel)).is_ok_and(|m| m.is_file()) {
             return None;
