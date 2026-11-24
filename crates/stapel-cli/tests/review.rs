@@ -1383,3 +1383,51 @@ fn pack_base_after_a_main_merge() {
     assert!(pack.contains("mine.txt"), "{pack}");
     assert!(!pack.contains("other.txt"), "{pack}");
 }
+
+// STP-42 AC-7 (DR1-3): a base branch whose merge base is the ticket base, and one with no common
+// history, both give the ticket base on one base line and no `ticket base` line.
+#[test]
+fn pack_base_edges() {
+    let repo = built_with_spec(&[]);
+    let dir = repo.path();
+    let ticket_base = state_json(dir, "ABC-1")["base"].as_str().unwrap().to_string();
+    let sibling = git(
+        dir,
+        &[
+            "commit-tree",
+            &format!("{ticket_base}^{{tree}}"),
+            "-p",
+            &ticket_base,
+            "-m",
+            "a sibling commit",
+        ],
+    )
+    .trim()
+    .to_string();
+    git(dir, &["branch", "sibling", &sibling]);
+    let unrelated = git(dir, &["commit-tree", "HEAD^{tree}", "-m", "a root commit"])
+        .trim()
+        .to_string();
+    git(dir, &["branch", "unrelated", &unrelated]);
+    let read = |name: &str| {
+        std::fs::read_to_string(dir.join(format!(".stapel/scratch/review/ABC-1-r1/{name}")))
+            .unwrap()
+    };
+
+    let mut state = state_json(dir, "ABC-1");
+    for branch in ["sibling", "unrelated"] {
+        state["base_branch"] = serde_json::json!(branch);
+        write_state(dir, "ABC-1", &state);
+        commit_all(dir, &format!("state with base branch {branch}"));
+        start(dir, &["ABC-1", "--round", "1"]).code(0);
+        let pack = read("pack.md");
+        assert!(
+            pack.contains(&format!("\n- base: {ticket_base}\n")),
+            "{branch}: {pack}"
+        );
+        assert_eq!(pack.matches("- base:").count(), 1, "{branch}: {pack}");
+        assert!(!pack.contains("ticket base"), "{branch}: {pack}");
+        let patch = read("diff.patch");
+        assert!(patch.contains("code.txt"), "{branch}: {patch}");
+    }
+}
