@@ -1389,3 +1389,41 @@ fn reach_word_coverage() {
     assert!(!text.contains("warning: guard"), "{text}");
     assert_eq!(last_check_record(repo.path())["guards"], with_outside);
 }
+
+// CR2-1, XR2-6, XR2-7 (AC-3): an interpreter name opens a reach word only at a command start; the `&` of
+// `2>&1` starts no word.
+#[test]
+fn interpreter_only_at_command_start() {
+    let guards = [
+        guard("subject", "grep -w sh scripts/x.sh || true"),
+        guard("readme", "grep sh README.md || true"),
+        guard("redirect", "grep TODO 2>&1 || true"),
+        guard("redirect_in", "grep TODO <&1 || true"),
+        guard("real", "sh scripts/x.sh"),
+    ]
+    .concat();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "scripts/x.sh", "exit 0\n");
+    write(dir, "README.md", "readme\n");
+    write(dir, "1", "one\n");
+    commit(dir, "ABC-1: guard files");
+
+    let out = stapel(dir)
+        .args(["check", "ABC-1", "--level", "head"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    let seen: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("warning: guard "))
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            "warning: guard real reads scripts/x.sh outside guards; a guard's scripts and configs belong in guards"
+        ],
+        "{err}"
+    );
+    assert_eq!(out.status.code(), Some(0), "{err}");
+}
