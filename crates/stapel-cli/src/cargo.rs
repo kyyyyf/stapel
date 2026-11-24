@@ -143,6 +143,14 @@ pub fn take(command: &str) -> Result<Option<CargoLock>, String> {
     let wt_path = worktree_path(&dir);
     let wt_file = open_lock(&wt_path)?;
     take_one(&[(wt_path.clone(), wt_file.try_clone().map_err(|e| e.to_string())?)])?;
+    let line = format!(
+        "{}, pid {}, since {}, {command}",
+        branch_ticket_key(),
+        std::process::id(),
+        stapel_core::time::now_rfc3339()
+    );
+    // The worktree holder is named before the slot wait, so a second run of the worktree sees it.
+    write_line(&wt_path, &wt_file, &line)?;
     let mut slots = Vec::new();
     for i in 1..=slot_count() {
         let path = slot_path(&dir, i);
@@ -151,21 +159,19 @@ pub fn take(command: &str) -> Result<Option<CargoLock>, String> {
     }
     let n = take_one(&slots)?;
     let (path, file) = slots.swap_remove(n);
-    let line = format!(
-        "{}, pid {}, since {}, {command}",
-        branch_ticket_key(),
-        std::process::id(),
-        stapel_core::time::now_rfc3339()
-    );
-    for (p, f) in [(&wt_path, &wt_file), (&path, &file)] {
-        f.set_len(0)
-            .and_then(|()| (&*f).write_all(line.as_bytes()))
-            .map_err(|e| format!("cannot write the cargo lock {}: {e}", p.display()))?;
-        inherit(f)?;
-    }
+    write_line(&path, &file, &line)?;
+    inherit(&wt_file)?;
+    inherit(&file)?;
     Ok(Some(CargoLock {
         files: vec![wt_file, file],
     }))
+}
+
+/// Writes the holder line into a held lock file.
+fn write_line(path: &std::path::Path, file: &File, line: &str) -> Result<(), String> {
+    file.set_len(0)
+        .and_then(|()| (&*file).write_all(line.as_bytes()))
+        .map_err(|e| format!("cannot write the cargo lock {}: {e}", path.display()))
 }
 
 /// Clears close-on-exec on the lock descriptor, so children keep the lock.
