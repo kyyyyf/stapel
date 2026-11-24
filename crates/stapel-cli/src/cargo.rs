@@ -125,6 +125,16 @@ pub fn run(args: &[String]) -> ExitCode {
     } else {
         format!("stapel cargo {}", args.join(" "))
     };
+    // A `stapel.toml` that fails loading refuses the run; outside a stapel repository N is 3.
+    let in_repo = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| stapel_core::guard::stapel_root(&cwd));
+    if let Some(root) = in_repo {
+        if let Err(e) = crate::repo::load(&root) {
+            warn!("stapel: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
     let lock = match take(&command) {
         Ok(l) => l,
         Err(e) => {
