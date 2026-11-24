@@ -398,3 +398,77 @@ fn hard_denials_win_in_the_guards_folder() {
         assert!(reason.contains(denied), "{target}: {reason}");
     }
 }
+
+// XR2-4 (AC-12): a guards folder that is a link to a folder outside the repository still asks the
+// main agent and still denies a subagent.
+#[test]
+fn a_folder_outside_the_root_asks() {
+    let hook = |root: &std::path::Path, agent: Option<&str>| -> (String, String) {
+        let mut payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "cwd": root,
+            "permission_mode": "default",
+            "tool_name": "Write",
+            "tool_input": { "file_path": "guards/size.sh", "content": "new\n" },
+        });
+        if let Some(agent) = agent {
+            payload["agent_id"] = json!(agent);
+        }
+        let out = stapel(root)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .output()
+            .unwrap();
+        if out.status.code() == Some(2) {
+            return ("deny".into(), String::from_utf8_lossy(&out.stderr).into());
+        }
+        assert!(out.status.success(), "{:?}", out.status);
+        let v: serde_json::Value =
+            serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("no JSON answer: {e}"));
+        let h = &v["hookSpecificOutput"];
+        (
+            h["permissionDecision"].as_str().unwrap_or("").to_string(),
+            h["permissionDecisionReason"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
+        )
+    };
+    let repo = git_repo();
+    let root = repo.path().to_path_buf();
+    stapel(&root)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let config = read(&root, ".stapel/stapel.toml");
+    let config = if config.lines().any(|l| l.trim() == "[check]") {
+        config
+    } else {
+        format!("{config}\n[check]\nrunner = \"cargo\"\ntimeout_secs = 3600\n")
+    };
+    std::fs::write(
+        root.join(".stapel/stapel.toml"),
+        format!("{config}\n[guards]\ndir = \"guards\"\n"),
+    )
+    .unwrap();
+    let outside = git_repo();
+    let shared = outside.path().join("shared-guards");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::os::unix::fs::symlink(&shared, root.join("guards")).unwrap();
+
+    let (decision, reason) = hook(&root, None);
+    assert_eq!(decision, "ask", "{reason}");
+    assert_eq!(
+        reason,
+        "a write into the guards folder guards: the person confirms it in this dialog"
+    );
+    let (decision, reason) = hook(&root, Some("agent-1"));
+    assert_eq!(decision, "deny", "{reason}");
+    assert!(
+        reason.contains(
+            "only the main agent writes into the guards folder guards, through the person's dialog"
+        ),
+        "{reason}"
+    );
+}
