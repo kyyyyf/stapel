@@ -354,6 +354,24 @@ Route: full (tags `guard`, `interface`, `data`), auto.
    Must not change: the `output` of every run.
 12. Tightening cases (DR1-4, AC-10; test `check_guards::tightening_edge_cases`): a coverage commit of the
    three Tightening cases the step 6 test left out, with a `history:` line; no GREEN.
+13. Off-HEAD baseline (XR1-1, AC-10): the GREEN writes no baseline when the checked commit is not the
+   working tree's HEAD (`pass; baseline not tightened: checked <short> is not HEAD`). Must not change: the
+   tightening of an open ticket.
+14. Linked baseline (CR1-3, AC-10): the GREEN writes no baseline that is a symlink in the working tree
+   (`pass; baseline not written: a symlink`). Must not change: the write of a regular file.
+15. Crashing guard (XR1-3, AC-10): the GREEN tightens only on exit 0, or on exit 1 with empty standard
+   error; otherwise `pass; baseline not tightened: exit 1 with standard error`. Must not change: the pass
+   or fail of the guard.
+16. Hook config and linked folder (XR1-2, XR1-4, AC-12): the GREEN loads the config in `guards_write_ask`
+   with `Config::parse` and resolves `<root>/<dir>` before the compare. Must not change: the other write
+   rules.
+
+| Fix step | Tests |
+|---|---|
+| 13 | `check_guards::no_tightening_off_head` |
+| 14 | `check_guards::a_linked_baseline_is_not_written` |
+| 15 | `check_guards::a_crashing_guard_keeps_the_baseline` |
+| 16 | `hook_guards::a_bad_cargo_pin_keeps_the_dialog`, `hook_guards::a_linked_guards_folder_asks` |
 
 ## Review
 
@@ -369,6 +387,7 @@ Findings:
 | spec-review | 1 | reviewer | 1 | 6 | 2 | 0 | defer 1, patch 8 |
 | spec-review | 2 | reviewer | 0 | 3 | 7 | 0 | patch 10 |
 | step-drift | 1 | drift | 0 | 1 | 3 | 0 | no-change 1, patch 3 |
+| code-review | 1 | external, reviewer | 1 | 7 | 1 | 0 | defer 1, no-change 1, patch 7 |
 | dependency | STP-40:00d8a34c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:bd0eb2ad | depends | 0 | 1 | 0 | 0 | patch 1 |
