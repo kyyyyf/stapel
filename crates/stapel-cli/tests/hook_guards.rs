@@ -312,3 +312,89 @@ fn a_linked_guards_folder_asks() {
         );
     }
 }
+
+// XR2-3 (AC-12): the hard denials of the old write rules come before the guards dialog.
+#[test]
+fn hard_denials_win_in_the_guards_folder() {
+    let hook = |root: &std::path::Path, path: &str| -> (String, String) {
+        let payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "cwd": root,
+            "permission_mode": "default",
+            "tool_name": "Write",
+            "tool_input": { "file_path": path, "content": "new\n" },
+        });
+        let out = stapel(root)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .output()
+            .unwrap();
+        // A denial is exit code 2 with the reason on standard error.
+        if out.status.code() == Some(2) {
+            return ("deny".into(), String::from_utf8_lossy(&out.stderr).into());
+        }
+        assert!(out.status.success(), "{path}: {:?}", out.status);
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout)
+            .unwrap_or_else(|e| panic!("no JSON answer for {path}: {e}"));
+        let h = &v["hookSpecificOutput"];
+        (
+            h["permissionDecision"].as_str().unwrap_or("").to_string(),
+            h["permissionDecisionReason"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
+        )
+    };
+    let setup = |dir: &str| {
+        let repo = git_repo();
+        let root = repo.path().to_path_buf();
+        stapel(&root)
+            .args(["init", "--prefix", "ABC"])
+            .assert()
+            .success();
+        let config = read(&root, ".stapel/stapel.toml");
+        let config = if config.lines().any(|l| l.trim() == "[check]") {
+            config
+        } else {
+            format!("{config}\n[check]\nrunner = \"cargo\"\ntimeout_secs = 3600\n")
+        };
+        std::fs::write(
+            root.join(".stapel/stapel.toml"),
+            format!("{config}\n[guards]\ndir = \"{dir}\"\n"),
+        )
+        .unwrap();
+        (repo, root)
+    };
+    let denied = "a stapel, git or Claude Code file";
+
+    // (a) a git hooks folder inside the guards folder.
+    let (_repo, root) = setup("ci");
+    std::fs::create_dir_all(root.join("ci/hooks")).unwrap();
+    let status = std::process::Command::new("git")
+        .args(["config", "core.hooksPath", "ci/hooks"])
+        .current_dir(&root)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let (decision, reason) = hook(&root, "ci/hooks/pre-push");
+    assert_eq!(decision, "deny", "{reason}");
+    assert!(reason.contains(denied), "{reason}");
+    // (c) control: another path in the folder still asks.
+    let (decision, reason) = hook(&root, "ci/check.sh");
+    assert_eq!(decision, "ask", "{reason}");
+    assert_eq!(
+        reason,
+        "a write into the guards folder ci: the person confirms it in this dialog"
+    );
+
+    // (b) a guards folder that is a link to `.claude`, and to `.git`.
+    for (target, file) in [(".claude", "settings.json"), (".git", "config")] {
+        let (_repo, root) = setup("guards");
+        std::fs::create_dir_all(root.join(target)).unwrap();
+        std::os::unix::fs::symlink(root.join(target), root.join("guards")).unwrap();
+        let (decision, reason) = hook(&root, &format!("guards/{file}"));
+        assert_eq!(decision, "deny", "{target}: {reason}");
+        assert!(reason.contains(denied), "{target}: {reason}");
+    }
+}
