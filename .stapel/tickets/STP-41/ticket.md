@@ -36,10 +36,9 @@ command to accept a new violation; guards at level `steps`; a baseline per ticke
 
 Not promised: a shell command that writes into `dir` (the guard freeze, `docs/HISTORY.md` 2026-11-10);
 non-UTF-8 output; repeated lines; a guard that leaves processes behind; a command that hides its own
-failure (exit 0, no output); symlinks inside `dir`; a baseline changed between the check's read and write.
+failure (exit 0 or 1); symlinks inside `dir`; a baseline changed between the check's read and write.
 
-**Prior art.** STP-37 (`[check] project`); STP-36 3.7a (`toml_edit_ask`); `guard.rs::decide_write`;
-ratchet baselines of `betterer`, `detekt` and `rubocop --auto-gen-config`.
+**Prior art.** STP-37 (`[check] project`); STP-36 3.7a (`toml_edit_ask`); ratchet baselines of `betterer`, `detekt` and `rubocop --auto-gen-config`.
 
 **Size.** About 400 source lines and 600 test lines; 10 Plan steps. Route: full, auto.
 
@@ -74,16 +73,17 @@ Terms:
 - **Guards folder**: the folder `[guards] dir`, a relative path from the repository root whose first part
   is not `.stapel`, `.git` or `.claude` in any case.
 - **Guard**: one entry of `[[guards.check]]`: a `name`, a `command` run with `sh -c`, and an optional
-  `baseline`, a relative path, read as `<dir>/<baseline>`: the **baseline path**. The **baseline** is the
-  file at the baseline path in the commit the check resolved as HEAD at its start, read with `git show`
-  before the command runs, lossy as UTF-8. A guard with a baseline is a **ratchet guard**; one without is an **exit-code guard**.
+  `baseline`, a relative path, read as `<dir>/<baseline>`: the **baseline path**. The **baseline** is that
+  file in the checked commit (HEAD at the start, or a closed ticket's end), read from git before the
+  command runs, lossy as UTF-8. A guard with a baseline is a **ratchet guard**; one without is an **exit-code guard**.
 - **Lines** of a text: the text split at `\n`, each line with trailing whitespace (`\r` included)
   removed, empty lines left out, compared as a set of exact strings.
 - **Violation**: a line of the standard output alone (not standard error) of a ratchet guard's command;
   a **new** violation is one that is not a line of the baseline; a **fixed** line is a line of the
   baseline that is not a violation. Counts are of distinct lines.
 - **Guards folder write**: a Write, Edit, MultiEdit or NotebookEdit whose target, resolved as the guard
-  resolves every write target, lies inside `<root>/<dir>`, compared per component without case.
+  resolves every write target, lies inside `<root>/<dir>` resolved the same way, compared per component
+  without case.
 
 | № | Criterion | Test |
 |---|---|---|
@@ -92,28 +92,30 @@ Terms:
 | AC-3 | WHEN the level is `head` or `full` and guards are declared THE check runs each in order with `sh -c` in the check copy, after setting it to HEAD with tracked changes discarded before each guard (untracked files stay), with the environment of the project commands, after them; an exit-code guard prints `guard: <name>: pass` on exit 0, or `guard: <name>: fail (exit <n>)` and the last 20 lines of its standard output and error; names and lines are printed with control characters as spaces; a fail makes the result `fail`, exit 1, and the close refuses it as any failing check. | `check_guards::exit_code_guards`, `check_guards::a_failing_guard_fails_the_check` |
 | AC-4 | WHEN the level is `steps` and guards are declared THE check runs none and prints `guards: skipped: level steps`. | `check_guards::steps_level_skips` |
 | AC-5 | IF the time limit runs out before or during a guard, or a guard cannot start or ends by a signal THEN its line says `guard: <name>: unverified: <reason>` as a project command's line does (after the time limit, every later guard says `unverified: time limit` too), the result is `fail`, and no baseline is written. | `check_guards::time_limit_stops_a_guard` |
-| AC-6 | WHEN a ratchet guard's command exits 0 or 1 and every violation is a line of its baseline THE guard prints `guard: <name>: pass`; lines on standard error are no violations. | `check_guards::known_violations_pass` |
+| AC-6 | WHEN a ratchet guard's command exits 0 or 1 and every violation is a line of its baseline THE guard prints `guard: <name>: pass`; lines on standard error are no violations; a command that fails with exit 0 or 1 is read as its output (Not promised). | `check_guards::known_violations_pass` |
 | AC-7 | IF a ratchet guard has new violations THEN it prints `guard: <name>: fail: <n> new` (`n` distinct lines), then the first 20 new violations in output order, each as `  <line>` with control characters printed as spaces; the result is `fail` and the baseline file is not written; a command that rewrites its baseline file in the copy changes nothing, because the baseline was read from git. | `check_guards::a_new_violation_fails` |
 | AC-8 | IF the baseline path of a ratchet guard is no file in the HEAD commit, and AC-9 does not apply, THEN the guard prints `guard: <name>: fail: no baseline <dir>/<baseline>`, then the first 20 violations as in AC-7; the result is `fail` and nothing is written. | `check_guards::a_missing_baseline_fails` |
 | AC-9 | IF a ratchet guard's command exits with a code other than 0 and 1 (checked before AC-8) THEN it prints `guard: <name>: fail (exit <n>)` and the last 20 lines of its output, the result is `fail` and the baseline file is not written. | `check_guards::a_broken_ratchet_guard_fails` |
-| AC-10 | WHEN a ratchet guard passes and its baseline file has fixed lines THE check writes `<root>/<dir>/<baseline>` in the working tree it was started in as the baseline's lines that are still violations, in their order, the first of equal lines only, each ending with `\n` (a baseline with no fixed line is not written), and prints `guard: <name>: pass, <n> fixed removed from <dir>/<baseline>; commit it`; IF the write fails THEN it prints `guard: <name>: pass; baseline not written: <reason>` and the guard stays `pass`; after the change is committed, a fixed line that comes back is a new violation. | `check_guards::fixed_violations_leave_the_baseline`, `check_guards::tightening_edge_cases` |
+| AC-10 | WHEN a ratchet guard passes, its baseline file has fixed lines and AC-17 does not apply THE check writes `<root>/<dir>/<baseline>` in the working tree it was started in as the baseline's lines that are still violations, in their order, the first of equal lines only, each ending with `\n` (a baseline with no fixed line is not written), and prints `guard: <name>: pass, <n> fixed removed from <dir>/<baseline>; commit it`; IF the write fails THEN it prints `guard: <name>: pass; baseline not written: <reason>` and the guard stays `pass`; after the change is committed, a fixed line that comes back is a new violation. | `check_guards::fixed_violations_leave_the_baseline`, `check_guards::tightening_edge_cases` |
 | AC-11 | WHEN a check ran guards THE record holds `guards`: one `{name, outcome, new, removed}` per guard, with the outcome `pass`, `fail` or `unverified`, `new` and `removed` counts (0 for an exit-code, broken or unverified guard; `new` is every distinct violation when the baseline is missing), the name cut to 200 characters; past 20 guards the rest are left out with `guards_truncated: true`. | `check_guards::the_record_lists_the_guards`, `check_guards::known_violations_pass`, `check_guards::a_new_violation_fails`, `check_guards::fixed_violations_leave_the_baseline` |
-| AC-12 | WHEN the main agent makes a guards folder write in a dialog permission mode THE guard answers `ask` with the reason `a write into the guards folder <dir>: the person confirms it in this dialog`, whatever `always_writable` and the build permit say. | `hook_guards::guards_folder_edit_asks` |
-| AC-13 | IF a subagent makes a guards folder write THEN the guard denies it with `only the main agent writes into the guards folder <dir>, through the person's dialog`; IF the main agent makes one in a permission mode without the dialog THEN it denies with `a write into the guards folder <dir> needs the permission dialog, which Claude Code does not show in permission mode "<mode>"`; IF `stapel.toml` does not load THEN no guards folder exists and the write rules of today apply. | `hook_guards::guards_folder_refusals` |
+| AC-12 | WHEN the main agent makes a guards folder write in a dialog permission mode THE guard answers `ask` with the reason `a write into the guards folder <dir>: the person confirms it in this dialog`, whatever `always_writable` and the build permit say; the hard denials of the old rules come first. | `hook_guards::guards_folder_edit_asks`, `hook_guards::a_linked_guards_folder_asks`, `hook_guards::a_folder_outside_the_root_asks`, `hook_guards::hard_denials_win_in_the_guards_folder` |
+| AC-13 | IF a subagent makes a guards folder write THEN the guard denies it with `only the main agent writes into the guards folder <dir>, through the person's dialog`; IF the main agent makes one in a permission mode without the dialog THEN it denies with `a write into the guards folder <dir> needs the permission dialog, which Claude Code does not show in permission mode "<mode>"`; IF `stapel.toml` does not parse (the cargo pin is not checked) THEN no guards folder exists and the write rules of today apply. | `hook_guards::guards_folder_refusals`, `hook_guards::a_bad_cargo_pin_keeps_the_dialog` |
 | AC-14 | WHEN `stapel init` writes the starter `stapel.toml` and the skill THE starter holds a commented `[guards]` example with `dir` and one `[[guards.check]]` with a `baseline`, and the skill names the guards folder, the dialog of a write into it and the commit of a tightened baseline with a `history:` line. | `init_process::starter_names_guards` |
 | AC-15 | WHEN the newest check record passed and every path that differs from its commit (committed or not) is a baseline path whose lines are a subset of its lines at that commit THE check stays current for `stapel status`, `stapel next` and `stapel close`; IF any other path inside the guards folder differs, or a baseline path is no regular file at that commit or is missing or no regular file now, THEN the check is stale, under `docs/` too. | `check_guards::a_tightening_commit_keeps_the_check` |
 | AC-16 | IF a ratchet guard's standard output reached the output limit or was still open at the drain deadline THEN its line says `guard: <name>: unverified: output cut`, the result is `fail` and no baseline is written; an exit-code guard with a cut output is judged by its exit code. | `check_guards::a_cut_output_is_unverified`, `check_guards::a_held_output_is_unverified` |
+| AC-17 | IF a ratchet guard passes with fixed lines and (in this order) its standard error is not empty, its standard output has no line, the commit checked is not the working tree's HEAD, or the working-tree baseline is a symlink THEN the guard prints `guard: <name>: pass; baseline not tightened: standard error`, `…: no output`, `…: checked <short> is not HEAD` or `guard: <name>: pass; baseline not written: a symlink`, writes nothing, and its record has `removed` 0. | `check_guards::no_tightening_off_head`, `check_guards::a_linked_baseline_is_not_written`, `check_guards::a_crashing_guard_keeps_the_baseline`, `check_guards::a_silent_or_masked_crash_keeps_the_baseline` |
 
 ### Guarantees
 
 - **Promised:** the Frame's promise items: item 1 by AC-1 and AC-2, item 2 by AC-3 to AC-5 and AC-11,
-  item 3 by AC-3, item 4 by AC-6 to AC-9 and AC-16, item 5 by AC-10 and AC-15, item 6 by AC-12 and AC-13, item 7 by AC-14.
+  item 3 by AC-3, item 4 by AC-6 to AC-9 and AC-16, item 5 by AC-10, AC-15 and AC-17, item 6 by AC-12 and AC-13, item 7 by AC-14.
   Unchanged: a check without `[guards]` (its lines and its record); the project commands; the step cache
   (guards are never cached); the write rules for every path outside the guards folder; the dialog of
   `stapel.toml` edits.
 - **Not promised:** the Frame's list; two checks of one working tree that write the same baseline at once;
   lines of a baseline other than violations (comments, headers), which leave it at a tightening; a
-  baseline committed as a symlink, a submodule or an LFS pointer (read as its git text); under junit a
+  baseline committed as a symlink, a submodule or an LFS pointer (read as its git text; a symlink is never
+  written through, AC-17); a linter that writes to standard error (it never tightens); under junit a
   baseline path that matches a test or input glob; a baseline path that is also a guard's script.
 
 ### Abuse table
@@ -127,6 +129,8 @@ Terms:
 | adds the guards folder to `always_writable` | the `stapel.toml` edit goes through its dialog, and `always_writable` does not open the folder | `hook_guards::guards_folder_edit_asks` |
 | removes a guard or changes `dir` in `stapel.toml` | the dialog of a `stapel.toml` edit (STP-36) | `hook::stapel_toml_edit_asks` |
 | breaks a ratchet guard's command so that it prints nothing (exit 127) | the guard fails and the baseline stays | `check_guards::a_broken_ratchet_guard_fails` |
+| breaks it so that it crashes with exit 1, silently or inside a pipe that exits 0 | the guard passes, but its baseline is not tightened (AC-17) | `check_guards::a_crashing_guard_keeps_the_baseline`, `check_guards::a_silent_or_masked_crash_keeps_the_baseline` |
+| writes through a guards folder that is a symlink (inside or outside the root), or into a folder that holds the git hooks folder or links to `.claude` or `.git` | the dialog or denial of AC-12 and AC-13; a hard denial comes first | `hook_guards::a_linked_guards_folder_asks`, `hook_guards::a_folder_outside_the_root_asks`, `hook_guards::hard_denials_win_in_the_guards_folder` |
 | deletes the baseline with `rm`, or edits a guard with `sed -i` | a shell write is not promised (the guard freeze); a missing baseline fails the check | `check_guards::a_missing_baseline_fails` |
 
 **Author self-check (item 7).** Done on 2026-11-23: each row of the Abuse table maps to promise item 4 or
@@ -155,13 +159,15 @@ before each GREEN also `--test ticket_drift`.
 | New violations | one new line among known ones; 25 new lines: `25 new` and the first 20; one new line printed three times: `1 new`; a line with a control character; the baseline file unchanged byte for byte; a command that first appends its violations to its baseline file in the copy: still fails; the record's `new` | `check_guards::a_new_violation_fails` |
 | Missing baseline | no baseline file at HEAD with three violations (record `new` 3); a baseline path that is a folder; a baseline file present in the working tree but not committed; exit 2 with no baseline: the line of AC-9 | `check_guards::a_missing_baseline_fails` |
 | Broken command | exit 127 with no output; exit 2 with output: tail printed, baseline unchanged | `check_guards::a_broken_ratchet_guard_fails` |
-| Tightening | three baseline lines, one fixed: the file holds the two others in order, the line names `1 fixed`; a baseline with a duplicated line; the next check refuses the uncommitted change; after a commit, the fixed line printed again fails as new; a check that fails in a step still tightens a passing guard; two ratchet guards, one fails and one tightens; a ratchet guard with fixed lines stopped by the time limit: baseline unchanged; a read-only baseline file: `baseline not written`, pass; the record's `removed` |
-| Cut output | a ratchet guard with fixed lines whose standard output passes the output limit: `unverified: output cut`, baseline unchanged, record `new` 0 and `removed` 0; an exit-code guard with the same output and exit 0: pass | `check_guards::a_cut_output_is_unverified` | `check_guards::fixed_violations_leave_the_baseline` |
+| Tightening | three baseline lines, one fixed: the file holds the two others in order, the line names `1 fixed`; a baseline with a duplicated line; the next check refuses the uncommitted change; two ratchet guards, one fails and one tightens; a read-only baseline file: `baseline not written`, pass; the record's `removed` | `check_guards::fixed_violations_leave_the_baseline` |
+| Cut output | a ratchet guard with fixed lines whose standard output passes the output limit: `unverified: output cut`, baseline unchanged, record `new` 0 and `removed` 0; an exit-code guard with the same output and exit 0: pass | `check_guards::a_cut_output_is_unverified` |
 | Record | two guards, one passing and one failing exit-code guard (`fail`, `new` 0); 22 guards and a name of 300 `ж`: cut and `guards_truncated`; no `[guards]`: no `guards` key | `check_guards::the_record_lists_the_guards` |
 | Hook ask | Write, Edit, MultiEdit and NotebookEdit into `<dir>/x` by the main agent in `default`, `acceptEdits`, `auto` and `plan`; an absolute path, `./a/../<dir>/x`, a symlink to the folder, another case of `<dir>`; a `dir` listed in `always_writable`; a ticket without a build permit | `hook_guards::guards_folder_edit_asks` |
 | Hook refusals | a subagent's Write into `<dir>/x`; the main agent in `bypassPermissions` and `dontAsk`; a broken `stapel.toml`: the old rules (denied without a build permit); a path beside the folder (`<dir>x/f`) follows the old rules | `hook_guards::guards_folder_refusals` |
 | Check after tightening | a passing check, the tightened baseline committed: `stapel status` shows the check current and `stapel close` accepts it; the same with the change uncommitted; a commit that adds a line to the baseline, one that edits a guard script, one that edits a guard script under a guards folder in `docs/`, one that deletes the baseline, one that adds a baseline absent at the record commit, and one that changes `[guards]` with a subset baseline: stale; a path beside the folder (docs/guardsx/f) and, without `[guards]`, a `docs/` change: current | `check_guards::a_tightening_commit_keeps_the_check` |
 | Drift fixes | a ratchet guard with fixed lines whose detached child (`setsid`, outside the group) holds standard output open past the drain: `unverified: output cut`, baseline unchanged; a fixed line that returns after the tightening commit: `1 new`; a check whose step fails still tightens a passing guard; a ratchet guard with fixed lines stopped by the time limit: baseline unchanged | `check_guards::a_held_output_is_unverified`, `check_guards::tightening_edge_cases` |
+| Held tightening | a closed ticket checked after a later commit; symlink baselines inside and outside the repository; exit 1 with a traceback; a pipe that hides a failure; a silent exit 1; controls: a linter's exit 1 and exit 0 with one fixed line tighten | `check_guards::no_tightening_off_head`, `check_guards::a_linked_baseline_is_not_written`, `check_guards::a_crashing_guard_keeps_the_baseline`, `check_guards::a_silent_or_masked_crash_keeps_the_baseline` |
+| Hook reach | a bad `[check] cargo` pin: ask; a folder linked inside and outside the root: ask, a subagent denied; a hooks path inside the folder, a folder linked to `.claude` or `.git`: denied | `hook_guards::a_bad_cargo_pin_keeps_the_dialog`, `hook_guards::a_linked_guards_folder_asks`, `hook_guards::a_folder_outside_the_root_asks`, `hook_guards::hard_denials_win_in_the_guards_folder` |
 | Process files | the starter `stapel.toml` and the skill | `init_process::starter_names_guards` |
 
 ### Inputs
@@ -188,7 +194,7 @@ before each GREEN also `--test ticket_drift`.
 | claude-code | allow rules that skip the dialog | the `ask` of the hook, as for `stapel.toml` edits; not tested again | — |
 | claude-code | environment of hooks, transcripts, tool call failed | not read by this ticket | — |
 | os | case-insensitive file systems: another case of `<dir>` | compared without case | `hook_guards::guards_folder_edit_asks` |
-| os | symlinks: a link outside the folder that points into it | the resolved target counts | `hook_guards::guards_folder_edit_asks` |
+| os | symlinks: a link into the folder; a linked folder | both resolved | `hook_guards::guards_folder_edit_asks`, `hook_guards::a_linked_guards_folder_asks` |
 | os | symlinks inside the folder; file permissions of a guard script | not promised | — |
 | os | processes of a guard: groups, children that leave the group, signals | the kill of the check's time limit, as for project commands | `check_guards::time_limit_stops_a_guard` |
 | cargo | every dimension | unchanged; guards are shell commands, not cargo runs | — |
@@ -249,12 +255,13 @@ one baseline file (each judged alone; the second write wins; not promised); a gu
 
 - 2026-11-23, agent: a ratchet guard reads exit codes 0 and 1 as a list, because linters exit 1 when they
   find something; any other code is a broken command, so a guard that cannot run never empties its
-  baseline.
+  baseline. Amended 2026-11-24 (XR1-3, XR2-1): a crash with exit 0 or 1 still passes, but AC-17 keeps
+  its baseline when standard error is not empty or the output has no line.
 - 2026-11-23, agent: a guard runs after the project commands, even when a step or a project command
   failed, so one check shows every failure; a ratchet guard tightens whenever it passes itself.
 - 2026-11-23, agent (SR1-2): the baseline is read from the HEAD commit before the command runs and
   written into the working tree; the two are equal because the check refuses an uncommitted working tree
-  (F-2).
+  (F-2). Amended 2026-11-24 (XR1-1): only when the checked commit is HEAD; AC-17 writes nothing otherwise.
 - 2026-11-23, agent (SR1-5): a commit that only tightens baselines keeps the passing check, so a tightening
   does not cost a second check of 45 to 100 minutes; a subset of lines cannot hide a new violation.
 - 2026-11-23, agent (SR1-9): the guards folder is compared without case on every file system, so a
@@ -292,6 +299,21 @@ All dated 2026-11-23, mark `agent`; the person may overrule them at the close.
 - Step 10 (cf1da5c): `checkstate::current` takes the changed paths inside the guards folder out before the
   `changed.retain` filter, drops a baseline path whose lines (`line_set`) are a subset at the record
   commit and now (`baseline_subset`), and adds every other one back after the filter.
+- Step 11 (f206511, DR1-1): `runner::collect` returns the bytes and whether the stream ended, so a
+  standard output still held open at the drain deadline sets `stdout_cut`.
+- Step 12 (65538da): three Tightening cases as one coverage commit.
+- Dated 2026-11-24 below. Steps 13 to 15 and 17 (6e5d49a, 485301f, 5948ccf, aee5f70): `Runner::guards`
+  checks, before the write and in this order, the trimmed `RunResult.stderr` (a new field), a standard
+  output with a line, `git rev-parse HEAD` against the checked commit, and `symlink_metadata` of the
+  working-tree baseline. Step 17 made the step 14 test's links point at a two-line target so that one
+  line stays fixed (a `history:` line).
+- Step 16 (7adaf17): `guards_write_ask` loads the config with `Config::parse`, as `decide_write` does.
+- Step 18 (b46bb83): `hard_denial` is taken out of `decide_write` with the same text and runs in `decide`
+  before `guards_write_ask`.
+- Step 19 (3ce5163): `guards_write_ask` tries the stapel root of the written path, then of the resolved
+  target, and compares the resolved target with `resolve(<root>/<dir>)` per component.
+- The guards loop copies the run part of `Runner::project` instead of sharing it as Shape says; builders'
+  `rustfmt` runs reflowed unrelated lines of `check.rs` and `guard.rs` (no change of behaviour).
 
 ## Proof
 
@@ -308,11 +330,12 @@ All dated 2026-11-23, mark `agent`; the person may overrule them at the close.
 | AC-9 | `check_guards::a_broken_ratchet_guard_fails` |
 | AC-10 | `check_guards::fixed_violations_leave_the_baseline`, `check_guards::tightening_edge_cases` |
 | AC-11 | `check_guards::the_record_lists_the_guards`, `check_guards::known_violations_pass`, `check_guards::a_new_violation_fails`, `check_guards::fixed_violations_leave_the_baseline` |
-| AC-12 | `hook_guards::guards_folder_edit_asks` |
-| AC-13 | `hook_guards::guards_folder_refusals` |
+| AC-12 | `hook_guards::guards_folder_edit_asks`, `hook_guards::a_linked_guards_folder_asks`, `hook_guards::a_folder_outside_the_root_asks`, `hook_guards::hard_denials_win_in_the_guards_folder` |
+| AC-13 | `hook_guards::guards_folder_refusals`, `hook_guards::a_bad_cargo_pin_keeps_the_dialog` |
 | AC-14 | `init_process::starter_names_guards` |
 | AC-15 | `check_guards::a_tightening_commit_keeps_the_check` |
 | AC-16 | `check_guards::a_cut_output_is_unverified`, `check_guards::a_held_output_is_unverified` |
+| AC-17 | `check_guards::no_tightening_off_head`, `check_guards::a_linked_baseline_is_not_written`, `check_guards::a_crashing_guard_keeps_the_baseline`, `check_guards::a_silent_or_masked_crash_keeps_the_baseline` |
 
 ## Plan
 
