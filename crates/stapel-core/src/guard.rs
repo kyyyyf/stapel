@@ -133,14 +133,24 @@ fn toml_edit_ask(input: &HookInput, target: &Path) -> Option<Decision> {
 /// The dialog for a write into the guards folder `[guards] dir` (STP-41 AC-12): the main agent in
 /// a dialog mode is asked, a subagent or another mode is denied. A write outside the folder, or a
 /// repository without `[guards]`, is `None`: the other write rules stand.
-fn guards_write_ask(input: &HookInput, written: &Path, target: &Path) -> Option<Decision> {
+fn guards_write_ask(
+    input: &HookInput,
+    written: &Path,
+    target: &Path,
+    hook_root: Option<&Path>,
+) -> Option<Decision> {
     // The root comes from the written path as given, then from the resolved target: a guards
-    // folder linked outside the root resolves the target out of it (STP-41 XR2-4).
+    // folder linked outside the root resolves the target out of it (STP-41 XR2-4). The hook root
+    // comes last: the real target of a linked folder, written directly, has no root of its own
+    // (STP-41 XR3-1).
     let mut roots: Vec<PathBuf> = stapel_root(written).into_iter().collect();
-    if let Some(root) = stapel_root(target)
-        && !roots.contains(&root)
+    for root in [stapel_root(target), hook_root.map(Path::to_path_buf)]
+        .into_iter()
+        .flatten()
     {
-        roots.push(root);
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
     }
     roots
         .iter()
@@ -319,7 +329,7 @@ pub fn decide(input: &HookInput, cwd: &Path, project_dir: Option<&Path>) -> Deci
             {
                 return deny;
             }
-            if let Some(ask) = guards_write_ask(input, &written, &target) {
+            if let Some(ask) = guards_write_ask(input, &written, &target, hook_root.as_deref()) {
                 return ask;
             }
             decide_write(&target)
