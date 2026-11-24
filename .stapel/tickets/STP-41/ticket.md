@@ -116,7 +116,9 @@ Terms:
   lines of a baseline other than violations (comments, headers), which leave it at a tightening; a
   baseline committed as a symlink, a submodule or an LFS pointer (read as its git text; a baseline file
   that is a symlink is not written through, AC-17); a linter that writes to standard error (it never tightens); under junit a
-  baseline path that matches a test or input glob; a baseline path that is also a guard's script.
+  baseline path that matches a test or input glob; a baseline path that is also a guard's script; for a
+  guards folder linked outside the repository, a write to its real place from a working folder in another
+  stapel repository, or through a path alias that is no symlink (a firmlink, a bind mount) (XR4-1, XR4-2).
 
 ### Abuse table
 
@@ -429,6 +431,7 @@ Findings:
 | code-review | 1 | external, reviewer | 1 | 7 | 1 | 0 | defer 1, no-change 1, patch 7 |
 | code-review | 2 | drift, external, reviewer | 0 | 10 | 1 | 0 | no-change 2, patch 9 |
 | code-review | 3 | drift, external, reviewer | 0 | 3 | 2 | 0 | no-change 4, patch 1 |
+| code-review | 4 | external, reviewer | 0 | 2 | 1 | 0 | no-change 3 |
 | dependency | STP-40:00d8a34c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:3a09984c | depends | 0 | 0 | 1 | 0 | open 1 |
 | dependency | STP-40:4afbf11c:bd0eb2ad | depends | 0 | 1 | 0 | 0 | patch 1 |
