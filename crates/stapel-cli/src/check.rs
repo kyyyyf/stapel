@@ -1318,12 +1318,23 @@ impl Runner<'_> {
         } else {
             "fail"
         };
+        let mut failing: Vec<String> = Vec::new();
+        for suite in &suites {
+            for case in suite.cases.iter().filter(|c| c.outcome == CaseOutcome::Failed) {
+                let name = format!("{} {}", suite.name, case.name.trim());
+                if !failing.contains(&name) {
+                    failing.push(name);
+                }
+            }
+        }
+        let failing_more = failing.len().saturating_sub(MAX_FAILING);
+        failing.truncate(MAX_FAILING);
         Suite {
             outcome: outcome.into(),
             detail,
             counts: (p, f, i),
-            failing: Vec::new(),
-            failing_more: 0,
+            failing,
+            failing_more,
         }
     }
 
