@@ -10,6 +10,7 @@ mod export;
 mod fail;
 mod findings;
 mod hook;
+mod inbox;
 mod init;
 mod ledger;
 mod lint;
@@ -81,6 +82,20 @@ enum Command {
         /// Print the action as one JSON line.
         #[arg(long)]
         json: bool,
+    },
+    /// Write `.stapel/inbox.md`: the decisions that wait for the person.
+    Inbox,
+    /// Answer a finding that waits for the person: append a person's triage record.
+    Answer {
+        /// The ticket key.
+        key: String,
+        /// The finding id.
+        id: String,
+        /// The fate: `patch`, `bad_plan`, `defer` or `no-change`.
+        fate: String,
+        /// The note; it may start with `-`.
+        #[arg(allow_hyphen_values = true)]
+        note: String,
     },
     /// Print the brief of one Plan step to a builder. Writes nothing.
     Brief {
@@ -419,6 +434,13 @@ fn main() -> ExitCode {
         Command::Lsp => return ExitCode::from(stapel_lsp::run() as u8),
         Command::Brief { key, step } => return fail::finish(brief::run(&key, &step)),
         Command::Depends { key } => return fail::finish(depends::run(key.as_deref())),
+        Command::Inbox => return fail::finish(inbox::run()),
+        Command::Answer {
+            key,
+            id,
+            fate,
+            note,
+        } => return fail::finish(findings::answer(&key, &id, &fate, &note)),
         Command::Next { key, json } => return fail::finish(next::run(key.as_deref(), json)),
         Command::Status { key } => match status::run(key.as_deref()) {
             Ok(code) => return code,

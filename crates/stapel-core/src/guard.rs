@@ -234,6 +234,8 @@ const CARGO_REASON: &str =
     "cargo runs only through `stapel cargo`, which waits for the machine-wide cargo lock";
 /// The variable with which `stapel cargo` marks a held lock; an agent may not set it.
 const CARGO_LOCK_HELD_WORD: &str = "STAPEL_CARGO_LOCK_HELD";
+const ANSWER_REASON: &str = "stapel answer records a person's answer; an agent asks the person in \
+                             the chat and runs stapel findings triage";
 const HOOK_SELF_REASON: &str = "stapel hook is run only by Claude Code; an agent may not run the \
                                 hook entry point itself";
 
@@ -761,6 +763,8 @@ pub fn check_command(command: &str) -> Option<&'static str> {
         Some(BYPASS_REASON)
     } else if found.hook {
         Some(HOOK_SELF_REASON)
+    } else if found.answer {
+        Some(ANSWER_REASON)
     } else if found.inject {
         Some(INJECT_REASON)
     } else if found.grant {
@@ -804,6 +808,8 @@ struct Found {
     grant: bool,
     /// The agent runs the hook entry point itself.
     hook: bool,
+    /// `stapel answer`, the person's answer to a finding (STP-40 AC-9).
+    answer: bool,
     /// Bare `cargo`, or a word that sets the cargo lock mark (STP-27 AC-13).
     cargo: bool,
     /// A `git … commit` call (STP-14); it decides nothing for PreToolUse.
@@ -970,6 +976,9 @@ fn cargo_runs(words: &[String]) -> bool {
 /// `stapel` or `cargo run ... --`.
 /// The action and the sub-action are compared in any case.
 fn check_stapel(name: &str, args: &[String], found: &mut Found) {
+    // A case-insensitive file system runs `STAPEL` as `stapel`.
+    let lower = name.to_ascii_lowercase();
+    let name = lower.as_str();
     // `stapel cargo run [options] -- <action>` runs that action (STP-27 R-4); a bare
     // `cargo run ... -- <action>` is denied as cargo, but its hook or grant reason comes first.
     let wrapped = match name {
@@ -992,6 +1001,7 @@ fn check_stapel(name: &str, args: &[String], found: &mut Found) {
     };
     match rest[at].to_ascii_lowercase().as_str() {
         "hook" => found.hook = true,
+        "answer" => found.answer = true,
         "ok" | "close" => {
             if rest[at + 1..]
                 .iter()

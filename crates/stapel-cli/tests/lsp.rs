@@ -122,7 +122,14 @@ fn initialize_and_shutdown() {
     commands.sort();
     assert_eq!(
         commands,
-        ["stapel.next", "stapel.ok", "stapel.page", "stapel.status"]
+        [
+            "stapel.answer",
+            "stapel.inbox",
+            "stapel.next",
+            "stapel.ok",
+            "stapel.page",
+            "stapel.status"
+        ]
     );
 
     let hover = c.request(
@@ -1544,5 +1551,433 @@ fn capabilities_name_open_close_and_save() {
         sync["save"] == json!(true) || sync["save"].is_object(),
         "save not named: {sync}"
     );
+    let _ = c.child.kill();
+}
+
+// STP-40 AC-11: the buttons of an open inbox document, chosen by the entry of the range start.
+#[test]
+fn inbox_buttons() {
+    let dir = tempfile::tempdir().unwrap();
+    repo_with(dir.path(), "STP-1");
+    let text = "# Inbox\n\
+\n\
+## STP-1 \u{2014} T\n\
+worktree: /w\n\
+\n\
+### STP-1 finding F-1\n\
+code-review round 1, HIGH, p: claim\n\
+note:\n\
+\n\
+### STP-1 finding F-2\n\
+code-review round 1, HIGH, p: other\n\
+note:\n\
+\n\
+### STP-1 confirmation\n\
+waiting: Frame\n\
+page: /w/page.md\n";
+    let path = dir.path().join(".stapel/inbox.md");
+    std::fs::write(&path, text).unwrap();
+    let uri = file_uri(&path);
+    let fates = |id: &str| -> Vec<String> {
+        let mut v: Vec<String> = ["patch", "bad_plan", "defer", "no-change"]
+            .iter()
+            .map(|f| format!("answer {id}: {f}"))
+            .collect();
+        v.push("stapel inbox".to_string());
+        v
+    };
+    let range = |c: &mut Client, from: u32, to: u32, only: Option<Value>| {
+        let mut context = json!({"diagnostics": []});
+        if let Some(o) = only {
+            context["only"] = o;
+        }
+        c.request_with_notes(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": {"uri": uri},
+                "range": {"start": {"line": from, "character": 0}, "end": {"line": to, "character": 0}},
+                "context": context
+            }),
+        )
+    };
+
+    let mut c = Client::start();
+    c.initialize();
+    let before = {
+        c.open(&uri, text);
+        range(&mut c, 0, 0, None)
+    };
+    // no diagnostic after didOpen
+    assert!(
+        before
+            .1
+            .iter()
+            .all(|n| n["method"] != json!("textDocument/publishDiagnostics")),
+        "{:?}",
+        before.1
+    );
+    // the title line and a `##` line: only the inbox button
+    for line in [0, 2] {
+        let (resp, _) = range(&mut c, line, line, None);
+        assert_eq!(titles(&resp), ["stapel inbox"], "line {line}");
+    }
+    // inside a finding entry, from its heading to its last line
+    for line in [5, 6, 7, 8] {
+        let (resp, _) = range(&mut c, line, line, None);
+        assert_eq!(titles(&resp), fates("F-1"), "line {line}");
+    }
+    let (resp, _) = range(&mut c, 9, 11, None);
+    assert_eq!(titles(&resp), fates("F-2"));
+    // a range from a finding entry into the next one: the first
+    let (resp, _) = range(&mut c, 6, 10, None);
+    assert_eq!(titles(&resp), fates("F-1"));
+    // the whole file: its start line is the title line
+    let (resp, _) = range(&mut c, 0, 15, None);
+    assert_eq!(titles(&resp), ["stapel inbox"]);
+    // a confirmation entry
+    for line in [13, 14, 15] {
+        let (resp, _) = range(&mut c, line, line, None);
+        assert_eq!(titles(&resp), ["stapel page STP-1", "stapel inbox"], "line {line}");
+    }
+    // the commands and their first argument
+    let (resp, _) = range(&mut c, 5, 5, None);
+    let first = &resp["result"][0];
+    assert_eq!(first["command"]["command"], json!("stapel.answer"));
+    assert_eq!(resp["result"][4]["command"]["command"], json!("stapel.inbox"));
+    assert_eq!(resp["result"][4]["command"]["arguments"], json!([uri]));
+    let (resp, _) = range(&mut c, 13, 13, None);
+    assert_eq!(resp["result"][0]["command"]["command"], json!("stapel.page"));
+    // an `only` filter gets nothing
+    for only in [json!(["quickfix"]), json!(["source.fixAll"])] {
+        let (resp, _) = range(&mut c, 5, 5, Some(only));
+        assert!(titles(&resp).is_empty(), "{resp}");
+    }
+    // a document that was never opened gets nothing
+    let other = dir.path().join("elsewhere/.stapel/inbox.md");
+    let (resp, _) = c.code_action(&file_uri(&other), 0);
+    assert!(titles(&resp).is_empty(), "{resp}");
+    // an inbox without a loading stapel.toml gets nothing
+    let bare = dir.path().join("bare/.stapel");
+    std::fs::create_dir_all(&bare).unwrap();
+    let bare_uri = file_uri(&bare.join("inbox.md"));
+    c.open(&bare_uri, text);
+    let (resp, _) = c.code_action(&bare_uri, 5);
+    assert!(titles(&resp).is_empty(), "{resp}");
+    let _ = c.child.kill();
+}
+
+// STP-40 AC-12: the button `stapel.answer` takes the note from the buffer's entry and runs
+// `stapel answer` in the worktree whose branch names the key.
+#[test]
+fn answers_from_the_inbox() {
+    let pair = common::two_ticket_worktrees();
+    let root = pair.repo.path();
+    let findings = pair.a.join(".stapel/tickets/ABC-1/findings.jsonl");
+    let owed = |id: &str| {
+        json!({
+            "v": 1, "id": id, "stage": "code-review", "round": 2, "severity": "HIGH",
+            "promise": "inside", "claim": format!("claim of {id}"), "fate": "open",
+        })
+        .to_string()
+    };
+    let seeded = format!("{}\n{}\n", owed("F-1"), owed("F-2"));
+    std::fs::write(&findings, &seeded).unwrap();
+    let entry = |id: &str, note: &str| {
+        format!(
+            "### ABC-1 finding {id}\ncode-review round 2, HIGH, inside: claim of {id}\nnote: {note}\n\n"
+        )
+    };
+    let on_disk = format!(
+        "# Inbox\n\n## ABC-1 \u{2014} First\nworktree: {}\n\n{}{}",
+        pair.a.display(),
+        entry("F-1", ""),
+        entry("F-2", "")
+    );
+    let inbox = root.join(".stapel/inbox.md");
+    std::fs::write(&inbox, &on_disk).unwrap();
+    let uri = file_uri(&inbox);
+    // the buffer differs from the disk; its `worktree:` line names another folder
+    let buffer = format!(
+        "# Inbox\n\n## ABC-1 \u{2014} First\nworktree: /nowhere/else\n\n{}{}",
+        entry("F-1", "  ok, fix it  "),
+        entry("F-2", "- later")
+    );
+
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &buffer);
+    let (resp, notes) = c.execute("stapel.answer", json!([uri, "ABC-1", "F-1", "patch"]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    assert!(resp.get("error").is_none(), "{resp}");
+    assert_eq!(
+        shown(&notes),
+        vec![(3, "stapel answer ABC-1 F-1 patch: answered: F-1 of ABC-1: patch".to_string())],
+        "{notes:?}"
+    );
+    assert!(logged(&notes).starts_with("stapel answer ABC-1 F-1 patch\n"), "{notes:?}");
+    assert!(!logged(&notes).contains("ok, fix it"), "{notes:?}");
+
+    let (resp, notes) = c.execute("stapel.answer", json!([uri, "ABC-1", "F-2", "defer"]));
+    assert!(resp.get("error").is_none(), "{resp}");
+    assert_eq!(
+        shown(&notes),
+        vec![(3, "stapel answer ABC-1 F-2 defer: answered: F-2 of ABC-1: defer".to_string())],
+        "{notes:?}"
+    );
+    let _ = c.child.kill();
+
+    let text = std::fs::read_to_string(&findings).unwrap();
+    let appended: Vec<Value> = text
+        .lines()
+        .skip(2)
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(appended.len(), 2, "{text}");
+    for (record, id, fate, note) in [
+        (&appended[0], "F-1", "patch", "ok, fix it"),
+        (&appended[1], "F-2", "defer", "- later"),
+    ] {
+        assert_eq!(record["kind"], json!("triage"), "{record}");
+        assert_eq!(record["ticket"], json!("ABC-1"), "{record}");
+        assert_eq!(record["id"], json!(id), "{record}");
+        assert_eq!(record["fate"], json!(fate), "{record}");
+        assert_eq!(record["note"], json!(note), "{record}");
+        assert_eq!(record["imported_by"]["by"], json!("person"), "{record}");
+    }
+}
+
+// STP-40 AC-15: after a run from an inbox document, whatever its exit, the server runs `stapel inbox`
+// in the inbox root and carries the buffer's notes into the entries that remain.
+#[test]
+fn inbox_written_again_after_a_run() {
+    let pair = common::two_ticket_worktrees();
+    let root = pair.repo.path();
+    let findings = pair.a.join(".stapel/tickets/ABC-1/findings.jsonl");
+    let owed = |id: &str| {
+        json!({
+            "v": 1, "id": id, "stage": "code-review", "round": 2, "severity": "HIGH",
+            "promise": "inside", "claim": format!("claim of {id}"), "fate": "open",
+        })
+        .to_string()
+    };
+    std::fs::write(&findings, format!("{}\n{}\n", owed("F-1"), owed("F-2"))).unwrap();
+    let entry = |id: &str, note: &str| {
+        format!(
+            "### ABC-1 finding {id}\ncode-review round 2, HIGH, inside: claim of {id}\nnote: {note}\n\n"
+        )
+    };
+    let inbox = root.join(".stapel/inbox.md");
+    std::fs::write(&inbox, "stale\n").unwrap();
+    let uri = file_uri(&inbox);
+    let buffer = format!(
+        "# Inbox\n\n## ABC-1 \u{2014} First\nworktree: /nowhere/else\n\n{}{}",
+        entry("F-1", "ok, fix it"),
+        entry("F-2", "typed for the other")
+    );
+
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &buffer);
+    let (resp, _) = c.execute("stapel.answer", json!([uri, "ABC-1", "F-1", "patch"]));
+    assert!(resp.get("error").is_none(), "{resp}");
+    let text = std::fs::read_to_string(&inbox).unwrap();
+    assert!(!text.contains("### ABC-1 finding F-1"), "{text}");
+    assert!(text.contains("### ABC-1 finding F-2"), "{text}");
+    assert!(text.contains("note: typed for the other"), "{text}");
+    assert!(!text.contains("ok, fix it"), "{text}");
+
+    // a run that failed: F-1 no longer waits; the file is written again all the same
+    std::fs::write(&inbox, "stale\n").unwrap();
+    let (resp, notes) = c.execute("stapel.answer", json!([uri, "ABC-1", "F-1", "patch"]));
+    assert!(resp.get("error").is_none(), "{resp}");
+    assert_eq!(shown(&notes).len(), 1, "{notes:?}");
+    assert_eq!(shown(&notes)[0].0, 1, "{notes:?}");
+    let text = std::fs::read_to_string(&inbox).unwrap();
+    assert!(!text.contains("stale"), "{text}");
+    assert!(text.contains("### ABC-1 finding F-2"), "{text}");
+    assert!(text.contains("note: typed for the other"), "{text}");
+    let _ = c.child.kill();
+}
+
+// STP-40 AC-13: a run that cannot go ahead shows an Error message and answers `null`; wrong
+// argument forms answer InvalidParams; nothing runs and nothing is appended.
+#[test]
+fn inbox_refusals() {
+    let pair = common::two_ticket_worktrees();
+    let root = pair.repo.path();
+    let findings = pair.a.join(".stapel/tickets/ABC-1/findings.jsonl");
+    let owed = |id: &str| {
+        json!({
+            "v": 1, "id": id, "stage": "code-review", "round": 2, "severity": "HIGH",
+            "promise": "inside", "claim": format!("claim of {id}"), "fate": "open",
+        })
+        .to_string()
+    };
+    let seeded = format!("{}\n", owed("F-1"));
+    std::fs::write(&findings, &seeded).unwrap();
+    let entry = |key: &str, id: &str, note: &str| {
+        format!("### {key} finding {id}\ncode-review round 2, HIGH, inside: claim of {id}\nnote: {note}\n\n")
+    };
+    let buffer = format!(
+        "# Inbox\n\n## ABC-1 \u{2014} First\nworktree: {}\n\n{}{}{}{}### ABC-1 finding F-5\ncode-review round 2, HIGH, inside: claim\n\n{}{}",
+        pair.a.display(),
+        entry("ABC-1", "F-1", "fix it"),
+        entry("ABC-1", "F-2", "   "),
+        entry("ABC-1", "F-3", ""),
+        entry("ABC-1", "F-7", "no such finding"),
+        entry("ABC-2", "F-1", "fix it"),
+        entry("ABC-9", "F-1", "fix it"),
+    );
+    let inbox = root.join(".stapel/inbox.md");
+    std::fs::write(&inbox, &buffer).unwrap();
+    let uri = file_uri(&inbox);
+    let ticket_uri = file_uri(&pair.a.join(".stapel/tickets/ABC-1/ticket.md"));
+    // the live worktree of ABC-2 is gone
+    std::fs::remove_dir_all(&pair.b).unwrap();
+
+    fn start(agent_shell: bool) -> Client {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_stapel"));
+        cmd.arg("lsp")
+            .env_remove("CLAUDECODE")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        if agent_shell {
+            cmd.env("CLAUDECODE", "1");
+        }
+        let mut child = cmd.spawn().unwrap();
+        let stdin = child.stdin.take();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        Client { child, stdin, stdout, next_id: 1 }
+    }
+
+    let refused = [
+        ("F-9", "ABC-1", "stapel lsp: ABC-1 F-9 is not in this inbox; run stapel inbox"),
+        ("F-2", "ABC-1", "stapel lsp: write the note after note: in the entry of ABC-1 F-2 first"),
+        ("F-3", "ABC-1", "stapel lsp: write the note after note: in the entry of ABC-1 F-3 first"),
+        ("F-5", "ABC-1", "stapel lsp: write the note after note: in the entry of ABC-1 F-5 first"),
+        ("F-1", "ABC-2", "stapel lsp: no worktree has the branch of ABC-2"),
+        ("F-1", "ABC-9", "stapel lsp: no worktree has the branch of ABC-9"),
+    ];
+    let bad_answer = "stapel lsp: the arguments must be the URI of an open inbox.md, a key, an id and one of patch, bad_plan, defer, no-change";
+    let agent = "stapel lsp: this editor was started from an agent's shell (CLAUDECODE or CLAUDE_CODE_ENTRYPOINT is set); start it from your own shell to use the buttons";
+
+    for agent_shell in [false, true] {
+        let mut c = start(agent_shell);
+        c.initialize();
+        c.open(&uri, &buffer);
+        c.open(&ticket_uri, "# T\n");
+        for (id, key, text) in refused {
+            let (resp, notes) = c.execute("stapel.answer", json!([uri, key, id, "patch"]));
+            assert_eq!(resp["result"], Value::Null, "{agent_shell} {key} {id}: {resp}");
+            assert!(resp.get("error").is_none(), "{agent_shell} {key} {id}: {resp}");
+            let want = if agent_shell { agent } else { text };
+            assert_eq!(shown(&notes), vec![(1, want.to_string())], "{agent_shell} {key} {id}: {notes:?}");
+            assert!(logged(&notes).is_empty(), "{agent_shell} {key} {id}: {notes:?}");
+        }
+        // a valid answer in an agent shell runs nothing
+        if agent_shell {
+            let (resp, notes) = c.execute("stapel.answer", json!([uri, "ABC-1", "F-1", "patch"]));
+            assert_eq!(resp["result"], Value::Null, "{resp}");
+            assert_eq!(shown(&notes), vec![(1, agent.to_string())], "{notes:?}");
+            assert!(logged(&notes).is_empty(), "{notes:?}");
+        }
+
+        let wrong = [
+            ("stapel.answer", json!([uri, "ABC-1", "F-1", "open"])),
+            ("stapel.answer", json!([uri, "ABC-1", "F-1", "intent_gap"])),
+            ("stapel.answer", json!([uri, "ABC-1", "F-1"])),
+            ("stapel.answer", json!([uri, "ABC-1", "F-1", "patch", "x"])),
+            ("stapel.answer", json!([uri, "ABC-1", "F-1", 5])),
+            ("stapel.answer", json!([ticket_uri, "ABC-1", "F-1", "patch"])),
+            ("stapel.answer", json!([])),
+        ];
+        for (command, args) in wrong {
+            let (resp, notes) = c.execute(command, args.clone());
+            assert_eq!(resp["error"]["code"], json!(-32602), "{agent_shell} {args}: {resp}");
+            assert_eq!(resp["error"]["message"], json!(bad_answer), "{agent_shell} {args}: {resp}");
+            assert!(shown(&notes).is_empty(), "{agent_shell} {args}: {notes:?}");
+            assert!(logged(&notes).is_empty(), "{agent_shell} {args}: {notes:?}");
+        }
+        for (command, args) in [
+            ("stapel.page", json!([uri])),
+            ("stapel.inbox", json!([uri, "ABC-1"])),
+            ("stapel.inbox", json!([ticket_uri])),
+        ] {
+            let (resp, notes) = c.execute(command, args.clone());
+            assert_eq!(resp["error"]["code"], json!(-32602), "{agent_shell} {command} {args}: {resp}");
+            assert!(shown(&notes).is_empty(), "{agent_shell} {command} {args}: {notes:?}");
+            assert!(logged(&notes).is_empty(), "{agent_shell} {command} {args}: {notes:?}");
+        }
+        assert_eq!(std::fs::read_to_string(&findings).unwrap(), seeded, "{agent_shell}");
+        let _ = c.child.kill();
+    }
+
+    // a child that refuses: the Error message of the run report, the file unchanged
+    let mut c = start(false);
+    c.initialize();
+    c.open(&uri, &buffer);
+    let (resp, notes) = c.execute("stapel.answer", json!([uri, "ABC-1", "F-7", "patch"]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    assert!(resp.get("error").is_none(), "{resp}");
+    let messages = shown(&notes);
+    assert_eq!(messages.len(), 1, "{notes:?}");
+    assert_eq!(messages[0].0, 1, "{notes:?}");
+    assert!(
+        messages[0].1.starts_with("stapel answer ABC-1 F-7 patch: exit 2: stapel: "),
+        "{notes:?}"
+    );
+    assert!(logged(&notes).starts_with("stapel answer ABC-1 F-7 patch\n"), "{notes:?}");
+    assert_eq!(std::fs::read_to_string(&findings).unwrap(), seeded);
+    let _ = c.child.kill();
+}
+
+// STP-40 AC-14: `stapel.page` with the inbox URI and a key runs `stapel page KEY` in the worktree
+// of the key; `stapel.inbox` runs `stapel inbox` in the inbox root.
+#[test]
+fn inbox_page_and_inbox_buttons() {
+    let pair = common::two_ticket_worktrees();
+    let root = pair.repo.path();
+    let inbox = root.join(".stapel/inbox.md");
+    let buffer = format!(
+        "# Inbox\n\n## ABC-1 \u{2014} First\nworktree: {}\n\n### ABC-1 confirmation\nwaiting: Frame\npage: {}/page.md\n",
+        pair.a.display(),
+        pair.a.join(".stapel/tickets/ABC-1").display()
+    );
+    assert!(!inbox.exists());
+    let uri = file_uri(&inbox);
+    let page_a = pair.a.join(".stapel/tickets/ABC-1/page.md");
+    let page_b = pair.b.join(".stapel/tickets/ABC-2/page.md");
+    assert!(!page_a.exists());
+
+    let mut c = Client::start();
+    c.initialize();
+    c.open(&uri, &buffer);
+
+    let (resp, notes) = c.execute("stapel.page", json!([uri, "ABC-1"]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    assert!(resp.get("error").is_none(), "{resp}");
+    let msgs = shown(&notes);
+    assert_eq!(msgs.len(), 1, "{notes:?}");
+    assert_eq!(msgs[0].0, 3, "{msgs:?}");
+    assert!(msgs[0].1.starts_with("stapel page ABC-1: "), "{msgs:?}");
+    assert!(logged(&notes).starts_with("stapel page ABC-1\n"), "{notes:?}");
+    assert!(page_a.is_file());
+    assert!(!page_b.exists());
+    assert!(!root.join(".stapel/tickets/ABC-1/page.md").exists());
+
+    // STP-40 AC-15: the run from the inbox is followed by a write of the inbox
+    assert!(inbox.is_file());
+    std::fs::remove_file(&inbox).unwrap();
+    let (resp, notes) = c.execute("stapel.inbox", json!([uri]));
+    assert_eq!(resp["result"], Value::Null, "{resp}");
+    assert!(resp.get("error").is_none(), "{resp}");
+    let msgs = shown(&notes);
+    assert_eq!(msgs.len(), 1, "{notes:?}");
+    assert_eq!(msgs[0].0, 3, "{msgs:?}");
+    assert!(msgs[0].1.starts_with("stapel inbox: "), "{msgs:?}");
+    assert!(logged(&notes).starts_with("stapel inbox\n"), "{notes:?}");
+    assert!(inbox.is_file());
     let _ = c.child.kill();
 }
