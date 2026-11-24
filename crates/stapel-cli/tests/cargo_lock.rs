@@ -1371,3 +1371,131 @@ fn two_waiting_lines() {
     let text = std::fs::read_to_string(&err).unwrap();
     assert_eq!(text.matches(WAIT_LINE).count(), 2, "{text}");
 }
+
+// STP-42 AC-4 (DR1-2): the holder `stapel cargo` killed while its cargo child runs: the worktree lock
+// stays held until the child ends, and a second run from that worktree waits for it; a run with the
+// held mark takes no worktree lock.
+#[test]
+fn worktree_lock_outlives_its_holder() {
+    /// Ends the stand-in `cargo` and the waiting run on drop, also when an assertion failed, and
+    /// waits until the stand-in has let go of the worktree lock.
+    struct Reaper {
+        release: PathBuf,
+        lock: Option<PathBuf>,
+        children: Vec<Child>,
+    }
+    impl Drop for Reaper {
+        fn drop(&mut self) {
+            let _ = std::fs::write(&self.release, "");
+            let end = Instant::now() + Duration::from_secs(20);
+            for child in &mut self.children {
+                while child.try_wait().ok().flatten().is_none() && Instant::now() < end {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            if let Some(path) = &self.lock {
+                if let Ok(file) = std::fs::OpenOptions::new().read(true).write(true).open(path) {
+                    while file.try_lock().is_err() && Instant::now() < end {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                }
+            }
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let lock_dir = home.join(".cache/stapel");
+    std::fs::create_dir_all(&home).unwrap();
+    let repo = slot_repo(3);
+    let dir = repo.path();
+    let standin_a = holding_standin(root.path(), "a");
+    let standin_b = Standin::new(&root.path().join("b"));
+    let standin_c = Standin::new(&root.path().join("c"));
+    let mut reaper = Reaper {
+        release: standin_a.ctl.join("release"),
+        lock: None,
+        children: Vec::new(),
+    };
+
+    let mut holder = standin_a
+        .command(dir, &home, &["cargo", "hold-a"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_until("the holder's cargo", || standin_a.ctl.join("started").exists());
+    let worktree_locks = || -> Vec<PathBuf> {
+        std::fs::read_dir(&lock_dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("worktree-")
+            })
+            .collect()
+    };
+    let locks = worktree_locks();
+    assert_eq!(locks.len(), 1, "{locks:?}");
+    let lock = locks[0].clone();
+    reaper.lock = Some(lock.clone());
+    let holder_pid = holder.id();
+
+    // The holder dies; its cargo child keeps both the worktree lock and the slot.
+    kill9(&mut holder);
+    let is_held = |path: &Path| {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+        file.try_lock().is_err()
+    };
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(is_held(&lock), "the worktree lock was freed with its holder");
+    assert!(
+        is_held(&slot_file(&home, 1)),
+        "the slot was freed with its holder"
+    );
+
+    // A second run from the worktree waits and names the dead holder.
+    let err = root.path().join("b.err");
+    reaper.children.push(spawn_to(
+        standin_b.command(dir, &home, &["cargo", "second"]),
+        &err,
+    ));
+    wait_until("the wait line", || {
+        std::fs::read_to_string(&err)
+            .unwrap_or_default()
+            .contains(WAIT_LINE)
+    });
+    let text = std::fs::read_to_string(&err).unwrap();
+    let wait = text.lines().find(|l| l.contains(WAIT_LINE)).unwrap();
+    assert!(wait.contains(&format!("pid {holder_pid}")), "{wait}");
+    assert_eq!(standin_b.runs("second"), 0, "{}", standin_b.log());
+
+    // A run with the held mark takes no worktree lock and does not wait.
+    let err_c = root.path().join("c.err");
+    let mut marked = standin_c.command(dir, &home, &["cargo", "marked"]);
+    marked.env("STAPEL_CARGO_LOCK_HELD", "4242");
+    let mut marked = spawn_to(marked, &err_c);
+    let status = wait_exit(&mut marked, "the marked run");
+    assert!(status.success(), "{status:?}");
+    let text = std::fs::read_to_string(&err_c).unwrap();
+    assert!(!text.contains(WAIT_LINE), "{text}");
+    assert_eq!(standin_c.runs("marked"), 1, "{}", standin_c.log());
+    assert_eq!(worktree_locks(), vec![lock.clone()]);
+    assert_eq!(standin_b.runs("second"), 0, "{}", standin_b.log());
+
+    // The child ends: the worktree lock is freed and the second run goes on.
+    standin_a.touch("release");
+    let mut second = reaper.children.pop().unwrap();
+    let status = wait_exit(&mut second, "the second run");
+    assert!(status.success(), "{status:?}");
+    assert_eq!(standin_b.runs("second"), 1, "{}", standin_b.log());
+    wait_until("the worktree lock to be free", || !is_held(&lock));
+}
