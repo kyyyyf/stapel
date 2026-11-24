@@ -836,6 +836,79 @@ fn starter_names_guards() {
     assert!(skill.contains("`history:` line"), "no history line");
 }
 
+// STP-43 AC-4: init prints the reach warnings after every refusal check and before it writes; a
+// refusal prints none.
+#[test]
+fn guard_reach_warning() {
+    let with_guard = |t: String| {
+        format!(
+            "{t}\n[check]\nrunner = \"cargo\"\ntimeout_secs = 3600\n\n[guards]\ndir = \"guards\"\n\n\
+             [[guards.check]]\nname = \"cov\"\ncommand = 'sh scripts/cov.sh'\n"
+        )
+    };
+    let script = |dir: &Path| {
+        std::fs::create_dir_all(dir.join("scripts")).unwrap();
+        std::fs::write(dir.join("scripts/cov.sh"), "exit 0\n").unwrap();
+    };
+    let warning = "warning: guard cov reads scripts/cov.sh outside guards; a guard's scripts and configs belong in guards";
+
+    let repo = repo_with_config(with_guard);
+    let dir = repo.path();
+    script(dir);
+    let (stdout, stderr) = run_init(dir);
+    assert_eq!(stderr.matches(warning).count(), 1, "{stderr}");
+    assert!(stdout.contains("created: "), "{stdout}");
+    assert!(dir.join(SKILL).is_file());
+    for rel in AGENTS {
+        assert!(dir.join(rel).is_file(), "{rel}");
+    }
+
+    let repo = repo_with_config(|t| {
+        with_guard(replace_line(
+            t,
+            "external",
+            "external = { provider = \"claude-code\", model = \"claude-sonnet-5-5\", permission_mode = \"bypassPermissions\" }",
+        ))
+    });
+    let dir = repo.path();
+    script(dir);
+    let before = snapshot(dir);
+    let out = stapel(dir).arg("init").assert().code(1);
+    let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(err.contains("permission_mode bypassPermissions"), "{err}");
+    assert!(!err.contains("reads scripts/cov.sh"), "{err}");
+    assert_eq!(snapshot(dir), before);
+
+    let repo = repo_with_config(with_guard);
+    let dir = repo.path();
+    script(dir);
+    std::fs::create_dir_all(dir.join(SKILL)).unwrap();
+    let before = snapshot(dir);
+    let out = stapel(dir).arg("init").assert().code(1);
+    let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(err.contains("is a directory; nothing was written"), "{err}");
+    assert!(!err.contains("reads scripts/cov.sh"), "{err}");
+    assert_eq!(snapshot(dir), before);
+}
+
+// STP-43 AC-5: the starter comment and the skill say that a guard's scripts and configs belong in dir.
+#[test]
+fn guard_reach_text() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let line = "# a guard's scripts and configs belong in dir: an agent edits a file outside it with no dialog";
+    let starter = read(dir, ".stapel/stapel.toml");
+    assert!(starter.lines().any(|l| l == line), "no starter line");
+    let sentence = "A guard's scripts and configs belong in the guards folder; an agent edits a file outside it with no dialog.";
+    assert!(collapsed(&body_of(dir, SKILL)).contains(sentence), "no installed sentence");
+    let asset = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/skill.md"),
+    )
+    .unwrap();
+    assert!(collapsed(&asset).contains(sentence), "no asset sentence");
+}
+
 // AC-17: each agent body holds the role lines.
 #[test]
 fn agent_texts_hold_their_rules() {
