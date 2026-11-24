@@ -879,6 +879,25 @@ fn guard_reach_warning() {
     assert!(!err.contains("reads scripts/cov.sh"), "{err}");
     assert_eq!(snapshot(dir), before);
 
+    let repo = repo_with_config(|t| {
+        with_guard(replace_line(
+            t,
+            "external",
+            "external = { provider = \"anthropic-api\", model = \"claude-opus-5-5\" }",
+        ))
+    });
+    let dir = repo.path();
+    script(dir);
+    let before = snapshot(dir);
+    let out = stapel(dir).arg("init").assert().code(1);
+    let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(
+        err.contains("[models] external: provider \"anthropic-api\" is not claude-code"),
+        "{err}"
+    );
+    assert!(!err.contains("reads scripts/cov.sh"), "{err}");
+    assert_eq!(snapshot(dir), before);
+
     let repo = repo_with_config(with_guard);
     let dir = repo.path();
     script(dir);
@@ -2281,4 +2300,49 @@ fn external_reviewer_agent() {
     let record: serde_json::Value =
         serde_json::from_str(records.lines().next().expect("a record")).unwrap();
     assert_eq!(record["role"], "external", "{record}");
+}
+
+/// STP-43 AC-7: an agent role bound to another provider refuses, in the order of the roles, before
+/// its mode and model; `author` is not checked.
+#[test]
+fn refuses_a_foreign_provider() {
+    for role in ["external", "builder"] {
+        refused_binding(
+            role,
+            "{ provider = \"anthropic-api\", model = \"claude-opus-5-5\" }",
+            &format!(
+                "stapel: [models] {role}: provider \"anthropic-api\" is not claude-code: an agent role runs as a Claude Code agent; set provider = \"claude-code\""
+            ),
+        );
+    }
+    refused_binding(
+        "reviewer",
+        "{ provider = \"anthropic-api\", model = \"claude-opus-5-5\", permission_mode = \"yolo\" }",
+        "stapel: [models] reviewer: provider \"anthropic-api\" is not claude-code",
+    );
+    let repo = repo_with_config(|t| {
+        replace_line(
+            t,
+            "author",
+            "author = { provider = \"anthropic-api\", model = \"claude-opus-5-5\" }",
+        )
+    });
+    stapel(repo.path()).arg("init").assert().success();
+}
+
+/// STP-43 AC-8: the starter binds `external` to Claude Code.
+#[test]
+fn starter_binds_claude_code() {
+    let repo = git_repo();
+    stapel(repo.path())
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let starter = read(repo.path(), ".stapel/stapel.toml");
+    let line = starter
+        .lines()
+        .find(|l| l.starts_with("external"))
+        .expect("an external line");
+    assert!(line.contains("provider = \"claude-code\""), "{line}");
+    assert!(line.contains("model = \"claude-opus-5-5\""), "{line}");
 }
