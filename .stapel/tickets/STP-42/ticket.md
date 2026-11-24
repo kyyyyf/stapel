@@ -357,7 +357,7 @@ Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| head | pass | c4b0c6e | 2026-11-24T13:51:51Z | pass 9 |
+| head | fail | 280f595 | 2026-11-24T14:25:11Z | cached 9, pass 2 |
 <!-- stapel:review:end -->
 
 ## Summary
