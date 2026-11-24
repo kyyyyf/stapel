@@ -330,7 +330,11 @@ Findings:
 | spec-review | 2 | external | 0 | 4 | 3 | 0 | patch 7 |
 | step-drift | 1 | drift | 0 | 1 | 4 | 0 | no-change 1, patch 4 |
 
-Check runs: none
+Check runs:
+
+| Level | Result | Commit | At | Steps |
+|---|---|---|---|---|
+| head | fail | 0c57a51 | 2026-11-24T13:18:02Z | no-red 1, pass 8 |
 <!-- stapel:review:end -->
 
 ## Summary
