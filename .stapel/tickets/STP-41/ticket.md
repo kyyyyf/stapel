@@ -440,7 +440,7 @@ Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| head | pass | de0ac7e | 2026-11-24T07:28:07Z | cached 12, pass 5 |
+| head | pass | aabd431 | 2026-11-24T08:03:44Z | cached 17, pass 1 |
 <!-- stapel:review:end -->
 
 ## Summary
