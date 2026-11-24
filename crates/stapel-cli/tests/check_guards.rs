@@ -100,6 +100,38 @@ fn refuses_an_overlapping_dir() {
     }
 }
 
+// STP-43 AC-1: each of the nine work folders is refused, in any letter case, with or without a
+// trailing slash; a nested folder or another name loads with no error at all.
+#[test]
+fn all_work_folders_refused() {
+    for name in [
+        "src", "tests", "test", "docs", "lib", "crates", "app", "packages", "spec",
+    ] {
+        for dir in [name.to_string(), format!("{name}/"), name.to_uppercase()] {
+            let repo = stapel_repo();
+            add_config(repo.path(), true, &format!("[guards]\ndir = \"{dir}\"\n"));
+            let (code, err) = check(repo.path());
+            let refusal = format!(
+                "guards.dir {dir} is a folder that agents write: name a folder of its own, such as guards"
+            );
+            assert_eq!(code, 2, "{dir}: {err}");
+            assert!(err.contains(&refusal), "{dir}: {err}");
+        }
+    }
+
+    // `guards` is known to load: its whole stderr is the baseline, so any other load error fails.
+    let repo = stapel_repo();
+    add_config(repo.path(), true, "[guards]\ndir = \"guards\"\n");
+    let (_, baseline) = check(repo.path());
+    assert!(baseline.contains("no open ticket"), "{baseline}");
+    for dir in ["tests/guards", "src/x"] {
+        let repo = stapel_repo();
+        add_config(repo.path(), true, &format!("[guards]\ndir = \"{dir}\"\n"));
+        let (_, err) = check(repo.path());
+        assert_eq!(err, baseline, "{dir}");
+    }
+}
+
 // AC-2: a guard needs a name and a command, a unique name and a relative baseline.
 #[test]
 fn refuses_bad_entries() {
