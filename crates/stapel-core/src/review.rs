@@ -260,7 +260,7 @@ pub fn reviewers(light: bool, tags: &[&str]) -> Vec<Reviewer> {
     }];
     if !light && !tags.is_empty() {
         out.push(Reviewer {
-            agent: "stapel-reviewer",
+            agent: "stapel-external-reviewer",
             role: "external",
             whole_ticket: false,
         });
