@@ -474,6 +474,13 @@ fn check_bindings(config: &Config) -> Result<(), String> {
         let Some(binding) = config.models.get(role) else {
             continue;
         };
+        if binding.provider != "claude-code" {
+            return Err(format!(
+                "[models] {role}: provider \"{}\" is not claude-code: an agent role runs as a \
+                 Claude Code agent; set provider = \"claude-code\"",
+                binding.provider
+            ));
+        }
         match binding.permission_mode.as_deref() {
             Some("bypassPermissions") => {
                 return Err(format!(
