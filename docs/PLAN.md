@@ -140,6 +140,17 @@ documents, not the orchestrator).
   returns apart; `stapel ledger rules` counts, per rule and per ticket, what each rule caught, so that rule
   9 (a rule that caught nothing in three tickets is removed) can be applied.
 
+**Ticket 3b-5, the process after the pilot of phase 5** (ledger 2026-11-24; taken after 5.1 and before
+5.2).
+
+- 3b-5a the cargo lock of `stapel cargo` as N machine-wide slots (by default 3, configurable), at most one
+  cargo run per worktree.
+- 3b-5b the external reviewer on `claude-opus-5-5` in the `stapel.toml` template, with its own agent type
+  and the token role `external`.
+- 3b-5c `stapel review start` takes the pack base after the last merge of main.
+- 3b-5d `stapel check` names the failing suite tests.
+- 3b-5e the builder runs the fixtures privacy test with the ticket lint before each GREEN.
+
 ### Phase 3c — the editor (ledger 2026-11-20)
 
 The person of the pilot asked for it, which is what `docs/decisions/0004` waited for. The measure it works
