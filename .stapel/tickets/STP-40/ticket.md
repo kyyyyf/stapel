@@ -100,7 +100,8 @@ Terms:
   trimmed. The id, the title (from `state.json`) and the fields of a finding line are written in it; a
   missing field writes `?`, a number writes its digits. The severity is that of the finding's triage
   state, as `stapel findings` shows it (DR-5).
-- **Button** and the run report of a button are those of STP-39 (its Terms and AC-4).
+- **Button** and the run report of a button are those of STP-39 (its Terms and AC-4); a button also is
+  an inbox command: `stapel.answer`, `stapel.page` with an inbox URI and a key, and `stapel.inbox` (MX-3).
 
 | № | Criterion | Test |
 |---|---|---|
@@ -115,7 +116,7 @@ Terms:
 | AC-9 | WHEN an agent's Bash command runs `stapel answer`, alone, in a compound command or as `stapel cargo run -- answer` THE PreToolUse guard denies it with `stapel answer records a person's answer; an agent asks the person in the chat and runs stapel findings triage`. | `hook::denies_stapel_answer` |
 | AC-10 | WHEN `stapel init` writes its ignore lines THE list holds `/.stapel/inbox.md`. | `init::ignores_the_inbox` |
 | AC-11 | WHEN a code action request without an `only` filter names an open inbox document THE server returns, for a range whose entry is a finding entry the buttons `answer <ID>: <fate>` for the four person's fates in their order, for a confirmation entry `stapel page <KEY>`, and then `stapel inbox` at any range; an inbox document gets no diagnostic; the commands of STP-39 AC-1 gain `stapel.answer` and `stapel.inbox`. | `lsp::inbox_buttons` |
-| AC-12 | WHEN the button `stapel.answer` runs with the inbox URI, KEY, ID and a person's fate THE server takes the note from the `note:` line of the entry `### <KEY> finding <ID>` in the buffer (the text after `note:`, trimmed), runs `stapel answer KEY ID FATE NOTE` in the live worktree whose branch names KEY, and reports the run as STP-39 AC-4 does with the label `stapel answer <KEY> <ID> <FATE>`, the note left out. | `lsp::answers_from_the_inbox` |
+| AC-12 | WHEN the button `stapel.answer` runs with the inbox URI, KEY, ID and a person's fate THE server takes the note from the `note:` line of the entry `### <KEY> finding <ID>` in the buffer (the text after `note:`, trimmed), runs `stapel answer -- KEY ID FATE NOTE` in the live worktree whose branch names KEY, and reports the run as STP-39 AC-4 does with the label `stapel answer <KEY> <ID> <FATE>`, the note left out. | `lsp::answers_from_the_inbox` |
 | AC-13 | IF the buffer has no entry `### <KEY> finding <ID>`, its note is empty, no live worktree has a branch that names KEY, or the server runs in an agent shell THEN the server runs nothing, answers `null` and shows an Error message; IF the arguments of a command with an inbox URI are not those of AC-12 or AC-14 THEN it answers `InvalidParams` and runs nothing (texts in Design); the forms of STP-39 with ticket documents are unchanged. | `lsp::inbox_refusals` |
 | AC-14 | WHEN the button `stapel.page` runs with the arguments inbox URI and KEY, or `stapel.inbox` with the inbox URI THE server runs `stapel page KEY` in the worktree of KEY, or `stapel inbox` in the inbox root, and reports as STP-39 AC-4 does. | `lsp::inbox_page_and_inbox_buttons` |
 | AC-15 | WHEN a button run from an inbox document ran, whatever its exit, or its child could not start THE server runs `stapel inbox` in the inbox root and then puts into the `note:` line of each new entry whose heading is in the buffer the note text of that buffer entry, so notes typed for other entries stay. | `lsp::inbox_written_again_after_a_run` |
@@ -125,7 +126,10 @@ Terms:
 - **Promised:** the Frame's promise items: item 1 by AC-1 to AC-5, item 2 by AC-6 and AC-7, item 3 by AC-8
   and AC-9, item 4 by AC-11 to AC-15, item 5 by AC-10. Unchanged: `stapel findings triage`, `stapel ok`,
   the buttons of `ticket.md` and `page.md`, every other command. Changed: the command list of STP-39 AC-1
-  gains two names; the guard reads the program name in lower case (DR-2).
+  gains two names; the guard reads the program name in lower case (DR-2); for an inbox document only,
+  STP-39 Frame items 1 and 3, AC-3 and AC-5 (code actions and arguments only for ticket documents) and its
+  decision that the key comes only from the URI path no longer hold: an open inbox gets buttons, and the
+  key of an inbox command comes from its arguments (MX-1).
 - **Not promised:** the Frame's list; an entry the editor shows after the file changed on disk and before
   the editor reloads it; two answers to one finding from two sessions (the second is refused by AC-7); an
   open ticket that the branch of no live worktree names (since plan item 1.13 `stapel new` gives each
@@ -437,6 +441,7 @@ Findings:
 | code-review | 1 | drift, external, reviewer | 0 | 4 | 12 | 0 | defer 6, patch 10 |
 | code-review | 2 | drift, external, reviewer | 0 | 2 | 9 | 0 | defer 2, no-change 1, patch 8 |
 | code-review | 3 | drift, external, reviewer | 0 | 1 | 11 | 0 | defer 2, no-change 5, patch 5 |
+| code-review | merge:ae3e78f1 | drift, external, reviewer | 0 | 1 | 9 | 0 | defer 4, no-change 3, patch 3 |
 | dependency | STP-39:c0dd15b1:c1d22378 | depends | 0 | 0 | 2 | 0 | patch 2 |
 
 Check runs:
@@ -480,5 +485,9 @@ Deferred for the person or a later ticket:
   the process ticket after STP-41).
 - XR2-4: no test of an unreadable `ticket.md`.
 - CR3-4: no message when the rewrite's own `stapel inbox` fails.
+- MR-1: the STP-39 test name `workspace_has_seven_members` is stale (five members).
+- MR-3: the inbox buttons add runs to STP-39 CR2-3, a child with no time limit.
+- MX-2: no test of the `ticket.md` refresh after a run from the inbox.
+- MX-4: as XR1-8.
 - The token journal records the external reviewer under `reviewer` (process ticket after STP-41).
 
