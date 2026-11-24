@@ -606,6 +606,10 @@ fn junit_check_takes_the_lock() {
     std::fs::create_dir_all(&lock_dir).unwrap();
     let repo = common::junit_repo();
     let dir = repo.dir();
+    // STP-42: two slots; the check waits only while both are held and names both holders.
+    let config = dir.join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, format!("{text}\n[cargo]\nslots = 2\n")).unwrap();
     std::fs::write(
         dir.join("__tests__/x.test.ts"),
         "it(\"one\", () => { /* needs src/ok.ts */ });\n",
@@ -615,13 +619,19 @@ fn junit_check_takes_the_lock() {
     std::fs::write(dir.join("src/ok.ts"), "export const ok = 1;\n").unwrap();
     commit_all(dir, "ABC-1 step 1 GREEN: one");
 
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(lock_dir.join("cargo.lock"))
-        .unwrap();
-    file.lock().unwrap();
+    let hold = |name: &str, holder: &str| {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(lock_dir.join(name))
+            .unwrap();
+        file.lock().unwrap();
+        std::fs::write(lock_dir.join(name), holder).unwrap();
+        file
+    };
+    let file = hold("cargo.lock", "first junit holder");
+    let second = hold("cargo-2.lock", "second junit holder");
     let err = root.path().join("junit.err");
     let out = root.path().join("junit.out");
     let mut cmd = standin.command(dir, &home, &["check", "ABC-1"]);
@@ -641,8 +651,14 @@ fn junit_check_takes_the_lock() {
             .contains("step 1:"),
         "the check ran while the lock was held"
     );
+    let waited = std::fs::read_to_string(&err).unwrap_or_default();
     drop(file);
+    drop(second);
     wait_exit(&mut check, "the check");
+    assert!(
+        waited.contains("first junit holder; second junit holder"),
+        "the wait line names both slot holders: {waited}"
+    );
     let text = std::fs::read_to_string(&out).unwrap();
     assert!(text.contains("step 1: pass"), "{text}");
 }
@@ -838,4 +854,225 @@ fn a_bad_config_refuses() {
         .unwrap();
     assert_eq!(out.status.code(), Some(3), "{out:?}");
     assert_eq!(standin.runs("print"), 1);
+}
+
+/// A stapel repository of its own (so its own worktree) with `[cargo] slots = n`.
+fn slot_repo(n: u32) -> tempfile::TempDir {
+    let repo = stapel_repo();
+    let config = repo.path().join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, format!("{text}\n[cargo]\nslots = {n}\n")).unwrap();
+    repo
+}
+
+/// A stand-in `cargo` of its own under `<root>/<name>`, set to hold its next run.
+fn holding_standin(root: &Path, name: &str) -> Standin {
+    let dir = root.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let standin = Standin::new(&dir);
+    standin.touch("hold");
+    standin
+}
+
+fn slot_file(home: &Path, slot: u32) -> PathBuf {
+    let name = if slot == 1 {
+        "cargo.lock".to_string()
+    } else {
+        format!("cargo-{slot}.lock")
+    };
+    home.join(".cache/stapel").join(name)
+}
+
+fn slot_text(home: &Path, slot: u32) -> String {
+    std::fs::read_to_string(slot_file(home, slot)).unwrap_or_default()
+}
+
+// STP-42 AC-2: with N = 2, a second run from another worktree takes slot 2 and runs at once while the
+// first holds slot 1; each slot holds its holder line; `stapel check` takes the free slot too.
+#[test]
+fn runs_in_parallel_up_to_slots() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let repo_a = slot_repo(2);
+    let repo_b = slot_repo(2);
+    let standin_a = holding_standin(root.path(), "a");
+    let standin_b = holding_standin(root.path(), "b");
+
+    let mut first = standin_a
+        .command(repo_a.path(), &home, &["cargo", "hold-a"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_until("the first cargo", || standin_a.ctl.join("started").exists());
+    let err_b = root.path().join("b.err");
+    let mut second = spawn_to(
+        standin_b.command(repo_b.path(), &home, &["cargo", "hold-b"]),
+        &err_b,
+    );
+    wait_until("the second cargo, in parallel", || {
+        standin_b.ctl.join("started").exists()
+    });
+    assert!(
+        slot_text(&home, 1).contains(&format!("pid {}", first.id())),
+        "slot 1: {:?}",
+        slot_text(&home, 1)
+    );
+    assert!(
+        slot_text(&home, 1).contains("stapel cargo hold-a"),
+        "slot 1: {:?}",
+        slot_text(&home, 1)
+    );
+    assert!(
+        slot_text(&home, 2).contains(&format!("pid {}", second.id())),
+        "slot 2: {:?}",
+        slot_text(&home, 2)
+    );
+    assert!(
+        slot_text(&home, 2).contains("stapel cargo hold-b"),
+        "slot 2: {:?}",
+        slot_text(&home, 2)
+    );
+    let text = std::fs::read_to_string(&err_b).unwrap_or_default();
+    assert!(!text.contains(WAIT_LINE), "{text}");
+
+    // The second run ends; `stapel check` runs on slot 2 while the first still holds slot 1.
+    standin_b.touch("release");
+    let status = wait_exit(&mut second, "the second run");
+    assert!(status.success(), "{status:?}");
+    let check = check_repo();
+    git(check.path(), &["switch", "-q", "-c", "ABC-1"]);
+    let config = check.path().join(".stapel/stapel.toml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, text.replace("slots = 1", "slots = 2")).unwrap();
+    commit_all(check.path(), "two slots");
+    let standin_c = holding_standin(root.path(), "c");
+    let err_c = root.path().join("c.err");
+    let mut checker = spawn_to(
+        standin_c.command(check.path(), &home, &["check", "ABC-1"]),
+        &err_c,
+    );
+    wait_until("the check's cargo, in parallel", || {
+        standin_c.ctl.join("started").exists()
+    });
+    assert!(
+        slot_text(&home, 2).contains("stapel check"),
+        "slot 2: {:?}",
+        slot_text(&home, 2)
+    );
+    assert!(
+        slot_text(&home, 1).contains(&format!("pid {}", first.id())),
+        "slot 1: {:?}",
+        slot_text(&home, 1)
+    );
+    let text = std::fs::read_to_string(&err_c).unwrap_or_default();
+    assert!(!text.contains(WAIT_LINE), "{text}");
+    standin_c.touch("release");
+    standin_a.touch("release");
+    wait_exit(&mut checker, "the check");
+    wait_exit(&mut first, "the first run");
+}
+
+// STP-42 AC-3: with N = 2 and both slots held by foreign processes, a run prints one waiting line with
+// both holders, waits, and starts on the slot that is freed; a third run waits while two runs hold.
+#[test]
+fn all_slots_held_waits() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let lock_dir = home.join(".cache/stapel");
+    std::fs::create_dir_all(&lock_dir).unwrap();
+    let repo_a = slot_repo(2);
+    let repo_c = slot_repo(2);
+    let standin_a = holding_standin(root.path(), "a");
+    let standin_c = Standin::new(&root.path().join("c"));
+
+    // Slot 1 held with a holder line, slot 2 held with an empty file.
+    let open = |slot: u32| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(slot_file(&home, slot))
+            .unwrap()
+    };
+    let foreign_one = open(1);
+    foreign_one.lock().unwrap();
+    std::fs::write(
+        slot_file(&home, 1),
+        "XYZ-9, pid 4242, since 2026-01-01T00:00:00Z, cargo test",
+    )
+    .unwrap();
+    let foreign_two = open(2);
+    foreign_two.lock().unwrap();
+
+    let err = root.path().join("a.err");
+    let mut waiter = spawn_to(
+        standin_a.command(repo_a.path(), &home, &["cargo", "second"]),
+        &err,
+    );
+    wait_until("the wait line", || {
+        std::fs::read_to_string(&err)
+            .unwrap_or_default()
+            .contains(WAIT_LINE)
+    });
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(waiter.try_wait().unwrap().is_none(), "the run did not wait");
+    assert!(
+        !standin_a.ctl.join("started").exists(),
+        "cargo ran while both slots were held"
+    );
+    let text = std::fs::read_to_string(&err).unwrap();
+    assert_eq!(text.matches(WAIT_LINE).count(), 1, "{text}");
+    let line = text.lines().find(|l| l.contains(WAIT_LINE)).unwrap();
+    assert!(
+        line.contains("XYZ-9, pid 4242, since 2026-01-01T00:00:00Z, cargo test; an unknown holder"),
+        "{line}"
+    );
+
+    // Slot 2 freed: the run starts on slot 2.
+    drop(foreign_two);
+    wait_until("the run on slot 2", || {
+        standin_a.ctl.join("started").exists()
+    });
+    assert!(
+        slot_text(&home, 2).contains(&format!("pid {}", waiter.id())),
+        "slot 2: {:?}",
+        slot_text(&home, 2)
+    );
+    let text = std::fs::read_to_string(&err).unwrap();
+    assert_eq!(text.matches(WAIT_LINE).count(), 1, "{text}");
+
+    // Two runs hold slots 1 and 2: a third run, from a third worktree, waits.
+    let err_c = root.path().join("c.err");
+    let mut third = spawn_to(
+        standin_c.command(repo_c.path(), &home, &["cargo", "third"]),
+        &err_c,
+    );
+    wait_until("the third run's wait line", || {
+        std::fs::read_to_string(&err_c)
+            .unwrap_or_default()
+            .contains(WAIT_LINE)
+    });
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(
+        third.try_wait().unwrap().is_none(),
+        "the third run did not wait"
+    );
+    assert_eq!(standin_c.runs("third"), 0, "{}", standin_c.log());
+    let text = std::fs::read_to_string(&err_c).unwrap();
+    assert_eq!(text.matches(WAIT_LINE).count(), 1, "{text}");
+    let line = text.lines().find(|l| l.contains(WAIT_LINE)).unwrap();
+    assert!(
+        line.contains("XYZ-9, pid 4242") && line.contains(&format!("pid {}", waiter.id())),
+        "{line}"
+    );
+
+    // The foreign holder of slot 1 ends: the third run goes on.
+    drop(foreign_one);
+    wait_until("the third run", || standin_c.runs("third") == 1);
+    standin_a.touch("release");
+    wait_exit(&mut waiter, "the second run");
+    wait_exit(&mut third, "the third run");
 }
