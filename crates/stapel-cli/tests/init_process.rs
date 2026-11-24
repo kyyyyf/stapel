@@ -916,6 +916,27 @@ fn builder_text_forbids_history_rewrites() {
     );
 }
 
+// AC-10: the builder runs the private-data test with the ticket lint before each GREEN; the skill says
+// the Test plan names both.
+#[test]
+fn builder_runs_the_privacy_test() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let builder = collapsed(&body_of(dir, AGENTS[0]));
+    assert!(
+        builder.contains(
+            "the private-data test of the project with the ticket lint before each GREEN"
+        ),
+        "builder text lacks the privacy test"
+    );
+    let skill = collapsed(&body_of(dir, SKILL));
+    assert!(
+        skill.contains("the Test plan names both"),
+        "skill rule 6 lacks the Test plan sentence"
+    );
+}
+
 // AC-8: the skill and the reviewer agent name the review pack.
 #[test]
 fn skill_text_names_the_review_pack() {
