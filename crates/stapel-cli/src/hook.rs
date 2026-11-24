@@ -158,9 +158,10 @@ fn deny(reason: &str) -> ExitCode {
 }
 
 /// The default `[roles]` rows, used when `stapel.toml` has no table (STP-26).
-const DEFAULT_ROLES: [(&str, &str); 4] = [
+const DEFAULT_ROLES: [(&str, &str); 5] = [
     ("stapel-builder", "builder"),
     ("stapel-drift", "drift"),
+    ("stapel-external-reviewer", "external"),
     ("stapel-reviewer", "reviewer"),
     ("stapel-spec-reviewer", "reviewer"),
 ];

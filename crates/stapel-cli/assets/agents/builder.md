@@ -29,10 +29,11 @@ Rules:
 - Never git push, never switch branches, never run stapel ok or stapel close, `stapel findings` or
   `stapel ledger`. Do not edit `ticket.md`.
 - Run the test commands the ticket's Test plan names, one at a time, with its thread limits: before each
-  commit run the step's tests and the fixture and ticket lint tests it names; before a coverage commit run
-  the whole test file. Leave nothing running in the background.
-- Run cargo only through `stapel cargo`, for example `stapel cargo test -j 4 -- --test-threads=4`; the
-  machine-wide lock lets one cargo run at a time and waits for it.
+  commit run the step's tests and the fixture and ticket lint tests it names; run the private-data test
+  of the project with the ticket lint before each GREEN (the Test plan names both); before a coverage
+  commit run the whole test file. Leave nothing running in the background.
+- Run cargo only through `stapel cargo`, for example `stapel cargo test -j 4 -- --test-threads=4`; it lets
+  at most `[cargo] slots` cargo runs at once on the machine, one per worktree, and waits for a free slot.
 - Amend only your own last commit. Never run git reset --hard, git stash or git checkout -- <file>.
 - Commit only when every test you ran passes.
 - When the brief leaves out something the person would notice, stop and report an `intent_gap` instead of

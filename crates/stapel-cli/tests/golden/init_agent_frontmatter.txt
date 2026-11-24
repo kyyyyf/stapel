@@ -33,3 +33,12 @@ model: "claude-sonnet-5-5"
 permissionMode: default
 # stapel: <version> sha256:<hash>
 ---
+===
+---
+name: stapel-external-reviewer
+description: "Reviews the code of a ticket on a copy of the repository as the external reviewer and reports findings without changing anything."
+tools: Read, Grep, Glob
+model: "claude-opus-5-5"
+permissionMode: default
+# stapel: <version> sha256:<hash>
+---

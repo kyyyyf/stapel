@@ -137,6 +137,8 @@ pub struct Pack<'a> {
     pub key: &'a str,
     pub round: u64,
     pub base: &'a str,
+    /// The ticket base of `state.json`, when the pack base differs from it.
+    pub ticket_base: Option<&'a str>,
     pub head: &'a str,
     pub folder: &'a str,
     pub stat: &'a str,
@@ -145,9 +147,13 @@ pub struct Pack<'a> {
 }
 
 pub fn pack_text(p: &Pack) -> String {
+    let ticket_base = match p.ticket_base {
+        Some(b) => format!("- ticket base: {b}\n"),
+        None => String::new(),
+    };
     let mut out = format!(
         "# Review pack {key}, round {round}\n\n- ticket: {key}\n- round: {round}\n- base: {base}\n\
-         - head: {head}\n\n## Paths\n\n- copy: {folder}/tree\n\
+         {ticket_base}- head: {head}\n\n## Paths\n\n- copy: {folder}/tree\n\
          - ticket: {folder}/tree/.stapel/tickets/{key}/ticket.md\n- diff: {folder}/diff.patch\n\n\
          ## Stat\n\n```\n{stat}\n```\n\n## Spec\n\n{spec}\n",
         key = p.key,
@@ -260,7 +266,7 @@ pub fn reviewers(light: bool, tags: &[&str]) -> Vec<Reviewer> {
     }];
     if !light && !tags.is_empty() {
         out.push(Reviewer {
-            agent: "stapel-reviewer",
+            agent: "stapel-external-reviewer",
             role: "external",
             whole_ticket: false,
         });

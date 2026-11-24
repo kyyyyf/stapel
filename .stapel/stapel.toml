@@ -64,6 +64,11 @@ stapel-depends = "depends"
 stapel-drift = "drift"
 stapel-reviewer = "reviewer"
 stapel-spec-reviewer = "reviewer"
+stapel-external-reviewer = "external"
+
+# Machine-wide cargo slots of `stapel cargo` and `stapel check` (STP-42); 10 cores and 16 GB here.
+[cargo]
+slots = 3
 
 # Sections whose fresh confirmations together permit code writes.
 [build]

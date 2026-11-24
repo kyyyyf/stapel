@@ -125,7 +125,15 @@ pub fn start(key: Option<&str>, round: Round) -> Result<(), Fail> {
     if let Some(n) = number {
         remove_old_copies(&root, &ticket.key, n)?;
         copy_head(&root, &ticket.key, &label)?;
-        write_pack(&root, &ticket.key, &ticket.dir, n, base, &head)?;
+        write_pack(
+            &root,
+            &ticket.key,
+            &ticket.dir,
+            n,
+            base,
+            state.base_branch.as_deref(),
+            &head,
+        )?;
     } else {
         let Some(base_branch) = &state.base_branch else {
             return Err(Fail::failed(format!(
@@ -203,7 +211,8 @@ fn write_pack(
     key: &str,
     ticket_dir: &Path,
     round: u64,
-    base: &str,
+    ticket_base: &str,
+    base_branch: Option<&str>,
     head: &str,
 ) -> Result<(), Fail> {
     let relative = format!(".stapel/scratch/review/{key}-r{round}");
@@ -212,6 +221,18 @@ fn write_pack(
         let path = folder.join(name);
         std::fs::write(&path, bytes).map_err(|e| Fail::failed(format!("{}: {e}", path.display())))
     };
+    // The pack base is the merge base with the base branch, so a later base commit stays out.
+    let merge_base = base_branch.and_then(|branch| {
+        let out = Command::new("git")
+            .args(["merge-base", &format!("refs/heads/{branch}"), head])
+            .current_dir(root)
+            .output()
+            .ok()?;
+        let found = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (out.status.success() && !found.is_empty()).then_some(found)
+    });
+    let base = merge_base.as_deref().unwrap_or(ticket_base);
+    let differs = (base != ticket_base).then_some(ticket_base);
     write("diff.patch", &diff(root, &[], base, head)?)?;
     let stat = diff(root, &["--stat=120", "--stat-graph-width=20"], base, head)?;
     let ticket_md = ticket_dir.join("ticket.md");
@@ -238,6 +259,7 @@ fn write_pack(
         key,
         round,
         base,
+        ticket_base: differs,
         head,
         folder: &relative,
         stat: &String::from_utf8_lossy(&stat),

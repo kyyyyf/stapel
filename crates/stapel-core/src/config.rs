@@ -64,6 +64,33 @@ pub struct Config {
     /// `[guards]` (STP-41 AC-1): machine checks in a folder the agent cannot write unseen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guards: Option<Guards>,
+    /// `[cargo]` (STP-42 AC-1): the number of cargo lock slots; absent means 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cargo: Option<CargoSettings>,
+}
+
+/// The slots of the cargo lock when `[cargo] slots` is absent.
+pub const DEFAULT_CARGO_SLOTS: u32 = 3;
+
+/// `[cargo]`: the cargo lock settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CargoSettings {
+    /// Kept as read, so a float or a string is refused by `Config::validate` with one message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slots: Option<toml::Value>,
+}
+
+impl Config {
+    /// N: the number of cargo lock slots, 3 when `[cargo] slots` is absent.
+    pub fn cargo_slots(&self) -> u32 {
+        self.cargo
+            .as_ref()
+            .and_then(|c| c.slots.as_ref())
+            .and_then(|v| v.as_integer())
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(DEFAULT_CARGO_SLOTS)
+    }
 }
 
 /// `[guards]`: the folder of guard files and the guard entries.
@@ -383,6 +410,11 @@ impl Config {
 
     /// Checks that sections, dependencies, the key pattern and `build.requires` fit together.
     fn validate(&self) -> Result<(), String> {
+        if let Some(slots) = self.cargo.as_ref().and_then(|c| c.slots.as_ref()) {
+            if !slots.as_integer().is_some_and(|n| (1..=16).contains(&n)) {
+                return Err("cargo.slots must be a whole number from 1 to 16".into());
+            }
+        }
         if let Some(process) = &self.process {
             if process.dialogs != "all" && process.dialogs != "close" {
                 return Err(format!(

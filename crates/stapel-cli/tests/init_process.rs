@@ -8,11 +8,12 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 
 const SKILL: &str = ".claude/skills/stapel/SKILL.md";
-const AGENTS: [&str; 4] = [
+const AGENTS: [&str; 5] = [
     ".claude/agents/stapel-builder.md",
     ".claude/agents/stapel-drift.md",
     ".claude/agents/stapel-reviewer.md",
     ".claude/agents/stapel-spec-reviewer.md",
+    ".claude/agents/stapel-external-reviewer.md",
 ];
 const GOLDEN: &str = "tests/golden/init_agent_frontmatter.txt";
 
@@ -912,6 +913,27 @@ fn builder_text_forbids_history_rewrites() {
     assert!(
         flat.contains("Never run git reset --hard, git stash or git checkout -- <file>."),
         "missing sentence"
+    );
+}
+
+// AC-10: the builder runs the private-data test with the ticket lint before each GREEN; the skill says
+// the Test plan names both.
+#[test]
+fn builder_runs_the_privacy_test() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let builder = collapsed(&body_of(dir, AGENTS[0]));
+    assert!(
+        builder.contains(
+            "the private-data test of the project with the ticket lint before each GREEN"
+        ),
+        "builder text lacks the privacy test"
+    );
+    let skill = collapsed(&body_of(dir, SKILL));
+    assert!(
+        skill.contains("the Test plan names both"),
+        "skill rule 6 lacks the Test plan sentence"
     );
 }
 
@@ -2121,4 +2143,51 @@ fn names_the_records() {
     ] {
         assert!(flat.contains(want), "the skill lacks {want}");
     }
+}
+
+// STP-42 AC-5: the external reviewer agent has the reviewer's body and the model of `external`; the
+// starter binds `external` to Opus and maps the agent type; without `[roles]` its records get `external`.
+#[test]
+fn external_reviewer_agent() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    let rel = ".claude/agents/stapel-external-reviewer.md";
+    let fm = frontmatter(&read(dir, rel));
+    assert_eq!(fm[1], "name: stapel-external-reviewer", "{fm:?}");
+    assert!(fm.contains(&"tools: Read, Grep, Glob".to_string()), "{fm:?}");
+    assert!(fm.contains(&"model: \"claude-opus-5-5\"".to_string()), "{fm:?}");
+    assert_eq!(body_of(dir, rel), body_of(dir, AGENTS[2]));
+
+    let text = read(dir, ".stapel/stapel.toml");
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines.contains(&"stapel-external-reviewer = \"external\""), "{text}");
+    let bound = lines.iter().find(|l| l.starts_with("external")).expect("external binding");
+    assert!(bound.contains("model = \"claude-opus-5-5\""), "{bound}");
+
+    let (head, tail) = text.split_once("[roles]\n").expect("a [roles] table");
+    let rest = tail.split_once("\n\n").map_or("", |(_, r)| r);
+    std::fs::write(dir.join(".stapel/stapel.toml"), format!("{head}\n{rest}")).unwrap();
+    let transcript = dir.join("sub.jsonl");
+    std::fs::write(
+        &transcript,
+        "{\"type\":\"user\",\"timestamp\":\"2026-01-01T11:00:00.000Z\",\"sessionId\":\"s-hook\",\"agentId\":\"agent-hook\",\"isSidechain\":true}\n\
+         {\"type\":\"assistant\",\"timestamp\":\"2026-01-01T11:00:05.000Z\",\"sessionId\":\"s-hook\",\"agentId\":\"agent-hook\",\"isSidechain\":true,\"message\":{\"id\":\"m1\",\"model\":\"claude-opus-5-5\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"cache_read_input_tokens\":3,\"cache_creation_input_tokens\":4},\"stop_reason\":\"end_turn\"}}\n",
+    )
+    .unwrap();
+    let input = serde_json::json!({
+        "hook_event_name": "SubagentStop",
+        "session_id": "s-hook",
+        "cwd": dir,
+        "agent_type": "stapel-external-reviewer",
+        "agent_transcript_path": transcript,
+    });
+    stapel(dir)
+        .args(["hook", "subagent-stop"])
+        .write_stdin(input.to_string())
+        .assert()
+        .success();
+    let records = read(dir, ".stapel/tickets/ABC-1/tokens.jsonl");
+    let record: serde_json::Value =
+        serde_json::from_str(records.lines().next().expect("a record")).unwrap();
+    assert_eq!(record["role"], "external", "{record}");
 }

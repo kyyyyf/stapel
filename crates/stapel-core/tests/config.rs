@@ -38,7 +38,7 @@ fn default_config_has_roles_and_sections() {
     assert_eq!(roles, expected);
 
     let external = &config.models["external"];
-    assert_eq!(external.model, "claude-fable-5-1");
+    assert_eq!(external.model, "claude-opus-5-5");
     assert!(!external.required);
     assert!(config.models["builder"].required);
     assert_eq!(config.models["author"].model, "claude-opus-5-5");

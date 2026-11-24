@@ -124,7 +124,8 @@ list must not only grow.
    not exist, a test exists that no ticket names, a criterion quotes an output line that is not in the code,
    a ticket names a missing path, a tagged ticket lacks its tables or a dated self-check, a ticket tagged
    guard or security lacks its Abuse table, the test lists of criteria, Test plan and Proof disagree, or a
-   CLI option is in no Inputs table. The builder runs the ticket lint before each commit.
+   CLI option is in no Inputs table. The builder runs the ticket lint before each commit. It also runs the
+   private-data test of the project before each GREEN; the Test plan names both.
 7. **Code review without quotas.** Each reviewer reports every HIGH and MEDIUM finding and a short summary
    of LOW ones, with no fixed maximum. Each finding gets `catchable_at` (`spec`, `design`, `test-plan`,
    `code`), `promise` (`inside` or `outside`) and `rule`: the rule of this process that should have caught

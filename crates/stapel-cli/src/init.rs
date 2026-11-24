@@ -379,7 +379,7 @@ struct AgentFile {
 
 const READ_ONLY_TOOLS: &str = "Read, Grep, Glob";
 
-const AGENT_FILES: [AgentFile; 5] = [
+const AGENT_FILES: [AgentFile; 6] = [
     AgentFile {
         name: "builder",
         role: "builder",
@@ -420,6 +420,14 @@ const AGENT_FILES: [AgentFile; 5] = [
         default_mode: "default",
         body: include_str!("../assets/agents/depends.md"),
     },
+    AgentFile {
+        name: "external-reviewer",
+        role: "external",
+        description: "Reviews the code of a ticket on a copy of the repository as the external reviewer and reports findings without changing anything.",
+        tools: READ_ONLY_TOOLS,
+        default_mode: "default",
+        body: include_str!("../assets/agents/reviewer.md"),
+    },
 ];
 
 /// Stapel's text of a process file: the frontmatter lines (without the marker), the marker line
@@ -452,7 +460,7 @@ const ALLOWED_MODES: [&str; 6] = [
     "plan",
     "manual",
 ];
-const AGENT_ROLES: [&str; 4] = ["builder", "drift", "reviewer", "depends"];
+const AGENT_ROLES: [&str; 5] = ["builder", "drift", "reviewer", "depends", "external"];
 
 /// Refuses a binding of an agent role whose mode or model cannot go into an agent file.
 fn check_bindings(config: &Config) -> Result<(), String> {
