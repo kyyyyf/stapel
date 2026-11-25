@@ -385,3 +385,127 @@ fn refuses_a_changed_library() {
         );
     }
 }
+
+#[test]
+fn symbol_text() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("B.rs"), "fn dup() {}\n").unwrap();
+    std::fs::write(dir.join("a.rs"), "\nfn dup() {}\nfn dupe() {}\n").unwrap();
+    std::fs::write(dir.join("sub/c.rs"), "\n\nstruct dup;\n").unwrap();
+    build_grammar(dir, &path, &home);
+
+    let out = stapel(dir)
+        .args(["q", "symbol", "dup"])
+        .env("HOME", &home)
+        .assert()
+        .success();
+    assert_eq!(
+        stdout_of(out),
+        "B.rs:1 fn dup\na.rs:2 fn dup\nsub/c.rs:3 struct dup\n"
+    );
+
+    // The same from a subfolder: paths stay relative to the top of the tree.
+    let out = stapel(&dir.join("sub"))
+        .args(["q", "symbol", "dupe"])
+        .env("HOME", &home)
+        .assert()
+        .success();
+    assert_eq!(stdout_of(out), "a.rs:3 fn dupe\n");
+}
+
+#[test]
+fn symbol_not_found() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::write(dir.join("a.rs"), "fn alpha() {}\n").unwrap();
+    build_grammar(dir, &path, &home);
+
+    for name in ["nothing", "Alpha", ""] {
+        let out = stapel(dir)
+            .args(["q", "symbol", name])
+            .env("HOME", &home)
+            .assert()
+            .code(1);
+        let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+        assert!(
+            err.contains(&format!("stapel: no definition of {name}\n")),
+            "stderr: {err}"
+        );
+        assert_eq!(stdout_of(out), "", "name {name:?}");
+    }
+    let out = stapel(dir)
+        .args(["q", "symbol", "--", "-x"])
+        .env("HOME", &home)
+        .assert()
+        .code(1);
+    assert_eq!(stdout_of(out), "");
+
+    // An index with a Rust name, then the record removed: no output, no message, exit 2.
+    stapel(dir)
+        .arg("index")
+        .env("HOME", &home)
+        .assert()
+        .success();
+    let mut records = 0;
+    for folder in std::fs::read_dir(dir.join(".git/stapel/grammars")).unwrap() {
+        let record = folder.unwrap().path().join("rust.json");
+        std::fs::remove_file(record).unwrap();
+        records += 1;
+    }
+    assert_eq!(records, 1);
+    let out = stapel(dir)
+        .args(["q", "symbol", "alpha"])
+        .env("HOME", &home)
+        .assert()
+        .code(2);
+    let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(
+        err.contains("stapel: no grammar library for rust: run stapel grammar build"),
+        "stderr: {err}"
+    );
+    assert!(!err.contains("no definition of"), "stderr: {err}");
+    assert_eq!(stdout_of(out), "");
+
+    // A build, then the name is found.
+    build_grammar(dir, &path, &home);
+    let out = stapel(dir)
+        .args(["q", "symbol", "alpha"])
+        .env("HOME", &home)
+        .assert()
+        .success();
+    assert_eq!(stdout_of(out), "a.rs:1 fn alpha\n");
+}
+
+#[test]
+fn outside_git() {
+    let folder = common::bare_dir();
+    let home = folder.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    for args in [
+        vec!["grammar", "build"],
+        vec!["index"],
+        vec!["q", "symbol", "x"],
+    ] {
+        let out = stapel(folder.path())
+            .args(&args)
+            .env("HOME", &home)
+            .assert()
+            .code(1);
+        let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+        assert!(
+            err.contains("stapel: not a git working tree\n"),
+            "{args:?}, stderr: {err}"
+        );
+        assert_eq!(stdout_of(out), "", "{args:?}");
+    }
+}
