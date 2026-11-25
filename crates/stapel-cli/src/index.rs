@@ -226,10 +226,11 @@ pub fn run() -> Result<(), Fail> {
 }
 
 /// `stapel q symbol NAME`: one line per definition named exactly NAME.
-pub fn symbol(name: &str) -> Result<(), Fail> {
+pub fn symbol(name: &str, json: bool) -> Result<(), Fail> {
     let top = toplevel()?;
     let built = build(&top)?;
     let mut found = 0usize;
+    let mut objects: Vec<serde_json::Value> = Vec::new();
     // The map keeps the paths in byte order.
     for (path, entry) in &built.stored {
         let Some(definitions) = entry["definitions"].as_array() else {
@@ -242,9 +243,18 @@ pub fn symbol(name: &str) -> Result<(), Fail> {
             .collect();
         lines.sort();
         for (line, kind) in lines {
-            say!("{path}:{line} {kind} {name}");
+            if json {
+                objects.push(serde_json::json!({
+                    "path": path, "line": line, "kind": kind, "name": name
+                }));
+            } else {
+                say!("{path}:{line} {kind} {name}");
+            }
             found += 1;
         }
+    }
+    if json {
+        say!("{}", serde_json::to_string(&objects).unwrap());
     }
     built.library_failure()?;
     if found == 0 {

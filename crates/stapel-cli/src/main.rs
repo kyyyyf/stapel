@@ -49,6 +49,9 @@ enum QueryCommand {
     Symbol {
         /// The name; after `--` it may start with a dash.
         name: String,
+        /// Print one JSON array of {path, line, kind, name} instead of lines.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -462,7 +465,9 @@ fn main() -> ExitCode {
             command: GrammarCommand::Build,
         } => return fail::finish(grammar::build()),
         Command::Index => return fail::finish(index::run()),
-        Command::Q(QueryCommand::Symbol { name }) => return fail::finish(index::symbol(&name)),
+        Command::Q(QueryCommand::Symbol { name, json }) => {
+            return fail::finish(index::symbol(&name, json))
+        },
         Command::Lsp => return ExitCode::from(stapel_lsp::run() as u8),
         Command::Brief { key, step } => return fail::finish(brief::run(&key, &step)),
         Command::Depends { key } => return fail::finish(depends::run(key.as_deref())),
