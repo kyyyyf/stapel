@@ -736,3 +736,40 @@ fn syntax_errors() {
     let text = stdout_of(out);
     assert!(text.ends_with("syntax errors: 1 files\n"), "stdout: {text}");
 }
+
+#[test]
+fn index_is_not_tracked() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::write(dir.join("a.rs"), "fn one() {}\n").unwrap();
+    build_grammar(dir, &path, &home);
+
+    let porcelain = || {
+        let out = std::process::Command::new("git")
+            .args(["status", "--porcelain", "--untracked-files=all"])
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert!(!dir.join(".gitignore").exists());
+    let before = porcelain();
+    stapel(dir).arg("index").env("HOME", &home).assert().success();
+    assert_eq!(porcelain(), before);
+    stapel(dir)
+        .args(["q", "symbol", "one"])
+        .env("HOME", &home)
+        .assert()
+        .success();
+    assert_eq!(porcelain(), before);
+
+    let folder = dir.join(".stapel/index");
+    assert_eq!(std::fs::read_to_string(folder.join(".gitignore")).unwrap(), "*\n");
+    assert!(folder.join("index.json").is_file());
+    assert!(!dir.join(".gitignore").exists());
+}
