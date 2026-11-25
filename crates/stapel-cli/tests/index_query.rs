@@ -823,3 +823,89 @@ fn concurrent_queries() {
         std::fs::remove_dir_all(dir.join(".stapel/index")).unwrap();
     }
 }
+
+#[test]
+fn check_order_takes_the_first_fault() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+    build_grammar(dir, &path, &home);
+    let folder = std::fs::read_dir(dir.join(".git/stapel/grammars"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path()
+        .canonicalize()
+        .unwrap();
+    let record_path = folder.join("rust.json");
+    let mut record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record_path).unwrap()).unwrap();
+    let library = folder.join(record["file"].as_str().unwrap());
+
+    // Two faults at once: the bytes differ from the record and the record has another version.
+    let mut bytes = std::fs::read(&library).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 1;
+    std::fs::write(&library, bytes).unwrap();
+    record["version"] = serde_json::json!("0.0.1-other");
+    std::fs::write(&record_path, record.to_string()).unwrap();
+
+    let out = stapel(dir)
+        .arg("index")
+        .env("HOME", &home)
+        .assert()
+        .code(2);
+    let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(
+        err.contains(&format!(
+            "stapel: grammar library {} refused: grammar version 0.0.1-other is not ",
+            library.display()
+        )),
+        "stderr: {err}"
+    );
+    assert!(
+        !err.contains("content hash differs from its record"),
+        "stderr: {err}"
+    );
+}
+
+#[test]
+fn no_index_line_after_a_missing_library() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::write(dir.join("a.rs"), "fn alpha() {}\n").unwrap();
+    build_grammar(dir, &path, &home);
+    stapel(dir)
+        .args(["q", "symbol", "alpha"])
+        .env("HOME", &home)
+        .assert()
+        .success();
+
+    // The record removed: the stored Rust definitions are dropped, and no index: line tells of it.
+    let mut records = 0;
+    for folder in std::fs::read_dir(dir.join(".git/stapel/grammars")).unwrap() {
+        std::fs::remove_file(folder.unwrap().path().join("rust.json")).unwrap();
+        records += 1;
+    }
+    assert_eq!(records, 1);
+    let out = stapel(dir)
+        .args(["q", "symbol", "alpha"])
+        .env("HOME", &home)
+        .assert()
+        .code(2);
+    let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(
+        err.contains("stapel: no grammar library for rust: run stapel grammar build"),
+        "stderr: {err}"
+    );
+    assert!(!err.contains("index:"), "stderr: {err}");
+}
