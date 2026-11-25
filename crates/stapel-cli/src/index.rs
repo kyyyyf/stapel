@@ -331,7 +331,7 @@ pub fn symbol(name: &str, json: bool) -> Result<(), Fail> {
             found += 1;
         }
     }
-    if json {
+    if json && (found > 0 || built.library_failure().is_err()) {
         say!("{}", serde_json::to_string(&objects).unwrap());
     }
     built.library_failure()?;
