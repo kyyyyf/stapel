@@ -157,6 +157,105 @@ fn builds_into_the_common_folder() {
 }
 
 #[test]
+fn a_failed_build_leaves_the_folder() {
+    let ext = if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    };
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let bin = scratch.path().join("bin");
+    let ctl = scratch.path().join("ctl");
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&ctl).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    // The fake cargo reads its mode from a file: `ok` writes a library whose bytes are the mode
+    // file's second line, `fail` prints and exits 1, `empty` exits 0 and writes no library.
+    let script = format!(
+        "#!/bin/sh\n\
+         D='{ctl}'\n\
+         MODE=$(head -n 1 \"$D/mode\")\n\
+         BYTES=$(tail -n 1 \"$D/mode\")\n\
+         T=target\n\
+         while [ $# -gt 0 ]; do\n\
+         \x20 if [ \"$1\" = --target-dir ]; then T=\"$2\"; fi\n\
+         \x20 shift\n\
+         done\n\
+         if [ \"$MODE\" = fail ]; then echo 'fake cargo exploded'; echo 'fake cargo stderr' >&2; exit 1; fi\n\
+         if [ \"$MODE\" = empty ]; then exit 0; fi\n\
+         mkdir -p \"$T/release\"\n\
+         printf '%s' \"$BYTES\" > \"$T/release/libstapel_grammar_rust.{ext}\"\n\
+         exit 0\n",
+        ctl = ctl.display()
+    );
+    let cargo = bin.join("cargo");
+    std::fs::write(&cargo, script).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let run = || {
+        stapel(repo.path())
+            .args(["grammar", "build"])
+            .env("PATH", &path)
+            .env("HOME", &home)
+            .env_remove("STAPEL_CARGO_LOCK_HELD")
+            .assert()
+    };
+    let grammars = repo.path().join(".git/stapel/grammars");
+    let folder = grammars.join(env!("CARGO_PKG_VERSION"));
+    let snapshot = |dir: &Path| -> Vec<(String, Vec<u8>)> {
+        let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| {
+                let e = e.unwrap();
+                (
+                    e.file_name().to_string_lossy().into_owned(),
+                    std::fs::read(e.path()).unwrap(),
+                )
+            })
+            .collect();
+        files.sort();
+        files
+    };
+
+    // An earlier build gives a library and a record.
+    std::fs::write(ctl.join("mode"), "ok\nearlier bytes").unwrap();
+    run().success();
+    let before = snapshot(&folder);
+    assert_eq!(before.len(), 2, "the library and the record");
+
+    for mode in ["fail", "empty"] {
+        std::fs::write(ctl.join("mode"), format!("{mode}\nlater bytes")).unwrap();
+        let out = run().code(1);
+        let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+        let all = format!("{stdout}{stderr}");
+        assert!(
+            all.contains("stapel: grammar build failed for rust"),
+            "{mode}: {all}"
+        );
+        if mode == "fail" {
+            assert!(all.contains("fake cargo exploded"), "{mode}: {all}");
+            assert!(all.contains("fake cargo stderr"), "{mode}: {all}");
+        }
+        assert_eq!(snapshot(&folder), before, "{mode}: the folder is unchanged");
+        let others: Vec<String> = std::fs::read_dir(&grammars)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            others,
+            [env!("CARGO_PKG_VERSION")],
+            "{mode}: no build folder is left"
+        );
+    }
+}
+
+#[test]
 fn wrapper_lock_matches_the_workspace() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let workspace = std::fs::read_to_string(root.join("Cargo.lock")).unwrap();
