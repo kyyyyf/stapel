@@ -104,7 +104,16 @@ pub fn run() -> Result<(), Fail> {
             .and_then(|e| e.to_str())
             .is_some_and(|e| adapter.extensions.contains(&e))
     };
-    let library = if files.iter().any(|f| owns(f)) {
+    let candidate = |path: &str| {
+        let full = top.join(path);
+        owns(path)
+            && full
+                .symlink_metadata()
+                .map(|m| m.file_type().is_file() && m.len() <= 1_048_576)
+                .unwrap_or(false)
+            && std::fs::File::open(&full).is_ok()
+    };
+    let library = if files.iter().any(|f| candidate(f)) {
         Some(load(adapter)?)
     } else {
         None
