@@ -909,3 +909,56 @@ fn no_index_line_after_a_missing_library() {
     );
     assert!(!err.contains("index:"), "stderr: {err}");
 }
+
+#[test]
+fn unreadable_record_is_missing() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::write(dir.join("a.rs"), "fn alpha() {}\n").unwrap();
+    build_grammar(dir, &path, &home);
+    let line = "stapel: no grammar library for rust: run stapel grammar build";
+    let folders: Vec<PathBuf> = std::fs::read_dir(dir.join(".git/stapel/grammars"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(folders.len(), 1);
+    let record = folders[0].join("rust.json");
+    let good = std::fs::read_to_string(&record).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&good).unwrap();
+
+    let check = |label: &str| {
+        let out = stapel(dir)
+            .args(["q", "symbol", "alpha"])
+            .env("HOME", &home)
+            .assert()
+            .code(2);
+        let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+        assert!(err.contains(line), "{label}: stderr: {err}");
+        assert!(!err.contains("refused"), "{label}: stderr: {err}");
+    };
+
+    // A record that is not JSON.
+    std::fs::write(&record, "garbage").unwrap();
+    check("garbage");
+
+    // A record without its `sha256`.
+    let mut cut = value.clone();
+    cut.as_object_mut().unwrap().remove("sha256").unwrap();
+    std::fs::write(&record, serde_json::to_string(&cut).unwrap()).unwrap();
+    check("no sha256");
+
+    // A library file that cannot be read.
+    std::fs::write(&record, &good).unwrap();
+    let file = folders[0].join(value["file"].as_str().unwrap());
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::File::open(&file).is_err() {
+        check("mode 000");
+    }
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+}
