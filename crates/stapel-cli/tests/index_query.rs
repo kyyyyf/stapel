@@ -709,3 +709,30 @@ fn reparses_on_grammar_change() {
     assert!(err.contains("index: 2 parsed, 0 removed\n"), "stderr: {err}");
     assert!(!query().contains("index:"));
 }
+
+#[test]
+fn syntax_errors() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::write(dir.join("broken.rs"), "fn broken( {\nstruct Good;\n").unwrap();
+    build_grammar(dir, &path, &home);
+
+    let out = stapel(dir)
+        .args(["q", "symbol", "Good"])
+        .env("HOME", &home)
+        .assert()
+        .success();
+    assert_eq!(stdout_of(out), "broken.rs:2 struct Good\n");
+
+    let out = stapel(dir)
+        .arg("index")
+        .env("HOME", &home)
+        .assert()
+        .success();
+    let text = stdout_of(out);
+    assert!(text.ends_with("syntax errors: 1 files\n"), "stdout: {text}");
+}
