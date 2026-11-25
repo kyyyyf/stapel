@@ -121,3 +121,75 @@ fn worktrees_share_the_grammar() {
         "rust: 2 files, 3 symbols\nskipped: 0 files\nsyntax errors: 0 files\n"
     );
 }
+
+#[test]
+fn file_list() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    git_config(dir, "user.email", "test@example.invalid");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+    std::fs::write(dir.join("gone.rs"), "fn gone() {}\n").unwrap();
+    std::fs::write(dir.join("sub/in.rs"), "fn inner() {}\n").unwrap();
+    git(dir, &["add", "a.rs", "gone.rs", "sub/in.rs"]);
+    git(dir, &["commit", "-q", "-m", "first"]);
+    std::fs::remove_file(dir.join("gone.rs")).unwrap();
+
+    std::fs::write(dir.join(".gitignore"), "ignored.rs\n").unwrap();
+    std::fs::write(dir.join("ignored.rs"), "fn ignored() {}\n").unwrap();
+    std::fs::write(dir.join("untracked.rs"), "fn untracked() {}\n").unwrap();
+    std::fs::write(dir.join("sp ace.rs"), "fn spaced() {}\n").unwrap();
+    std::fs::write(dir.join("é.rs"), "fn accent() {}\n").unwrap();
+    std::fs::write(dir.join("notes.txt"), "text\n").unwrap();
+    std::os::unix::fs::symlink("a.rs", dir.join("link.rs")).unwrap();
+    let sized = |name: &str, size: usize| {
+        let mut text = b"fn sized() {}\n".to_vec();
+        text.resize(size, b' ');
+        std::fs::write(dir.join(name), text).unwrap();
+    };
+    sized("edge.rs", 1_048_576);
+    sized("big.rs", 1_048_577);
+    std::fs::write(dir.join("locked.rs"), "fn locked() {}\n").unwrap();
+    std::fs::set_permissions(dir.join("locked.rs"), std::fs::Permissions::from_mode(0)).unwrap();
+    build_grammar(dir, &path, &home);
+
+    // From the top: 6 indexed files (a, sub/in, untracked, sp ace, é, edge); skipped: .gitignore,
+    // notes.txt, link.rs, big.rs and locked.rs.
+    let counts = "rust: 6 files, 6 symbols\nskipped: 5 files\nsyntax errors: 0 files\n";
+    let out = stapel(dir)
+        .arg("index")
+        .env("HOME", &home)
+        .assert()
+        .success();
+    assert_eq!(stdout_of(out), counts);
+
+    let stored = std::fs::read_to_string(dir.join(".stapel/index/index.json")).unwrap();
+    let document: serde_json::Value = serde_json::from_str(&stored).unwrap();
+    let mut names: Vec<&str> = document["files"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["a.rs", "edge.rs", "sp ace.rs", "sub/in.rs", "untracked.rs", "é.rs"]
+    );
+
+    // From a subfolder and a second time: the same answer.
+    let out = stapel(&dir.join("sub"))
+        .arg("index")
+        .env("HOME", &home)
+        .assert()
+        .success();
+    assert_eq!(stdout_of(out), counts);
+    let again = std::fs::read_to_string(dir.join(".stapel/index/index.json")).unwrap();
+    assert_eq!(again, stored);
+    assert!(!dir.join("sub/.stapel").exists());
+}
