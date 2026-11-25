@@ -193,3 +193,38 @@ fn file_list() {
     assert_eq!(again, stored);
     assert!(!dir.join("sub/.stapel").exists());
 }
+
+#[test]
+fn no_rust_files_load_nothing() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let dir = repo.path();
+    git_config(dir, "user.email", "test@example.invalid");
+    let run = |counts: &str| {
+        let out = stapel(dir)
+            .arg("index")
+            .env("HOME", &home)
+            .assert()
+            .success();
+        let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+        assert!(!err.contains("grammar"), "stderr: {err}");
+        assert_eq!(stdout_of(out), counts);
+    };
+
+    std::fs::write(dir.join("README.md"), "text\n").unwrap();
+    run("skipped: 1 files\nsyntax errors: 0 files\n");
+
+    // A tracked file that is deleted from the tree.
+    std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+    git(dir, &["add", "a.rs"]);
+    git(dir, &["commit", "-q", "-m", "first"]);
+    std::fs::remove_file(dir.join("a.rs")).unwrap();
+    run("skipped: 1 files\nsyntax errors: 0 files\n");
+
+    // Only a symlink with the extension.
+    git(dir, &["rm", "-q", "--cached", "a.rs"]);
+    std::os::unix::fs::symlink("README.md", dir.join("x.rs")).unwrap();
+    run("skipped: 2 files\nsyntax errors: 0 files\n");
+}
