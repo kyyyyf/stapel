@@ -580,3 +580,54 @@ fn outside_git() {
         assert_eq!(stdout_of(out), "", "{args:?}");
     }
 }
+
+#[test]
+fn sees_edits_outside_stapel() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::write(dir.join("a.rs"), "fn one() {}\n").unwrap();
+    std::fs::write(dir.join("b.rs"), "fn two() {}\n").unwrap();
+    build_grammar(dir, &path, &home);
+
+    let query = |name: &str| {
+        let out = stapel(dir)
+            .args(["q", "symbol", name])
+            .env("HOME", &home)
+            .assert()
+            .success();
+        let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+        (stdout_of(out), err)
+    };
+    let (text, _) = query("one");
+    assert_eq!(text, "a.rs:1 fn one\n");
+
+    // Unchanged: no index line.
+    let (text, err) = query("one");
+    assert_eq!(text, "a.rs:1 fn one\n");
+    assert!(!err.contains("index:"), "stderr: {err}");
+
+    // A change, an addition and a removal outside stapel.
+    std::fs::write(dir.join("a.rs"), "fn uno() {}\n").unwrap();
+    std::fs::write(dir.join("c.rs"), "\nfn uno() {}\n").unwrap();
+    std::fs::remove_file(dir.join("b.rs")).unwrap();
+    let (text, err) = query("uno");
+    assert_eq!(text, "a.rs:1 fn uno\nc.rs:2 fn uno\n");
+    assert!(err.contains("index: 2 parsed, 1 removed\n"), "stderr: {err}");
+
+    // The old names are gone.
+    let out = stapel(dir)
+        .args(["q", "symbol", "two"])
+        .env("HOME", &home)
+        .assert()
+        .code(1);
+    let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(!err.contains("index:"), "stderr: {err}");
+
+    // Unchanged again: no index line.
+    let (_, err) = query("uno");
+    assert!(!err.contains("index:"), "stderr: {err}");
+}
