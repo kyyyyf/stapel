@@ -100,6 +100,9 @@ struct Built {
     erroneous: usize,
     stored: serde_json::Map<String, serde_json::Value>,
     library: Option<Library>,
+    /// Files parsed in this run, and files of the old index that left the list.
+    parsed: usize,
+    removed: usize,
 }
 
 impl Built {
@@ -118,10 +121,35 @@ impl Built {
     }
 }
 
-/// Rebuilds the whole index of the tree at `top` and stores it; definitions of a language without a
-/// usable library are not stored.
-fn build(top: &Path) -> Result<Built, Fail> {
+/// The files of the stored index of `top`, when it is readable and made by this version.
+fn previous(top: &Path) -> serde_json::Map<String, serde_json::Value> {
+    let Ok(text) = std::fs::read_to_string(top.join(".stapel/index/index.json")) else {
+        return Default::default();
+    };
+    let Ok(document) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Default::default();
+    };
+    if document["stapel"] != env!("CARGO_PKG_VERSION") {
+        return Default::default();
+    }
+    document["files"].as_object().cloned().unwrap_or_default()
+}
+
+/// Brings the index of the tree at `top` up to date and stores it; with `incremental` a file whose
+/// content hash is the stored one is not parsed again. Definitions of a language without a usable
+/// library are not stored.
+fn build(top: &Path, incremental: bool) -> Result<Built, Fail> {
     let files = file_list(top)?;
+    let old = if incremental {
+        previous(top)
+    } else {
+        Default::default()
+    };
+    let removed = old
+        .keys()
+        .filter(|k| files.binary_search(k).is_err())
+        .count();
+    let mut parsed_now = 0usize;
     let adapter = &stapel_index::adapters()[0];
     let owns = |path: &str| {
         Path::new(path)
@@ -167,10 +195,21 @@ fn build(top: &Path) -> Result<Built, Fail> {
             skipped += 1;
             continue;
         };
+        let sha = hex(&Sha256::digest(&source));
+        if let Some(entry) = old.get(file).filter(|e| e["sha256"] == sha.as_str()) {
+            parsed_files += 1;
+            symbols += entry["definitions"].as_array().map_or(0, |d| d.len());
+            if entry["errors"] == true {
+                erroneous += 1;
+            }
+            stored.insert(file.clone(), entry.clone());
+            continue;
+        }
         let Ok(found) = stapel_index::extract(adapter, library, &source) else {
             skipped += 1;
             continue;
         };
+        parsed_now += 1;
         parsed_files += 1;
         symbols += found.definitions.len();
         if found.has_errors {
@@ -184,7 +223,7 @@ fn build(top: &Path) -> Result<Built, Fail> {
         stored.insert(
             file.clone(),
             serde_json::json!({
-                "sha256": hex(&Sha256::digest(&source)),
+                "sha256": sha,
                 "errors": found.has_errors,
                 "definitions": definitions,
             }),
@@ -210,13 +249,15 @@ fn build(top: &Path) -> Result<Built, Fail> {
         erroneous,
         stored,
         library,
+        parsed: parsed_now,
+        removed,
     })
 }
 
 /// `stapel index`: rebuilds the whole index and prints the counts.
 pub fn run() -> Result<(), Fail> {
     let top = toplevel()?;
-    let built = build(&top)?;
+    let built = build(&top, false)?;
     if let Some((files, symbols)) = built.rust_line {
         say!("rust: {files} files, {symbols} symbols");
     }
@@ -228,7 +269,10 @@ pub fn run() -> Result<(), Fail> {
 /// `stapel q symbol NAME`: one line per definition named exactly NAME.
 pub fn symbol(name: &str, json: bool) -> Result<(), Fail> {
     let top = toplevel()?;
-    let built = build(&top)?;
+    let built = build(&top, true)?;
+    if built.parsed > 0 || built.removed > 0 {
+        warn!("index: {} parsed, {} removed", built.parsed, built.removed);
+    }
     let mut found = 0usize;
     let mut objects: Vec<serde_json::Value> = Vec::new();
     // The map keeps the paths in byte order.
