@@ -42,7 +42,7 @@ pub fn common_dir() -> Result<PathBuf, Fail> {
         .output()
         .map_err(|e| Fail::failed(format!("git did not start: {e}")))?;
     if !out.status.success() {
-        return Err(Fail::failed("not in a git working tree"));
+        return Err(Fail::failed("not a git working tree"));
     }
     let text = String::from_utf8_lossy(&out.stdout);
     let path = PathBuf::from(text.trim_end_matches('\n'));

@@ -63,7 +63,7 @@ fn toplevel() -> Result<PathBuf, Fail> {
         .output()
         .map_err(|e| Fail::failed(format!("git did not start: {e}")))?;
     if !out.status.success() {
-        return Err(Fail::failed("not in a git working tree"));
+        return Err(Fail::failed("not a git working tree"));
     }
     Ok(PathBuf::from(
         String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'),
@@ -93,10 +93,35 @@ fn file_list(top: &Path) -> Result<Vec<String>, Fail> {
     Ok(files)
 }
 
-/// `stapel index`: rebuilds the whole index and prints the counts.
-pub fn run() -> Result<(), Fail> {
-    let top = toplevel()?;
-    let files = file_list(&top)?;
+/// The result of one rebuild of the index.
+struct Built {
+    rust_line: Option<(usize, usize)>,
+    skipped: usize,
+    erroneous: usize,
+    stored: serde_json::Map<String, serde_json::Value>,
+    library: Option<Library>,
+}
+
+impl Built {
+    /// The library line as a refusal (exit 2), when a Rust file was skipped for the library.
+    fn library_failure(&self) -> Result<(), Fail> {
+        match &self.library {
+            Some(Library::Missing) => Err(Fail::refused(
+                "no grammar library for rust: run stapel grammar build",
+            )),
+            Some(Library::Refused(path, reason)) => Err(Fail::refused(format!(
+                "grammar library {} refused: {reason}; run stapel grammar build",
+                path.display()
+            ))),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Rebuilds the whole index of the tree at `top` and stores it; definitions of a language without a
+/// usable library are not stored.
+fn build(top: &Path) -> Result<Built, Fail> {
+    let files = file_list(top)?;
     let adapter = &stapel_index::adapters()[0];
     let owns = |path: &str| {
         Path::new(path)
@@ -178,19 +203,52 @@ pub fn run() -> Result<(), Fail> {
         serde_json::to_string(&document).unwrap().as_bytes(),
     )?;
 
-    if loaded.is_some() {
-        say!("rust: {parsed_files} files, {symbols} symbols");
+    let rust_line = loaded.map(|_| (parsed_files, symbols));
+    Ok(Built {
+        rust_line,
+        skipped,
+        erroneous,
+        stored,
+        library,
+    })
+}
+
+/// `stapel index`: rebuilds the whole index and prints the counts.
+pub fn run() -> Result<(), Fail> {
+    let top = toplevel()?;
+    let built = build(&top)?;
+    if let Some((files, symbols)) = built.rust_line {
+        say!("rust: {files} files, {symbols} symbols");
     }
-    say!("skipped: {skipped} files");
-    say!("syntax errors: {erroneous} files");
-    match library {
-        Some(Library::Missing) => Err(Fail::refused(
-            "no grammar library for rust: run stapel grammar build",
-        )),
-        Some(Library::Refused(path, reason)) => Err(Fail::refused(format!(
-            "grammar library {} refused: {reason}; run stapel grammar build",
-            path.display()
-        ))),
-        _ => Ok(()),
+    say!("skipped: {} files", built.skipped);
+    say!("syntax errors: {} files", built.erroneous);
+    built.library_failure()
+}
+
+/// `stapel q symbol NAME`: one line per definition named exactly NAME.
+pub fn symbol(name: &str) -> Result<(), Fail> {
+    let top = toplevel()?;
+    let built = build(&top)?;
+    let mut found = 0usize;
+    // The map keeps the paths in byte order.
+    for (path, entry) in &built.stored {
+        let Some(definitions) = entry["definitions"].as_array() else {
+            continue;
+        };
+        let mut lines: Vec<(u64, &str)> = definitions
+            .iter()
+            .filter(|d| d["name"] == name)
+            .map(|d| (d["line"].as_u64().unwrap_or(0), d["kind"].as_str().unwrap_or("")))
+            .collect();
+        lines.sort();
+        for (line, kind) in lines {
+            say!("{path}:{line} {kind} {name}");
+            found += 1;
+        }
     }
+    built.library_failure()?;
+    if found == 0 {
+        return Err(Fail::failed(format!("no definition of {name}")));
+    }
+    Ok(())
 }

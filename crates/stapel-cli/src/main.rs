@@ -44,6 +44,15 @@ enum GrammarCommand {
 }
 
 #[derive(Subcommand)]
+enum QueryCommand {
+    /// Print `path:line kind name` for each definition named exactly NAME.
+    Symbol {
+        /// The name; after `--` it may start with a dash.
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum Command {
     /// Prepare this repository: create .stapel/ and install Claude Code hooks.
     Init {
@@ -177,6 +186,9 @@ enum Command {
     },
     /// Rebuild the code index of this working tree and print the counts.
     Index,
+    /// Ask the code index of this working tree.
+    #[command(subcommand)]
+    Q(QueryCommand),
     /// Run the language server for an editor on standard input and output.
     Lsp,
     /// Review findings kept in a ticket's findings.jsonl.
@@ -450,6 +462,7 @@ fn main() -> ExitCode {
             command: GrammarCommand::Build,
         } => return fail::finish(grammar::build()),
         Command::Index => return fail::finish(index::run()),
+        Command::Q(QueryCommand::Symbol { name }) => return fail::finish(index::symbol(&name)),
         Command::Lsp => return ExitCode::from(stapel_lsp::run() as u8),
         Command::Brief { key, step } => return fail::finish(brief::run(&key, &step)),
         Command::Depends { key } => return fail::finish(depends::run(key.as_deref())),
