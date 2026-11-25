@@ -16,3 +16,4 @@
 {"v":1,"id":"d-0428aebad07d","at":"2026-11-25T05:37:19Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:ddda293936d97a4c34a3fdd3a6570c9ddeb87018e43004109cdafe8ad615d0ed","via":"grant"}
 {"v":1,"id":"d-1ad449c2fb01","at":"2026-11-25T05:37:19Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:62167d59e7d09b9fe3bef6091f880a7f1dcee498374739f2085d048f6e6f6b2a","via":"grant"}
 {"v":1,"id":"d-f8fb7c8f3e61","at":"2026-11-25T05:37:19Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:7a9320b5f125280f99d131365cbfbc71c9875c88f2524b93a23dda95613e0401","via":"grant"}
+{"v":1,"id":"d-d7e3577bf5b6","at":"2026-11-25T07:03:32Z","by":"kyyyyf","action":"close","reason":"The guards folder refuses work folders and warns about outside scripts, and the external reviewer records its role and runs only on claude-code, all checked with a passing stapel check after three code review rounds."}
