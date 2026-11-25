@@ -962,3 +962,25 @@ fn unreadable_record_is_missing() {
     }
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
 }
+
+#[test]
+fn path_order_mixes_tracked_and_untracked() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::write(dir.join("b.rs"), "\n\nfn dup() {}\n").unwrap();
+    git(dir, &["add", "b.rs"]);
+    // Untracked: git prints it after the tracked file, so only the sort puts it first.
+    std::fs::write(dir.join("a.rs"), "fn dup() {}\n").unwrap();
+    build_grammar(dir, &path, &home);
+
+    let out = stapel(dir)
+        .args(["q", "symbol", "dup"])
+        .env("HOME", &home)
+        .assert()
+        .success();
+    assert_eq!(stdout_of(out), "a.rs:1 fn dup\nb.rs:3 fn dup\n");
+}
