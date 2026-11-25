@@ -3,12 +3,14 @@
 use assert_cmd::Command;
 use std::path::Path;
 
-const MEMBERS: [&str; 5] = [
+// STP-44 adds the grammar wrapper crate.
+const MEMBERS: [&str; 6] = [
     "stapel-core",
     "stapel-index",
     "stapel-mcp",
     "stapel-lsp",
     "stapel-cli",
+    "stapel-grammar-rust",
 ];
 
 // STP-39 AC-15: the two empty crates are removed.
@@ -63,7 +65,8 @@ fn version_prints_package_version() {
 #[test]
 fn stub_packages_are_empty() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for name in ["index", "mcp"] {
+    // STP-44 fills stapel-index.
+    for name in ["mcp"] {
         let lib = root.join(format!("crates/stapel-{name}/src/lib.rs"));
         let text = std::fs::read_to_string(&lib).unwrap();
         assert!(
