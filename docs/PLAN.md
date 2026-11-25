@@ -193,6 +193,12 @@ that Zed, VS Code and every editor that speaks the protocol get the same.
   the next query; `stapel index` rebuilds everything, and a stapel version change does that on its own.
   Languages are adapters as data (a grammar and its queries), TypeScript and Rust first, so that Go and
   Python are cheap to add.
+- 5.2b the guards folder checks after STP-43 (ledger 2026-11-25; taken after 5.2 and before 5.3):
+  - 5.2b-1 the work folders that `[guards] dir` must not name include `scripts`, `tools`, `pkg`, `cmd`,
+    `internal` and `include`, because a guards folder named so loads and then denies builder writes
+    (STP-43 SR1-9);
+  - 5.2b-2 a newline in a multi-line guard command separates commands like `;`, so the word after it is a
+    command start for the reach warning (STP-43 XR2-8).
 - 5.3 the blast radius in the process: the investigation before the Frame runs `impact` and the Frame lists
   the places the ticket changes; the brief carries the places of its step; the review and drift packs carry
   the blast radius of the diff; the Review Focus names the tests of the radius the plan does not run; the
