@@ -11,12 +11,14 @@ path = "src/main.rs"
 [dependencies]
 stapel-core = { path = "../stapel-core" }
 stapel-lsp = { path = "../stapel-lsp" }
+stapel-index = { path = "../stapel-index" }
 clap = { version = "4", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 libc = "0.2"
 
 [dev-dependencies]
+stapel-grammar-rust = { path = "../stapel-grammar-rust" }
 proptest = "1"
 toml = "0.9"
 serde_json = "1"

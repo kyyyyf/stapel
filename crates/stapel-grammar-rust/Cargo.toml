@@ -1,0 +1,11 @@
+[package]
+name = "stapel-grammar-rust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tree-sitter-rust = "=0.24.2"
