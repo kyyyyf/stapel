@@ -255,6 +255,11 @@ init refuses, `init_process::refuses_a_bad_permission_mode` covers the path).
 - 2026-11-24, agent (code review round 2): rule (b) now needs the interpreter at a command start, and
   `2>&1` starts no word (step 11, CR2-1, XR2-6, XR2-7); the test gaps of the round are coverage steps 8
   to 10.
+- Steps 8 to 10 (a301e17, 3c8231f, fcca4f7): coverage commits; each test passed against the code. The
+  load half of `check_guards::all_work_folders_refused` compares the whole standard error with that of
+  `dir = "guards"`.
+- Step 11 (db97b39, 8788b9c): `command_words` skips an `&` right after `>` or `<`; `guard_reach` marks
+  "after an interpreter" only when the interpreter word starts a command.
 
 ## Proof
 
@@ -326,7 +331,7 @@ Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| head | pass | 5cacf2a | 2026-11-24T20:53:28Z | pass 7 |
+| head | pass | 8788b9c | 2026-11-25T05:35:44Z | cached 7, pass 1 |
 <!-- stapel:review:end -->
 
 ## Summary
