@@ -9,7 +9,8 @@ use std::process::Command;
 
 /// The first library line that a query prints: the reason the Rust files are skipped.
 enum Library {
-    Loaded(stapel_index::Library),
+    /// The library and its SHA-256.
+    Loaded(stapel_index::Library, String),
     Missing,
     Refused(PathBuf, String),
 }
@@ -53,7 +54,7 @@ fn load(adapter: &stapel_index::Adapter) -> Result<Library, Fail> {
             return refuse(reason);
         }
     }
-    Ok(Library::Loaded(library))
+    Ok(Library::Loaded(library, sha))
 }
 
 /// The top folder of the working tree.
@@ -121,18 +122,35 @@ impl Built {
     }
 }
 
-/// The files of the stored index of `top`, when it is readable and made by this version.
-fn previous(top: &Path) -> serde_json::Map<String, serde_json::Value> {
+/// The SHA-256 of the built-in query file of the adapter.
+fn query_hash(adapter: &stapel_index::Adapter) -> String {
+    hex(&Sha256::digest(adapter.query.as_bytes()))
+}
+
+/// The files of the stored index of `top` and the library hash it used, when it is readable and its
+/// stamp (stapel version and query file hash) is that of the running `stapel`.
+fn previous(
+    top: &Path,
+    adapter: &stapel_index::Adapter,
+) -> (serde_json::Map<String, serde_json::Value>, Option<String>) {
     let Ok(text) = std::fs::read_to_string(top.join(".stapel/index/index.json")) else {
         return Default::default();
     };
     let Ok(document) = serde_json::from_str::<serde_json::Value>(&text) else {
         return Default::default();
     };
-    if document["stapel"] != env!("CARGO_PKG_VERSION") {
+    if document["stapel"] != env!("CARGO_PKG_VERSION")
+        || document["queries"][adapter.library] != query_hash(adapter).as_str()
+    {
         return Default::default();
     }
-    document["files"].as_object().cloned().unwrap_or_default()
+    let library = document["libraries"][adapter.library]
+        .as_str()
+        .map(str::to_string);
+    (
+        document["files"].as_object().cloned().unwrap_or_default(),
+        library,
+    )
 }
 
 /// Brings the index of the tree at `top` up to date and stores it; with `incremental` a file whose
@@ -140,8 +158,9 @@ fn previous(top: &Path) -> serde_json::Map<String, serde_json::Value> {
 /// library are not stored.
 fn build(top: &Path, incremental: bool) -> Result<Built, Fail> {
     let files = file_list(top)?;
-    let old = if incremental {
-        previous(top)
+    let adapter = &stapel_index::adapters()[0];
+    let (mut old, old_library) = if incremental {
+        previous(top, adapter)
     } else {
         Default::default()
     };
@@ -150,7 +169,6 @@ fn build(top: &Path, incremental: bool) -> Result<Built, Fail> {
         .filter(|k| files.binary_search(k).is_err())
         .count();
     let mut parsed_now = 0usize;
-    let adapter = &stapel_index::adapters()[0];
     let owns = |path: &str| {
         Path::new(path)
             .extension()
@@ -172,9 +190,17 @@ fn build(top: &Path, incremental: bool) -> Result<Built, Fail> {
         None
     };
     let loaded = match &library {
-        Some(Library::Loaded(l)) => Some(l),
+        Some(Library::Loaded(l, _)) => Some(l),
         _ => None,
     };
+    let library_hash = match &library {
+        Some(Library::Loaded(_, sha)) => Some(sha.clone()),
+        _ => None,
+    };
+    // Another library than the one the index used: every file of the language is parsed again.
+    if library_hash != old_library {
+        old.clear();
+    }
 
     let mut parsed_files = 0usize;
     let mut symbols = 0usize;
@@ -235,6 +261,10 @@ fn build(top: &Path, incremental: bool) -> Result<Built, Fail> {
         .map_err(|e| Fail::failed(format!("cannot make {}: {e}", folder.display())))?;
     let document = serde_json::json!({
         "stapel": env!("CARGO_PKG_VERSION"),
+        "queries": {(adapter.library): query_hash(adapter)},
+        "libraries": library_hash
+            .map(|sha| serde_json::json!({(adapter.library): sha}))
+            .unwrap_or_else(|| serde_json::json!({})),
         "files": stored,
     });
     write_replacing(
