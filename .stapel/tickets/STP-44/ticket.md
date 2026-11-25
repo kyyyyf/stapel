@@ -108,11 +108,11 @@ Terms:
 
 | № | Criterion | Test |
 |---|---|---|
-| AC-1 | WHEN `stapel grammar build` runs in a git working tree THE it takes a slot of the machine-wide cargo lock, writes the wrapper crate of the pinned version with its standalone manifest and `grammar.lock` as its `Cargo.lock` into a new build folder, runs `cargo build --release --locked` there, puts the library into the grammar folder under its hash name through a temporary file and a rename (keeping a file of that name whose hash fits), writes the record through a temporary file and a rename, removes the build folder, and prints `built: rust <pinned> <library path>`, exit 0. | `grammar_build::builds_into_the_common_folder` |
+| AC-1 | WHEN `stapel grammar build` runs in a git working tree THE it takes a slot of the machine-wide cargo lock, writes the wrapper crate of the pinned version with its standalone manifest and `grammar.lock` as its `Cargo.lock` into a new build folder, runs `cargo build --release --locked` there, puts the library into the grammar folder under its hash name through a temporary file and a rename (keeping a file of that name whose hash fits), writes the record through a temporary file and a rename, removes the build folder, and prints `built: rust <pinned> <library path>`, exit 0; the standalone manifest names the same dependencies as the member manifest of `crates/stapel-grammar-rust`, plus `tree-sitter`. | `grammar_build::builds_into_the_common_folder`, `grammar_build::standalone_manifest_matches_the_member` |
 | AC-2 | IF cargo exits non-zero or leaves no library THEN `stapel grammar build` prints cargo's output and `stapel: grammar build failed for rust`, exits 1, the grammar folder holds the files it held before, and no build folder is left. | `grammar_build::a_failed_build_leaves_the_folder` |
 | AC-3 | WHEN `stapel index` runs in a linked worktree THE it uses the library that `stapel grammar build` built in main, with no build of its own. | `index_query::worktrees_share_the_grammar` |
-| AC-4 | IF the list holds a Rust candidate and the grammar folder has no record, or a record whose library file is missing THEN the query prints the missing library line on standard error, skips the Rust files, drops the stored Rust definitions, prints its answer from the other files and exits 2, also when that answer is empty. | `index_query::missing_library` |
-| AC-5 | IF the library's SHA-256 differs from its record, the record's version is not the pinned one, the file cannot be loaded, it has no symbol `stapel_grammar_language`, or tree-sitter refuses its ABI version THEN the query prints the refused library line with that reason and handles the Rust files as AC-4, exit 2. | `index_query::refuses_a_changed_library` |
+| AC-4 | IF the list holds a Rust candidate and the grammar folder has no record, or a record whose library file is missing THEN the query prints the missing library line on standard error, skips the Rust files, drops the stored Rust definitions, prints its answer from the other files and exits 2, also when that answer is empty; the dropped definitions give no `index:` line. | `index_query::missing_library`, `index_query::no_index_line_after_a_missing_library` |
+| AC-5 | IF the library's SHA-256 differs from its record, the record's version is not the pinned one, the file cannot be loaded, it has no symbol `stapel_grammar_language`, or tree-sitter refuses its ABI version THEN the query prints the refused library line with the reason of the first failing check (Terms) and handles the Rust files as AC-4, exit 2. | `index_query::refuses_a_changed_library`, `index_query::check_order_takes_the_first_fault` |
 | AC-6 | WHEN the file list holds no Rust candidate THE the query loads no library and prints no library line, even when the library is missing. | `index_query::no_rust_files_load_nothing` |
 | AC-7 | WHEN a query runs, from the top of the tree or from a subfolder THE it indexes the indexed files of the whole file list with paths relative to the top, names with spaces and non-ASCII UTF-8 letters as written; deleted tracked files and ignored files are not in it. | `index_query::file_list` |
 | AC-8 | WHEN a Rust file has syntax errors THE the query indexes the definitions its parse finds and counts the file as one with syntax errors. | `index_query::syntax_errors` |
@@ -124,7 +124,7 @@ Terms:
 | AC-14 | WHEN `stapel q symbol NAME --json` runs THE it prints one JSON array of objects `{"path","line","kind","name"}` with the data and order of AC-12, `[]` after a library line with nothing found. | `index_query::symbol_json` |
 | AC-15 | IF no definition has the name and no library line was printed THEN `stapel q symbol` prints `stapel: no definition of <NAME>` on standard error and exits 1, with no standard output (`--json` too); after a library line it prints no such message and exits 2. | `index_query::symbol_not_found` |
 | AC-16 | WHEN a query runs THE the index lives in `.stapel/index/` of the worktree and `git status --porcelain` is the same before and after it, with or without a `.gitignore` entry; two queries started at the same time both answer and leave an index that a third query reads. | `index_query::index_is_not_tracked`, `index_query::concurrent_queries` |
-| AC-17 | WHEN the library built from the pinned version parses `crates/stapel-cli/tests/data/grammar/sample.rs` THE the definitions found equal `sample.expected`; the adapter table holds one entry (Rust, extension `rs`, library `rust`, the query file `crates/stapel-index/queries/rust.scm` built in); the manifests of `stapel-cli` and of the path crates it depends on (not as dev-dependencies) name `tree-sitter` and no `tree-sitter-<language>` crate. | `grammar_load::sample_symbols`, `grammar_load::adapter_table_is_data`, `grammar_load::binary_links_no_grammar` |
+| AC-17 | WHEN the library built from the pinned version parses `crates/stapel-cli/tests/data/grammar/sample.rs` THE the definitions found equal `sample.expected`; the adapter table holds one entry (Rust, extension `rs`, library `rust`, the query file `crates/stapel-index/queries/rust.scm` built in); the manifests of `stapel-cli` and of the path crates it depends on (not as dev-dependencies) name `tree-sitter` and no `tree-sitter-<language>` crate; `tree-sitter-language`, the crate of the ABI type, is no grammar. | `grammar_load::sample_symbols`, `grammar_load::adapter_table_is_data`, `grammar_load::binary_links_no_grammar` |
 | AC-18 | IF the current folder is not in a git working tree THEN `stapel grammar build`, `stapel index` and `stapel q symbol` print `stapel: not a git working tree` and exit 1. | `index_query::outside_git` |
 
 ### Guarantees
@@ -162,6 +162,9 @@ also `--test ticket_drift` and `--test fixtures`.
 | Lock agreement | the versions of `tree-sitter-rust` and `tree-sitter` in `grammar.lock` equal those in the workspace `Cargo.lock` | `grammar_build::wrapper_lock_matches_the_workspace` |
 | Worktrees | build in main, `git worktree add`, `stapel index` in the worktree: its `rust:` line counts the worktree's files | `index_query::worktrees_share_the_grammar` |
 | Missing | `stapel index` with no grammar folder, and with a record whose library file is gone: the line, exit 2, no `rust:` line, `skipped` counts the Rust files | `index_query::missing_library` |
+| Check order | a record with another version and a library whose hash differs: the version reason | `index_query::check_order_takes_the_first_fault` |
+| Dropped, no line | an index with Rust definitions, the record removed: `q symbol` prints no `index:` line | `index_query::no_index_line_after_a_missing_library` |
+| Standalone manifest | the `[dependencies]` of `standalone.toml` equal those of the member `Cargo.toml` plus `tree-sitter`; crate type `cdylib`; an empty `[workspace]` | `grammar_build::standalone_manifest_matches_the_member` |
 | Refused | one byte of the library changed; the record's version changed; a text file as the library with a fitting record (cannot load); a library of another crate with no `stapel_grammar_language` (the `libdep` kind of F-7): each reason, exit 2 | `index_query::refuses_a_changed_library` |
 | No Rust | no grammar folder and a repository with only `README.md`; with a deleted tracked `a.rs`; with only a symlink `x.rs`: `stapel index` exit 0, no library line | `index_query::no_rust_files_load_nothing` |
 | File list | tracked, untracked, ignored, deleted tracked, a symlink to a `.rs` file, a `.rs` file of 1,048,577 bytes and one of 1,048,576, a `.txt` file, a file with mode 000, a path with a space, `é.rs`; the same answer from a subfolder; a second `stapel index` gives the same `skipped` count | `index_query::file_list` |
@@ -279,17 +282,53 @@ there; no test).
 
 ### Decisions (as built)
 
-None yet.
+- Step 1 (170fac5, cebe129): `stapel_index::adapters()`, `Library::open(&Path)` and `extract(&Adapter,
+  &Library, &[u8]) -> Extract { definitions, has_errors }`; `tree-sitter` 0.25, `tree-sitter-language`
+  0.1, `libloading` 0.8; `tree-sitter-rust = "=0.24.2"`. The GREEN has a `history:` line for
+  `crates/stapel-cli/Cargo.toml`.
+- Step 2 (f049eea, 26c8075): `extract` keeps one definition per start byte of its name; `method` wins
+  over `fn`.
+- Step 3 (81f85fa): 2026-11-25, agent: `binary_links_no_grammar` allows `tree-sitter-language`, the ABI
+  type crate, which is no grammar (AC-17 says so since DR1-3).
+- Step 4 (761c623, 308e7a3): `crates/stapel-cli/src/grammar.rs`; the record `rust.json` has `version`,
+  `file` and `sha256`; the grammar folder is named by `CARGO_PKG_VERSION`; `standalone.toml` has the
+  package `stapel-grammar-rust`, crate type `cdylib`, an empty `[workspace]` and `tree-sitter =
+  "=0.25.10"`, so `grammar.lock` keeps that entry; `grammar.lock` was generated from the standalone
+  manifest (tree-sitter-rust 0.24.2, tree-sitter 0.25.10); `grammar::pinned_version()` lives in the CLI
+  crate. The tests remove `STAPEL_CARGO_LOCK_HELD`, which `stapel cargo` sets. The GREEN already handled a
+  failed build.
+- 2026-11-25, agent: steps 5, 7, 9 and 14 became coverage commits (5: 6077964, 7: ab341cc, 9: 38a94a6,
+  14: d5883c1), and step 8 has a coverage commit (1ff37d1), because earlier GREENs already met their
+  criteria.
+- Step 6 (d4fac48, 812cc85): `crates/stapel-cli/src/index.rs` holds `stapel index`, the load, the file
+  list, the counts and the store `.stapel/index/index.json` (per file its hash, definitions and an errors
+  flag); `grammar.rs` makes `common_dir`, `hex`, `random_part` and `write_replacing` public.
+- Step 8 (c25c878, a74d7d2): the library loads only for a Rust candidate.
+- Step 10 (f6a72a3, 2f5967d): `index::build(top)` returns counts, the stored map and the library state;
+  files of a language without a usable library are not stored.
+- Step 11 (054a0d1, 2ee2196): `symbol(name, json)`. 2026-11-25, agent: with `--json` and nothing found it
+  printed `[]` with exit 1 and its test expected that, against AC-15; found by the orchestrator, fixed in
+  step 17.
+- Step 12 (64628e1, ef4223b): `build(top, incremental)` reuses the entries whose content hash is
+  unchanged; `stapel index` rebuilds all and prints no `index:` line.
+- Step 13 (5cda6e3, 275b3b7): the index stores `stapel`, `queries.<language>` (query SHA-256) and
+  `libraries.<language>` (library SHA-256, empty when none loaded); a new library hash clears the stored
+  entries of that language.
+- Step 15 (e7973cc, a24d472): `.stapel/index/.gitignore` with `*` is written when missing, through
+  `grammar::write_replacing` (`.<name>.tmp-<pid>-<random>` and a rename), which every index write uses.
+- Step 16 (1ea5f2b): coverage commit; 20 rounds of two queries at once on a tree with no index.
+- 2026-11-25, agent (drift round 1): DR1-1 and DR1-5 become coverage step 18, DR1-2 coverage step 19 and
+  the stand; DR1-4 (a path that is not UTF-8) is not promised; DR1-6 is deferred.
 
 ## Proof
 
 | Criterion | Test |
 |---|---|
-| AC-1 | `grammar_build::builds_into_the_common_folder` |
+| AC-1 | `grammar_build::builds_into_the_common_folder`, `grammar_build::standalone_manifest_matches_the_member` |
 | AC-2 | `grammar_build::a_failed_build_leaves_the_folder` |
 | AC-3 | `index_query::worktrees_share_the_grammar` |
-| AC-4 | `index_query::missing_library` |
-| AC-5 | `index_query::refuses_a_changed_library` |
+| AC-4 | `index_query::missing_library`, `index_query::no_index_line_after_a_missing_library` |
+| AC-5 | `index_query::refuses_a_changed_library`, `index_query::check_order_takes_the_first_fault` |
 | AC-6 | `index_query::no_rust_files_load_nothing` |
 | AC-7 | `index_query::file_list` |
 | AC-8 | `index_query::syntax_errors` |
@@ -319,19 +358,19 @@ Route: full (tags `interface`, `data`), auto.
 4. Build (AC-1; tests `grammar_build::builds_into_the_common_folder`,
    `grammar_build::wrapper_lock_matches_the_workspace`): the RED adds the tests and the fake cargo; the
    GREEN adds `stapel grammar build`, `grammar.lock` and the record.
-5. Failed build (AC-2; test `grammar_build::a_failed_build_leaves_the_folder`): the RED adds the test; the
-   GREEN copies the library and writes the record only after cargo's success, and removes the build folder
-   on every exit path.
+5. Failed build (AC-2; test `grammar_build::a_failed_build_leaves_the_folder`): a coverage commit only,
+   because the GREEN of step 4 already handles a failed build.
 6. Index and counts (AC-3, AC-11; tests `index_query::index_prints_counts`,
    `index_query::worktrees_share_the_grammar`): the RED adds the tests; the GREEN adds `stapel index`, the
    store, and the load of the library the record names in the grammar folder of the common folder.
-7. File list (AC-7; test `index_query::file_list`): the RED adds the test; the GREEN takes the list at the
-   top with `-z` and adds the symlink, size and read rules.
+7. File list (AC-7; test `index_query::file_list`): a coverage commit only, because the GREEN of step 6
+   already met AC-7.
 8. Missing library (AC-4, AC-6; tests `index_query::missing_library`,
-   `index_query::no_rust_files_load_nothing`): the RED adds the tests; the GREEN adds the missing line and the
-   lazy load.
-9. Refused library (AC-5; test `index_query::refuses_a_changed_library`): the RED adds the test; the GREEN
-   adds the hash, version, load, symbol and ABI checks.
+   `index_query::no_rust_files_load_nothing`): the RED adds `no_rust_files_load_nothing`; the GREEN loads the
+   library only for a Rust candidate; `missing_library` is a coverage commit, as step 6 already printed the
+   line.
+9. Refused library (AC-5; test `index_query::refuses_a_changed_library`): a coverage commit only, because
+   the GREEN of step 6 already ran the checks.
 10. Symbol (AC-12, AC-15, AC-18; tests `index_query::symbol_text`, `index_query::symbol_not_found`,
     `index_query::outside_git`): the RED adds the tests; the GREEN adds `stapel q symbol`, the drop of
     the stored definitions of a language without a usable library, and the outside git refusal of the
@@ -342,11 +381,19 @@ Route: full (tags `interface`, `data`), auto.
 13. Rebuilds (AC-10; tests `index_query::rebuilds_on_version_change`,
     `index_query::reparses_on_grammar_change`): the RED adds the tests; the GREEN compares the index stamp
     and the library hash.
-14. Syntax errors (AC-8; test `index_query::syntax_errors`): the RED adds the test; the GREEN counts
-    files whose tree has an error.
+14. Syntax errors (AC-8; test `index_query::syntax_errors`): a coverage commit only, because steps 1 and
+    6 already counted files with errors.
 15. Store (AC-16; test `index_query::index_is_not_tracked`): the RED adds the test; the GREEN adds the
     self-ignoring index folder and the write through a unique temporary file and a rename.
 16. Concurrency (AC-16; test `index_query::concurrent_queries`): a coverage commit only.
+17. JSON with nothing found (AC-15; test `index_query::symbol_json`): the RED changes the test, which
+    expected `[]` with exit 1, to expect no standard output (a `history:` line); the GREEN prints the
+    array only when a definition was found or a library line was printed.
+18. Coverage of the check order and the dropped definitions (DR1-1, DR1-5; AC-4, AC-5; tests
+    `index_query::check_order_takes_the_first_fault`, `index_query::no_index_line_after_a_missing_library`):
+    a coverage commit only.
+19. Coverage of the standalone manifest (DR1-2; AC-1; test
+    `grammar_build::standalone_manifest_matches_the_member`): a coverage commit only.
 
 ## Review
 
@@ -361,6 +408,7 @@ Findings:
 |---|---|---|---|---|---|---|---|
 | spec-review | 1 | external | 1 | 10 | 4 | 0 | defer 1, no-change 1, patch 13 |
 | spec-review | 2 | reviewer | 1 | 4 | 6 | 0 | defer 1, patch 10 |
+| code-review | 1 | drift | 0 | 2 | 4 | 0 | defer 1, no-change 1, patch 4 |
 
 Check runs: none
 <!-- stapel:review:end -->
