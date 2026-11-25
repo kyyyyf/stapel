@@ -77,7 +77,8 @@ pub fn extract(adapter: &Adapter, library: &Library, source: &[u8]) -> Result<Ex
     let names = query.capture_names();
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source);
-    let mut definitions = Vec::new();
+    let mut definitions: Vec<Definition> = Vec::new();
+    let mut seen = std::collections::HashMap::<usize, usize>::new();
     while let Some(m) = matches.next() {
         let mut name = None;
         let mut kind = None;
@@ -90,6 +91,16 @@ pub fn extract(adapter: &Adapter, library: &Library, source: &[u8]) -> Result<Ex
             }
         }
         if let (Some(name), Some(kind)) = (name, kind) {
+            let at = name.start_byte();
+            // A `fn` in an `impl` or `trait` body matches both the general and the method pattern;
+            // the method wins.
+            if let Some(&i) = seen.get(&at) {
+                if kind == "method" {
+                    definitions[i].kind = "method".to_string();
+                }
+                continue;
+            }
+            seen.insert(at, definitions.len());
             definitions.push(Definition {
                 line: name.start_position().row + 1,
                 kind: kind.to_string(),
