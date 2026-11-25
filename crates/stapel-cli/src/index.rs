@@ -259,6 +259,10 @@ fn build(top: &Path, incremental: bool) -> Result<Built, Fail> {
     let folder = top.join(".stapel/index");
     std::fs::create_dir_all(&folder)
         .map_err(|e| Fail::failed(format!("cannot make {}: {e}", folder.display())))?;
+    let ignore = folder.join(".gitignore");
+    if !ignore.is_file() {
+        write_replacing(&ignore, b"*\n")?;
+    }
     let document = serde_json::json!({
         "stapel": env!("CARGO_PKG_VERSION"),
         "queries": {(adapter.library): query_hash(adapter)},
