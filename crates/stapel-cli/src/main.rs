@@ -9,6 +9,7 @@ mod depends;
 mod export;
 mod fail;
 mod findings;
+mod grammar;
 mod hook;
 mod inbox;
 mod init;
@@ -33,6 +34,12 @@ use std::process::ExitCode;
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Subcommand)]
+enum GrammarCommand {
+    /// Build the Rust grammar library into the grammar folder of the git common folder.
+    Build,
 }
 
 #[derive(Subcommand)]
@@ -161,6 +168,11 @@ enum Command {
         /// The arguments of `cargo`, passed as given.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
         args: Vec<String>,
+    },
+    /// The grammar libraries of the code index.
+    Grammar {
+        #[command(subcommand)]
+        command: GrammarCommand,
     },
     /// Run the language server for an editor on standard input and output.
     Lsp,
@@ -431,6 +443,9 @@ fn main() -> ExitCode {
         }
         Command::Lint { key } => return lint::run(key.as_deref()),
         Command::Cargo { args } => return cargo::run(&args),
+        Command::Grammar {
+            command: GrammarCommand::Build,
+        } => return fail::finish(grammar::build()),
         Command::Lsp => return ExitCode::from(stapel_lsp::run() as u8),
         Command::Brief { key, step } => return fail::finish(brief::run(&key, &step)),
         Command::Depends { key } => return fail::finish(depends::run(key.as_deref())),
