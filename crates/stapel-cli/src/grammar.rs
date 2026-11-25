@@ -34,7 +34,7 @@ pub fn pinned_version() -> String {
 }
 
 /// The git common folder of the current folder, made absolute.
-fn common_dir() -> Result<PathBuf, Fail> {
+pub fn common_dir() -> Result<PathBuf, Fail> {
     let cwd = std::env::current_dir().map_err(|e| Fail::failed(format!("no current folder: {e}")))?;
     let out = Command::new("git")
         .args(["rev-parse", "--git-common-dir"])
@@ -53,12 +53,12 @@ fn common_dir() -> Result<PathBuf, Fail> {
     })
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// A random part for a folder or a temporary file name.
-fn random_part() -> String {
+pub fn random_part() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -86,7 +86,7 @@ fn io_fail(what: &str, path: &Path, e: std::io::Error) -> Fail {
 }
 
 /// Writes `bytes` to `path` through a temporary file next to it and a rename.
-fn write_replacing(path: &Path, bytes: &[u8]) -> Result<(), Fail> {
+pub fn write_replacing(path: &Path, bytes: &[u8]) -> Result<(), Fail> {
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
     let temporary = path.with_file_name(format!(".{name}.tmp-{}-{}", std::process::id(), random_part()));
     let result = std::fs::write(&temporary, bytes)

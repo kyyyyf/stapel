@@ -10,6 +10,7 @@ mod export;
 mod fail;
 mod findings;
 mod grammar;
+mod index;
 mod hook;
 mod inbox;
 mod init;
@@ -174,6 +175,8 @@ enum Command {
         #[command(subcommand)]
         command: GrammarCommand,
     },
+    /// Rebuild the code index of this working tree and print the counts.
+    Index,
     /// Run the language server for an editor on standard input and output.
     Lsp,
     /// Review findings kept in a ticket's findings.jsonl.
@@ -446,6 +449,7 @@ fn main() -> ExitCode {
         Command::Grammar {
             command: GrammarCommand::Build,
         } => return fail::finish(grammar::build()),
+        Command::Index => return fail::finish(index::run()),
         Command::Lsp => return ExitCode::from(stapel_lsp::run() as u8),
         Command::Brief { key, step } => return fail::finish(brief::run(&key, &step)),
         Command::Depends { key } => return fail::finish(depends::run(key.as_deref())),
