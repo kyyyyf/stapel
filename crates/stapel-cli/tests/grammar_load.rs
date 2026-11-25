@@ -44,6 +44,22 @@ fn sample_symbols() {
 }
 
 #[test]
+fn all_kinds() {
+    let source = std::fs::read(data("kinds.rs")).unwrap();
+    let expected = std::fs::read_to_string(data("kinds.expected")).unwrap();
+    let adapter = &stapel_index::adapters()[0];
+    let library = stapel_index::Library::open(&built_library()).expect("the library loads");
+    let parsed = stapel_index::extract(adapter, &library, &source).expect("the sample parses");
+    assert!(!parsed.has_errors, "the sample has no syntax errors");
+    let found: String = parsed
+        .definitions
+        .iter()
+        .map(|d| format!("{} {} {}\n", d.line, d.kind, d.name))
+        .collect();
+    assert_eq!(found, expected);
+}
+
+#[test]
 fn adapter_table_is_data() {
     let table = stapel_index::adapters();
     assert_eq!(table.len(), 1);
