@@ -631,3 +631,81 @@ fn sees_edits_outside_stapel() {
     let (_, err) = query("uno");
     assert!(!err.contains("index:"), "stderr: {err}");
 }
+
+#[test]
+fn rebuilds_on_version_change() {
+    for case in ["stapel", "queries"] {
+        let repo = git_repo();
+        let scratch = tempfile::tempdir().unwrap();
+        let home = scratch.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let path = fake_cargo_path(&scratch.path().join("bin"));
+        let dir = repo.path();
+        std::fs::write(dir.join("a.rs"), "fn one() {}\n").unwrap();
+        std::fs::write(dir.join("b.rs"), "fn two() {}\n").unwrap();
+        std::fs::write(dir.join("c.txt"), "text\n").unwrap();
+        build_grammar(dir, &path, &home);
+        let query = || {
+            let out = stapel(dir)
+                .args(["q", "symbol", "one"])
+                .env("HOME", &home)
+                .assert()
+                .success();
+            String::from_utf8(out.get_output().stderr.clone()).unwrap()
+        };
+        query();
+        assert!(!query().contains("index:"), "case {case}");
+
+        let index_path = dir.join(".stapel/index/index.json");
+        let mut index: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&index_path).unwrap()).unwrap();
+        if case == "stapel" {
+            index["stapel"] = serde_json::json!("0.0.0-old");
+        } else {
+            index["queries"]["rust"] = serde_json::json!("0000");
+        }
+        std::fs::write(&index_path, index.to_string()).unwrap();
+
+        let err = query();
+        assert!(
+            err.contains("index: 2 parsed, 0 removed\n"),
+            "case {case}, stderr: {err}"
+        );
+        assert!(!query().contains("index:"), "case {case}");
+    }
+}
+
+#[test]
+fn reparses_on_grammar_change() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::write(dir.join("a.rs"), "fn one() {}\n").unwrap();
+    std::fs::write(dir.join("b.rs"), "fn two() {}\n").unwrap();
+    std::fs::write(dir.join("c.txt"), "text\n").unwrap();
+    build_grammar(dir, &path, &home);
+    let query = || {
+        let out = stapel(dir)
+            .args(["q", "symbol", "one"])
+            .env("HOME", &home)
+            .assert()
+            .success();
+        String::from_utf8(out.get_output().stderr.clone()).unwrap()
+    };
+    query();
+    assert!(!query().contains("index:"));
+
+    // The index was made with another library.
+    let index_path = dir.join(".stapel/index/index.json");
+    let mut index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&index_path).unwrap()).unwrap();
+    index["libraries"]["rust"] = serde_json::json!("0000");
+    std::fs::write(&index_path, index.to_string()).unwrap();
+
+    let err = query();
+    assert!(err.contains("index: 2 parsed, 0 removed\n"), "stderr: {err}");
+    assert!(!query().contains("index:"));
+}
