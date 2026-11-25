@@ -111,7 +111,7 @@ Terms:
 | AC-1 | WHEN `stapel grammar build` runs in a git working tree THE it takes a slot of the machine-wide cargo lock, writes the wrapper crate of the pinned version with its standalone manifest and `grammar.lock` as its `Cargo.lock` into a new build folder, runs `cargo build --release --locked` there, puts the library into the grammar folder under its hash name through a temporary file and a rename (keeping a file of that name whose hash fits), writes the record through a temporary file and a rename, removes the build folder, and prints `built: rust <pinned> <library path>`, exit 0; the standalone manifest names the same dependencies as the member manifest of `crates/stapel-grammar-rust`, plus `tree-sitter`. | `grammar_build::builds_into_the_common_folder`, `grammar_build::standalone_manifest_matches_the_member` |
 | AC-2 | IF cargo exits non-zero or leaves no library THEN `stapel grammar build` prints cargo's output and `stapel: grammar build failed for rust`, exits 1, the grammar folder holds the files it held before, and no build folder is left. | `grammar_build::a_failed_build_leaves_the_folder` |
 | AC-3 | WHEN `stapel index` runs in a linked worktree THE it uses the library that `stapel grammar build` built in main, with no build of its own. | `index_query::worktrees_share_the_grammar` |
-| AC-4 | IF the list holds a Rust candidate and the grammar folder has no record, or a record whose library file is missing THEN the query prints the missing library line on standard error, skips the Rust files, drops the stored Rust definitions, prints its answer from the other files and exits 2, also when that answer is empty; the dropped definitions give no `index:` line. | `index_query::missing_library`, `index_query::no_index_line_after_a_missing_library` |
+| AC-4 | IF the list holds a Rust candidate and the grammar folder has no readable record (none, not JSON, or without `version`, `file` or `sha256`), or a record whose library file is missing or cannot be read THEN the query prints the missing library line on standard error, skips the Rust files, drops the stored Rust definitions, prints its answer from the other files and exits 2, also when that answer is empty; the dropped definitions give no `index:` line. | `index_query::missing_library`, `index_query::no_index_line_after_a_missing_library`, `index_query::unreadable_record_is_missing` |
 | AC-5 | IF the library's SHA-256 differs from its record, the record's version is not the pinned one, the file cannot be loaded, it has no symbol `stapel_grammar_language`, or tree-sitter refuses its ABI version THEN the query prints the refused library line with the reason of the first failing check (Terms) and handles the Rust files as AC-4, exit 2. | `index_query::refuses_a_changed_library`, `index_query::check_order_takes_the_first_fault` |
 | AC-6 | WHEN the file list holds no Rust candidate THE the query loads no library and prints no library line, even when the library is missing. | `index_query::no_rust_files_load_nothing` |
 | AC-7 | WHEN a query runs, from the top of the tree or from a subfolder THE it indexes the indexed files of the whole file list with paths relative to the top, names with spaces and non-ASCII UTF-8 letters as written; deleted tracked files and ignored files are not in it. | `index_query::file_list` |
@@ -119,7 +119,7 @@ Terms:
 | AC-9 | WHEN a file of the list was changed, added or removed since the last query THE the next `stapel q symbol` re-parses the changed and added files, drops the removed ones, prints `index: <p> parsed, <r> removed` on standard error when either count is above 0 (`<r>` counts files gone from the list; dropped definitions of AC-4 are not counted), and answers for the new content; unchanged files are not parsed. | `index_query::sees_edits_outside_stapel` |
 | AC-10 | WHEN the index stamp differs from that of the running `stapel` THE the next `stapel q symbol` parses every indexed file; WHEN the library's SHA-256 differs from the one the index used THE it parses every indexed file of that language; in both cases its `index:` line counts them. | `index_query::rebuilds_on_version_change`, `index_query::reparses_on_grammar_change` |
 | AC-11 | WHEN `stapel index` runs THE it rebuilds the whole index and prints `rust: <f> files, <s> symbols` (files with syntax errors included; no such line when the Rust library is missing or refused), then `skipped: <n> files` and `syntax errors: <n> files`, and no `index:` line; exit 0, or 2 after a library line. | `index_query::index_prints_counts` |
-| AC-12 | WHEN `stapel q symbol NAME` runs THE it prints one line `<path>:<line> <kind> <name>` per definition whose name equals NAME exactly, in path order (Terms) then line order, with the path relative to the top of the tree and the line (from 1) of the name. | `index_query::symbol_text` |
+| AC-12 | WHEN `stapel q symbol NAME` runs THE it prints one line `<path>:<line> <kind> <name>` per definition whose name equals NAME exactly, in path order (Terms) then line order, with the path relative to the top of the tree and the line (from 1) of the name. | `index_query::symbol_text`, `index_query::path_order_mixes_tracked_and_untracked` |
 | AC-13 | WHEN the index holds Rust definitions THE their kinds are: `fn` for a `fn` outside an `impl` or `trait` body (in a module, in an `extern` block, or nested in a `fn` body); `method` for a `fn` in an `impl` or `trait` body, with or without a body; `struct`, `enum`, `union`, `trait`; `type` and `const`, also inside an `impl` or `trait` body; `static`, also in an `extern` block; `mod`, with or without a body; `macro` for `macro_rules!`; each definition gives one line, two `#[cfg]` variants two lines. | `grammar_load::all_kinds` |
 | AC-14 | WHEN `stapel q symbol NAME --json` runs THE it prints one JSON array of objects `{"path","line","kind","name"}` with the data and order of AC-12, `[]` after a library line with nothing found. | `index_query::symbol_json` |
 | AC-15 | IF no definition has the name and no library line was printed THEN `stapel q symbol` prints `stapel: no definition of <NAME>` on standard error and exits 1, with no standard output (`--json` too); after a library line it prints no such message and exits 2. | `index_query::symbol_not_found` |
@@ -163,6 +163,7 @@ also `--test ticket_drift` and `--test fixtures`.
 | Worktrees | build in main, `git worktree add`, `stapel index` in the worktree: its `rust:` line counts the worktree's files | `index_query::worktrees_share_the_grammar` |
 | Missing | `stapel index` with no grammar folder, and with a record whose library file is gone: the line, exit 2, no `rust:` line, `skipped` counts the Rust files | `index_query::missing_library` |
 | Check order | a record with another version and a library whose hash differs: the version reason | `index_query::check_order_takes_the_first_fault` |
+| Unreadable record | a record `garbage`, a record without `sha256`, a library file of mode 000: the missing line, exit 2 | `index_query::unreadable_record_is_missing` |
 | Dropped, no line | an index with Rust definitions, the record removed: `q symbol` prints no `index:` line | `index_query::no_index_line_after_a_missing_library` |
 | Standalone manifest | the `[dependencies]` of `standalone.toml` equal those of the member `Cargo.toml` plus `tree-sitter`; crate type `cdylib`; an empty `[workspace]` | `grammar_build::standalone_manifest_matches_the_member` |
 | Refused | one byte of the library changed; the record's version changed; a text file as the library with a fitting record (cannot load); a library of another crate with no `stapel_grammar_language` (the `libdep` kind of F-7): each reason, exit 2 | `index_query::refuses_a_changed_library` |
@@ -174,6 +175,7 @@ also `--test ticket_drift` and `--test fixtures`.
 | Grammar change | the record pointing to a library with another hash: the next `q symbol` prints `index: <n> parsed, 0 removed` with `<n>` the Rust files | `index_query::reparses_on_grammar_change` |
 | Counts | three `.rs` files with 2, 1 and 0 definitions and one `.txt` file: `rust: 3 files, 3 symbols`, `skipped: 1 files`, `syntax errors: 0 files`, no `index:` line | `index_query::index_prints_counts` |
 | Symbol | two definitions of one name in two files and one in a nested folder, in `B.rs` and `a.rs` (byte order puts `B.rs` first), a name that is a prefix of another: the lines in order | `index_query::symbol_text` |
+| Tracked and untracked | an untracked `a.rs` and a tracked `b.rs` that define one name: `a.rs` first | `index_query::path_order_mixes_tracked_and_untracked` |
 | Kinds | each construct of AC-13 in the sample of the test, with two `#[cfg]` variants of one `fn` | `grammar_load::all_kinds` |
 | JSON | the same fixture as Symbol: the array equals the text lines field by field; after a missing library: `[]`, exit 2 | `index_query::symbol_json` |
 | Not found | a name with no definition, an empty name: the message, exit 1, no standard output; after an index with a Rust name, the record removed: no output, no message, exit 2; a build, then the name is found | `index_query::symbol_not_found` |
@@ -189,7 +191,7 @@ also `--test ticket_drift` and `--test fixtures`.
 | `NAME` of `stapel q symbol` | string | one character / any | no definition: exit 1 | a name starting with `-` is read as an option unless after `--` | exact, case-sensitive | `index_query::symbol_not_found` |
 | `--json` of `stapel q symbol` | flag | — | absent: text | — | — | `index_query::symbol_json` |
 | a file of the file list | bytes | 0 bytes / 1,048,576 bytes (larger skipped) | indexed with no definition | not UTF-8 or syntax errors: parsed as far as it goes; unreadable: skipped | exact bytes hashed | `index_query::file_list`, `index_query::syntax_errors` |
-| the record `rust.json` | JSON | — | missing: the missing line | unreadable or other version: the refused line | exact | `index_query::missing_library`, `index_query::refuses_a_changed_library` |
+| the record `rust.json` | JSON | — | missing, unreadable, not JSON or without a field: the missing line | other version: the refused line | exact | `index_query::missing_library`, `index_query::unreadable_record_is_missing`, `index_query::refuses_a_changed_library` |
 | the index in `.stapel/index/` | JSON | — | missing: built | unreadable or another stamp: rebuilt | exact | `index_query::rebuilds_on_version_change` |
 
 ### External states
@@ -319,6 +321,11 @@ there; no test).
 - Step 16 (1ea5f2b): coverage commit; 20 rounds of two queries at once on a tree with no index.
 - 2026-11-25, agent (drift round 1): DR1-1 and DR1-5 become coverage step 18, DR1-2 coverage step 19 and
   the stand; DR1-4 (a path that is not UTF-8) is not promised; DR1-6 is deferred.
+- e401202: `tests/cli.rs` of STP-1 counts six workspace members with `stapel-grammar-rust`, and
+  `stub_packages_are_empty` checks only `stapel-mcp`, because this ticket fills `stapel-index` (XR2-7).
+- 2026-11-25, the person (code review round 2): an unreadable or incomplete record and an unreadable library
+  file give the missing line, as the code already did (XR2-1, DR2-2, CR2-2); DR2-3 and XR2-2 (a query that
+  does not compile against a library) are deferred.
 
 ## Proof
 
@@ -327,7 +334,7 @@ there; no test).
 | AC-1 | `grammar_build::builds_into_the_common_folder`, `grammar_build::standalone_manifest_matches_the_member` |
 | AC-2 | `grammar_build::a_failed_build_leaves_the_folder` |
 | AC-3 | `index_query::worktrees_share_the_grammar` |
-| AC-4 | `index_query::missing_library`, `index_query::no_index_line_after_a_missing_library` |
+| AC-4 | `index_query::missing_library`, `index_query::no_index_line_after_a_missing_library`, `index_query::unreadable_record_is_missing` |
 | AC-5 | `index_query::refuses_a_changed_library`, `index_query::check_order_takes_the_first_fault` |
 | AC-6 | `index_query::no_rust_files_load_nothing` |
 | AC-7 | `index_query::file_list` |
@@ -335,7 +342,7 @@ there; no test).
 | AC-9 | `index_query::sees_edits_outside_stapel` |
 | AC-10 | `index_query::rebuilds_on_version_change`, `index_query::reparses_on_grammar_change` |
 | AC-11 | `index_query::index_prints_counts` |
-| AC-12 | `index_query::symbol_text` |
+| AC-12 | `index_query::symbol_text`, `index_query::path_order_mixes_tracked_and_untracked` |
 | AC-13 | `grammar_load::all_kinds` |
 | AC-14 | `index_query::symbol_json` |
 | AC-15 | `index_query::symbol_not_found` |
@@ -394,6 +401,9 @@ Route: full (tags `interface`, `data`), auto.
     a coverage commit only.
 19. Coverage of the standalone manifest (DR1-2; AC-1; test
     `grammar_build::standalone_manifest_matches_the_member`): a coverage commit only.
+20. Coverage of an unreadable record and of the path order (XR2-1, XR2-3; AC-4, AC-12; tests
+    `index_query::unreadable_record_is_missing`, `index_query::path_order_mixes_tracked_and_untracked`):
+    a coverage commit only.
 
 ## Review
 
@@ -420,6 +430,7 @@ Findings:
 | spec-review | 1 | external | 1 | 10 | 4 | 0 | defer 1, no-change 1, patch 13 |
 | spec-review | 2 | reviewer | 1 | 4 | 6 | 0 | defer 1, patch 10 |
 | code-review | 1 | drift | 0 | 2 | 4 | 0 | defer 1, no-change 1, patch 4 |
+| code-review | 2 | drift, external, reviewer | 0 | 1 | 14 | 0 | defer 7, no-change 3, patch 5 |
 
 Check runs:
 
