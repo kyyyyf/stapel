@@ -420,6 +420,77 @@ fn symbol_text() {
 }
 
 #[test]
+fn symbol_json() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("B.rs"), "fn dup() {}\n").unwrap();
+    std::fs::write(dir.join("a.rs"), "\nfn dup() {}\nfn dupe() {}\n").unwrap();
+    std::fs::write(dir.join("sub/c.rs"), "\n\nstruct dup;\n").unwrap();
+
+    // No library: the array is empty and the exit code is 2.
+    let out = stapel(dir)
+        .args(["q", "symbol", "dup", "--json"])
+        .env("HOME", &home)
+        .assert()
+        .code(2);
+    let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(
+        err.contains("stapel: no grammar library for rust: run stapel grammar build"),
+        "stderr: {err}"
+    );
+    let array: serde_json::Value = serde_json::from_str(&stdout_of(out)).unwrap();
+    assert_eq!(array, serde_json::json!([]));
+
+    build_grammar(dir, &path, &home);
+    let text = stdout_of(
+        stapel(dir)
+            .args(["q", "symbol", "dup"])
+            .env("HOME", &home)
+            .assert()
+            .success(),
+    );
+    let raw = stdout_of(
+        stapel(dir)
+            .args(["q", "symbol", "dup", "--json"])
+            .env("HOME", &home)
+            .assert()
+            .success(),
+    );
+    assert_eq!(raw.matches('\n').count(), 1, "one JSON value: {raw}");
+    let array: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let items = array.as_array().unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(items.len(), 3);
+    assert_eq!(items.len(), lines.len());
+    for (item, line) in items.iter().zip(lines) {
+        let object = item.as_object().unwrap();
+        let keys: Vec<&str> = object.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["path", "line", "kind", "name"]);
+        let rebuilt = format!(
+            "{}:{} {} {}",
+            object["path"].as_str().unwrap(),
+            object["line"].as_u64().unwrap(),
+            object["kind"].as_str().unwrap(),
+            object["name"].as_str().unwrap()
+        );
+        assert_eq!(rebuilt, line);
+    }
+
+    // Nothing found: the empty array, exit 1.
+    let out = stapel(dir)
+        .args(["q", "symbol", "nothing", "--json"])
+        .env("HOME", &home)
+        .assert()
+        .code(1);
+    assert_eq!(stdout_of(out).trim(), "[]");
+}
+
+#[test]
 fn symbol_not_found() {
     let repo = git_repo();
     let scratch = tempfile::tempdir().unwrap();
