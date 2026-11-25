@@ -481,13 +481,13 @@ fn symbol_json() {
         assert_eq!(rebuilt, line);
     }
 
-    // Nothing found: the empty array, exit 1.
+    // Nothing found: no standard output, exit 1.
     let out = stapel(dir)
         .args(["q", "symbol", "nothing", "--json"])
         .env("HOME", &home)
         .assert()
         .code(1);
-    assert_eq!(stdout_of(out).trim(), "[]");
+    assert_eq!(stdout_of(out), "");
 }
 
 #[test]
