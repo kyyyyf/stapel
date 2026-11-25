@@ -773,3 +773,53 @@ fn index_is_not_tracked() {
     assert!(folder.join("index.json").is_file());
     assert!(!dir.join(".gitignore").exists());
 }
+
+#[test]
+fn concurrent_queries() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::write(dir.join("a.rs"), "fn one() {}\nstruct Two;\n").unwrap();
+    std::fs::write(dir.join("b.rs"), "fn three() {}\n").unwrap();
+    build_grammar(dir, &path, &home);
+
+    for round in 0..20 {
+        let run = |args: &[&str]| {
+            stapel(dir)
+                .args(args)
+                .env("HOME", &home)
+                .output()
+                .unwrap()
+        };
+        let (first, second) = std::thread::scope(|scope| {
+            let a = scope.spawn(|| run(&["q", "symbol", "one"]));
+            let b = scope.spawn(|| run(&["index"]));
+            (a.join().unwrap(), b.join().unwrap())
+        });
+        assert!(first.status.success(), "round {round}: {first:?}");
+        assert_eq!(
+            String::from_utf8(first.stdout).unwrap(),
+            "a.rs:1 fn one\n",
+            "round {round}"
+        );
+        assert!(second.status.success(), "round {round}: {second:?}");
+        assert_eq!(
+            String::from_utf8(second.stdout).unwrap(),
+            "rust: 2 files, 3 symbols\nskipped: 0 files\nsyntax errors: 0 files\n",
+            "round {round}"
+        );
+
+        let third = run(&["q", "symbol", "three"]);
+        assert!(third.status.success(), "round {round}: {third:?}");
+        assert_eq!(
+            String::from_utf8(third.stdout).unwrap(),
+            "b.rs:1 fn three\n",
+            "round {round}"
+        );
+        // Start the next round from no index, so the two queries race to make it.
+        std::fs::remove_dir_all(dir.join(".stapel/index")).unwrap();
+    }
+}
