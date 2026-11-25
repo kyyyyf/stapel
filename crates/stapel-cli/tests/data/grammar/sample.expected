@@ -1,0 +1,4 @@
+5 struct Point
+10 enum Shape
+15 fn origin
+19 fn describe
