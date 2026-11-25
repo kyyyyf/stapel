@@ -437,9 +437,42 @@ Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| head | pass | e401202 | 2026-11-25T14:03:42Z | pass 11 |
+| head | pass | 27e6b10 | 2026-11-25T19:24:58Z | cached 11 |
 <!-- stapel:review:end -->
 
 ## Summary
 
-TODO
+Done: `stapel grammar build` builds the pinned Rust grammar into a library under its hash name in one
+grammar folder per repository, shared by all worktrees; `stapel index` builds the structural index of
+the file list in `.stapel/index/`; `stapel q symbol NAME [--json]` answers from it, re-parses only
+changed files, and refuses a missing or changed library with exit 2. The binary links no grammar.
+On this repository: build 9.9 s, index of 144 Rust files 4.0 s, a query 0.27 s.
+
+For the person to decide (agent decisions, overrule if wanted):
+
+- Files with syntax errors are indexed as far as they parse, not skipped.
+- `binary_links_no_grammar` allows `tree-sitter-language`, the ABI type crate.
+- Steps 5, 7, 9 and 14 became coverage commits, because earlier GREENs met their criteria.
+- Exit 2 (a library line) wins over exit 1 (nothing found).
+- Definitions of a language without a usable library are dropped from the index, not kept stale.
+- `tests/cli.rs` of STP-1 counts the new crate and no longer checks `stapel-index` as a stub.
+
+Deferred, outside the promise (proposals to widen it):
+
+- SR1-15: grammar build from a worktree writes into the main `.git/stapel/`, which a sandbox may block.
+- SR2-11: the grammar folder is keyed by the stapel version only, so two pins at one version collide.
+- DR1-6: the `--target-dir` of the build and the index folder's `.gitignore` have no criterion text.
+- DR2-3, XR2-2: a built-in query that does not compile against a library skips every Rust file silently
+  (the person deferred it).
+
+Deferred, inside the promise, LOW:
+
+- DR2-4: after a stamp rebuild, `index:` counts 0 removed even when files left the list.
+- XR2-4: `grammar build` runs in a bare repository or inside `.git`, where `index` refuses.
+- XR2-5: no test runs the locked standalone build; the stand shows it.
+- CR2-3, XR2-6: the query is compiled per file; empty cargo output prints blank warning lines;
+  a test uses `shasum`.
+
+Process note: checks 3 and 4 hit the 5400 s limit; the suite inside `stapel check` takes about 60 min,
+against 11 min with `-j 4 --test-threads=4`. The person agreed to a plan item on the observability of
+`stapel check` after this close.
