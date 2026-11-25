@@ -9,6 +9,8 @@ mod depends;
 mod export;
 mod fail;
 mod findings;
+mod grammar;
+mod index;
 mod hook;
 mod inbox;
 mod init;
@@ -33,6 +35,24 @@ use std::process::ExitCode;
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Subcommand)]
+enum GrammarCommand {
+    /// Build the Rust grammar library into the grammar folder of the git common folder.
+    Build,
+}
+
+#[derive(Subcommand)]
+enum QueryCommand {
+    /// Print `path:line kind name` for each definition named exactly NAME.
+    Symbol {
+        /// The name; after `--` it may start with a dash.
+        name: String,
+        /// Print one JSON array of {path, line, kind, name} instead of lines.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -162,6 +182,16 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
         args: Vec<String>,
     },
+    /// The grammar libraries of the code index.
+    Grammar {
+        #[command(subcommand)]
+        command: GrammarCommand,
+    },
+    /// Rebuild the code index of this working tree and print the counts.
+    Index,
+    /// Ask the code index of this working tree.
+    #[command(subcommand)]
+    Q(QueryCommand),
     /// Run the language server for an editor on standard input and output.
     Lsp,
     /// Review findings kept in a ticket's findings.jsonl.
@@ -431,6 +461,13 @@ fn main() -> ExitCode {
         }
         Command::Lint { key } => return lint::run(key.as_deref()),
         Command::Cargo { args } => return cargo::run(&args),
+        Command::Grammar {
+            command: GrammarCommand::Build,
+        } => return fail::finish(grammar::build()),
+        Command::Index => return fail::finish(index::run()),
+        Command::Q(QueryCommand::Symbol { name, json }) => {
+            return fail::finish(index::symbol(&name, json))
+        },
         Command::Lsp => return ExitCode::from(stapel_lsp::run() as u8),
         Command::Brief { key, step } => return fail::finish(brief::run(&key, &step)),
         Command::Depends { key } => return fail::finish(depends::run(key.as_deref())),

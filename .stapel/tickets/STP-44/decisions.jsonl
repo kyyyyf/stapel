@@ -1,0 +1,15 @@
+{"v":1,"id":"d-553bae519aa2","at":"2026-11-25T11:43:04Z","by":"kyyyyf","action":"ok","section":"description","hash":"sha256:903273960bf9abc8ba1473049488fc7c1e0063c03eff300812afc51ce79bf550","via":"grant"}
+{"v":1,"id":"d-bc9cb2ecd986","at":"2026-11-25T11:43:04Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:a59b2c73486a91b7c66348590bdf4d9001d2c784baf402c2250e6a57afcd1692","via":"grant"}
+{"v":1,"id":"d-43db773b3aa0","at":"2026-11-25T11:43:04Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:5596e5bf1c0064a548d590435482533433830c022d8a7002a8ee9f209f2fc306","via":"grant"}
+{"v":1,"id":"d-32794318d3ec","at":"2026-11-25T11:43:04Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:dd19d456816e00bfa23dd239e3ba4d33fe12f573275c7156ce10c188f9923e04","via":"grant"}
+{"v":1,"id":"d-1a6d08b37573","at":"2026-11-25T11:43:04Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:4f7bce77d799789da5401640cfe1334629d8a912a19c8dbcf7990b83cee08171","via":"grant"}
+{"v":1,"id":"d-9244519bb4ef","at":"2026-11-25T12:40:53Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:49d7c95eae41cc94b73a9ed356583ed135e23058abea274b3a33b94665b248da","via":"grant"}
+{"v":1,"id":"d-23ac143ecf41","at":"2026-11-25T12:40:53Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:6e52975b556e1a70dcf06850e051d327a6678a2825ce5f289168546a432e08d3","via":"grant"}
+{"v":1,"id":"d-0c9df2e9a30f","at":"2026-11-25T12:40:53Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:be4c4c01cee49540aff5be1ba003d5c19c42284cce36faf63d85db0a0d891a58","via":"grant"}
+{"v":1,"id":"d-9e0b1f4a670e","at":"2026-11-25T12:40:53Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:af432b617ba519608d713d61856f97509e088cd1b39e00b99f355da0af960c88","via":"grant"}
+{"v":1,"id":"d-288c9beb33bb","at":"2026-11-25T14:18:56Z","by":"kyyyyf","action":"ok","section":"spec","hash":"sha256:409f26c0e91f855edc07371885df7d754e24ccdc2b8216e7056b17348a40b13c","via":"grant"}
+{"v":1,"id":"d-b22196d3cebc","at":"2026-11-25T14:18:56Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:3be2b09be1694cdc2a671e6cd90b831ed6ac42ebd6e39d5d0b139ed9f557c05e","via":"grant"}
+{"v":1,"id":"d-9633cd03f531","at":"2026-11-25T14:18:56Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:61ecac5b6ad370e3dac7ae6708fe4c8a2ca9133fd9a127062d617bdbeb886757","via":"grant"}
+{"v":1,"id":"d-7928d096c649","at":"2026-11-25T14:18:56Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:da27f6fd8912b98c92433d3ee50ef60976dae3ed35ef685c2fae34db6d2072df","via":"grant"}
+{"v":1,"id":"d-e4409c4e7b33","at":"2026-11-25T14:19:47Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:a3efed152409a2b693e5dee187b4f4d37dfb7bcfe7126a02d2982054f6ab7275","via":"grant"}
+{"v":1,"id":"d-25d23d8b6aac","at":"2026-11-25T19:27:43Z","by":"kyyyyf","action":"close","reason":"The Rust grammar library, the structural index and stapel q symbol work end to end on this repository, every step passed stapel check with the full suite, and code review left no open HIGH or MEDIUM finding."}
