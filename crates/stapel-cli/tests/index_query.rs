@@ -275,3 +275,113 @@ fn no_rust_files_load_nothing() {
     std::os::unix::fs::symlink("README.md", dir.join("x.rs")).unwrap();
     run("skipped: 2 files\nsyntax errors: 0 files\n");
 }
+
+#[test]
+fn refuses_a_changed_library() {
+    let ext = if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    };
+    let deps = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    // A library of another crate: a proc-macro library that cargo built next to the test executable.
+    let other = std::fs::read_dir(&deps)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| {
+            p.extension().is_some_and(|e| e == ext)
+                && !p
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .contains("stapel_grammar_rust")
+        })
+        .expect("a library of another crate");
+    let sha = |path: &Path| -> String {
+        let out = std::process::Command::new("shasum")
+            .args(["-a", "256"])
+            .arg(path)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_string()
+    };
+
+    let cases = ["bytes", "version", "text", "nosymbol"];
+    for case in cases {
+        let repo = git_repo();
+        let scratch = tempfile::tempdir().unwrap();
+        let home = scratch.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let path = fake_cargo_path(&scratch.path().join("bin"));
+        let dir = repo.path();
+        std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+        build_grammar(dir, &path, &home);
+        let folder = std::fs::read_dir(dir.join(".git/stapel/grammars"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path()
+            .canonicalize()
+            .unwrap();
+        let record_path = folder.join("rust.json");
+        let mut record: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&record_path).unwrap()).unwrap();
+        let library = folder.join(record["file"].as_str().unwrap());
+        let reason = match case {
+            "bytes" => {
+                let mut bytes = std::fs::read(&library).unwrap();
+                let last = bytes.len() - 1;
+                bytes[last] ^= 1;
+                std::fs::write(&library, bytes).unwrap();
+                "content hash differs from its record".to_string()
+            }
+            "version" => {
+                record["version"] = serde_json::json!("0.0.1-other");
+                std::fs::write(&record_path, record.to_string()).unwrap();
+                "grammar version 0.0.1-other is not ".to_string()
+            }
+            "text" => {
+                std::fs::write(&library, "not a library\n").unwrap();
+                record["sha256"] = serde_json::json!(sha(&library));
+                std::fs::write(&record_path, record.to_string()).unwrap();
+                "cannot load: ".to_string()
+            }
+            _ => {
+                std::fs::copy(&other, &library).unwrap();
+                record["sha256"] = serde_json::json!(sha(&library));
+                std::fs::write(&record_path, record.to_string()).unwrap();
+                "no symbol stapel_grammar_language".to_string()
+            }
+        };
+        let out = stapel(dir)
+            .arg("index")
+            .env("HOME", &home)
+            .assert()
+            .code(2);
+        let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+        let head = format!(
+            "stapel: grammar library {} refused: {reason}",
+            library.display()
+        );
+        assert!(err.contains(&head), "case {case}, stderr: {err}");
+        assert!(
+            err.contains("; run stapel grammar build"),
+            "case {case}, stderr: {err}"
+        );
+        assert_eq!(
+            stdout_of(out),
+            "skipped: 1 files\nsyntax errors: 0 files\n",
+            "case {case}"
+        );
+    }
+}
