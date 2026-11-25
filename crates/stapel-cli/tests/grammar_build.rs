@@ -269,3 +269,37 @@ fn wrapper_lock_matches_the_workspace() {
         );
     }
 }
+
+#[test]
+fn standalone_manifest_matches_the_member() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../stapel-grammar-rust");
+    let read = |name: &str| -> toml::Table {
+        std::fs::read_to_string(dir.join(name))
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let member = read("Cargo.toml");
+    let standalone = read("standalone.toml");
+
+    let mut expected = member["dependencies"].as_table().unwrap().clone();
+    let mut got = standalone["dependencies"].as_table().unwrap().clone();
+    assert!(
+        got.remove("tree-sitter").is_some(),
+        "the standalone manifest names tree-sitter"
+    );
+    // The member may name tree-sitter too; the standalone one always does.
+    expected.remove("tree-sitter");
+    assert_eq!(got, expected, "the same dependencies besides tree-sitter");
+
+    let types: Vec<&str> = standalone["lib"]["crate-type"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t.as_str().unwrap())
+        .collect();
+    assert_eq!(types, ["cdylib"]);
+
+    let workspace = standalone["workspace"].as_table().expect("a [workspace]");
+    assert!(workspace.is_empty(), "the [workspace] table is empty");
+}
