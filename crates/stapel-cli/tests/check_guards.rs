@@ -69,6 +69,69 @@ fn refuses_a_bad_dir() {
     }
 }
 
+// STP-43 AC-1: a dir that is a work folder is refused; a nested or another name loads.
+#[test]
+fn refuses_an_overlapping_dir() {
+    for dir in ["tests", "Tests/", "src", "docs", "crates", "packages"] {
+        for with_check in [true, false] {
+            let repo = stapel_repo();
+            add_config(
+                repo.path(),
+                with_check,
+                &format!("[guards]\ndir = \"{dir}\"\n"),
+            );
+            let (code, err) = check(repo.path());
+            let refusal = format!(
+                "guards.dir {dir} is a folder that agents write: name a folder of its own, such as guards"
+            );
+            assert_eq!(code, 2, "{dir}: {err}");
+            assert!(err.contains(&refusal), "{dir}: {err}");
+        }
+    }
+
+    for dir in ["tests/guards", "src/x", "guards", "testing"] {
+        let repo = stapel_repo();
+        add_config(repo.path(), true, &format!("[guards]\ndir = \"{dir}\"\n"));
+        let (_, err) = check(repo.path());
+        assert!(
+            !err.contains("stapel.toml") && !err.contains("guards"),
+            "{dir}: {err}"
+        );
+    }
+}
+
+// STP-43 AC-1: each of the nine work folders is refused, in any letter case, with or without a
+// trailing slash; a nested folder or another name loads with no error at all.
+#[test]
+fn all_work_folders_refused() {
+    for name in [
+        "src", "tests", "test", "docs", "lib", "crates", "app", "packages", "spec",
+    ] {
+        for dir in [name.to_string(), format!("{name}/"), name.to_uppercase()] {
+            let repo = stapel_repo();
+            add_config(repo.path(), true, &format!("[guards]\ndir = \"{dir}\"\n"));
+            let (code, err) = check(repo.path());
+            let refusal = format!(
+                "guards.dir {dir} is a folder that agents write: name a folder of its own, such as guards"
+            );
+            assert_eq!(code, 2, "{dir}: {err}");
+            assert!(err.contains(&refusal), "{dir}: {err}");
+        }
+    }
+
+    // `guards` is known to load: its whole stderr is the baseline, so any other load error fails.
+    let repo = stapel_repo();
+    add_config(repo.path(), true, "[guards]\ndir = \"guards\"\n");
+    let (_, baseline) = check(repo.path());
+    assert!(baseline.contains("no open ticket"), "{baseline}");
+    for dir in ["tests/guards", "src/x"] {
+        let repo = stapel_repo();
+        add_config(repo.path(), true, &format!("[guards]\ndir = \"{dir}\"\n"));
+        let (_, err) = check(repo.path());
+        assert_eq!(err, baseline, "{dir}");
+    }
+}
+
 // AC-2: a guard needs a name and a command, a unique name and a relative baseline.
 #[test]
 fn refuses_bad_entries() {
@@ -1169,4 +1232,198 @@ fn a_silent_or_masked_crash_keeps_the_baseline() {
     assert_eq!(read(dir, "guards/masked.txt"), "a\nb\n");
     assert_eq!(read(dir, "guards/silent.txt"), "a\nb\n");
     assert_eq!(read(dir, "guards/control.txt"), "a\n");
+}
+
+// STP-43 AC-3: a guard's command that reads an existing file outside `dir` makes one warning line on
+// standard error; the run goes on with the same outcomes.
+#[test]
+fn warns_about_a_file_outside_dir() {
+    let guards = [
+        guard("a", "sh scripts/cov.sh; ./scripts/cov.sh; sh scripts/cov.sh"),
+        guard("b", "true --config=clippy.toml"),
+        guard("c", "true --config=\"clippy.toml\" --config=clippy.toml"),
+        guard("d", "true --config clippy.toml"),
+        guard("e", "sh guards/run.sh"),
+        guard("f", "grep -rn TODO src || true; grep TODO README.md || true"),
+        guard(
+            "g",
+            "missing/x.sh || true; target/dangling.sh || true; $HOME/x || true; *.rs || true; /abs/x || true; ../x || true; scripts/./cov.sh || true",
+        ),
+        guard("h", "sh target/l.sh || true"),
+    ]
+    .concat();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "scripts/cov.sh", "exit 0\n");
+    write(dir, "guards/run.sh", "exit 0\n");
+    write(dir, "clippy.toml", "\n");
+    write(dir, "README.md", "readme\n");
+    write(dir, "src/lib.rs", "\n");
+    commit(dir, "ABC-1: guard files");
+    // An ignored folder holds the links: a link in the tracked tree stops the check.
+    std::fs::create_dir_all(dir.join("target")).unwrap();
+    std::os::unix::fs::symlink("../scripts/cov.sh", dir.join("target/l.sh")).unwrap();
+    std::os::unix::fs::symlink("no-such-target", dir.join("target/dangling.sh")).unwrap();
+
+    let warning = |name: &str, word: &str| {
+        format!(
+            "warning: guard {name} reads {word} outside guards; a guard's scripts and configs belong in guards"
+        )
+    };
+    let expected = [
+        warning("a", "scripts/cov.sh"),
+        warning("b", "clippy.toml"),
+        warning("c", "clippy.toml"),
+        warning("d", "clippy.toml"),
+        warning("h", "target/l.sh"),
+    ];
+    let both = |level: &str| {
+        let out = stapel(dir)
+            .args(["check", "ABC-1", "--level", level])
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    for level in ["head", "full"] {
+        let (code, out, err) = both(level);
+        let seen: Vec<&str> = err
+            .lines()
+            .filter(|l| l.starts_with("warning: guard "))
+            .collect();
+        assert_eq!(
+            seen,
+            expected.iter().map(String::as_str).collect::<Vec<_>>(),
+            "{level}: {err}"
+        );
+        assert_eq!(code, 0, "{level}: {out}{err}");
+        for name in ["a", "b", "c", "d", "e", "f", "g", "h"] {
+            assert!(
+                out.lines()
+                    .any(|l| l.trim() == format!("guard: {name}: pass")),
+                "{level} {name}: {out}"
+            );
+        }
+        assert!(!out.contains("warning: guard"), "{level}: {out}");
+    }
+    let (code, out, err) = both("steps");
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!err.contains("warning: guard"), "{err}");
+
+    // DR1-1: `dir` is compared in lower case, so `dir = "Guards"` covers `guards/run.sh`.
+    let toml = read(dir, ".stapel/stapel.toml").replace("dir = \"guards\"", "dir = \"Guards\"");
+    write(dir, ".stapel/stapel.toml", &toml);
+    commit(dir, "ABC-1: dir in capitals");
+    let (code, out, err) = both("head");
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        !err.contains("guard e reads"),
+        "dir = Guards covers guards/run.sh: {err}"
+    );
+    assert!(
+        err.contains("warning: guard a reads scripts/cov.sh outside Guards;"),
+        "{err}"
+    );
+}
+
+// DR2-1, XR2-1, XR2-5 (AC-3): every command start and interpreter warns; a folder does not; the record is unchanged.
+#[test]
+fn reach_word_coverage() {
+    let cases = [
+        ("pipe", "true | scripts/pipe.sh || true", "scripts/pipe.sh"),
+        ("and", "true && scripts/and.sh || true", "scripts/and.sh"),
+        ("paren", "(scripts/paren.sh) || true", "scripts/paren.sh"),
+        ("tick", "echo `scripts/tick.sh` || true", "scripts/tick.sh"),
+        ("node", "node scripts/n.js || true", "scripts/n.js"),
+        ("py", "python scripts/p.py || true", "scripts/p.py"),
+        ("py3", "python3 scripts/p3.py || true", "scripts/p3.py"),
+        ("ruby", "ruby scripts/r.rb || true", "scripts/r.rb"),
+        ("opt", "sh -e scripts/cov.sh", "scripts/cov.sh"),
+        ("folder", "sh src || true", ""),
+    ];
+    let guards: String = cases.iter().map(|(n, c, _)| guard(n, c)).collect();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    for f in [
+        "pipe.sh", "and.sh", "paren.sh", "tick.sh", "n.js", "p.py", "p3.py", "r.rb", "cov.sh",
+    ] {
+        write(dir, &format!("scripts/{f}"), "exit 0\n");
+    }
+    write(dir, "src/lib.rs", "\n");
+    commit(dir, "ABC-1: guard files");
+
+    let out = stapel(dir)
+        .args(["check", "ABC-1", "--level", "head"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    let seen: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("warning: guard "))
+        .collect();
+    let expected: Vec<String> = cases
+        .iter()
+        .filter(|(_, _, w)| !w.is_empty())
+        .map(|(n, _, w)| {
+            format!(
+                "warning: guard {n} reads {w} outside guards; a guard's scripts and configs belong in guards"
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        expected.iter().map(String::as_str).collect::<Vec<_>>(),
+        "{err}"
+    );
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let with_outside = last_check_record(dir)["guards"].clone();
+
+    // The same guard names with no outside file: the same record part.
+    let plain: String = cases.iter().map(|(n, _, _)| guard(n, "true")).collect();
+    let (repo, _scripts) = guards_repo("", 3600, &plain);
+    let (code, text) = run(repo.path(), &["--level", "head"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(!text.contains("warning: guard"), "{text}");
+    assert_eq!(last_check_record(repo.path())["guards"], with_outside);
+}
+
+// CR2-1, XR2-6, XR2-7 (AC-3): an interpreter name opens a reach word only at a command start; the `&` of
+// `2>&1` starts no word.
+#[test]
+fn interpreter_only_at_command_start() {
+    let guards = [
+        guard("subject", "grep -w sh scripts/x.sh || true"),
+        guard("readme", "grep sh README.md || true"),
+        guard("redirect", "grep TODO 2>&1 || true"),
+        guard("redirect_in", "grep TODO <&1 || true"),
+        guard("real", "sh scripts/x.sh"),
+    ]
+    .concat();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "scripts/x.sh", "exit 0\n");
+    write(dir, "README.md", "readme\n");
+    write(dir, "1", "one\n");
+    commit(dir, "ABC-1: guard files");
+
+    let out = stapel(dir)
+        .args(["check", "ABC-1", "--level", "head"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    let seen: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("warning: guard "))
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            "warning: guard real reads scripts/x.sh outside guards; a guard's scripts and configs belong in guards"
+        ],
+        "{err}"
+    );
+    assert_eq!(out.status.code(), Some(0), "{err}");
 }

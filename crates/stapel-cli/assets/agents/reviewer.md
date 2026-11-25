@@ -14,6 +14,6 @@ Check the change against the ticket's criteria, Design "as built" and the Frame'
 Report every HIGH and MEDIUM finding and a short summary of LOW ones, with no fixed maximum. Each finding
 is one JSON line:
 
-{"id":"<prefix>-<n>","ticket":"<KEY>","stage":"code-review","round":<n>,"role":"reviewer","severity":"HIGH|MEDIUM|LOW","promise":"inside|outside","claim":"<the defect and a concrete failing case>","catchable_at":"spec|design|test-plan|code","fate":"open","rule":"<the rule of the spec process that should have caught it, or none>"}
+{"id":"<prefix>-<n>","ticket":"<KEY>","stage":"code-review","round":<n>,"role":"@ROLE@","severity":"HIGH|MEDIUM|LOW","promise":"inside|outside","claim":"<the defect and a concrete failing case>","catchable_at":"spec|design|test-plan|code","fate":"open","rule":"<the rule of the spec process that should have caught it, or none>"}
 
 `inside` is a defect within the promise; `outside` is a proposal to widen it, not a defect.

@@ -138,6 +138,122 @@ fn refuse(message: impl std::fmt::Display) -> ExitCode {
     ExitCode::from(2)
 }
 
+/// The command words of a guard's command, each with whether it starts a command (STP-43 AC-3): the
+/// command is split at white space and at `; | & ( ) < >` and a backtick, then each `'` and `"` goes.
+fn command_words(command: &str) -> Vec<(String, bool)> {
+    let mut words: Vec<(String, bool)> = Vec::new();
+    let mut piece = String::new();
+    let mut starts = true;
+    let mut next_starts = true;
+    let mut flush = |piece: &mut String, starts: &mut bool, next_starts: &mut bool| {
+        if !piece.is_empty() {
+            let word: String = piece.chars().filter(|c| !matches!(c, '\'' | '"')).collect();
+            if !word.is_empty() {
+                words.push((word, *starts));
+                *next_starts = false;
+            }
+            piece.clear();
+        }
+        *starts = *next_starts;
+    };
+    let mut previous = ' ';
+    for c in command.chars() {
+        let after_redirect = matches!(previous, '<' | '>');
+        previous = c;
+        if c == '&' && after_redirect {
+            // The `&` of `2>&1` is part of the redirection and starts no word.
+            continue;
+        }
+        if c.is_whitespace() {
+            flush(&mut piece, &mut starts, &mut next_starts);
+        } else if matches!(c, ';' | '|' | '&' | '(' | '`') {
+            flush(&mut piece, &mut starts, &mut next_starts);
+            next_starts = true;
+            starts = true;
+        } else if matches!(c, ')' | '<' | '>') {
+            flush(&mut piece, &mut starts, &mut next_starts);
+        } else {
+            piece.push(c);
+        }
+    }
+    flush(&mut piece, &mut starts, &mut next_starts);
+    words
+}
+
+/// The reach warnings of the guards: for each guard one line for each distinct script or config of its
+/// command that is an existing regular file of the working tree at `root` outside `dir` (STP-43 AC-3).
+pub(crate) fn guard_reach(
+    root: &Path,
+    dir: &str,
+    entries: &[stapel_core::config::GuardEntry],
+) -> Vec<String> {
+    const INTERPRETERS: [&str; 8] = [
+        "sh", "bash", "zsh", "node", "python", "python3", "ruby", "perl",
+    ];
+    let inside = dir.trim_end_matches('/');
+    let outside_file = |word: &str| -> Option<String> {
+        let rel = word.strip_prefix("./").unwrap_or(word);
+        if rel.starts_with('/')
+            || rel.contains(['$', '*', '?', '~', '{'])
+            || rel.split('/').any(|p| matches!(p, "" | "." | ".."))
+        {
+            return None;
+        }
+        let (rel_lower, inside_lower) = (rel.to_lowercase(), inside.to_lowercase());
+        let covered = rel_lower == inside_lower
+            || rel_lower
+                .strip_prefix(&inside_lower)
+                .is_some_and(|rest| rest.starts_with('/'));
+        if covered || !std::fs::metadata(root.join(rel)).is_ok_and(|m| m.is_file()) {
+            return None;
+        }
+        Some(rel.to_string())
+    };
+    let mut lines = Vec::new();
+    for entry in entries {
+        let mut seen: Vec<String> = Vec::new();
+        let mut reach: Vec<&str> = Vec::new();
+        let words = command_words(&entry.command);
+        let mut after_interpreter = false;
+        let mut config_next = false;
+        for (word, starts) in &words {
+            if *starts {
+                after_interpreter = false;
+                config_next = false;
+                reach.push(word);
+            } else if config_next {
+                config_next = false;
+                reach.push(word);
+            } else if after_interpreter && !word.starts_with('-') {
+                after_interpreter = false;
+                reach.push(word);
+            }
+            if *starts && INTERPRETERS.contains(&word.as_str()) {
+                after_interpreter = true;
+            }
+            if let Some(option) = word.strip_prefix('-') {
+                match option.split_once('=') {
+                    Some((name, value)) if name.contains("config") => reach.push(value),
+                    None if option.contains("config") => config_next = true,
+                    _ => {}
+                }
+            }
+        }
+        for word in reach {
+            if let Some(file) = outside_file(word) {
+                if !seen.contains(&file) {
+                    lines.push(format!(
+                        "warning: guard {} reads {file} outside {dir}; a guard's scripts and configs belong in {dir}",
+                        printable(&entry.name)
+                    ));
+                    seen.push(file);
+                }
+            }
+        }
+    }
+    lines
+}
+
 // The refusals both modes share (STP-14); each mode calls them in its own order.
 
 /// A legacy or unreadable ticket cannot be checked.
@@ -707,6 +823,9 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
             say!("guards: skipped: level steps");
         } else {
             let guards_dir = config.guards.as_ref().map_or("", |g| g.dir.as_str());
+            for line in guard_reach(&root, guards_dir, guard_entries) {
+                warn!("{line}");
+            }
             for (entry, (outcome, new, removed)) in guard_entries
                 .iter()
                 .zip(runner.guards(guards_dir, guard_entries))

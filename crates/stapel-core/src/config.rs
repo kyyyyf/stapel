@@ -33,7 +33,7 @@ pub fn starter_toml(prefix: &str, cargo: bool) -> String {
     text
 }
 
-const GUARDS_COMMENT: &str = "\n# [guards]\n# dir = \"guards\"   # a write into this folder asks the person\n#\n# [[guards.check]]\n# name = \"no-todo\"\n# command = \"grep -rn TODO src\"   # each output line is a violation\n# baseline = \"no-todo.txt\"   # read as <dir>/<baseline>; stapel check removes fixed lines\n";
+const GUARDS_COMMENT: &str = "\n# [guards]   # a guard's scripts and configs belong in dir: an agent edits a file outside it with no dialog\n# dir = \"guards\"   # a write into this folder asks the person\n#\n# [[guards.check]]\n# name = \"no-todo\"\n# command = \"grep -rn TODO src\"   # each output line is a violation\n# baseline = \"no-todo.txt\"   # read as <dir>/<baseline>; stapel check removes fixed lines\n";
 
 const PROJECT_COMMENT: &str = "# project = [\"npx prettier --check {files}\"]   # shell commands run after the suite; {files} is the ticket's changed files\n";
 
@@ -429,6 +429,15 @@ impl Config {
             if !is_relative_path(dir) || matches!(first.as_str(), ".stapel" | ".git" | ".claude") {
                 return Err(format!(
                     "guards.dir must be a relative folder of the repository outside .stapel, .git and .claude: {}",
+                    guards.dir
+                ));
+            }
+            if matches!(
+                dir.to_lowercase().as_str(),
+                "src" | "tests" | "test" | "docs" | "lib" | "crates" | "app" | "packages" | "spec"
+            ) {
+                return Err(format!(
+                    "guards.dir {} is a folder that agents write: name a folder of its own, such as guards",
                     guards.dir
                 ));
             }

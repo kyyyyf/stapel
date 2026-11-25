@@ -836,6 +836,98 @@ fn starter_names_guards() {
     assert!(skill.contains("`history:` line"), "no history line");
 }
 
+// STP-43 AC-4: init prints the reach warnings after every refusal check and before it writes; a
+// refusal prints none.
+#[test]
+fn guard_reach_warning() {
+    let with_guard = |t: String| {
+        format!(
+            "{t}\n[check]\nrunner = \"cargo\"\ntimeout_secs = 3600\n\n[guards]\ndir = \"guards\"\n\n\
+             [[guards.check]]\nname = \"cov\"\ncommand = 'sh scripts/cov.sh'\n"
+        )
+    };
+    let script = |dir: &Path| {
+        std::fs::create_dir_all(dir.join("scripts")).unwrap();
+        std::fs::write(dir.join("scripts/cov.sh"), "exit 0\n").unwrap();
+    };
+    let warning = "warning: guard cov reads scripts/cov.sh outside guards; a guard's scripts and configs belong in guards";
+
+    let repo = repo_with_config(with_guard);
+    let dir = repo.path();
+    script(dir);
+    let (stdout, stderr) = run_init(dir);
+    assert_eq!(stderr.matches(warning).count(), 1, "{stderr}");
+    assert!(stdout.contains("created: "), "{stdout}");
+    assert!(dir.join(SKILL).is_file());
+    for rel in AGENTS {
+        assert!(dir.join(rel).is_file(), "{rel}");
+    }
+
+    let repo = repo_with_config(|t| {
+        with_guard(replace_line(
+            t,
+            "external",
+            "external = { provider = \"claude-code\", model = \"claude-sonnet-5-5\", permission_mode = \"bypassPermissions\" }",
+        ))
+    });
+    let dir = repo.path();
+    script(dir);
+    let before = snapshot(dir);
+    let out = stapel(dir).arg("init").assert().code(1);
+    let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(err.contains("permission_mode bypassPermissions"), "{err}");
+    assert!(!err.contains("reads scripts/cov.sh"), "{err}");
+    assert_eq!(snapshot(dir), before);
+
+    let repo = repo_with_config(|t| {
+        with_guard(replace_line(
+            t,
+            "external",
+            "external = { provider = \"anthropic-api\", model = \"claude-opus-5-5\" }",
+        ))
+    });
+    let dir = repo.path();
+    script(dir);
+    let before = snapshot(dir);
+    let out = stapel(dir).arg("init").assert().code(1);
+    let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(
+        err.contains("[models] external: provider \"anthropic-api\" is not claude-code"),
+        "{err}"
+    );
+    assert!(!err.contains("reads scripts/cov.sh"), "{err}");
+    assert_eq!(snapshot(dir), before);
+
+    let repo = repo_with_config(with_guard);
+    let dir = repo.path();
+    script(dir);
+    std::fs::create_dir_all(dir.join(SKILL)).unwrap();
+    let before = snapshot(dir);
+    let out = stapel(dir).arg("init").assert().code(1);
+    let err = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(err.contains("is a directory; nothing was written"), "{err}");
+    assert!(!err.contains("reads scripts/cov.sh"), "{err}");
+    assert_eq!(snapshot(dir), before);
+}
+
+// STP-43 AC-5: the starter comment and the skill say that a guard's scripts and configs belong in dir.
+#[test]
+fn guard_reach_text() {
+    let repo = git_repo();
+    let dir = repo.path();
+    init_in(dir);
+    let line = "# [guards]   # a guard's scripts and configs belong in dir: an agent edits a file outside it with no dialog";
+    let starter = read(dir, ".stapel/stapel.toml");
+    assert!(starter.lines().any(|l| l == line), "no starter line");
+    let sentence = "A guard's scripts and configs belong in the guards folder; an agent edits a file outside it with no dialog.";
+    assert!(collapsed(&body_of(dir, SKILL)).contains(sentence), "no installed sentence");
+    let asset = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/skill.md"),
+    )
+    .unwrap();
+    assert!(collapsed(&asset).contains(sentence), "no asset sentence");
+}
+
 // AC-17: each agent body holds the role lines.
 #[test]
 fn agent_texts_hold_their_rules() {
@@ -2145,6 +2237,21 @@ fn names_the_records() {
     }
 }
 
+// STP-43 AC-6: the finding template of the reviewer body holds the role of the agent that carries it.
+#[test]
+fn reviewer_role_in_the_finding_template() {
+    let repo = common::repo_with_ticket();
+    let dir = repo.path();
+    let reviewer = body_of(dir, AGENTS[2]);
+    let external = body_of(dir, AGENTS[4]);
+    assert!(reviewer.contains("\"role\":\"reviewer\""), "{reviewer}");
+    assert!(!reviewer.contains("@ROLE@"), "{reviewer}");
+    assert!(external.contains("\"role\":\"external\""), "{external}");
+    assert!(!external.contains("\"role\":\"reviewer\""), "{external}");
+    assert!(!external.contains("@ROLE@"), "{external}");
+    assert_eq!(reviewer.replace("\"role\":\"reviewer\"", "\"role\":\"external\""), external);
+}
+
 // STP-42 AC-5: the external reviewer agent has the reviewer's body and the model of `external`; the
 // starter binds `external` to Opus and maps the agent type; without `[roles]` its records get `external`.
 #[test]
@@ -2156,7 +2263,10 @@ fn external_reviewer_agent() {
     assert_eq!(fm[1], "name: stapel-external-reviewer", "{fm:?}");
     assert!(fm.contains(&"tools: Read, Grep, Glob".to_string()), "{fm:?}");
     assert!(fm.contains(&"model: \"claude-opus-5-5\"".to_string()), "{fm:?}");
-    assert_eq!(body_of(dir, rel), body_of(dir, AGENTS[2]));
+    assert_eq!(
+        body_of(dir, rel),
+        body_of(dir, AGENTS[2]).replace("\"role\":\"reviewer\"", "\"role\":\"external\"")
+    );
 
     let text = read(dir, ".stapel/stapel.toml");
     let lines: Vec<&str> = text.lines().collect();
@@ -2190,4 +2300,91 @@ fn external_reviewer_agent() {
     let record: serde_json::Value =
         serde_json::from_str(records.lines().next().expect("a record")).unwrap();
     assert_eq!(record["role"], "external", "{record}");
+}
+
+/// STP-43 AC-7: an agent role bound to another provider refuses, in the order of the roles, before
+/// its mode and model; `author` is not checked.
+#[test]
+fn refuses_a_foreign_provider() {
+    for role in ["external", "builder"] {
+        refused_binding(
+            role,
+            "{ provider = \"anthropic-api\", model = \"claude-opus-5-5\" }",
+            &format!(
+                "stapel: [models] {role}: provider \"anthropic-api\" is not claude-code: an agent role runs as a Claude Code agent; set provider = \"claude-code\""
+            ),
+        );
+    }
+    refused_binding(
+        "reviewer",
+        "{ provider = \"anthropic-api\", model = \"claude-opus-5-5\", permission_mode = \"yolo\" }",
+        "stapel: [models] reviewer: provider \"anthropic-api\" is not claude-code",
+    );
+    let repo = repo_with_config(|t| {
+        replace_line(
+            t,
+            "author",
+            "author = { provider = \"anthropic-api\", model = \"claude-opus-5-5\" }",
+        )
+    });
+    stapel(repo.path()).arg("init").assert().success();
+}
+
+/// STP-43 AC-7: with two foreign agent roles the first of the list is named; `drift` and `depends`
+/// alone are refused.
+#[test]
+fn first_foreign_role_is_named() {
+    let foreign = "{ provider = \"anthropic-api\", model = \"claude-opus-5-5\" }";
+    let run = |roles: &[&str]| -> String {
+        let repo = repo_with_config(|t| {
+            roles.iter().fold(t, |t, role| {
+                if *role == "depends" {
+                    // the starter has no `depends` line: add one after `cheap`
+                    replace_line(
+                        t,
+                        "cheap",
+                        &format!(
+                            "cheap = {{ provider = \"claude-code\", model = \"claude-haiku-4-5\" }}\n{role} = {foreign}"
+                        ),
+                    )
+                } else {
+                    replace_line(t, role, &format!("{role} = {foreign}"))
+                }
+            })
+        });
+        let dir = repo.path();
+        let before = snapshot(dir);
+        let out = stapel(dir).arg("init").assert().code(1);
+        assert_eq!(snapshot(dir), before, "{roles:?}");
+        String::from_utf8_lossy(&out.get_output().stderr).to_string()
+    };
+    let both = run(&["external", "builder"]);
+    assert!(both.contains("[models] builder: provider"), "{both}");
+    assert!(!both.contains("[models] external:"), "{both}");
+    for role in ["drift", "depends"] {
+        let text = run(&[role]);
+        assert!(
+            text.contains(&format!(
+                "stapel: [models] {role}: provider \"anthropic-api\" is not claude-code"
+            )),
+            "{text}"
+        );
+    }
+}
+
+/// STP-43 AC-8: the starter binds `external` to Claude Code.
+#[test]
+fn starter_binds_claude_code() {
+    let repo = git_repo();
+    stapel(repo.path())
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let starter = read(repo.path(), ".stapel/stapel.toml");
+    let line = starter
+        .lines()
+        .find(|l| l.starts_with("external"))
+        .expect("an external line");
+    assert!(line.contains("provider = \"claude-code\""), "{line}");
+    assert!(line.contains("model = \"claude-opus-5-5\""), "{line}");
 }

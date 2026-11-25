@@ -186,6 +186,12 @@ pub fn run(prefix: Option<String>, local: bool) -> Result<(), String> {
         junit_note = plan_workflow(&config, &root, &mut plan, &mut kept);
     }
 
+    if let Some(guards) = &config.guards {
+        for line in crate::check::guard_reach(&root, &guards.dir, &guards.check) {
+            warn!("{line}");
+        }
+    }
+
     for step in &plan {
         let path = root.join(&step.rel);
         if let Some(parent) = path.parent() {
@@ -468,6 +474,13 @@ fn check_bindings(config: &Config) -> Result<(), String> {
         let Some(binding) = config.models.get(role) else {
             continue;
         };
+        if binding.provider != "claude-code" {
+            return Err(format!(
+                "[models] {role}: provider \"{}\" is not claude-code: an agent role runs as a \
+                 Claude Code agent; set provider = \"claude-code\"",
+                binding.provider
+            ));
+        }
         match binding.permission_mode.as_deref() {
             Some("bypassPermissions") => {
                 return Err(format!(
@@ -551,7 +564,8 @@ fn plan_process_files(
             .and_then(|b| b.permission_mode.as_deref())
             .unwrap_or(agent.default_mode);
         lines.push(format!("permissionMode: {mode}"));
-        let text = process_text(&lines, agent.body);
+        let body = agent.body.replace("@ROLE@", agent.role);
+        let text = process_text(&lines, &body);
         plan_create_text(
             root,
             format!(".claude/agents/stapel-{}.md", agent.name),
