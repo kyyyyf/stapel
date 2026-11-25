@@ -401,8 +401,9 @@ Route: full (tags `interface`, `data`), auto.
     a coverage commit only.
 19. Coverage of the standalone manifest (DR1-2; AC-1; test
     `grammar_build::standalone_manifest_matches_the_member`): a coverage commit only.
-20. Coverage of an unreadable record and of the path order (XR2-1, XR2-3; AC-4, AC-12; tests
-    `index_query::unreadable_record_is_missing`, `index_query::path_order_mixes_tracked_and_untracked`):
+20. Coverage of an unreadable record (XR2-1; AC-4; test `index_query::unreadable_record_is_missing`): a
+    coverage commit only.
+21. Coverage of the path order (XR2-3; AC-12; test `index_query::path_order_mixes_tracked_and_untracked`):
     a coverage commit only.
 
 ## Review
