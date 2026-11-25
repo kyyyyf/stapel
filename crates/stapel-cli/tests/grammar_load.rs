@@ -73,3 +73,45 @@ fn adapter_table_is_data() {
     .unwrap();
     assert_eq!(adapter.query, file);
 }
+
+#[test]
+fn binary_links_no_grammar() {
+    fn walk(manifest: &Path, seen: &mut Vec<PathBuf>, names: &mut Vec<String>) {
+        let manifest = manifest.canonicalize().unwrap();
+        if seen.contains(&manifest) {
+            return;
+        }
+        seen.push(manifest.clone());
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        let doc: toml::Table = text.parse().unwrap();
+        for section in ["dependencies", "build-dependencies"] {
+            let Some(deps) = doc.get(section).and_then(|d| d.as_table()) else {
+                continue;
+            };
+            for (name, spec) in deps {
+                names.push(name.clone());
+                if let Some(path) = spec.get("path").and_then(|p| p.as_str()) {
+                    walk(
+                        &manifest.parent().unwrap().join(path).join("Cargo.toml"),
+                        seen,
+                        names,
+                    );
+                }
+            }
+        }
+    }
+    let mut seen = Vec::new();
+    let mut names = Vec::new();
+    walk(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+        &mut seen,
+        &mut names,
+    );
+    assert!(names.iter().any(|n| n == "tree-sitter"), "{names:?}");
+    // `tree-sitter-language` is the shared ABI type crate, not a grammar.
+    let grammars: Vec<&String> = names
+        .iter()
+        .filter(|n| n.starts_with("tree-sitter-") && *n != "tree-sitter-language")
+        .collect();
+    assert!(grammars.is_empty(), "grammar crates linked: {grammars:?}");
+}
