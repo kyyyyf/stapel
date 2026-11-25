@@ -195,6 +195,53 @@ fn file_list() {
 }
 
 #[test]
+fn missing_library() {
+    let repo = git_repo();
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = fake_cargo_path(&scratch.path().join("bin"));
+    let dir = repo.path();
+    std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+    std::fs::write(dir.join("b.rs"), "fn b() {}\n").unwrap();
+    let line = "stapel: no grammar library for rust: run stapel grammar build";
+    let expected = "skipped: 2 files\nsyntax errors: 0 files\n";
+
+    // No grammar folder.
+    let out = stapel(dir)
+        .arg("index")
+        .env("HOME", &home)
+        .assert()
+        .code(2);
+    let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(err.contains(line), "stderr: {err}");
+    assert_eq!(stdout_of(out), expected);
+
+    // A record whose library file is gone.
+    build_grammar(dir, &path, &home);
+    let common = dir.join(".git/stapel/grammars");
+    let mut removed = 0;
+    for folder in std::fs::read_dir(&common).unwrap() {
+        for entry in std::fs::read_dir(folder.unwrap().path()).unwrap() {
+            let entry = entry.unwrap().path();
+            if entry.extension().is_some_and(|e| e == "dylib" || e == "so") {
+                std::fs::remove_file(entry).unwrap();
+                removed += 1;
+            }
+        }
+    }
+    assert_eq!(removed, 1);
+    let out = stapel(dir)
+        .arg("index")
+        .env("HOME", &home)
+        .assert()
+        .code(2);
+    let err = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(err.contains(line), "stderr: {err}");
+    assert_eq!(stdout_of(out), expected);
+}
+
+#[test]
 fn no_rust_files_load_nothing() {
     let repo = git_repo();
     let scratch = tempfile::tempdir().unwrap();
