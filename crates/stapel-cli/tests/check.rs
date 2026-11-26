@@ -2228,6 +2228,14 @@ fn without_cargo_line(text: &str) -> String {
                 "cargo slot: waited <n> s\n".to_string()
             } else if l.starts_with("suite build: ") {
                 "suite build: <n> s\n".to_string()
+            } else if l.starts_with("suite: ") && l.contains("; run ") {
+                let (head, end) = l.split_once("; run ").unwrap();
+                let (secs, rest) = end.split_once(" s, ").unwrap_or((end, ""));
+                assert!(
+                    !secs.is_empty() && secs.chars().all(|c| c.is_ascii_digit()),
+                    "{l}"
+                );
+                format!("{head}; run <n> s, {rest}\n")
             } else if l.starts_with("  times: ") {
                 let words: Vec<String> = l
                     .split(' ')

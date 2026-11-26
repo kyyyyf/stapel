@@ -811,3 +811,78 @@ fn failed_build_judges_the_suite() {
         records[0]
     );
 }
+
+// AC-7: the `suite:` line of a suite that ran ends with `; run <n> s, last pass <m> s`, `<m>` being
+// the `times.suite_run` of the last passing record of the ticket that has one, or `none`; a
+// malformed line is skipped; an unverified suite has no such end.
+#[test]
+fn last_pass_time() {
+    let suite_line = |out: &str| -> String {
+        out.lines()
+            .find(|l| l.starts_with("suite: "))
+            .unwrap_or_else(|| panic!("no suite line: {out}"))
+            .to_string()
+    };
+    let end_of = |line: &str, last: &str| -> bool {
+        let Some((_, end)) = line.split_once("; run ") else {
+            return false;
+        };
+        let Some((secs, rest)) = end.split_once(" s, last pass ") else {
+            return false;
+        };
+        !secs.is_empty() && secs.chars().all(|c| c.is_ascii_digit()) && rest == last
+    };
+
+    // No earlier record.
+    let (repo, _scripts) = repo_with_fake_cargo();
+    let (code, out, err) = run_check(repo.path(), "head");
+    assert_eq!(code, 0, "{out}{err}");
+    let line = suite_line(&out);
+    assert!(end_of(&line, "none"), "{line}");
+
+    // Earlier records: a pass with 7, a fail with 9, a malformed line, a later pass without the
+    // field and a pass of another ticket with 5.
+    let (repo, _scripts) = repo_with_fake_cargo();
+    let dir = repo.path();
+    let record = |ticket: &str, result: &str, times: serde_json::Value| {
+        serde_json::json!({
+            "v": 1, "kind": "check", "ticket": ticket, "result": result, "times": times
+        })
+        .to_string()
+    };
+    let lines = [
+        record("ABC-1", "pass", serde_json::json!({"suite_run": 7})),
+        record("ABC-1", "fail", serde_json::json!({"suite_run": 9})),
+        "{ this is not json".to_string(),
+        record("ABC-1", "pass", serde_json::json!({"copy": 1})),
+        record("ABC-2", "pass", serde_json::json!({"suite_run": 5})),
+    ];
+    let path = dir.join(".stapel/tickets/ABC-1/runs.jsonl");
+    let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+    for l in &lines {
+        text.push_str(l);
+        text.push('\n');
+    }
+    std::fs::write(&path, text).unwrap();
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 0, "{out}{err}");
+    let line = suite_line(&out);
+    assert!(end_of(&line, "7 s"), "{line}");
+
+    // An unverified suite has no such end.
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    write(
+        dir,
+        "Cargo.lock",
+        "# fake: stale lock\nversion = 3\n\n[[package]]\nname = \"tiny\"\nversion = \"0.1.0\"\n",
+    );
+    commit(dir, "ABC-1: a stale lock file");
+    configure(dir, &common::fake_cargo(scripts.path()), "");
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 1, "{out}{err}");
+    let line = suite_line(&out);
+    assert!(line.starts_with("suite: unverified: "), "{line}");
+    assert!(!line.contains("; run "), "{line}");
+}

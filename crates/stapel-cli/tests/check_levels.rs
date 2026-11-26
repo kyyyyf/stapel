@@ -396,10 +396,14 @@ fn suite_exclude() {
         "{suite_run}"
     );
     let suite_line = head.text.lines().find(|l| l.starts_with("suite: ")).unwrap();
+    let (detail, end) = suite_line
+        .split_once("; run ")
+        .unwrap_or_else(|| panic!("no run end: {suite_line}"));
     assert!(
-        suite_line.ends_with("(left out: slow_one, tests::slow_two)"),
+        detail.ends_with("(left out: slow_one, tests::slow_two)"),
         "{suite_line}"
     );
+    assert!(end.contains(" s, last pass "), "{suite_line}");
     assert_eq!(
         last_record(dir)["suite_exclude"],
         serde_json::json!(["slow_one", "tests::slow_two"])
