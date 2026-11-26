@@ -813,7 +813,17 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
     if let Some(d) = suite_build {
         say!("suite build: {} s", d.as_secs());
     }
-    say!("suite: {}: {}", suite.outcome, suite.detail);
+    let run_end = match suite_run {
+        Some(d) if suite.outcome == "pass" || suite.outcome == "fail" => {
+            let last = match last_pass_suite_run(&ticket.dir, &ticket.key) {
+                Some(m) => format!("{m} s"),
+                None => "none".to_string(),
+            };
+            format!("; run {} s, last pass {last}", d.as_secs())
+        }
+        _ => String::new(),
+    };
+    say!("suite: {}: {}{run_end}", suite.outcome, suite.detail);
     if !suite.failing.is_empty() {
         let more = if suite.failing_more > 0 {
             format!(" and {} more", suite.failing_more)
@@ -1379,6 +1389,21 @@ fn times_of(times: &BTreeMap<&'static str, Duration>) -> Option<(String, serde_j
         }
     }
     Some((format!("  times: {}", parts.join(", ")), json.into()))
+}
+
+/// The `times.suite_run` of the last passing check record of the ticket that has one (STP-45 AC-7);
+/// a malformed line is skipped.
+fn last_pass_suite_run(dir: &Path, ticket: &str) -> Option<u64> {
+    let text = std::fs::read_to_string(dir.join("runs.jsonl")).ok()?;
+    text.lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|r| {
+            r["kind"].as_str() == Some("check")
+                && r["ticket"].as_str() == Some(ticket)
+                && r["result"].as_str() == Some("pass")
+        })
+        .filter_map(|r| r["times"]["suite_run"].as_u64())
+        .last()
 }
 
 /// The id of the passing record that ran a step with this key, `None` when no record did (STP-35
