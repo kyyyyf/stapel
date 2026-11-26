@@ -1083,3 +1083,14 @@ fn limit_names_the_stage() {
     let log = std::fs::read_to_string(log).unwrap();
     assert!(log.contains("out line 30") && log.contains("err line 30"), "{log}");
 }
+
+// AC-13: this repository's own config sets the run settings of the check.
+#[test]
+fn this_repository_sets_four() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = std::fs::read_to_string(root.join(".stapel/stapel.toml")).unwrap();
+    let config = stapel_core::config::Config::parse(&text).unwrap();
+    let check = config.check.unwrap();
+    assert_eq!(check.jobs, Some(4));
+    assert_eq!(check.test_threads, Some(4));
+}
