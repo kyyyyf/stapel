@@ -85,3 +85,6 @@ runner = "cargo"
 timeout_secs = 5400
 # The person asked on 2026-11-23 for fewer local checks: none after each step.
 points = ["review", "close"]
+# STP-45: the suite took about 60 min without these and about 11 min with them (STP-44).
+jobs = 4
+test_threads = 4
