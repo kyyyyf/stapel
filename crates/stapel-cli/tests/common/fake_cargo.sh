@@ -119,6 +119,17 @@ if [ "$1" = --workspace ]; then
             exit 101
         fi
     done
+    # `--no-run`: the build only. A file under `crates/*/src` with the text `fake: build sleeps`
+    # makes it sleep a minute first (STP-45).
+    for arg in "$@"; do
+        if [ "$arg" = --no-run ]; then
+            if in_src "fake: build sleeps"; then
+                sleep 60
+            fi
+            echo "    Finished \`test\` profile [unoptimized + debuginfo] target(s) in 0.00s" >&2
+            exit 0
+        fi
+    done
     # Like cargo, stop after the first test file with a failure.
     # Like cargo, the `Running` line of each test binary goes to standard error (STP-42 XR1-1).
     for file in crates/*/tests/*.rs; do

@@ -146,10 +146,21 @@ fn run_settings() {
         runs.iter().filter(|l| l.contains("--exact")).cloned().collect()
     };
     let suites = |runs: &[String]| -> Vec<String> {
-        runs.iter().filter(|l| l.contains("--workspace")).cloned().collect()
+        runs.iter()
+            .filter(|l| l.contains("--workspace") && !l.contains("--no-run"))
+            .cloned()
+            .collect()
+    };
+    let builds = |runs: &[String]| -> Vec<String> {
+        runs.iter().filter(|l| l.contains("--no-run")).cloned().collect()
     };
 
     let runs = logged_runs("jobs = 3\ntest_threads = 2");
+    assert_eq!(
+        builds(&runs),
+        ["test --workspace --locked -j 3 --no-run"],
+        "{runs:?}"
+    );
     let step_runs = steps(&runs);
     assert_eq!(step_runs.len(), 3, "{runs:?}");
     for run in &step_runs {
@@ -355,7 +366,13 @@ fn log_holds_every_run() {
         .collect();
     assert_eq!(
         stages,
-        ["step 1 RED", "step 1 GREEN", "step 1 HEAD", "suite run"],
+        [
+            "step 1 RED",
+            "step 1 GREEN",
+            "step 1 HEAD",
+            "suite build",
+            "suite run"
+        ],
         "{log}"
     );
     for (head, _) in &sections[..3] {
@@ -365,14 +382,20 @@ fn log_holds_every_run() {
         );
     }
     assert!(
-        sections[3].0.ends_with(" test --workspace --locked"),
+        sections[3].0.ends_with(" test --workspace --locked --no-run"),
         "{}",
         sections[3].0
+    );
+    assert!(
+        sections[4].0.ends_with(" test --workspace --locked"),
+        "{}",
+        sections[4].0
     );
     assert!(sections[0].1.contains("test needs_two ... FAILED"), "{log}");
     assert!(sections[1].1.contains("test needs_two ... ok"), "{log}");
     assert!(sections[2].1.contains("test needs_two ... ok"), "{log}");
-    assert!(sections[3].1.contains("test result: ok."), "{log}");
+    assert!(sections[3].1.contains("Finished"), "{log}");
+    assert!(sections[4].1.contains("test result: ok."), "{log}");
 
     // Level `steps` with every step cached: no cargo run, no log, no field.
     let before = std::fs::read_dir(Path::new(path).parent().unwrap())
@@ -644,4 +667,76 @@ fn step_times() {
     let t = &check_records(dir)[0]["steps"][0]["times"];
     assert!(t["red"].is_u64() && t["green"].is_u64(), "{t}");
     assert!(t.get("head").is_none(), "{t}");
+}
+
+// AC-6: the suite build (`--no-run`, with `-j`) runs before the suite run and has its line, its
+// log header and its record time; a build that runs out of the time limit starts no run.
+#[test]
+fn suite_build_and_run() {
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let log = scripts.path().join("log");
+    configure(dir, &recording_fake(scripts.path(), &log), "jobs = 3");
+    std::fs::write(&log, "").unwrap();
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 0, "{out}{err}");
+
+    let logged = std::fs::read_to_string(&log).unwrap();
+    let runs: Vec<&str> = logged
+        .lines()
+        .filter(|l| l.contains("--workspace"))
+        .collect();
+    assert_eq!(runs.len(), 2, "{logged}");
+    assert!(runs[0].contains("--no-run"), "{logged}");
+    assert!(runs[0].contains("-j 3"), "{logged}");
+    assert!(!runs[1].contains("--no-run"), "{logged}");
+
+    let lines: Vec<&str> = out.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("suite build: "))
+        .unwrap_or_else(|| panic!("no suite build line: {out}"));
+    let secs: u64 = lines[at]
+        .strip_prefix("suite build: ")
+        .and_then(|r| r.strip_suffix(" s"))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("not `suite build: <n> s`: {}", lines[at]));
+    assert!(lines[at + 1].starts_with("suite: pass"), "{out}");
+    let records = check_records(dir);
+    let times = &records[0]["times"];
+    assert_eq!(times["suite_build"].as_u64(), Some(secs), "{}", records[0]);
+    assert!(times["suite_run"].is_u64(), "{}", records[0]);
+    let text = std::fs::read_to_string(records[0]["log"].as_str().unwrap()).unwrap();
+    assert!(text.contains("== suite build: "), "{text}");
+
+    // A build that outlasts the time limit: no run, no run time.
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let log = scripts.path().join("log");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        "pub fn one() {}\npub fn two() {}\n// fake: build sleeps\n",
+    );
+    commit(dir, "ABC-1: a slow build");
+    configure(dir, &recording_fake(scripts.path(), &log), "");
+    let text = read(dir, ".stapel/stapel.toml").replace("timeout_secs = 3600", "timeout_secs = 10");
+    write(dir, ".stapel/stapel.toml", &text);
+    commit(dir, "ABC-1: a short limit");
+    std::fs::write(&log, "").unwrap();
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(out.contains("suite: unverified: the time limit"), "{out}");
+    let logged = std::fs::read_to_string(&log).unwrap();
+    let runs: Vec<&str> = logged
+        .lines()
+        .filter(|l| l.contains("--workspace"))
+        .collect();
+    assert_eq!(runs.len(), 1, "{logged}");
+    assert!(runs[0].contains("--no-run"), "{logged}");
+    let records = check_records(dir);
+    let times = &records[0]["times"];
+    assert!(times.get("suite_run").is_none(), "{}", records[0]);
 }
