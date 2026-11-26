@@ -205,7 +205,7 @@ fn refuses_bad_settings() {
     let load = |extra: &str| -> (i32, String) {
         let repo = stapel_repo();
         add_to_check(repo.path(), extra);
-        let out = stapel(repo.path()).arg("status").output().unwrap();
+        let out = stapel(repo.path()).arg("inbox").output().unwrap();
         (
             out.status.code().unwrap_or(-1),
             String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -244,7 +244,7 @@ fn refuses_bad_settings() {
             read(repo.path(), ".stapel/stapel.toml")
         );
         std::fs::write(repo.path().join(".stapel/stapel.toml"), text).unwrap();
-        let out = stapel(repo.path()).arg("status").output().unwrap();
+        let out = stapel(repo.path()).arg("inbox").output().unwrap();
         (
             out.status.code().unwrap_or(-1),
             String::from_utf8_lossy(&out.stderr).into_owned(),

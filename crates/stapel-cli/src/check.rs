@@ -637,6 +637,8 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         outside: std::cell::RefCell::new(blocked),
         junit: junit_run,
         prepared: std::cell::Cell::new(false),
+        jobs: check.jobs,
+        test_threads: check.test_threads,
     };
     if end.is_some() {
         say!("ticket: {} at {} (closed)", ticket.key, short(&at));
@@ -1190,6 +1192,9 @@ struct Runner<'a> {
     junit: Option<JunitRun<'a>>,
     /// Set when the check copy was cleaned and set to HEAD for the project commands.
     prepared: std::cell::Cell<bool>,
+    /// `[check] jobs` and `test_threads` (STP-45 AC-11).
+    jobs: Option<i64>,
+    test_threads: Option<i64>,
 }
 
 /// The id of the passing record that ran a step with this key, `None` when no record did (STP-35
@@ -1338,12 +1343,19 @@ impl Runner<'_> {
         let mut out = BTreeMap::new();
         for ((dir, file), names) in groups {
             let package = self.package(commit, &dir)?;
-            let mut args: Vec<String> = [
-                "test", "--locked", "-p", &package, "--test", &file, "--", "--exact",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+            let mut args: Vec<String> = ["test", "--locked"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            if let Some(j) = self.jobs {
+                args.push("-j".into());
+                args.push(j.to_string());
+            }
+            args.extend(["-p", &package, "--test", &file, "--"].map(String::from));
+            if let Some(t) = self.test_threads {
+                args.push(format!("--test-threads={t}"));
+            }
+            args.push("--exact".into());
             args.extend(names.iter().cloned());
             let left = self.left()?;
             let run = run_cargo(self.cargo, &self.wt.path, &args, &self.target, left)?;
@@ -2097,8 +2109,15 @@ impl Runner<'_> {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        if !skip.is_empty() {
+        if let Some(j) = self.jobs {
+            args.push("-j".into());
+            args.push(j.to_string());
+        }
+        if self.test_threads.is_some() || !skip.is_empty() {
             args.push("--".into());
+            if let Some(t) = self.test_threads {
+                args.push(format!("--test-threads={t}"));
+            }
             for entry in skip {
                 args.push("--skip".into());
                 args.push(entry.clone());
