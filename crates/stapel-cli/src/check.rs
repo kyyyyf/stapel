@@ -553,10 +553,12 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         Ok(t) => t,
         Err(e) => return refuse(e),
     };
+    let copy_started = std::time::Instant::now();
     let wt = match Worktree::create(&root, &dir, &at, &tmp) {
         Ok(w) => w,
         Err(e) => return refuse(e),
     };
+    let copy_secs = copy_started.elapsed().as_secs();
     // Under junit no cargo is found or checked; the lock is taken as under cargo (AC-40).
     let cargo = if junit {
         PathBuf::new()
@@ -580,10 +582,12 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         }
     }
     // One cargo run at a time on the machine; the lock lives until the check ends (STP-27 AC-11).
+    let slot_started = std::time::Instant::now();
     let _cargo_lock = match crate::cargo::take("stapel check") {
         Ok(l) => l,
         Err(e) => return refuse(e),
     };
+    let slot_wait = slot_started.elapsed().as_secs();
     if _cargo_lock.is_some() {
         // SAFETY: the check is still single-threaded here; no cargo run or reader thread has started.
         unsafe { std::env::set_var(crate::cargo::HELD_MARK, std::process::id().to_string()) };
@@ -643,6 +647,10 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         test_threads: check.test_threads,
         log: CheckLog::new(&dir, &ticket.key, &check_id),
     };
+    if !junit {
+        say!("copy: {copy_secs} s");
+        say!("cargo slot: waited {slot_wait} s");
+    }
     if end.is_some() {
         say!("ticket: {} at {} (closed)", ticket.key, short(&at));
     } else {
@@ -859,6 +867,8 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         record["runner"] = serde_json::json!("junit");
     } else {
         record["cargo"] = serde_json::json!(cargo_text);
+        record["times"] = serde_json::json!({"copy": copy_secs});
+        record["slot_wait"] = serde_json::json!(slot_wait);
     }
     // The fields that a later check reads (STP-35 AC-6).
     if let Some(path) = runner.log.made() {
