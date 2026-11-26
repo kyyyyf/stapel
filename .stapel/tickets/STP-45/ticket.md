@@ -116,7 +116,7 @@ Terms:
 | AC-12 | IF `[check] jobs` or `test_threads` is outside 1 to 1024, or `progress_secs` outside 1 to 86400 THEN every command that loads the config prints `check.<key> must be a whole number from 1 to <max>` and exits 1; IF one of them is set with the junit runner THEN `check.<key> needs the cargo runner`; a value that is not a whole number gives the TOML error, exit 1. | `check_times::refuses_bad_settings` |
 | AC-13 | WHEN this repository's `.stapel/stapel.toml` is loaded THE its `[check]` has `jobs = 4` and `test_threads = 4`. | `check_times::this_repository_sets_four` |
 | AC-14 | IF the build of AC-6 exits non-zero, prints `error: could not compile` or `because --locked was passed`, or a build input above the copy is found after it THEN no run starts and the suite gets the outcome and detail that the run gave for that output before (`fail: … the workspace does not compile`, `unverified: Cargo.lock is out of date`, `unverified: build-input-outside: …`), with counts 0 and no `times.suite_run`. | `check_times::failed_build_judges_the_suite` |
-| AC-15 | WHEN a step run's standard output holds a section `---- <name> stdout ----` of a failing test THE the reading of that run skips every line from that heading up to the next line `failures:` or the next such heading, so `running` and `test result:` lines inside it count neither as blocks nor as summaries, and the step is judged by libtest's own lines. | `check::parse_skips_captured_output` |
+| AC-15 | WHEN a step run's standard output holds a section `---- <name> stdout ----` of a failing test THE the reading of that run skips every line from the first such heading up to the last line `failures:` of the output, so `running`, `failures:` and `test result:` lines inside a captured output count neither as blocks nor as summaries, and the step is judged by libtest's own lines. | `check::parse_skips_captured_output`, `check::captured_output_holds_a_failures_line` |
 
 ### Guarantees
 
@@ -171,6 +171,7 @@ and the seconds made neutral. Light tests: `stapel cargo test -j 4 -p stapel-cli
 | Failed build | a workspace that does not compile: one `--no-run` run, no suite run, `fail: … the workspace does not compile`, counts 0, no `suite_run`; a stale lock file: `unverified: Cargo.lock is out of date` | `check_times::failed_build_judges_the_suite` |
 | Golden | the full output of the golden fixture with the new lines | `check::report_matches_golden` |
 | Captured output | a run output with one failing test whose captured stdout holds two `running 1 test` blocks and their `test result:` lines, then libtest's own `failures:` list and summary: the names are counted from libtest's lines only, not unverified | `check::parse_skips_captured_output` |
+| Captured failures list | a captured output that holds a whole failing libtest run of its own (`running 1 test`, `failures:`, a name, `test result: FAILED`) before the real `failures:` list and summary: one block and one summary are counted | `check::captured_output_holds_a_failures_line` |
 
 ### Inputs
 
@@ -270,6 +271,10 @@ no test); the clock going back during a check (seconds saturate at 0; no test).
   failure message of `log_holds_every_run` at RED printed the log, whose fake output holds `running` and
   `test result:` lines; the fix is AC-15 and Plan step 13, and the check runs with `stapel` installed
   from this branch.
+- 2026-11-26, agent: the check of c-3e8bef6f581d (level steps) still read step 6 as unverified: the
+  captured output held a whole failing fake run with its own `failures:` line, where the skip of step 13
+  ended. AC-15 now ends the skip at the last `failures:` line, which libtest prints after every captured
+  section; Plan step 14 makes that change.
 
 ## Proof
 
@@ -289,7 +294,7 @@ no test); the clock going back during a check (seconds saturate at 0; no test).
 | AC-12 | `check_times::refuses_bad_settings` |
 | AC-13 | `check_times::this_repository_sets_four` |
 | AC-14 | `check_times::failed_build_judges_the_suite` |
-| AC-15 | `check::parse_skips_captured_output` |
+| AC-15 | `check::parse_skips_captured_output`, `check::captured_output_holds_a_failures_line` |
 
 Changed by this ticket: `check::report_matches_golden` (its golden gains the new lines of AC-1, AC-4 to
 AC-7); `check_levels::head_level`, `check_levels::full_level`, `check_levels::flag_wins_over_the_key` and
@@ -336,6 +341,8 @@ Route: full (tags `interface`, `data`), auto.
     GREEN sets `jobs = 4` and `test_threads = 4` in `.stapel/stapel.toml`.
 13. Captured output (AC-15; test `check::parse_skips_captured_output`): the RED adds the test; the GREEN
     makes `parse_run` skip the captured output sections of failing tests.
+14. Captured failures list (AC-15; test `check::captured_output_holds_a_failures_line`): the RED adds the
+    test; the GREEN makes the skip end at the last `failures:` line of the output, not the next one.
 
 ## Review
 
@@ -356,6 +363,7 @@ Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
+| steps | fail | efae2f9 | 2026-11-26T16:53:32Z | pass 12, unverified 1 |
 | head | fail | 4691109 | 2026-11-26T10:59:00Z | pass 11, unverified 1 |
 <!-- stapel:review:end -->
 
