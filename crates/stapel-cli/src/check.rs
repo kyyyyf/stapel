@@ -13,7 +13,7 @@ use stapel_core::outcomes::{
     Analysis, MAX_NAMED, Mode, analyse_in, history_outcome, named, open_red, passing,
 };
 use stapel_core::runner::{
-    Parsed, TestState, cargo_version, parse_run, resolve_cargo, run_cargo, run_program,
+    Parsed, TestState, cargo_version, parse_run, resolve_cargo, run_program,
     summary_counts,
 };
 use stapel_core::rust_tests::test_functions;
@@ -588,6 +588,8 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         Err(e) => return refuse(e),
     };
     let slot_wait = slot_started.elapsed().as_secs();
+    // The start of the check for the progress lines (STP-45 AC-9).
+    let check_started = std::time::Instant::now();
     if _cargo_lock.is_some() {
         // SAFETY: the check is still single-threaded here; no cargo run or reader thread has started.
         unsafe { std::env::set_var(crate::cargo::HELD_MARK, std::process::id().to_string()) };
@@ -646,6 +648,14 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         jobs: check.jobs,
         test_threads: check.test_threads,
         log: CheckLog::new(&dir, &ticket.key, &check_id),
+        check_started,
+        progress_every: Duration::from_secs(
+            check
+                .progress_secs
+                .and_then(|n| u64::try_from(n).ok())
+                .unwrap_or(300),
+        ),
+        last_progress: std::cell::Cell::new(check_started),
         times: std::cell::RefCell::new(BTreeMap::new()),
         suite_times: std::cell::RefCell::new((None, None)),
         slowest: std::cell::RefCell::new(Vec::new()),
@@ -1429,6 +1439,11 @@ struct Runner<'a> {
     test_threads: Option<i64>,
     /// The log of the cargo runs (STP-45 AC-1).
     log: CheckLog,
+    /// The start of the check, the seconds between progress lines and the instant of the last one
+    /// (STP-45 AC-9).
+    check_started: std::time::Instant,
+    progress_every: Duration,
+    last_progress: std::cell::Cell<std::time::Instant>,
     /// The time of the cargo runs of the step that runs now, by commit kind `RED`, `GREEN`, `HEAD`
     /// (STP-45 AC-5).
     times: std::cell::RefCell<BTreeMap<&'static str, Duration>>,
@@ -1544,6 +1559,46 @@ impl Runner<'_> {
         }
     }
 
+    /// One cargo run with the progress watcher (STP-45 AC-9). `file` is the running file of a step
+    /// run; a suite run reads it from its standard error.
+    fn cargo_run(
+        &self,
+        stage: &str,
+        file: Option<&str>,
+        args: &[String],
+        left: Duration,
+    ) -> Result<stapel_core::runner::RunResult, String> {
+        let report = |stderr: &str| {
+            let running = match file {
+                Some(f) => f.to_string(),
+                None => {
+                    let whole = stderr.rfind('\n').map_or("", |at| &stderr[..at + 1]);
+                    cargo_targets(whole)
+                        .pop()
+                        .filter(|t| !t.is_empty())
+                        .unwrap_or_else(|| "-".into())
+                }
+            };
+            say!(
+                "progress: {stage}, {running}, {} s",
+                self.check_started.elapsed().as_secs()
+            );
+        };
+        let watch = stapel_core::runner::Watch {
+            every: self.progress_every,
+            last: &self.last_progress,
+            report: &report,
+        };
+        stapel_core::runner::run_cargo_watched(
+            self.cargo,
+            &self.wt.path,
+            args,
+            &self.target,
+            left,
+            &watch,
+        )
+    }
+
     fn limit_reason(&self) -> String {
         format!(
             "the time limit of {} s for the check ran out",
@@ -1641,8 +1696,8 @@ impl Runner<'_> {
             let left = self.left()?;
             self.log.begin();
             let started = std::time::Instant::now();
-            let ran = run_cargo(self.cargo, &self.wt.path, &args, &self.target, left);
-            let kind = ["RED", "GREEN", "HEAD"]
+            let ran = self.cargo_run(stage, Some(&format!("{dir}/{file}")), &args, left);
+            let kind =["RED", "GREEN", "HEAD"]
                 .into_iter()
                 .find(|k| stage.ends_with(&format!(" {k}")));
             if let Some(kind) = kind {
@@ -2428,7 +2483,7 @@ impl Runner<'_> {
         build_args.push("--no-run".into());
         self.log.begin();
         let started = std::time::Instant::now();
-        let built = run_cargo(self.cargo, &self.wt.path, &build_args, &self.target, left);
+        let built = self.cargo_run("suite build", None, &build_args, left);
         self.suite_times.borrow_mut().0 = Some(started.elapsed());
         let built = match built {
             Ok(r) => r,
@@ -2459,7 +2514,7 @@ impl Runner<'_> {
                 Err(e) => return unverified(e),
             };
             let started = std::time::Instant::now();
-            let ran = run_cargo(self.cargo, &self.wt.path, &args, &self.target, left);
+            let ran = self.cargo_run("suite run", None, &args, left);
             self.suite_times.borrow_mut().1 = Some(started.elapsed());
             let run = match ran {
                 Ok(r) => r,
