@@ -7,6 +7,8 @@
 # Markers, as a comment line in the body of a test function:
 #   // fake: needs <text>   the test passes when a file under `crates/*/src` has <text>, else fails
 #   // fake: item <text>    the test file compiles when a file under `crates/*/src` has <text>
+# A line `// fake: sleeps <n>` before the tests makes a run of the file sleep <n> seconds first
+# (STP-45).
 # A test with no marker passes. A file under `crates/*/src` with the text `this does not compile`
 # breaks the library: nothing compiles.
 
@@ -77,6 +79,10 @@ run_file() {
         finished=""
     else
         finished="; finished in ${fin}s"
+    fi
+    nap=$(sed -n 's|^// fake: sleeps ||p' "$file" | head -1)
+    if [ -n "$nap" ]; then
+        sleep "$nap"
     fi
     total=0
     passed=0

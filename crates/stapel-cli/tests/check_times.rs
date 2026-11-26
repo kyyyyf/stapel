@@ -979,3 +979,59 @@ fn slowest_files() {
     let records = check_records(dir);
     assert!(records[0].get("slowest").is_none(), "{}", records[0]);
 }
+
+// AC-9: with `progress_secs = 1` a run that sleeps 3 s prints `progress: <stage>, <file>, <n> s`
+// lines, `<n>` the seconds since the start, rising; a step run names `<dir>/<file>`, a suite run
+// the target of its newest `Running` line.
+#[test]
+fn progress_lines() {
+    let extra = [
+        (
+            "crates/tiny/tests/basic.rs".to_string(),
+            "// fake: sleeps 3\n".to_string(),
+        ),
+        (
+            "crates/tiny/tests/slow.rs".to_string(),
+            "// fake: sleeps 3\n#[test]\nfn it_runs() {}\n".to_string(),
+        ),
+    ];
+    let repo = repo_with_a_step_and(&extra);
+    let scripts = tempfile::tempdir().unwrap();
+    configure(
+        repo.path(),
+        &common::fake_cargo(scripts.path()),
+        "progress_secs = 1",
+    );
+    let dir = repo.path();
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 0, "{out}{err}");
+    // `(stage, file, n)` of each progress line, in output order.
+    let lines: Vec<(String, String, u64)> = out
+        .lines()
+        .filter_map(|l| l.strip_prefix("progress: "))
+        .map(|rest| {
+            let parts: Vec<&str> = rest.split(", ").collect();
+            assert_eq!(parts.len(), 3, "not `progress: <stage>, <file>, <n> s`: {rest}");
+            let n = parts[2]
+                .strip_suffix(" s")
+                .and_then(|n| n.parse().ok())
+                .unwrap_or_else(|| panic!("not `<n> s`: {rest}"));
+            (parts[0].to_string(), parts[1].to_string(), n)
+        })
+        .collect();
+    let step: Vec<&(String, String, u64)> = lines
+        .iter()
+        .filter(|(stage, _, _)| stage == "step 1 RED")
+        .collect();
+    assert!(step.len() >= 2, "{out}");
+    assert!(step.iter().all(|(_, file, _)| file == "tiny/basic"), "{out}");
+    let suite: Vec<&(String, String, u64)> = lines
+        .iter()
+        .filter(|(stage, file, _)| stage == "suite run" && file == "slow")
+        .collect();
+    assert!(!suite.is_empty(), "{out}");
+    assert!(lines.iter().all(|l| l.2 >= 1), "{out}");
+    assert!(lines.windows(2).all(|w| w[0].2 <= w[1].2), "{out}");
+    // Every run of a step prints its own stage.
+    assert!(lines.iter().any(|l| l.0 == "step 1 GREEN"), "{out}");
+}
