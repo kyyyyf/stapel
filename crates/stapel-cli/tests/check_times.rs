@@ -432,3 +432,57 @@ fn unwritable_log_folder() {
     assert_eq!(code, 0, "{out}{err}");
     no_log(&out, &err, dir);
 }
+
+// AC-2: a check keeps the newest 10 logs of its ticket (the new one counted, ties by name) and
+// leaves the logs of other tickets and other files.
+#[test]
+fn keeps_ten_logs_per_ticket() {
+    let (repo, _scripts) = repo_with_fake_cargo();
+    let dir = repo.path();
+    let folder = dir.join(".git/stapel/check-logs");
+    std::fs::create_dir_all(&folder).unwrap();
+    let make = |name: &str, secs: u64| {
+        let file = std::fs::File::create(folder.join(name)).unwrap();
+        file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+    };
+    // Eleven logs of ABC-1: the oldest, then two with one time, then eight newer.
+    let names: Vec<String> = (0..11)
+        .map(|i| format!("ABC-1-c-{:012x}.log", i + 1))
+        .collect();
+    make(&names[0], 1000);
+    make(&names[1], 2000);
+    make(&names[2], 2000);
+    for (i, name) in names.iter().enumerate().skip(3) {
+        make(name, 3000 + i as u64);
+    }
+    let other: Vec<String> = (0..2)
+        .map(|i| format!("ABC-1-X-c-{:012x}.log", i + 1))
+        .collect();
+    make(&other[0], 500);
+    make(&other[1], 500);
+    make("notes.txt", 400);
+
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 0, "{out}{err}");
+
+    let present = |name: &str| folder.join(name).exists();
+    let ticket_logs = std::fs::read_dir(&folder)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("ABC-1-c-"))
+        .count();
+    assert_eq!(ticket_logs, 10, "{out}");
+    assert!(!present(&names[0]), "the oldest stays");
+    assert!(!present(&names[1]), "the tie is not broken by name");
+    assert!(present(&names[2]));
+    for name in &names[3..] {
+        assert!(present(name), "{name} removed");
+    }
+    for name in &other {
+        assert!(present(name), "{name} removed");
+    }
+    assert!(present("notes.txt"));
+    assert!(!err.contains("old check log not removed"), "{err}");
+}
