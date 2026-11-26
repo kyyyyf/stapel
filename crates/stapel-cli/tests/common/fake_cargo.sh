@@ -9,6 +9,8 @@
 #   // fake: item <text>    the test file compiles when a file under `crates/*/src` has <text>
 # A line `// fake: sleeps <n>` before the tests makes a run of the file sleep <n> seconds first
 # (STP-45).
+# A line `// fake: noise <n>` before the tests makes a run of the file print <n> lines on each
+# stream before it sleeps: `out line <i>` and `err line <i>`, the 25th with an escape byte (STP-45).
 # A test with no marker passes. A file under `crates/*/src` with the text `this does not compile`
 # breaks the library: nothing compiles.
 
@@ -79,6 +81,20 @@ run_file() {
         finished=""
     else
         finished="; finished in ${fin}s"
+    fi
+    noise=$(sed -n 's|^// fake: noise ||p' "$file" | head -1)
+    if [ -n "$noise" ]; then
+        i=1
+        while [ "$i" -le "$noise" ]; do
+            if [ "$i" = 25 ]; then
+                printf 'out line %s \033[31m red\n' "$i"
+                printf 'err line %s \033[31m red\n' "$i" >&2
+            else
+                echo "out line $i"
+                echo "err line $i" >&2
+            fi
+            i=$((i + 1))
+        done
     fi
     nap=$(sed -n 's|^// fake: sleeps ||p' "$file" | head -1)
     if [ -n "$nap" ]; then

@@ -1035,3 +1035,51 @@ fn progress_lines() {
     // Every run of a step prints its own stage.
     assert!(lines.iter().any(|l| l.0 == "step 1 GREEN"), "{out}");
 }
+
+// AC-10: the limit runs out in a step run: `time limit: <stage>, <file>`, then the last 20 lines of
+// each kept stream, control characters replaced; the check ends `unverified`, exit 1; the log
+// holds the timed-out run.
+#[test]
+fn limit_names_the_stage() {
+    let extra = [(
+        "crates/tiny/tests/basic.rs".to_string(),
+        "// fake: noise 30\n// fake: sleeps 60\n".to_string(),
+    )];
+    let repo = repo_with_a_step_and(&extra);
+    let scripts = tempfile::tempdir().unwrap();
+    configure(repo.path(), &common::fake_cargo(scripts.path()), "");
+    let dir = repo.path();
+    let text = read(dir, ".stapel/stapel.toml").replace("timeout_secs = 3600", "timeout_secs = 10");
+    write(dir, ".stapel/stapel.toml", &text);
+    commit(dir, "ABC-1: a short limit");
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 1, "{out}{err}");
+    let lines: Vec<&str> = out.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| *l == "time limit: step 1 RED, tiny/basic")
+        .unwrap_or_else(|| panic!("no time limit line: {out}"));
+    let tail = &lines[at + 1..at + 41];
+    let want_out: Vec<String> = (11..=30)
+        .map(|i| {
+            if i == 25 {
+                format!("  out | out line {i}  [31m red")
+            } else {
+                format!("  out | out line {i}")
+            }
+        })
+        .collect();
+    let want_err: Vec<String> = want_out.iter().map(|l| l.replace("out", "err")).collect();
+    assert_eq!(tail[..20], want_out[..], "{out}");
+    assert_eq!(tail[20..], want_err[..], "{out}");
+    assert!(!out.contains('\u{1b}'), "{out}");
+    assert!(out.contains("result: fail"), "{out}");
+    let log = std::fs::read_dir(dir.join(".git").join("stapel").join("check-logs"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let log = std::fs::read_to_string(log).unwrap();
+    assert!(log.contains("out line 30") && log.contains("err line 30"), "{log}");
+}
