@@ -1024,9 +1024,13 @@ fn a_source_file_test_and_the_cargo_note() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(outcome(&full, "step 1"), "pass", "{full}");
+    // The step ran cargo: the `times:` line follows its note (STP-45 AC-5).
+    let got = notes(&full, "step 1");
+    assert_eq!(got.len(), 2, "{full}");
     assert_eq!(
-        notes(&full, "step 1"),
-        ["history by step 1: the first assert was too strict"],
+        got[0],
+        "history by step 1: the first assert was too strict",
         "{full}"
     );
+    assert!(got[1].starts_with("times: RED "), "{full}");
 }

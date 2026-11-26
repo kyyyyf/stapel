@@ -533,3 +533,115 @@ fn copy_and_slot_times() {
     assert_eq!(records.len(), 2);
     assert_eq!(records[1]["slot_wait"].as_u64(), Some(0));
 }
+
+// AC-5: the line after a step line (and its notes) names the commits the step ran at and the
+// seconds of its cargo runs; the record of the step holds `times`; a step that ran no cargo has
+// neither.
+#[test]
+fn step_times() {
+    use std::os::unix::fs::PermissionsExt;
+    // The line after the step line.
+    let after_step = |out: &str| -> String {
+        let lines: Vec<&str> = out.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| l.starts_with("step 1"))
+            .unwrap_or_else(|| panic!("no step line: {out}"));
+        lines[at + 1].to_string()
+    };
+    // A `cargo` that sleeps a second per run, and hangs at the run numbered `hang` (0: never).
+    let slow = |scripts: &Path, hang: u32, nap: u32| -> String {
+        std::fs::create_dir_all(scripts.join("real")).unwrap();
+        let real = common::fake_cargo(&scripts.join("real"));
+        let count = scripts.join("count");
+        let path = scripts.join("cargo");
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = --version ] && exec {real} \"$@\"\necho x >> {count}\n\
+                 n=$(wc -l < {count} | tr -d ' ')\n\
+                 [ \"$n\" = {hang} ] && exec sleep 60\nsleep {nap}\nexec {real} \"$@\"\n",
+                count = count.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().into_owned()
+    };
+
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    configure(dir, &slow(scripts.path(), 0, 1), "");
+
+    // A passing step: RED, GREEN and HEAD, each at least the second its run slept.
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 0, "{out}{err}");
+    let line = after_step(&out);
+    let times: Vec<u64> = line
+        .strip_prefix("  times: RED ")
+        .and_then(|r| r.split_once(" s, GREEN "))
+        .and_then(|(red, r)| r.split_once(" s, HEAD ").map(|(g, h)| (red, g, h)))
+        .and_then(|(red, g, h)| {
+            Some(vec![
+                red.parse().ok()?,
+                g.parse().ok()?,
+                h.strip_suffix(" s")?.parse().ok()?,
+            ])
+        })
+        .unwrap_or_else(|| panic!("not a times line: {line}\n{out}"));
+    assert!(times.iter().all(|t| *t >= 1), "{line}");
+    let records = check_records(dir);
+    let t = &records[0]["steps"][0]["times"];
+    assert_eq!(
+        [t["red"].as_u64(), t["green"].as_u64(), t["head"].as_u64()],
+        [Some(times[0]), Some(times[1]), Some(times[2])],
+        "{}",
+        records[0]
+    );
+
+    // The cached step at the level `head`: HEAD only.
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("cached"), "{out}");
+    let line = after_step(&out);
+    assert!(
+        line.starts_with("  times: HEAD ") && line.ends_with(" s") && !line.contains("RED"),
+        "{line}\n{out}"
+    );
+    let records = check_records(dir);
+    let t = &records[1]["steps"][0]["times"];
+    assert!(t["head"].as_u64().is_some(), "{}", records[1]);
+    assert!(t.get("red").is_none() && t.get("green").is_none(), "{t}");
+
+    // The level `steps` with the cached step: no cargo run, no line, no field.
+    let (code, out, err) = run_check(dir, "steps");
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.lines().any(|l| l.contains("times: ")), "{out}");
+    let records = check_records(dir);
+    assert!(records[2]["steps"][0].get("times").is_none(), "{}", records[2]);
+
+    // A step cut by the time limit at GREEN: RED and GREEN.
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    configure(dir, &slow(scripts.path(), 2, 0), "");
+    let text = read(dir, ".stapel/stapel.toml").replace("timeout_secs = 3600", "timeout_secs = 10");
+    write(dir, ".stapel/stapel.toml", &text);
+    commit(dir, "ABC-1: a short limit");
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 1, "{out}{err}");
+    let lines: Vec<&str> = out.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("step 1: unverified"))
+        .unwrap_or_else(|| panic!("no unverified step: {out}"));
+    let line = lines[at + 1];
+    assert!(
+        line.starts_with("  times: RED ") && line.contains(" s, GREEN ") && !line.contains("HEAD"),
+        "{line}\n{out}"
+    );
+    let t = &check_records(dir)[0]["steps"][0]["times"];
+    assert!(t["red"].is_u64() && t["green"].is_u64(), "{t}");
+    assert!(t.get("head").is_none(), "{t}");
+}

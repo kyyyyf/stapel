@@ -2226,6 +2226,18 @@ fn without_cargo_line(text: &str) -> String {
                 "copy: <n> s\n".to_string()
             } else if l.starts_with("cargo slot: waited ") {
                 "cargo slot: waited <n> s\n".to_string()
+            } else if l.starts_with("  times: ") {
+                let words: Vec<String> = l
+                    .split(' ')
+                    .map(|w| {
+                        if w.chars().all(|c| c.is_ascii_digit()) && !w.is_empty() {
+                            "<n>".to_string()
+                        } else {
+                            w.to_string()
+                        }
+                    })
+                    .collect();
+                format!("{}\n", words.join(" "))
             } else {
                 format!("{l}\n")
             }

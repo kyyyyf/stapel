@@ -398,9 +398,21 @@ fn same_lines_as_the_full_check() {
         "{full}\n{hist}"
     );
     let mut kinds = Vec::new();
+    let mut saw_times = false;
     for (f, h) in full_blocks.iter().zip(&hist_blocks) {
-        // The notes are equal for every step.
-        assert_eq!(f.2, h.2, "{}\n{full}\n{hist}", f.0);
+        // The notes are equal for every step; the full check adds a `times:` line to a step that
+        // ran cargo, the history check never (STP-45 AC-5).
+        let (times, notes): (Vec<&String>, Vec<&String>) =
+            f.2.iter().partition(|n| n.starts_with("times: "));
+        assert!(times.len() <= 1, "{}\n{full}", f.0);
+        saw_times |= !times.is_empty();
+        assert!(h.2.iter().all(|n| !n.starts_with("times: ")), "{hist}");
+        assert_eq!(
+            notes,
+            h.2.iter().collect::<Vec<_>>(),
+            "{}\n{full}\n{hist}",
+            f.0
+        );
         if h.1 == format!("{}: needs-run", h.0) {
             continue;
         }
@@ -428,6 +440,7 @@ fn same_lines_as_the_full_check() {
     // The clean pair passes in the full check and needs a run here.
     assert_eq!(outcome(&full, "step 1"), "pass", "{full}");
     assert!(hist.lines().any(|l| l == "step 1: needs-run"), "{hist}");
+    assert!(saw_times, "no `times:` line in the full check:\n{full}");
 }
 
 #[test]
