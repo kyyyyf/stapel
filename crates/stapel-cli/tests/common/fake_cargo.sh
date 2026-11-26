@@ -141,6 +141,7 @@ while [ $# -gt 0 ]; do
         *) shift ;;
     esac
 done
+case "$1" in --test-threads=*) shift ;; esac
 [ "$1" = --exact ] && shift
 names=$(printf '%s\n' "$@")
 
