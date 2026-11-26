@@ -647,6 +647,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         test_threads: check.test_threads,
         log: CheckLog::new(&dir, &ticket.key, &check_id),
         times: std::cell::RefCell::new(BTreeMap::new()),
+        suite_times: std::cell::RefCell::new((None, None)),
     };
     if !junit {
         say!("copy: {copy_secs} s");
@@ -808,6 +809,10 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         runner.suite(&excluded)
     };
     ok &= suite.outcome == "pass" || suite.outcome == "skipped";
+    let (suite_build, suite_run) = *runner.suite_times.borrow();
+    if let Some(d) = suite_build {
+        say!("suite build: {} s", d.as_secs());
+    }
     say!("suite: {}: {}", suite.outcome, suite.detail);
     if !suite.failing.is_empty() {
         let more = if suite.failing_more > 0 {
@@ -878,6 +883,12 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         record["cargo"] = serde_json::json!(cargo_text);
         record["times"] = serde_json::json!({"copy": copy_secs});
         record["slot_wait"] = serde_json::json!(slot_wait);
+        if let Some(d) = suite_build {
+            record["times"]["suite_build"] = serde_json::json!(d.as_secs());
+        }
+        if let Some(d) = suite_run {
+            record["times"]["suite_run"] = serde_json::json!(d.as_secs());
+        }
     }
     // The fields that a later check reads (STP-35 AC-6).
     if let Some(path) = runner.log.made() {
@@ -1349,6 +1360,9 @@ struct Runner<'a> {
     /// The time of the cargo runs of the step that runs now, by commit kind `RED`, `GREEN`, `HEAD`
     /// (STP-45 AC-5).
     times: std::cell::RefCell<BTreeMap<&'static str, Duration>>,
+    /// The time of the suite build and of the suite run (STP-45 AC-6); `None` for a run that did not
+    /// run.
+    suite_times: std::cell::RefCell<(Option<Duration>, Option<Duration>)>,
 }
 
 /// The `times:` line of a step and its record object, `None` when the step ran no cargo.
@@ -2315,8 +2329,38 @@ impl Runner<'_> {
             Ok(l) => l,
             Err(e) => return unverified(e),
         };
+        // The build first (STP-45 AC-6); the run follows whatever the build gave, unless the limit
+        // ran out in it.
+        let mut build_args: Vec<String> = args
+            .iter()
+            .take_while(|a| a.as_str() != "--")
+            .cloned()
+            .collect();
+        build_args.push("--no-run".into());
         self.log.begin();
-        let run = match run_cargo(self.cargo, &self.wt.path, &args, &self.target, left) {
+        let started = std::time::Instant::now();
+        let built = run_cargo(self.cargo, &self.wt.path, &build_args, &self.target, left);
+        self.suite_times.borrow_mut().0 = Some(started.elapsed());
+        let built = match built {
+            Ok(r) => r,
+            Err(e) => return unverified(e),
+        };
+        self.log
+            .write_run("suite build", self.cargo, &build_args, &built);
+        if let Some(why) = self.found_outside() {
+            return unverified(why);
+        }
+        if built.timed_out {
+            return unverified(self.limit_reason());
+        }
+        let left = match self.left() {
+            Ok(l) => l,
+            Err(e) => return unverified(e),
+        };
+        let started = std::time::Instant::now();
+        let ran = run_cargo(self.cargo, &self.wt.path, &args, &self.target, left);
+        self.suite_times.borrow_mut().1 = Some(started.elapsed());
+        let run = match ran {
             Ok(r) => r,
             Err(e) => return unverified(e),
         };
