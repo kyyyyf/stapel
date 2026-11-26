@@ -217,7 +217,19 @@ that Zed, VS Code and every editor that speaks the protocol get the same.
   spec review read; named suites say what runs while a ticket is built, at push, and at a release or on a
   schedule (e2e and property-based tests with many cases), and `stapel init` writes the CI runs for them.
   This repository is the first pilot: its first property-based tests of the parsers and a few e2e tests
-  with real cargo, one at a time under the cargo slots.
+  with real cargo, one at a time under the cargo slots. Widened the same day (ledger 2026-11-26):
+  - 5.2d-1 the points of the check: the ticket lint and the spec review compare the kinds of the Test plan
+    with the pyramid before code; the guard compares the whole project with its baseline in `stapel check`
+    of the ticket and in the push suite of CI, and fails when the pyramid got worse; the release and
+    schedule runs print the full report, also of e2e and property-based tests, and block nothing; a
+    distance from the target while the project has not reached it is a warning, not a failure;
+  - 5.2d-2 the upkeep of the target: `stapel init` (or the first use of the feature) proposes a pyramid
+    from the kind of project (program, library, service, UI) and the report of its current tests, and the
+    person confirms it in a dialog; the release and schedule report flags a target that no longer fits (a
+    growing share of tests no rule gives a kind, a kind of the target that got no new test in many
+    tickets, departures of tickets for the same reason); the target is reviewed like a rule of the process
+    (rule 9): on such a flag, at a release, or every N tickets, and changed only by a dated `decision`
+    record made with the person.
 - 5.3 the blast radius in the process: the investigation before the Frame runs `impact` and the Frame lists
   the places the ticket changes; the brief carries the places of its step; the review and drift packs carry
   the blast radius of the diff; the Review Focus names the tests of the radius the plan does not run; the
