@@ -646,6 +646,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         jobs: check.jobs,
         test_threads: check.test_threads,
         log: CheckLog::new(&dir, &ticket.key, &check_id),
+        times: std::cell::RefCell::new(BTreeMap::new()),
     };
     if !junit {
         say!("copy: {copy_secs} s");
@@ -722,6 +723,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         } else {
             runner.outside.borrow().clone()
         };
+        runner.times.borrow_mut().clear();
         let (outcome, reason) = match history_outcome(a, blocked.as_deref()) {
             Some(o) => o,
             None => {
@@ -752,6 +754,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
             }
         };
         ok &= passing(&outcome);
+        let step_times = times_of(&runner.times.borrow());
         // For a cached step the reason is the id of the record that ran it.
         let from = (outcome == "cached").then(|| reason.clone());
         if steps_json.len() < MAX_STEPS {
@@ -769,9 +772,15 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
                 step_json["from"] = serde_json::json!(from);
                 step_json["reason"] = serde_json::json!("");
             }
+            if let Some((_, json)) = &step_times {
+                step_json["times"] = json.clone();
+            }
             steps_json.push(step_json);
         }
         say_step(a, &outcome, &reason);
+        if let Some((line, _)) = &step_times {
+            say!("{line}");
+        }
     }
     // The history commits of the range, before the suite line (STP-37 AC-13).
     let history = match build_inputs::history_commits(&root, &ticket.key, &at, bounds) {
@@ -1337,6 +1346,25 @@ struct Runner<'a> {
     test_threads: Option<i64>,
     /// The log of the cargo runs (STP-45 AC-1).
     log: CheckLog,
+    /// The time of the cargo runs of the step that runs now, by commit kind `RED`, `GREEN`, `HEAD`
+    /// (STP-45 AC-5).
+    times: std::cell::RefCell<BTreeMap<&'static str, Duration>>,
+}
+
+/// The `times:` line of a step and its record object, `None` when the step ran no cargo.
+fn times_of(times: &BTreeMap<&'static str, Duration>) -> Option<(String, serde_json::Value)> {
+    if times.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    let mut json = serde_json::Map::new();
+    for kind in ["RED", "GREEN", "HEAD"] {
+        if let Some(d) = times.get(kind) {
+            parts.push(format!("{kind} {} s", d.as_secs()));
+            json.insert(kind.to_lowercase(), serde_json::json!(d.as_secs()));
+        }
+    }
+    Some((format!("  times: {}", parts.join(", ")), json.into()))
 }
 
 /// The id of the passing record that ran a step with this key, `None` when no record did (STP-35
@@ -1509,7 +1537,15 @@ impl Runner<'_> {
             args.extend(names.iter().cloned());
             let left = self.left()?;
             self.log.begin();
-            let run = run_cargo(self.cargo, &self.wt.path, &args, &self.target, left)?;
+            let started = std::time::Instant::now();
+            let ran = run_cargo(self.cargo, &self.wt.path, &args, &self.target, left);
+            let kind = ["RED", "GREEN", "HEAD"]
+                .into_iter()
+                .find(|k| stage.ends_with(&format!(" {k}")));
+            if let Some(kind) = kind {
+                *self.times.borrow_mut().entry(kind).or_default() += started.elapsed();
+            }
+            let run = ran?;
             self.log.write_run(stage, self.cargo, &args, &run);
             if let Some(why) = self.found_outside() {
                 return Err(why);
