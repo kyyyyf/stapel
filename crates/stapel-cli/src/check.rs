@@ -588,6 +588,8 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         // SAFETY: the check is still single-threaded here; no cargo run or reader thread has started.
         unsafe { std::env::set_var(crate::cargo::HELD_MARK, std::process::id().to_string()) };
     }
+    // The id of the record is made at the start; the log is named after it (STP-45 AC-1).
+    let check_id = new_id("c");
     let target = dir.join("check-target");
     let timeout = Duration::from_secs(check.timeout_secs);
     // The limit bounds the whole check (STP-35 AC-3), not each program run.
@@ -639,6 +641,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         prepared: std::cell::Cell::new(false),
         jobs: check.jobs,
         test_threads: check.test_threads,
+        log: CheckLog::new(&dir, &ticket.key, &check_id),
     };
     if end.is_some() {
         say!("ticket: {} at {} (closed)", ticket.key, short(&at));
@@ -846,7 +849,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
     let mut record = serde_json::json!({
         "v": 1,
         "kind": "check",
-        "id": new_id("c"),
+        "id": check_id,
         "at": now_rfc3339(),
         "ticket": ticket.key,
         "head": head,
@@ -858,6 +861,9 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         record["cargo"] = serde_json::json!(cargo_text);
     }
     // The fields that a later check reads (STP-35 AC-6).
+    if let Some(path) = runner.log.made() {
+        record["log"] = serde_json::json!(path.display().to_string());
+    }
     record["level"] = serde_json::json!(level_now);
     record["lock"] = serde_json::json!(lock_now);
     record["toolchain"] = serde_json::json!(toolchain_now);
@@ -1173,6 +1179,90 @@ fn names_of(outcome: &str, reason: &str) -> Vec<String> {
         .collect()
 }
 
+/// The log of a check: the full output of every cargo run (STP-45 AC-1, AC-3).
+/// The removal of old logs, with the warning `warning: old check log not removed: <path>: <error>`,
+/// follows in the retention step (AC-2).
+struct CheckLog {
+    path: PathBuf,
+    state: std::cell::RefCell<LogState>,
+}
+
+enum LogState {
+    /// No cargo run has started yet.
+    Fresh,
+    Open(std::fs::File),
+    /// The file was made but a write failed.
+    Broken,
+    /// The file could not be made.
+    Off,
+}
+
+impl CheckLog {
+    fn new(dir: &Path, key: &str, id: &str) -> CheckLog {
+        let folder = std::path::absolute(dir.join("check-logs")).unwrap_or(dir.join("check-logs"));
+        CheckLog {
+            path: folder.join(format!("{key}-{id}.log")),
+            state: std::cell::RefCell::new(LogState::Fresh),
+        }
+    }
+
+    /// Makes the file at the first cargo run and prints its path; later calls do nothing.
+    fn begin(&self) {
+        let mut state = self.state.borrow_mut();
+        if !matches!(*state, LogState::Fresh) {
+            return;
+        }
+        let made = self
+            .path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&self.path)
+            });
+        match made {
+            Ok(file) => {
+                *state = LogState::Open(file);
+                say!("log: {}", self.path.display());
+            }
+            Err(e) => {
+                *state = LogState::Off;
+                warn!("warning: no check log: {e}");
+            }
+        }
+    }
+
+    /// The path, when the log was made.
+    fn made(&self) -> Option<&Path> {
+        match *self.state.borrow() {
+            LogState::Open(_) | LogState::Broken => Some(&self.path),
+            _ => None,
+        }
+    }
+
+    /// Appends the header and the kept output of one cargo run.
+    fn write_run(&self, stage: &str, cargo: &Path, args: &[String], run: &stapel_core::runner::RunResult) {
+        use std::io::Write;
+        let mut state = self.state.borrow_mut();
+        let LogState::Open(file) = &mut *state else {
+            return;
+        };
+        let mut text = format!("== {stage}: {} {}\n", cargo.display(), args.join(" "));
+        for part in [&run.stdout, &run.stderr] {
+            text.push_str(part);
+            if !part.is_empty() && !part.ends_with('\n') {
+                text.push('\n');
+            }
+        }
+        if let Err(e) = file.write_all(text.as_bytes()) {
+            *state = LogState::Broken;
+            warn!("warning: check log write failed: {e}");
+        }
+    }
+}
+
 struct Runner<'a> {
     root: &'a Path,
     wt: &'a Worktree,
@@ -1195,6 +1285,8 @@ struct Runner<'a> {
     /// `[check] jobs` and `test_threads` (STP-45 AC-11).
     jobs: Option<i64>,
     test_threads: Option<i64>,
+    /// The log of the cargo runs (STP-45 AC-1).
+    log: CheckLog,
 }
 
 /// The id of the passing record that ran a step with this key, `None` when no record did (STP-35
@@ -1303,7 +1395,15 @@ impl Runner<'_> {
     }
 
     /// Runs `tests` at `commit`, one cargo run per test file.
-    fn at(&self, commit: &str, tests: &[TestId], at_red: bool, files: &[(String, String)]) -> At {
+    /// `stage` names the runs in the log (`step 1 RED`).
+    fn at(
+        &self,
+        stage: &str,
+        commit: &str,
+        tests: &[TestId],
+        at_red: bool,
+        files: &[(String, String)],
+    ) -> At {
         // After a build-input hit no further cargo run starts (AC-7).
         if let Some(why) = self.outside.borrow().clone() {
             return Err(why);
@@ -1358,7 +1458,9 @@ impl Runner<'_> {
             args.push("--exact".into());
             args.extend(names.iter().cloned());
             let left = self.left()?;
+            self.log.begin();
             let run = run_cargo(self.cargo, &self.wt.path, &args, &self.target, left)?;
+            self.log.write_run(stage, self.cargo, &args, &run);
             if let Some(why) = self.found_outside() {
                 return Err(why);
             }
@@ -1650,8 +1752,8 @@ impl Runner<'_> {
             (Ok(BTreeMap::new()), Ok(BTreeMap::new()))
         } else {
             (
-                self.at(&red.sha, tests, true, &a.red_files),
-                self.at(&green.sha, tests, false, &[]),
+                self.at(&format!("{} RED", a.label), &red.sha, tests, true, &a.red_files),
+                self.at(&format!("{} GREEN", a.label), &green.sha, tests, false, &[]),
             )
         };
         // HEAD: tests missing there are removed; the rest run.
@@ -1671,7 +1773,7 @@ impl Runner<'_> {
             .cloned()
             .collect();
         let missing: Vec<&TestId> = tests.iter().filter(|t| !present.contains(t)).collect();
-        let at_head = self.at(self.head, &present, false, &[]);
+        let at_head = self.at(&format!("{} HEAD", a.label), self.head, &present, false, &[]);
 
         for (state, when) in [(&at_red, "RED"), (&at_green, "GREEN"), (&at_head, "HEAD")] {
             match state {
@@ -2127,10 +2229,12 @@ impl Runner<'_> {
             Ok(l) => l,
             Err(e) => return unverified(e),
         };
+        self.log.begin();
         let run = match run_cargo(self.cargo, &self.wt.path, &args, &self.target, left) {
             Ok(r) => r,
             Err(e) => return unverified(e),
         };
+        self.log.write_run("suite run", self.cargo, &args, &run);
         if let Some(why) = self.found_outside() {
             return unverified(why);
         }
