@@ -37,7 +37,21 @@ fn commit(dir: &Path, message: &str) {
 /// A repository with a one-crate workspace, ticket ABC-1 and one passing step (a RED, then its
 /// GREEN), all committed. The fake cargo compiles nothing.
 fn repo_with_a_step() -> tempfile::TempDir {
+    repo_with_a_step_and(&[])
+}
+
+/// `repo_with_a_step` with more files, `(path, text)`, in the initial commit.
+fn repo_with_a_step_and(extra: &[(String, String)]) -> tempfile::TempDir {
     let repo = common::git_repo();
+    // An entry for `basic.rs` is the head of the step's test file, not a file of its own.
+    let mut head = String::new();
+    for (rel, text) in extra {
+        if rel == "crates/tiny/tests/basic.rs" {
+            head = text.clone();
+        } else {
+            write(repo.path(), rel, text);
+        }
+    }
     let dir = repo.path();
     write(
         dir,
@@ -65,7 +79,7 @@ fn repo_with_a_step() -> tempfile::TempDir {
     write(
         dir,
         "crates/tiny/tests/basic.rs",
-        "#[test]\nfn needs_two() {\n    // fake: needs pub fn two\n}\n",
+        &format!("{head}#[test]\nfn needs_two() {{\n    // fake: needs pub fn two\n}}\n"),
     );
     commit(dir, "ABC-1 step 1 RED: two is missing");
     write(
@@ -885,4 +899,83 @@ fn last_pass_time() {
     let line = suite_line(&out);
     assert!(line.starts_with("suite: unverified: "), "{line}");
     assert!(!line.contains("; run "), "{line}");
+}
+
+// AC-8: after `suite:` and `failing:` the check prints `slowest: <target> <x> s, …` with the five
+// largest target times (blocks that ran tests), largest first, equal ones in output order, `<x>` as
+// libtest printed it; the record holds `slowest` as `{"target", "secs"}` objects. No target time,
+// no line and no field.
+#[test]
+fn slowest_files() {
+    let one = |time: &str| format!("// fake: finished {time}\n#[test]\nfn it_runs() {{}}\n");
+    // A block of 0 tests with the largest time, then six targets with tests; `basic` prints 0.00.
+    let mut extra = vec![(
+        "crates/tiny/tests/a_zero.rs".to_string(),
+        "// fake: finished 99.00\n".to_string(),
+    )];
+    for (name, time) in [
+        ("b1", "1.50"),
+        ("b2", "3.25"),
+        ("b3", "0.40"),
+        ("b4", "3.25"),
+        ("b5", "12.00"),
+        ("b6", "0.07"),
+    ] {
+        extra.push((format!("crates/tiny/tests/{name}.rs"), one(time)));
+    }
+    let repo = repo_with_a_step_and(&extra);
+    let scripts = tempfile::tempdir().unwrap();
+    configure(repo.path(), &common::fake_cargo(scripts.path()), "");
+    let dir = repo.path();
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 0, "{out}{err}");
+    let lines: Vec<&str> = out.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("suite: "))
+        .unwrap_or_else(|| panic!("no suite line: {out}"));
+    assert_eq!(
+        lines.get(at + 1).copied(),
+        Some("slowest: b5 12.00 s, b2 3.25 s, b4 3.25 s, b1 1.50 s, b3 0.40 s"),
+        "{out}"
+    );
+    let records = check_records(dir);
+    let slowest = records[0]["slowest"].as_array().unwrap_or_else(|| {
+        panic!("no slowest array: {}", records[0]);
+    });
+    let got: Vec<(String, f64)> = slowest
+        .iter()
+        .map(|e| {
+            (
+                e["target"].as_str().unwrap().to_string(),
+                e["secs"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    let want: Vec<(String, f64)> = [
+        ("b5", 12.0),
+        ("b2", 3.25),
+        ("b4", 3.25),
+        ("b1", 1.5),
+        ("b3", 0.4),
+    ]
+    .iter()
+    .map(|(t, s)| (t.to_string(), *s))
+    .collect();
+    assert_eq!(got, want, "{}", records[0]);
+
+    // A suite with no `finished in`: no line, no field.
+    let extra = [(
+        "crates/tiny/tests/basic.rs".to_string(),
+        "// fake: finished none\n".to_string(),
+    )];
+    let repo = repo_with_a_step_and(&extra);
+    let scripts = tempfile::tempdir().unwrap();
+    configure(repo.path(), &common::fake_cargo(scripts.path()), "");
+    let dir = repo.path();
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("slowest:"), "{out}");
+    let records = check_records(dir);
+    assert!(records[0].get("slowest").is_none(), "{}", records[0]);
 }

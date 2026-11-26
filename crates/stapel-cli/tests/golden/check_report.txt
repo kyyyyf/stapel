@@ -10,4 +10,5 @@ step 2: no-red: tiny/basic::already_true
   times: RED <n> s, GREEN <n> s, HEAD <n> s
 suite build: <n> s
 suite: pass: 3 passed, 0 failed, 0 ignored; run <n> s, last pass none
+slowest: basic 0.00 s
 result: fail

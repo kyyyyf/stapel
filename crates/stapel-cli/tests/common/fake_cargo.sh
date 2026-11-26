@@ -69,6 +69,15 @@ run_file() {
             echo "$name$TAB$(state "$name" "$kind" "$text")"
         fi
     done)
+    # A line `// fake: finished <x>` before the tests sets the time libtest prints (default 0.00);
+    # `// fake: finished none` leaves the `finished in` part out (STP-45).
+    fin=$(sed -n 's|^// fake: finished ||p' "$file" | head -1)
+    [ -z "$fin" ] && fin=0.00
+    if [ "$fin" = none ]; then
+        finished=""
+    else
+        finished="; finished in ${fin}s"
+    fi
     total=0
     passed=0
     failed=0
@@ -94,12 +103,12 @@ run_file() {
             [ "$st" = FAILED ] && echo "    $name"
         done
         echo
-        echo "test result: FAILED. $passed passed; $failed failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+        echo "test result: FAILED. $passed passed; $failed failed; 0 ignored; 0 measured; 0 filtered out$finished"
         echo
         return 1
     fi
     echo
-    echo "test result: ok. $passed passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    echo "test result: ok. $passed passed; 0 failed; 0 ignored; 0 measured; 0 filtered out$finished"
     echo
     return 0
 }
