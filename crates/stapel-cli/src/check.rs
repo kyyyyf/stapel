@@ -1599,6 +1599,29 @@ impl Runner<'_> {
         )
     }
 
+    /// What a cargo run that the time limit stopped printed last (STP-45 AC-10): the stage, the
+    /// running file, then the last 20 lines of each kept stream.
+    fn report_limit(&self, stage: &str, file: Option<&str>, run: &stapel_core::runner::RunResult) {
+        let running = match file {
+            Some(f) => f.to_string(),
+            None => {
+                let whole = run.stderr.rfind('\n').map_or("", |at| &run.stderr[..at + 1]);
+                cargo_targets(whole)
+                    .pop()
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or_else(|| "-".into())
+            }
+        };
+        say!("time limit: {stage}, {running}");
+        for (mark, text) in [("out", &run.stdout), ("err", &run.stderr)] {
+            let lines: Vec<&str> = text.lines().collect();
+            for line in &lines[lines.len().saturating_sub(20)..] {
+                let shown: String = printable(line).chars().take(500).collect();
+                say!("  {mark} | {shown}");
+            }
+        }
+    }
+
     fn limit_reason(&self) -> String {
         format!(
             "the time limit of {} s for the check ran out",
@@ -1709,6 +1732,7 @@ impl Runner<'_> {
                 return Err(why);
             }
             if run.timed_out {
+                self.report_limit(stage, Some(&format!("{dir}/{file}")), &run);
                 return Err(self.limit_reason());
             }
             match parse_run(&run.output, &names, run.exit, &file, at_red) {
@@ -2495,6 +2519,7 @@ impl Runner<'_> {
             return unverified(why);
         }
         if built.timed_out {
+            self.report_limit("suite build", None, &built);
             return unverified(self.limit_reason());
         }
         // A build that fails is judged by its own output and no run starts (STP-45 AC-14): the
@@ -2525,6 +2550,7 @@ impl Runner<'_> {
                 return unverified(why);
             }
             if run.timed_out {
+                self.report_limit("suite run", None, &run);
                 return unverified(self.limit_reason());
             }
             run
