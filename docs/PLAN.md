@@ -207,6 +207,17 @@ that Zed, VS Code and every editor that speaks the protocol get the same.
     (STP-43 SR1-9);
   - 5.2b-2 a newline in a multi-line guard command separates commands like `;`, so the word after it is a
     command start for the reach warning (STP-43 XR2-8).
+- 5.2d the test pyramid and the test suites, for any project that stapel runs in (ledger 2026-11-26; taken
+  after 5.2b and before 5.3; its requirements and tickets come from `stapel-elaborate` after STP-45):
+  each test of the project is given a kind (unit, library API, system through the program, golden, e2e
+  with real tools, property-based) by rules kept as data per language and runner, cargo and junit first;
+  a report prints the count and the run time of each kind; the project's target pyramid lives in its
+  `stapel.toml` and a guard keeps it no worse than now; a ticket's Test plan names the kind of each test,
+  and a departure from the pyramid needs a dated Decision with its reason, which the ticket lint and the
+  spec review read; named suites say what runs while a ticket is built, at push, and at a release or on a
+  schedule (e2e and property-based tests with many cases), and `stapel init` writes the CI runs for them.
+  This repository is the first pilot: its first property-based tests of the parsers and a few e2e tests
+  with real cargo, one at a time under the cargo slots.
 - 5.3 the blast radius in the process: the investigation before the Frame runs `impact` and the Frame lists
   the places the ticket changes; the brief carries the places of its step; the review and drift packs carry
   the blast radius of the diff; the Review Focus names the tests of the radius the plan does not run; the
