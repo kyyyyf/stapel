@@ -66,6 +66,22 @@ pub fn summary_counts(line: &str) -> Option<(u64, u64, u64)> {
     Some((get("passed")?, get("failed")?, get("ignored")?))
 }
 
+/// The lines of libtest's own output: the captured output of a failing test, from its heading
+/// `---- <name> stdout ----` up to the next `failures:` line or the next heading, is left out.
+fn own_lines(output: &str) -> impl Iterator<Item = &str> {
+    let mut skipping = false;
+    output.lines().filter(move |l| {
+        if l.starts_with("---- ") && l.ends_with(" stdout ----") {
+            skipping = true;
+            return false;
+        }
+        if *l == "failures:" {
+            skipping = false;
+        }
+        !skipping
+    })
+}
+
 fn first_error(output: &str) -> String {
     output
         .lines()
@@ -89,7 +105,7 @@ pub fn parse_run(
     if output.contains("because --locked was passed") {
         return Parsed::Unverified("Cargo.lock is out of date".into());
     }
-    let running: Vec<usize> = output.lines().filter_map(running_count).collect();
+    let running: Vec<usize> = own_lines(output).filter_map(running_count).collect();
     if running.is_empty() {
         let compile: Vec<&str> = output
             .lines()
@@ -115,7 +131,7 @@ pub fn parse_run(
                 .collect(),
         );
     }
-    let summaries: Vec<(u64, u64, u64)> = output.lines().filter_map(summary_counts).collect();
+    let summaries: Vec<(u64, u64, u64)> = own_lines(output).filter_map(summary_counts).collect();
     if running.len() != 1 || summaries.len() != 1 {
         return Parsed::Unverified(format!(
             "the output has {} running lines and {} result summaries",
@@ -131,7 +147,7 @@ pub fn parse_run(
         ));
     }
     let mut states: BTreeMap<String, Vec<TestState>> = BTreeMap::new();
-    for (name, state) in output.lines().filter_map(result_line) {
+    for (name, state) in own_lines(output).filter_map(result_line) {
         if names.iter().any(|n| n == name) {
             states.entry(name.to_string()).or_default().push(state);
         }
