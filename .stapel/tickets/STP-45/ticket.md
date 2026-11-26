@@ -43,6 +43,8 @@ beyond the two run settings.
 8. Run settings: `[check] jobs` and `[check] test_threads` (whole numbers from 1) give `-j <n>` and
    `--test-threads=<n>` to every cargo test run of the check; absent keys keep the runs as now; this
    repository sets 4 and 4.
+9. Captured output (CK1-1, widened on 2026-11-26): the reading of a step run counts only libtest's own
+   `running` and `test result:` lines, not those inside the captured output of a failing test.
 
 Not promised: times under a second (whole seconds, rounded down); a test file name that libtest does not
 print; a log on a disk that is full or read-only (the check warns and goes on); times of records written
@@ -114,12 +116,13 @@ Terms:
 | AC-12 | IF `[check] jobs` or `test_threads` is outside 1 to 1024, or `progress_secs` outside 1 to 86400 THEN every command that loads the config prints `check.<key> must be a whole number from 1 to <max>` and exits 1; IF one of them is set with the junit runner THEN `check.<key> needs the cargo runner`; a value that is not a whole number gives the TOML error, exit 1. | `check_times::refuses_bad_settings` |
 | AC-13 | WHEN this repository's `.stapel/stapel.toml` is loaded THE its `[check]` has `jobs = 4` and `test_threads = 4`. | `check_times::this_repository_sets_four` |
 | AC-14 | IF the build of AC-6 exits non-zero, prints `error: could not compile` or `because --locked was passed`, or a build input above the copy is found after it THEN no run starts and the suite gets the outcome and detail that the run gave for that output before (`fail: … the workspace does not compile`, `unverified: Cargo.lock is out of date`, `unverified: build-input-outside: …`), with counts 0 and no `times.suite_run`. | `check_times::failed_build_judges_the_suite` |
+| AC-15 | WHEN a step run's standard output holds a section `---- <name> stdout ----` of a failing test THE the reading of that run skips every line from that heading up to the next line `failures:` or the next such heading, so `running` and `test result:` lines inside it count neither as blocks nor as summaries, and the step is judged by libtest's own lines. | `check::parse_skips_captured_output` |
 
 ### Guarantees
 
 - **Promised:** the Frame's promise items: item 1 by AC-4 to AC-6 and AC-14; item 2 by AC-4; item 3 by
   AC-9; item 4 by AC-10; item 5 by AC-1 to AC-3; item 6 by AC-8; item 7 by AC-7; item 8 by AC-11 to
-  AC-13. Unchanged: the junit runner (its tests in `check_junit.rs` keep passing), the suite outcomes of
+  AC-13; item 9 by AC-15. Unchanged: the junit runner (its tests in `check_junit.rs` keep passing), the suite outcomes of
   before (AC-14), the level `steps` (no suite, no suite lines), `stapel check --list` and `--history`,
   the hook's step lines, the cache of steps.
 - **Not promised:** the Frame's list; the log of a run past the 16 MB that the runner keeps of a stream
@@ -153,20 +156,21 @@ and the seconds made neutral. Light tests: `stapel cargo test -j 4 -p stapel-cli
 | Category | Cases | Tests |
 |---|---|---|
 | Log | one step and the suite: the `log:` line before the first step line, the file exists, one `==` header per step run and the `suite run` header (the `suite build` header is checked by `check_times::suite_build_and_run`), the fake's output of each run under it; the record's `log`; level `steps` with every step cached: no `log:` line, no file, no `log` field | `check_times::log_holds_every_run` |
-| Retention | 11 logs of the ticket `ABC-1`, made older with set modification times, two of them with one time, 2 logs of `ABC-1-X` (`ABC-1-X-c-<hex>.log`), and a file `notes.txt`: after a check, 10 of the ticket (the oldest gone, the tie by name), the other logs and `notes.txt` stay | `check_times::keeps_ten_logs_per_ticket` |
-| No log | the log folder path taken by a plain file: the warning once, no `log:` line, no `log` field, the check passes; an old log in a folder of mode 555 next to a writable log: the removal warning, the check passes | `check_times::unwritable_log_folder` |
+| Retention | 11 logs of the ticket `ABC-1`, made older with set modification times, two of them with one time, 2 logs of `ABC-1-X` (`ABC-1-X-c-<hex>.log`), and a file `notes.txt`: after a check, 10 of the ticket (the oldest gone, the tie by name), the other logs and `notes.txt` stay, and no removal warning | `check_times::keeps_ten_logs_per_ticket` |
+| No log | the log folder path taken by a plain file: the warning once, no `log:` line, no `log` field, the check passes | `check_times::unwritable_log_folder` |
 | Copy, slot | the two lines in order before `ticket:`, whole numbers, `times.copy` and `slot_wait` in the record; with the held mark set, `waited 0 s` | `check_times::copy_and_slot_times` |
 | Step times | a passing step: `times:` with RED, GREEN, HEAD and the record keys; a cached step at the level `head`: HEAD only; a step unverified by the time limit at GREEN: RED and GREEN; at the level `steps` with a cached step: no `times:` line | `check_times::step_times` |
 | Suite build | the fake logs its arguments: a `--no-run` run with `-j` of `jobs = 3` before the suite run, its `== suite build:` header in the log; `suite build:` line before `suite:`; both record times; a sleep in the build past the time limit: no suite run, no `suite_run` | `check_times::suite_build_and_run` |
 | Last pass | no earlier record: `last pass none`; an earlier passing record with `times.suite_run` 7, a later passing one without it, a failing one with 9 and a malformed line: `last pass 7 s`; an unverified suite: no `; run` end | `check_times::last_pass_time` |
 | Slowest | a fake suite with seven targets and given `finished in` times, two equal, and a block of 0 tests with the largest time: the five largest of the blocks with tests in order, the equal ones in output order, the record array with numbers; a suite with no `finished in`: no line | `check_times::slowest_files` |
 | Progress | `progress_secs = 1`, a test that sleeps 3 s: at least two `progress:` lines naming the step stage and its file; a suite target that sleeps: `suite run` and the target | `check_times::progress_lines` |
-| Time-out | `timeout_secs = 2`, a step test that sleeps 10 s and prints 30 lines on each stream, one with an escape byte: `time limit: step 1 RED, tiny/basic`, the last 20 lines of each stream after `  out | ` and `  err | `, the escape replaced, `result: fail`, exit 1; the log holds the timed-out run | `check_times::limit_names_the_stage` |
+| Time-out | `timeout_secs = 10` (the lowest the config takes), a step test that sleeps 60 s and prints 30 lines on each stream, one with an escape byte: `time limit: step 1 RED, tiny/basic`, the last 20 lines of each stream after `  out | ` and `  err | `, the escape replaced, `result: fail`, exit 1; the log holds the timed-out run | `check_times::limit_names_the_stage` |
 | Settings | `jobs = 3`, `test_threads = 2`, with and without `suite_exclude`: the logged arguments of step and suite runs (the build in `check_times::suite_build_and_run`), `--test-threads=2` right after `--`; no keys: the old arguments | `check_times::run_settings` |
 | Bad settings | `jobs` 0 and 1025, `test_threads` 0, `progress_secs` 0 and 86401, `jobs` 1024 accepted; `jobs` and `progress_secs` with the junit runner; `jobs = "x"` | `check_times::refuses_bad_settings` |
 | This repository | the loaded config of the repository root | `check_times::this_repository_sets_four` |
 | Failed build | a workspace that does not compile: one `--no-run` run, no suite run, `fail: … the workspace does not compile`, counts 0, no `suite_run`; a stale lock file: `unverified: Cargo.lock is out of date` | `check_times::failed_build_judges_the_suite` |
 | Golden | the full output of the golden fixture with the new lines | `check::report_matches_golden` |
+| Captured output | a run output with one failing test whose captured stdout holds two `running 1 test` blocks and their `test result:` lines, then libtest's own `failures:` list and summary: the names are counted from libtest's lines only, not unverified | `check::parse_skips_captured_output` |
 
 ### Inputs
 
@@ -189,8 +193,7 @@ and the seconds made neutral. Light tests: `stapel cargo test -j 4 -p stapel-cli
 | cargo build | compiles; does not compile; lock file stale; build input found above the copy after it | the run follows; AC-14 outcomes, no run | `check_times::failed_build_judges_the_suite` |
 | time limit | runs out in a step run; in the suite build; in the suite run; between runs | AC-10 names the stage; the build: no run (AC-6); the run: AC-10; between runs: as before | `check_times::limit_names_the_stage`, `check_times::suite_build_and_run` |
 
-**Review Focus:** a failed removal of an old log on a read-only folder of another owner (the AC-3 warning;
-tested only with mode 555); a real cargo run with `--no-run` and then the run (no test runs a real cargo: the
+**Review Focus:** a failed removal of an old log (the AC-3 warning; no test); a real cargo run with `--no-run` and then the run (no test runs a real cargo: the
 check of this ticket at review is the stand, and its output is quoted in Review); a progress line while
 cargo builds and prints nothing (the running file `-`, covered by the suite build case only through the
 code review); a log line that holds bytes that are not UTF-8 (written as the runner kept them, lossy;
@@ -243,6 +246,31 @@ no test); the clock going back during a check (seconds saturate at 0; no test).
 - 2026-11-26, agent: the last pass compares the suite run time, not the build time, because the build
   time depends on what the target folder of the check holds.
 
+### Decisions (as built)
+
+- 2026-11-26, agent: the RED of step 1 loaded the config through `stapel status`, which exits 1 with no
+  open ticket whatever the config; its GREEN (a3519ec) runs `stapel inbox` instead, with a `history:` line.
+- 2026-11-26, agent: the removal warning of AC-3 belongs to retention (step 3); `keeps_ten_logs_per_ticket`
+  asserts that a normal run prints none, and the failed removal itself has no test (Review Focus).
+- 2026-11-26, agent: the RED of step 4 was amended in place (3694851), so the old tests broken by the
+  lines before `ticket:` change there and fail at RED.
+- 2026-11-26, agent: the test-only commit 7bc1013 makes `closed_pipe::closed_output_keeps_every_write`
+  drop `log`, `times` and `slot_wait` when it compares two runs' records.
+- 2026-11-26, agent: `timeout_secs` takes 10 at least, so the time-limit tests use 10 s and a fake that
+  sleeps 60 s; the fake cargo gained the markers `fake: sleeps <n>`, `fake: noise <n>`,
+  `fake: finished <x>`, `finished none`, `fake: build sleeps` (in a source file) and `fake: stale lock`
+  (in `Cargo.lock`).
+- 2026-11-26, agent: the step run and the suite build and run go through one `Runner::cargo_run`, which
+  passes a `Watch` to `run_cargo_watched` in `runner.rs`; `run_cargo`, `run_program` and `cargo_version`
+  run as before.
+- 2026-11-26, the person: step 12 needs a `stapel` that knows `jobs`, because the guard loads
+  `.stapel/stapel.toml` with the installed binary; `stapel` was installed from this branch before the
+  GREEN (e0b0f4d). After the merge it is installed again from the pinned checkout.
+- 2026-11-26, the person (CK1-1): the check of c-b0421055b3d3 read step 6 as unverified, because the
+  failure message of `log_holds_every_run` at RED printed the log, whose fake output holds `running` and
+  `test result:` lines; the fix is AC-15 and Plan step 13, and the check runs with `stapel` installed
+  from this branch.
+
 ## Proof
 
 | Criterion | Test |
@@ -261,10 +289,16 @@ no test); the clock going back during a check (seconds saturate at 0; no test).
 | AC-12 | `check_times::refuses_bad_settings` |
 | AC-13 | `check_times::this_repository_sets_four` |
 | AC-14 | `check_times::failed_build_judges_the_suite` |
+| AC-15 | `check::parse_skips_captured_output` |
 
 Changed by this ticket: `check::report_matches_golden` (its golden gains the new lines of AC-1, AC-4 to
 AC-7); `check_levels::head_level`, `check_levels::full_level`, `check_levels::flag_wins_over_the_key` and
-`check_levels::suite_exclude`, which count the runs with `--workspace` and now see the build too (AC-6).
+`check_levels::suite_exclude`, which count the runs with `--workspace` and now see the build too (AC-6;
+`suite_exclude` again at step 8); `check::closed_ticket_is_checked_at_its_last_commit` and
+`check::config_toolchain_build_script_and_links_are_unverified` with its golden
+`check_report_build_inputs.txt` (AC-4); `check_history::same_lines_as_the_full_check` and
+`check_history_reason::a_source_file_test_and_the_cargo_note` (AC-5); `closed_pipe::closed_output_keeps_every_write`
+(the record fields, commit 7bc1013).
 
 ## Plan
 
@@ -300,6 +334,8 @@ Route: full (tags `interface`, `data`), auto.
     the stage, the running file and the two tails.
 12. This repository (AC-13; test `check_times::this_repository_sets_four`): the RED adds the test; the
     GREEN sets `jobs = 4` and `test_threads = 4` in `.stapel/stapel.toml`.
+13. Captured output (AC-15; test `check::parse_skips_captured_output`): the RED adds the test; the GREEN
+    makes `parse_run` skip the captured output sections of failing tests.
 
 ## Review
 
@@ -314,8 +350,13 @@ Findings:
 |---|---|---|---|---|---|---|---|
 | spec-review | 1 | external | 1 | 8 | 7 | 0 | defer 1, no-change 1, patch 14 |
 | spec-review | 2 | reviewer | 0 | 3 | 5 | 0 | no-change 1, patch 7 |
+| code-review | 1 | reviewer | 1 | 0 | 0 | 0 | patch 1 |
 
-Check runs: none
+Check runs:
+
+| Level | Result | Commit | At | Steps |
+|---|---|---|---|---|
+| head | fail | 4691109 | 2026-11-26T10:59:00Z | pass 11, unverified 1 |
 <!-- stapel:review:end -->
 
 ## Summary

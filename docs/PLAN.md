@@ -59,7 +59,7 @@ CI; the pilot's gate in its first form is in `docs/HISTORY.md` with its verdict 
 
 Each item is one ticket of at most 12 Plan steps, taken in a new session in this order. Item 4.1 was
 started on 2026-11-19 before the order changed and finishes; after it the four tickets of phase 3b in
-their order, then phase 3c, then phase 5, then phase 4. The
+their order, then phase 3c, then phase 5, then phase 4, then phase 4b. The
 foreign repository for the next comparison (a fork of an open-source TypeScript project with jest, open
 issues, GitHub Actions and an MIT or Apache licence) is chosen by a ledger decision right after ticket 3b-1, from
 three candidates. The empty crates `stapel-agent` and `stapel-forge` are removed inside the next ticket that
@@ -262,6 +262,18 @@ Optional: a ticket without a feature works as before. Two levels only, feature a
   cause hypothesis from the index, the source ticket; one RED, one GREEN, one dialog) and the kind
   `refactor` (the promise "behaviour unchanged"; the proof: characterisation tests on the blast radius, the
   API snapshot of 5.4 and the full list of call sites from the index).
+
+### Phase 4b — stapel in Zed through ACP (ledger 2026-11-26)
+
+Taken after phase 4. The draft is `.stapel/features/acp-proxy.md`; its requirements and tickets are
+elaborated with `stapel-elaborate` before the first ticket.
+
+- 4b.1 `stapel acp`: the agent that Zed starts, between Zed and Claude Code (`claude-code-acp`) on the
+  Agent Client Protocol, on the person's Claude Code login and with no model call of its own; it adds the
+  next action at the session start, the process commands as slash commands, confirmations and process
+  questions as buttons that write the same records as `stapel ok` and triage, the Plan as a live plan,
+  the guard on every tool call, and the builder and reviewer sessions shown live; a feature gets one
+  overview session over its tickets. The terminal path stays as it is.
 
 ## 6. Out of scope
 
