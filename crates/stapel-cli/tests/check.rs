@@ -1389,6 +1389,41 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; 
     }
 }
 
+#[test]
+fn captured_output_holds_a_failures_line() {
+    let out = "running 1 test\n\
+test t ... FAILED\n\
+\n\
+failures:\n\
+\n\
+---- t stdout ----\n\
+== step 1 RED: cargo test -p tiny --test basic -- --exact inner\n\
+running 1 test\n\
+test inner ... FAILED\n\
+\n\
+failures:\n\
+    inner\n\
+\n\
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\
+\n\
+thread 't' panicked at src/lib.rs:1:1:\n\
+boom\n\
+\n\
+failures:\n\
+    t\n\
+\n\
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    let names = vec!["t".to_string()];
+    for at_red in [true, false] {
+        let parsed = stapel_core::runner::parse_run(out, &names, Some(101), "basic", at_red);
+        let want = std::collections::BTreeMap::from([(
+            "t".to_string(),
+            stapel_core::runner::TestState::Failed,
+        )]);
+        assert_eq!(parsed, stapel_core::runner::Parsed::Counted(want));
+    }
+}
+
 proptest::proptest! {
     #[test]
     fn output_parser_never_panics(out in "\\PC{0,400}", n in 0usize..4, exit in proptest::option::of(-2i32..300)) {
