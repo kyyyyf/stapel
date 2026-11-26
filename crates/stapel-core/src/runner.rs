@@ -67,20 +67,31 @@ pub fn summary_counts(line: &str) -> Option<(u64, u64, u64)> {
 }
 
 /// The lines of libtest's own output: the captured output of a failing test, from its heading
-/// `---- <name> stdout ----` up to the next `failures:` line or the next heading, is left out.
+/// `---- <name> stdout ----` up to the last `failures:` line of the output, is left out.
 fn own_lines(output: &str) -> impl Iterator<Item = &str> {
+    let last_failures = output
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| *l == "failures:")
+        .map(|(i, _)| i)
+        .last();
     let mut skipping = false;
-    output.lines().filter(move |l| {
+    output.lines().enumerate().filter_map(move |(i, l)| {
         if l.starts_with("---- ") && l.ends_with(" stdout ----") {
             skipping = true;
-            return false;
+            return None;
         }
-        if *l == "failures:" {
+        if skipping && Some(i) == last_failures {
             skipping = false;
         }
-        !skipping
+        if skipping {
+            None
+        } else {
+            Some(l)
+        }
     })
 }
+
 
 fn first_error(output: &str) -> String {
     output
