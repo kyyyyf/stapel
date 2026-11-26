@@ -110,6 +110,12 @@ if in_src "this does not compile"; then
 fi
 
 if [ "$1" = --workspace ]; then
+    # A `Cargo.lock` with the text `fake: stale lock` is out of date for `--locked` (STP-45).
+    if grep -qF -- "fake: stale lock" Cargo.lock 2>/dev/null; then
+        echo "error: the lock file needs to be updated but --locked was passed to prevent this" >&2
+        echo "because --locked was passed" >&2
+        exit 101
+    fi
     # The whole workspace: every test file; one that does not compile stops the run.
     for file in crates/*/tests/*.rs; do
         [ -f "$file" ] || continue

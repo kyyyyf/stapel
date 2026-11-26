@@ -740,3 +740,74 @@ fn suite_build_and_run() {
     let times = &records[0]["times"];
     assert!(times.get("suite_run").is_none(), "{}", records[0]);
 }
+
+// AC-14: a build that fails judges the suite by its output: no run starts, the counts are 0 and
+// there is no run time. The outcomes are `fail: … the workspace does not compile`,
+// `unverified: Cargo.lock is out of date` and `unverified: build-input-outside: …`.
+#[test]
+fn failed_build_judges_the_suite() {
+    // A workspace that does not compile.
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let log = scripts.path().join("log");
+    write(
+        dir,
+        "crates/tiny/src/lib.rs",
+        "pub fn one() {}\npub fn two() {}\n// this does not compile\n",
+    );
+    commit(dir, "ABC-1: a broken library");
+    configure(dir, &recording_fake(scripts.path(), &log), "");
+    std::fs::write(&log, "").unwrap();
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 1, "{out}{err}");
+    let logged = std::fs::read_to_string(&log).unwrap();
+    let runs: Vec<&str> = logged
+        .lines()
+        .filter(|l| l.contains("--workspace"))
+        .collect();
+    assert_eq!(runs.len(), 1, "{logged}");
+    assert!(runs[0].contains("--no-run"), "{logged}");
+    assert!(
+        out.contains("suite: fail: 0 passed, 0 failed, 0 ignored; the workspace does not compile"),
+        "{out}"
+    );
+    let records = check_records(dir);
+    assert!(
+        records[0]["times"].get("suite_run").is_none(),
+        "{}",
+        records[0]
+    );
+
+    // A stale lock file.
+    let repo = repo_with_a_step();
+    let dir = repo.path();
+    let scripts = tempfile::tempdir().unwrap();
+    let log = scripts.path().join("log");
+    write(
+        dir,
+        "Cargo.lock",
+        "# fake: stale lock\nversion = 3\n\n[[package]]\nname = \"tiny\"\nversion = \"0.1.0\"\n",
+    );
+    commit(dir, "ABC-1: a stale lock file");
+    configure(dir, &recording_fake(scripts.path(), &log), "");
+    std::fs::write(&log, "").unwrap();
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 1, "{out}{err}");
+    let logged = std::fs::read_to_string(&log).unwrap();
+    let runs: Vec<&str> = logged
+        .lines()
+        .filter(|l| l.contains("--workspace"))
+        .collect();
+    assert_eq!(runs.len(), 1, "{logged}");
+    assert!(
+        out.contains("suite: unverified: Cargo.lock is out of date"),
+        "{out}"
+    );
+    let records = check_records(dir);
+    assert!(
+        records[0]["times"].get("suite_run").is_none(),
+        "{}",
+        records[0]
+    );
+}
