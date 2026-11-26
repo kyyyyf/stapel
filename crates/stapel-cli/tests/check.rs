@@ -2220,6 +2220,8 @@ fn without_cargo_line(text: &str) -> String {
         .map(|l| {
             if l.starts_with("cargo: ") {
                 "cargo: <cargo>\n".to_string()
+            } else if l.starts_with("log: ") {
+                "log: <log>\n".to_string()
             } else {
                 format!("{l}\n")
             }

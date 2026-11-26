@@ -273,3 +273,162 @@ fn add_to_check(dir: &Path, lines: &str) {
     );
     std::fs::write(dir.join(".stapel/stapel.toml"), text).unwrap();
 }
+
+/// The `check` records of ABC-1 in `runs.jsonl`.
+fn check_records(dir: &Path) -> Vec<serde_json::Value> {
+    read(dir, ".stapel/tickets/ABC-1/runs.jsonl")
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["kind"] == "check")
+        .collect()
+}
+
+/// `stapel check ABC-1 --level <level>` in `dir`: exit code, standard output, standard error.
+fn run_check(dir: &Path, level: &str) -> (i32, String, String) {
+    let out = stapel(dir)
+        .args(["check", "ABC-1", "--level", level])
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// A repository with a step whose `[check] cargo` is the fake cargo; the scripts folder lives as
+/// long as the returned value.
+fn repo_with_fake_cargo() -> (tempfile::TempDir, tempfile::TempDir) {
+    let repo = repo_with_a_step();
+    let scripts = tempfile::tempdir().unwrap();
+    let fake = common::fake_cargo(scripts.path());
+    configure(repo.path(), &fake, "");
+    (repo, scripts)
+}
+
+// AC-1: the log is made at the first cargo run, its path is printed before the first step line,
+// the record holds it, and each run has its header and its output; no cargo run, no log.
+#[test]
+fn log_holds_every_run() {
+    let (repo, _scripts) = repo_with_fake_cargo();
+    let dir = repo.path();
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 0, "{out}{err}");
+
+    let lines: Vec<&str> = out.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("log: "))
+        .unwrap_or_else(|| panic!("no log line: {out}"));
+    let first_step = lines
+        .iter()
+        .position(|l| l.starts_with("step 1"))
+        .unwrap_or_else(|| panic!("no step line: {out}"));
+    assert!(at < first_step, "{out}");
+    let path = lines[at].strip_prefix("log: ").unwrap();
+
+    let records = check_records(dir);
+    assert_eq!(records.len(), 1);
+    let id = records[0]["id"].as_str().unwrap();
+    assert!(id.starts_with("c-") && id.len() == 14, "{id}");
+    assert_eq!(records[0]["log"], path);
+    assert!(
+        path.ends_with(&format!("stapel/check-logs/ABC-1-{id}.log")),
+        "{path}"
+    );
+
+    let log = std::fs::read_to_string(path).unwrap();
+    let mut sections: Vec<(&str, String)> = Vec::new();
+    for line in log.lines() {
+        if let Some(head) = line.strip_prefix("== ") {
+            sections.push((head, String::new()));
+        } else if let Some((_, body)) = sections.last_mut() {
+            body.push_str(line);
+            body.push('\n');
+        } else {
+            panic!("text before the first header: {log}");
+        }
+    }
+    let stages: Vec<&str> = sections
+        .iter()
+        .map(|(h, _)| h.split(": ").next().unwrap())
+        .collect();
+    assert_eq!(
+        stages,
+        ["step 1 RED", "step 1 GREEN", "step 1 HEAD", "suite run"],
+        "{log}"
+    );
+    for (head, _) in &sections[..3] {
+        assert!(
+            head.contains(" test --locked -p tiny --test basic -- --exact needs_two"),
+            "{head}"
+        );
+    }
+    assert!(
+        sections[3].0.ends_with(" test --workspace --locked"),
+        "{}",
+        sections[3].0
+    );
+    assert!(sections[0].1.contains("test needs_two ... FAILED"), "{log}");
+    assert!(sections[1].1.contains("test needs_two ... ok"), "{log}");
+    assert!(sections[2].1.contains("test needs_two ... ok"), "{log}");
+    assert!(sections[3].1.contains("test result: ok."), "{log}");
+
+    // Level `steps` with every step cached: no cargo run, no log, no field.
+    let before = std::fs::read_dir(Path::new(path).parent().unwrap())
+        .unwrap()
+        .count();
+    let (code, out, err) = run_check(dir, "steps");
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("cached"), "{out}");
+    assert!(!out.lines().any(|l| l.starts_with("log: ")), "{out}");
+    let after = std::fs::read_dir(Path::new(path).parent().unwrap())
+        .unwrap()
+        .count();
+    assert_eq!(before, after);
+    let records = check_records(dir);
+    assert_eq!(records.len(), 2);
+    assert!(records[1].get("log").is_none(), "{}", records[1]);
+}
+
+// AC-3: a log that cannot be made gives one warning, no `log:` line and no `log` field; the check
+// runs and passes as without the fault.
+#[test]
+fn unwritable_log_folder() {
+    let no_log = |out: &str, err: &str, dir: &Path| {
+        assert_eq!(
+            err.matches("warning: no check log: ").count(),
+            1,
+            "{err}"
+        );
+        assert!(!out.lines().any(|l| l.starts_with("log: ")), "{out}");
+        assert!(out.contains("result: pass"), "{out}");
+        let records = check_records(dir);
+        assert_eq!(records.len(), 1);
+        assert!(records[0].get("log").is_none(), "{}", records[0]);
+    };
+
+    // A plain file in the place of the log folder.
+    let (repo, _scripts) = repo_with_fake_cargo();
+    let dir = repo.path();
+    write(dir, ".git/stapel/check-logs", "not a folder\n");
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 0, "{out}{err}");
+    no_log(&out, &err, dir);
+
+    // A read-only folder: the same warning (not promised further); skipped where the mode
+    // does not stop the writer.
+    use std::os::unix::fs::PermissionsExt;
+    let (repo, _scripts) = repo_with_fake_cargo();
+    let dir = repo.path();
+    let folder = dir.join(".git/stapel/check-logs");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::write(folder.join("probe"), "").is_ok() {
+        return;
+    }
+    let (code, out, err) = run_check(dir, "head");
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(code, 0, "{out}{err}");
+    no_log(&out, &err, dir);
+}
