@@ -133,6 +133,10 @@ fn strip(value: &mut Value) {
         Value::Object(map) => {
             map.remove("id");
             map.remove("at");
+            // The check log path and the measured seconds differ between two runs (STP-45).
+            map.remove("log");
+            map.remove("times");
+            map.remove("slot_wait");
             map.values_mut().for_each(strip);
         }
         Value::Array(items) => items.iter_mut().for_each(strip),
