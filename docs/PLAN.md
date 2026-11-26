@@ -199,7 +199,8 @@ that Zed, VS Code and every editor that speaks the protocol get the same.
   minutes names the stage and the running test file; when the time limit runs out the check names the
   stage, the running test file and the last 20 lines of cargo output; the full output of a run is kept in
   a file outside git whose path the check prints. Later in the same item: the five slowest test files of
-  the suite, and the suite time against the last pass.
+  the suite, and the suite time against the last pass. Widened (ledger 2026-11-26): every cargo run of
+  the check takes its jobs and its test threads from `[check]` keys; this repository sets 4 and 4.
 - 5.2b the guards folder checks after STP-43 (ledger 2026-11-25; taken after 5.2 and before 5.3):
   - 5.2b-1 the work folders that `[guards] dir` must not name include `scripts`, `tools`, `pkg`, `cmd`,
     `internal` and `include`, because a guards folder named so loads and then denies builder writes
