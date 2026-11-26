@@ -486,3 +486,50 @@ fn keeps_ten_logs_per_ticket() {
     assert!(present("notes.txt"));
     assert!(!err.contains("old check log not removed"), "{err}");
 }
+
+// AC-4: the copy time and the slot wait are printed, in this order, before the `ticket:` line, and
+// recorded; an outer holder's mark makes the wait 0.
+#[test]
+fn copy_and_slot_times() {
+    let seconds = |line: &str, prefix: &str, suffix: &str| -> u64 {
+        line.strip_prefix(prefix)
+            .and_then(|r| r.strip_suffix(suffix))
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| panic!("not `{prefix}<n>{suffix}`: {line}"))
+    };
+    let (repo, _scripts) = repo_with_fake_cargo();
+    let dir = repo.path();
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 0, "{out}{err}");
+    let lines: Vec<&str> = out.lines().collect();
+    let at = |prefix: &str| {
+        lines
+            .iter()
+            .position(|l| l.starts_with(prefix))
+            .unwrap_or_else(|| panic!("no `{prefix}` line: {out}"))
+    };
+    let (copy, slot, ticket) = (at("copy: "), at("cargo slot: "), at("ticket: "));
+    assert!(copy < slot && slot < ticket, "{out}");
+    let copy_secs = seconds(lines[copy], "copy: ", " s");
+    let wait = seconds(lines[slot], "cargo slot: waited ", " s");
+    let records = check_records(dir);
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0]["times"]["copy"].as_u64(), Some(copy_secs));
+    assert_eq!(records[0]["slot_wait"].as_u64(), Some(wait));
+
+    // The held mark of an outer `stapel cargo`: no wait.
+    let out = stapel(dir)
+        .args(["check", "ABC-1", "--level", "head"])
+        .env("STAPEL_CARGO_LOCK_HELD", "1")
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.lines().any(|l| l == "cargo slot: waited 0 s"),
+        "{text}"
+    );
+    let records = check_records(dir);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[1]["slot_wait"].as_u64(), Some(0));
+}

@@ -2222,6 +2222,10 @@ fn without_cargo_line(text: &str) -> String {
                 "cargo: <cargo>\n".to_string()
             } else if l.starts_with("log: ") {
                 "log: <log>\n".to_string()
+            } else if l.starts_with("copy: ") {
+                "copy: <n> s\n".to_string()
+            } else if l.starts_with("cargo slot: waited ") {
+                "cargo slot: waited <n> s\n".to_string()
             } else {
                 format!("{l}\n")
             }
@@ -4882,8 +4886,11 @@ fn closed_ticket_is_checked_at_its_last_commit() {
     let dir = repo.path();
     let (code, text) = check_with(dir, Cargo::Real);
     assert_eq!(code, 0, "{text}");
+    let first: Vec<&str> = text.lines().take(3).collect();
+    assert!(first[0].starts_with("copy: "), "{text}");
+    assert!(first[1].starts_with("cargo slot: waited "), "{text}");
     assert_eq!(
-        text.lines().next().unwrap(),
+        first[2],
         format!("ticket: ABC-1 at {} (closed)", &end[..7]),
         "{text}"
     );
@@ -4900,8 +4907,11 @@ fn closed_ticket_is_checked_at_its_last_commit() {
     let dir = repo.path();
     let (code, text) = check_with(dir, Cargo::Real);
     assert_eq!(code, 1, "{text}");
+    let first: Vec<&str> = text.lines().take(3).collect();
+    assert!(first[0].starts_with("copy: "), "{text}");
+    assert!(first[1].starts_with("cargo slot: waited "), "{text}");
     assert_eq!(
-        text.lines().next().unwrap(),
+        first[2],
         format!("ticket: ABC-1 at {}", short_head(dir)),
         "{text}"
     );

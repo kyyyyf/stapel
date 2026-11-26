@@ -1,3 +1,5 @@
+copy: <n> s
+cargo slot: waited <n> s
 ticket: ABC-1 at <sha>
 cargo: <cargo>
 level: head
