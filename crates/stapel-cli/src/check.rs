@@ -2353,24 +2353,38 @@ impl Runner<'_> {
         if built.timed_out {
             return unverified(self.limit_reason());
         }
-        let left = match self.left() {
-            Ok(l) => l,
-            Err(e) => return unverified(e),
+        // A build that fails is judged by its own output and no run starts (STP-45 AC-14): the
+        // suite gets `fail: … the workspace does not compile` or `unverified: Cargo.lock is out
+        // of date`; a build input above the copy was found above.
+        let build_failed = built.exit != Some(0)
+            || built.output.contains("because --locked was passed")
+            || built
+                .output
+                .lines()
+                .any(|l| l.starts_with("error: could not compile"));
+        let run = if build_failed {
+            built
+        } else {
+            let left = match self.left() {
+                Ok(l) => l,
+                Err(e) => return unverified(e),
+            };
+            let started = std::time::Instant::now();
+            let ran = run_cargo(self.cargo, &self.wt.path, &args, &self.target, left);
+            self.suite_times.borrow_mut().1 = Some(started.elapsed());
+            let run = match ran {
+                Ok(r) => r,
+                Err(e) => return unverified(e),
+            };
+            self.log.write_run("suite run", self.cargo, &args, &run);
+            if let Some(why) = self.found_outside() {
+                return unverified(why);
+            }
+            if run.timed_out {
+                return unverified(self.limit_reason());
+            }
+            run
         };
-        let started = std::time::Instant::now();
-        let ran = run_cargo(self.cargo, &self.wt.path, &args, &self.target, left);
-        self.suite_times.borrow_mut().1 = Some(started.elapsed());
-        let run = match ran {
-            Ok(r) => r,
-            Err(e) => return unverified(e),
-        };
-        self.log.write_run("suite run", self.cargo, &args, &run);
-        if let Some(why) = self.found_outside() {
-            return unverified(why);
-        }
-        if run.timed_out {
-            return unverified(self.limit_reason());
-        }
         if run.output.contains("because --locked was passed") {
             return unverified("Cargo.lock is out of date".into());
         }
