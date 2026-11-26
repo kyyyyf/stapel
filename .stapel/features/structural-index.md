@@ -69,6 +69,7 @@ R17: Each grammar update is checked before its release; shown by a test per lang
 
 ## Decisions
 
+- 2026-11-26: Decision: the person chose that ticket 2 (refs) takes six deferred findings of STP-44 (SR2-11, DR2-3/XR2-2, SR1-15, XR2-4, DR2-4, CR2-3); DR1-6, XR2-5 and XR2-6 stay deferred.
 - 2026-11-25: Decision: the person chose the breakdown with an end-to-end Rust ticket first, then refs, then tests and impact, then the TypeScript adapter.
 - 2026-11-25: Decision: the person first chose grammars compiled into the binary and built-in query files; replaced the same day by the next line.
 - 2026-11-25: Decision: the person chose grammar libraries of our own, loaded when needed, built and released together with `stapel`; not `ast-grep`, not libraries the person builds.
@@ -86,6 +87,6 @@ R17: Each grammar update is checked before its release; shown by a test per lang
 
 - 1. The Rust index and `stapel q symbol`: covers R1, R2, R3, R4, R5, R11 (the `symbol` part), R12, R9 (the adapter entry form, with Rust as its one entry), R10 (the Rust part), R13, R14, R15, R16, R17 (the Rust part); after none; done when `stapel q symbol` finds a function of this repository that a test edits outside stapel, through the Rust grammar library.
 - 1a. If ticket 1 outgrows 12 Plan steps, the grammar loader (R13, R14, R15, R16) is split into a ticket of its own before ticket 1, and ticket 1 comes after it.
-- 2. The import graph and `stapel q refs`: covers R6, R11 (the `refs` part), R8 (the import graph that `impact` uses); after 1; done when `stapel q refs` lists the places of this repository that name a function of `stapel-core`.
+- 2. The import graph and `stapel q refs`: covers R6, R11 (the `refs` part), R8 (the import graph that `impact` uses); after 1; done when `stapel q refs` lists the places of this repository that name a function of `stapel-core`. It also takes six findings deferred at the close of ticket 1 (STP-44): SR2-11 (the grammar folder keyed by the grammar version too), DR2-3 and XR2-2 (a query that does not compile against a library gives the refused line), SR1-15 (a clear message when the write into the common `.git/stapel/` is blocked), XR2-4 (`grammar build` refuses a bare repository), DR2-4 (the `index:` line counts removed files after a stamp rebuild), CR2-3 (the query compiled once per run). If they push the ticket over 12 Plan steps, they become ticket 2a of their own, after 1 and before 2.
 - 3. `stapel q tests` and `stapel q impact`: covers R7, R8, R11 (the `tests` and `impact` parts); after 2; done when `stapel q impact` on a file of `stapel-core` lists the dependent files and their tests.
 - 4. The TypeScript adapter: covers R9 (the proof), R10 (the TypeScript part), R17 (the TypeScript part); after 3; done when the four queries answer on a TypeScript fixture project with a diff of only the grammar library, the query file and the adapter entry.
