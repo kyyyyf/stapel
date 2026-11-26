@@ -648,6 +648,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         log: CheckLog::new(&dir, &ticket.key, &check_id),
         times: std::cell::RefCell::new(BTreeMap::new()),
         suite_times: std::cell::RefCell::new((None, None)),
+        slowest: std::cell::RefCell::new(Vec::new()),
     };
     if !junit {
         say!("copy: {copy_secs} s");
@@ -832,6 +833,11 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         };
         say!("failing: {}{more}", suite.failing.join(", "));
     }
+    let slowest: Vec<(String, String)> = runner.slowest.borrow().clone();
+    if !slowest.is_empty() {
+        let parts: Vec<String> = slowest.iter().map(|(t, x)| format!("{t} {x} s")).collect();
+        say!("slowest: {}", parts.join(", "));
+    }
     // The project commands run after the suite, at `head` and `full` (STP-37 AC-2, AC-4, AC-5).
     let project_commands: &[String] = check.project.as_deref().unwrap_or(&[]);
     let mut project_json: Vec<serde_json::Value> = Vec::new();
@@ -898,6 +904,16 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         }
         if let Some(d) = suite_run {
             record["times"]["suite_run"] = serde_json::json!(d.as_secs());
+        }
+        if !slowest.is_empty() {
+            let list: Vec<serde_json::Value> = slowest
+                .iter()
+                .filter_map(|(t, x)| {
+                    let secs: f64 = x.parse().ok()?;
+                    Some(serde_json::json!({"target": t, "secs": secs}))
+                })
+                .collect();
+            record["slowest"] = serde_json::json!(list);
         }
     }
     // The fields that a later check reads (STP-35 AC-6).
@@ -999,7 +1015,72 @@ const MAX_FAILING: usize = 20;
 /// `stdout` that starts with `running <n> tests` belongs to the k-th `Running` or `Doc-tests` line of
 /// `stderr`; a block without such a line gives a bare name.
 fn cargo_failing_names(stdout: &str, stderr: &str) -> Vec<String> {
-    let targets: Vec<String> = stderr
+    let targets = cargo_targets(stderr);
+    let mut names: Vec<String> = Vec::new();
+    let mut block: Option<usize> = None;
+    for line in stdout.lines() {
+        if line.starts_with("running ") && line.ends_with(" tests") || line == "running 1 test" {
+            block = Some(block.map_or(0, |b| b + 1));
+        } else if let Some(name) = line
+            .strip_prefix("test ")
+            .and_then(|r| r.strip_suffix(" ... FAILED"))
+        {
+            let full = match block.and_then(|b| targets.get(b)) {
+                Some(target) if !target.is_empty() => format!("{target} {name}"),
+                _ => name.to_string(),
+            };
+            if !names.contains(&full) {
+                names.push(full);
+            }
+        }
+    }
+    names
+}
+
+/// The five slowest targets of a cargo run (STP-45 AC-8): `(target, time as printed)`, largest
+/// first, equal ones in output order. A target time is the `finished in <x>s` of the `test result:`
+/// line of a block that ran one or more tests; a block without a target name or with a time that is
+/// not a number is left out.
+fn cargo_slowest(stdout: &str, stderr: &str) -> Vec<(String, String)> {
+    let targets = cargo_targets(stderr);
+    let mut found: Vec<(String, String, f64)> = Vec::new();
+    let mut block: Option<usize> = None;
+    let mut ran = false;
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("running ") {
+            block = Some(block.map_or(0, |b| b + 1));
+            let count = rest.split(' ').next().unwrap_or("");
+            ran = count.parse::<u64>().is_ok_and(|n| n > 0);
+        } else if line.starts_with("test result: ") && ran {
+            let Some((_, tail)) = line.split_once("finished in ") else {
+                continue;
+            };
+            let Some(text) = tail.trim_end().strip_suffix('s') else {
+                continue;
+            };
+            let Ok(secs) = text.parse::<f64>() else {
+                continue;
+            };
+            if !secs.is_finite() || secs < 0.0 {
+                continue;
+            }
+            match block.and_then(|b| targets.get(b)) {
+                Some(target) if !target.is_empty() => {
+                    found.push((target.clone(), text.to_string(), secs));
+                }
+                _ => {}
+            }
+        }
+    }
+    found.sort_by(|a, b| b.2.total_cmp(&a.2));
+    found.truncate(5);
+    found.into_iter().map(|(t, x, _)| (t, x)).collect()
+}
+
+/// The targets of a cargo run in output order, from the `Running` and `Doc-tests` lines of
+/// `stderr`; a `Running` line without a name gives an empty string.
+fn cargo_targets(stderr: &str) -> Vec<String> {
+    stderr
         .lines()
         .filter_map(|line| {
             let trimmed = line.trim_start();
@@ -1026,26 +1107,7 @@ fn cargo_failing_names(stdout: &str, stderr: &str) -> Vec<String> {
                     .map(|rest| format!("doc {}", rest.trim()))
             }
         })
-        .collect();
-    let mut names: Vec<String> = Vec::new();
-    let mut block: Option<usize> = None;
-    for line in stdout.lines() {
-        if line.starts_with("running ") && line.ends_with(" tests") || line == "running 1 test" {
-            block = Some(block.map_or(0, |b| b + 1));
-        } else if let Some(name) = line
-            .strip_prefix("test ")
-            .and_then(|r| r.strip_suffix(" ... FAILED"))
-        {
-            let full = match block.and_then(|b| targets.get(b)) {
-                Some(target) if !target.is_empty() => format!("{target} {name}"),
-                _ => name.to_string(),
-            };
-            if !names.contains(&full) {
-                names.push(full);
-            }
-        }
-    }
-    names
+        .collect()
 }
 
 /// At most this many steps go into a record, and this many bytes of a label.
@@ -1373,6 +1435,8 @@ struct Runner<'a> {
     /// The time of the suite build and of the suite run (STP-45 AC-6); `None` for a run that did not
     /// run.
     suite_times: std::cell::RefCell<(Option<Duration>, Option<Duration>)>,
+    /// The slowest targets of the suite run, `(target, time as printed)` (STP-45 AC-8).
+    slowest: std::cell::RefCell<Vec<(String, String)>>,
 }
 
 /// The `times:` line of a step and its record object, `None` when the step ran no cargo.
@@ -2434,6 +2498,7 @@ impl Runner<'_> {
         } else {
             ("fail", detail)
         };
+        *self.slowest.borrow_mut() = cargo_slowest(&run.stdout, &run.stderr);
         let mut failing = cargo_failing_names(&run.stdout, &run.stderr);
         let failing_more = failing.len().saturating_sub(MAX_FAILING);
         failing.truncate(MAX_FAILING);
