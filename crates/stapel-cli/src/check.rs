@@ -1180,9 +1180,10 @@ fn names_of(outcome: &str, reason: &str) -> Vec<String> {
 }
 
 /// The log of a check: the full output of every cargo run (STP-45 AC-1, AC-3).
-/// The removal of old logs, with the warning `warning: old check log not removed: <path>: <error>`,
-/// follows in the retention step (AC-2).
+/// The logs of the ticket beyond the newest 10 are removed when the log is made (AC-2), with the
+/// warning `warning: old check log not removed: <path>: <error>` for one that stays.
 struct CheckLog {
+    key: String,
     path: PathBuf,
     state: std::cell::RefCell<LogState>,
 }
@@ -1201,6 +1202,7 @@ impl CheckLog {
     fn new(dir: &Path, key: &str, id: &str) -> CheckLog {
         let folder = std::path::absolute(dir.join("check-logs")).unwrap_or(dir.join("check-logs"));
         CheckLog {
+            key: key.to_string(),
             path: folder.join(format!("{key}-{id}.log")),
             state: std::cell::RefCell::new(LogState::Fresh),
         }
@@ -1226,10 +1228,48 @@ impl CheckLog {
             Ok(file) => {
                 *state = LogState::Open(file);
                 say!("log: {}", self.path.display());
+                self.remove_old();
             }
             Err(e) => {
                 *state = LogState::Off;
                 warn!("warning: no check log: {e}");
+            }
+        }
+    }
+
+    /// Removes the logs of this ticket beyond the newest 10 (modification time, ties by name).
+    fn remove_old(&self) {
+        const KEEP: usize = 10;
+        let Some(folder) = self.path.parent() else {
+            return;
+        };
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return;
+        };
+        let prefix = format!("{}-c-", self.key);
+        let mut logs: Vec<(std::time::SystemTime, String)> = entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let id = name.strip_prefix(&prefix)?.strip_suffix(".log")?;
+                let hex = id.len() == 12
+                    && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+                if !hex {
+                    return None;
+                }
+                let time = e.metadata().and_then(|m| m.modified()).ok()?;
+                Some((time, name))
+            })
+            .collect();
+        logs.sort();
+        let excess = logs.len().saturating_sub(KEEP);
+        for (_, name) in logs.into_iter().take(excess) {
+            let path = folder.join(&name);
+            if path == self.path {
+                continue;
+            }
+            if let Err(e) = std::fs::remove_file(&path) {
+                warn!("warning: old check log not removed: {}: {e}", path.display());
             }
         }
     }
