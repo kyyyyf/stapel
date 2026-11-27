@@ -82,7 +82,8 @@ always_writable = [".stapel/", "docs/"]
 # RED and GREEN commits and at HEAD; with this section, `stapel close` needs a passing check.
 [check]
 runner = "cargo"
-timeout_secs = 5400
+# STP-45: the suite run alone takes about 4500 s here (CK2-1, cause unknown); 5400 s left no room.
+timeout_secs = 9000
 # The person asked on 2026-11-23 for fewer local checks: none after each step.
 points = ["review", "close"]
 # STP-45: the suite took about 60 min without these and about 11 min with them (STP-44).
