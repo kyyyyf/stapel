@@ -197,7 +197,7 @@ pub struct Check {
     /// The cargo runner (STP-45 AC-11): `--test-threads=<n>` for every run that runs tests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_threads: Option<i64>,
-    /// The cargo runner (STP-45 AC-3): seconds between the progress lines.
+    /// The cargo runner (STP-45 AC-9): seconds between the progress lines.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress_secs: Option<i64>,
     /// Project commands (STP-37 AC-1): shell commands run in the check copy after the suite.

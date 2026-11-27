@@ -13,7 +13,7 @@ use stapel_core::outcomes::{
     Analysis, MAX_NAMED, Mode, analyse_in, history_outcome, named, open_red, passing,
 };
 use stapel_core::runner::{
-    Parsed, TestState, cargo_version, parse_run, resolve_cargo, run_program,
+    Parsed, TestState, cargo_version, parse_run_streams, resolve_cargo, run_program,
     summary_counts,
 };
 use stapel_core::rust_tests::test_functions;
@@ -1395,7 +1395,13 @@ impl CheckLog {
     }
 
     /// Appends the header and the kept output of one cargo run.
-    fn write_run(&self, stage: &str, cargo: &Path, args: &[String], run: &stapel_core::runner::RunResult) {
+    fn write_run(
+        &self,
+        stage: &str,
+        cargo: &Path,
+        args: &[String],
+        run: &stapel_core::runner::RunResult,
+    ) {
         use std::io::Write;
         let mut state = self.state.borrow_mut();
         let LogState::Open(file) = &mut *state else {
@@ -1720,7 +1726,7 @@ impl Runner<'_> {
             self.log.begin();
             let started = std::time::Instant::now();
             let ran = self.cargo_run(stage, Some(&format!("{dir}/{file}")), &args, left);
-            let kind =["RED", "GREEN", "HEAD"]
+            let kind = ["RED", "GREEN", "HEAD"]
                 .into_iter()
                 .find(|k| stage.ends_with(&format!(" {k}")));
             if let Some(kind) = kind {
@@ -1735,7 +1741,7 @@ impl Runner<'_> {
                 self.report_limit(stage, Some(&format!("{dir}/{file}")), &run);
                 return Err(self.limit_reason());
             }
-            match parse_run(&run.output, &names, run.exit, &file, at_red) {
+            match parse_run_streams(&run.stdout, &run.stderr, &names, run.exit, &file, at_red) {
                 Parsed::Unverified(r) => return Err(format!("{r} (at {})", short(commit))),
                 Parsed::Counted(states) => {
                     for (name, state) in states {

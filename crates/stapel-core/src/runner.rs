@@ -113,10 +113,27 @@ pub fn parse_run(
     target: &str,
     at_red: bool,
 ) -> Parsed {
-    if output.contains("because --locked was passed") {
+    parse_run_streams(output, "", names, exit, target, at_red)
+}
+
+/// Like `parse_run`, with the two streams apart: libtest's own lines are looked for in the
+/// standard output alone, so a `failures:` line on the standard error moves nothing; the lock text
+/// counts on the standard error and in libtest's own lines, not in a captured output.
+pub fn parse_run_streams(
+    stdout: &str,
+    stderr: &str,
+    names: &[String],
+    exit: Option<i32>,
+    target: &str,
+    at_red: bool,
+) -> Parsed {
+    let locked = |l: &str| l.contains("because --locked was passed");
+    if stderr.lines().any(locked) || own_lines(stdout).any(locked) {
         return Parsed::Unverified("Cargo.lock is out of date".into());
     }
-    let running: Vec<usize> = own_lines(output).filter_map(running_count).collect();
+    let both = format!("{stdout}{stderr}");
+    let output = both.as_str();
+    let running: Vec<usize> = own_lines(stdout).filter_map(running_count).collect();
     if running.is_empty() {
         let compile: Vec<&str> = output
             .lines()
@@ -142,7 +159,7 @@ pub fn parse_run(
                 .collect(),
         );
     }
-    let summaries: Vec<(u64, u64, u64)> = own_lines(output).filter_map(summary_counts).collect();
+    let summaries: Vec<(u64, u64, u64)> = own_lines(stdout).filter_map(summary_counts).collect();
     if running.len() != 1 || summaries.len() != 1 {
         return Parsed::Unverified(format!(
             "the output has {} running lines and {} result summaries",
@@ -158,7 +175,7 @@ pub fn parse_run(
         ));
     }
     let mut states: BTreeMap<String, Vec<TestState>> = BTreeMap::new();
-    for (name, state) in own_lines(output).filter_map(result_line) {
+    for (name, state) in own_lines(stdout).filter_map(result_line) {
         if names.iter().any(|n| n == name) {
             states.entry(name.to_string()).or_default().push(state);
         }
