@@ -910,6 +910,28 @@ fn guard_reach_warning() {
     assert_eq!(snapshot(dir), before);
 }
 
+// STP-46 AC-5: a script that the second line of a guard command runs gives the reach warning.
+#[test]
+fn guard_reach_after_newline() {
+    let repo = repo_with_config(|t| {
+        format!(
+            "{t}\n[check]\nrunner = \"cargo\"\ntimeout_secs = 3600\n\n[guards]\ndir = \"guards\"\n\n\
+             [[guards.check]]\nname = \"cov\"\ncommand = \"cargo fmt --check\\nsh scripts/cov.sh\"\n"
+        )
+    });
+    let dir = repo.path();
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    std::fs::write(dir.join("scripts/cov.sh"), "exit 0\n").unwrap();
+    let warning = "warning: guard cov reads scripts/cov.sh outside guards; a guard's scripts and configs belong in guards";
+    let (stdout, stderr) = run_init(dir);
+    assert_eq!(stderr.matches(warning).count(), 1, "{stderr}");
+    assert!(stdout.contains("created: "), "{stdout}");
+    assert!(dir.join(SKILL).is_file());
+    for rel in AGENTS {
+        assert!(dir.join(rel).is_file(), "{rel}");
+    }
+}
+
 // STP-43 AC-5: the starter comment and the skill say that a guard's scripts and configs belong in dir.
 #[test]
 fn guard_reach_text() {

@@ -1472,3 +1472,106 @@ fn interpreter_only_at_command_start() {
     );
     assert_eq!(out.status.code(), Some(0), "{err}");
 }
+
+// STP-46 AC-3: a newline that is not a continuation starts a command, like `;`.
+#[test]
+fn newline_starts_a_command() {
+    let toml_guard = |name: &str, command: &str| {
+        let escaped = command
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r");
+        format!("[[guards.check]]\nname = \"{name}\"\ncommand = \"{escaped}\"\n")
+    };
+    let cases = [
+        ("sh", "cargo fmt --check\nsh scripts/cov.sh", "scripts/cov.sh"),
+        ("bare", "cargo fmt --check\nscripts/cov.sh", "scripts/cov.sh"),
+        ("node", "cargo fmt --check\nnode scripts/cov.js", "scripts/cov.js"),
+        ("empty", "cargo fmt --check\n\nsh scripts/cov.sh", "scripts/cov.sh"),
+        ("semi", "true;\nsh scripts/cov.sh", "scripts/cov.sh"),
+        ("crlf", "cargo fmt --check\r\nsh scripts/cov.sh", "scripts/cov.sh"),
+        ("subject", "cargo fmt --check\ngrep -w sh scripts/x.sh", ""),
+    ];
+    let guards: String = cases.iter().map(|(n, c, _)| toml_guard(n, c)).collect();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    for f in ["cov.sh", "cov.js", "x.sh"] {
+        write(dir, &format!("scripts/{f}"), "exit 0\n");
+    }
+    commit(dir, "ABC-1: guard files");
+
+    let out = stapel(dir)
+        .args(["check", "ABC-1", "--level", "head"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    let seen: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("warning: guard "))
+        .collect();
+    let expected: Vec<String> = cases
+        .iter()
+        .filter(|(_, _, w)| !w.is_empty())
+        .map(|(n, _, w)| {
+            format!(
+                "warning: guard {n} reads {w} outside guards; a guard's scripts and configs belong in guards"
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        expected.iter().map(String::as_str).collect::<Vec<_>>(),
+        "{err}"
+    );
+}
+
+// STP-46 AC-4: a newline after an unescaped `\` is a continuation and separates nothing.
+#[test]
+fn backslash_newline_continues() {
+    let toml_guard = |name: &str, command: &str| {
+        let escaped = command
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n");
+        format!("[[guards.check]]\nname = \"{name}\"\ncommand = \"{escaped}\"\n")
+    };
+    let cases = [
+        ("and", "cargo fmt && \\\nscripts/cov.sh", "scripts/cov.sh"),
+        ("interp", "sh \\\nscripts/cov.sh", "scripts/cov.sh"),
+        ("escaped", "echo a\\\\\nscripts/cov.sh", "scripts/cov.sh"),
+        ("plain", "cargo test \\\nscripts/cov.sh", ""),
+        ("config", "cargo clippy \\\n--config clippy.toml", "clippy.toml"),
+        ("end", "cargo fmt --check \\", ""),
+    ];
+    let guards: String = cases.iter().map(|(n, c, _)| toml_guard(n, c)).collect();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "scripts/cov.sh", "exit 0\n");
+    write(dir, "clippy.toml", "\n");
+    commit(dir, "ABC-1: guard files");
+
+    let out = stapel(dir)
+        .args(["check", "ABC-1", "--level", "head"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    let seen: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("warning: guard "))
+        .collect();
+    let expected: Vec<String> = cases
+        .iter()
+        .filter(|(_, _, w)| !w.is_empty())
+        .map(|(n, _, w)| {
+            format!(
+                "warning: guard {n} reads {w} outside guards; a guard's scripts and configs belong in guards"
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        expected.iter().map(String::as_str).collect::<Vec<_>>(),
+        "{err}"
+    );
+}
