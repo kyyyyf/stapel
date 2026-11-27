@@ -231,7 +231,7 @@ no test); the clock going back during a check (seconds saturate at 0; no test).
   returns the seconds of its runs with the states; `suite` runs the build then the run and returns both
   times, the target times and the time-out tail; the last pass is read from `runs.jsonl` before the new
   record is appended.
-- `config.rs`: `jobs`, `test_threads`, `progress_secs` as `Option<u64>` in `Check`, checked at load as
+- `config.rs`: `jobs`, `test_threads`, `progress_secs` as `Option<i64>` in `Check`, checked at load as
   `suite_exclude` is.
 - `.stapel/stapel.toml` of this repository: `jobs = 4`, `test_threads = 4`.
 
@@ -285,6 +285,13 @@ no test); the clock going back during a check (seconds saturate at 0; no test).
   formatting of CR2-2 and DR2-2 and the reference of CR2-6 go with step 15); deferred: XR2-6 (the suite
   reading of captured output) and CK2-1 (about 3800 s of the suite run pass between test binaries, cause
   unknown); no change: CR2-1 and DR2-1 (now stated in AC-15), CR2-3, CR2-5, CR2-7 (a non-goal).
+- 2026-11-27, agent (code review round 3): this repository's `[check] timeout_secs` is 9000 (commit
+  3b152bc), because the suite run inside the check takes about 4200 to 4500 s with `jobs = 4` and
+  `test_threads = 4` (CK2-1), not the 11 min of STP-44; check c-c89d908dc547 passed with it. The double
+  blank line after `own_lines` stays (XR3-2, CR3-4; rustfmt is not run on src here). `own_lines` reads
+  one libtest run; over the whole workspace output two failing test binaries would join into one skip,
+  which cannot happen while the suite runs without `--no-fail-fast` (XR3-4, DR3-1). Deferred: XR3-3 (no
+  test pins the skip in the `failing:` line), CR3-3 (no test of a heading without `failures:`), CR3-1.
 
 ## Proof
 
@@ -375,13 +382,14 @@ Findings:
 | spec-review | 2 | reviewer | 0 | 3 | 5 | 0 | no-change 1, patch 7 |
 | code-review | 1 | reviewer | 1 | 0 | 0 | 0 | patch 1 |
 | code-review | 2 | drift, external, reviewer | 0 | 5 | 11 | 0 | defer 2, no-change 5, patch 9 |
+| code-review | 3 | drift, external, reviewer | 0 | 1 | 10 | 0 | defer 5, no-change 4, patch 2 |
 
 Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| steps | pass | 90cac22 | 2026-11-26T22:10:15Z | pass 14 |
-| head | pass | 90cac22 | 2026-11-27T10:03:21Z | cached 14 |
+| steps | pass | 3b152bc | 2026-11-27T11:40:31Z | cached 14, pass 2 |
+| head | pass | 3b152bc | 2026-11-27T13:05:01Z | cached 16 |
 <!-- stapel:review:end -->
 
 ## Summary
