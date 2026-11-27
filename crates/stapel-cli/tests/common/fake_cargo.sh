@@ -7,6 +7,12 @@
 # Markers, as a comment line in the body of a test function:
 #   // fake: needs <text>   the test passes when a file under `crates/*/src` has <text>, else fails
 #   // fake: item <text>    the test file compiles when a file under `crates/*/src` has <text>
+# A line `// fake: sleeps <n>` before the tests makes a run of the file sleep <n> seconds first
+# (STP-45).
+# A line `// fake: noise <n>` before the tests makes a run of the file print <n> lines on each
+# stream before it sleeps: `out line <i>` and `err line <i>`, the 25th with an escape byte (STP-45).
+# Lines `// fake: capture <text>` before the tests are printed as the captured output of every failing
+# test, under its `---- <name> stdout ----` heading (STP-45).
 # A test with no marker passes. A file under `crates/*/src` with the text `this does not compile`
 # breaks the library: nothing compiles.
 
@@ -69,6 +75,33 @@ run_file() {
             echo "$name$TAB$(state "$name" "$kind" "$text")"
         fi
     done)
+    # A line `// fake: finished <x>` before the tests sets the time libtest prints (default 0.00);
+    # `// fake: finished none` leaves the `finished in` part out (STP-45).
+    fin=$(sed -n 's|^// fake: finished ||p' "$file" | head -1)
+    [ -z "$fin" ] && fin=0.00
+    if [ "$fin" = none ]; then
+        finished=""
+    else
+        finished="; finished in ${fin}s"
+    fi
+    noise=$(sed -n 's|^// fake: noise ||p' "$file" | head -1)
+    if [ -n "$noise" ]; then
+        i=1
+        while [ "$i" -le "$noise" ]; do
+            if [ "$i" = 25 ]; then
+                printf 'out line %s \033[31m red\n' "$i"
+                printf 'err line %s \033[31m red\n' "$i" >&2
+            else
+                echo "out line $i"
+                echo "err line $i" >&2
+            fi
+            i=$((i + 1))
+        done
+    fi
+    nap=$(sed -n 's|^// fake: sleeps ||p' "$file" | head -1)
+    if [ -n "$nap" ]; then
+        sleep "$nap"
+    fi
     total=0
     passed=0
     failed=0
@@ -90,16 +123,28 @@ run_file() {
     if [ "$failed" -gt 0 ]; then
         echo
         echo "failures:"
+        captured=$(sed -n 's|^// fake: capture ||p' "$file")
+        if [ -n "$captured" ]; then
+            printf '%s\n' "$selected" | while IFS=$TAB read -r name st; do
+                if [ "$st" = FAILED ]; then
+                    echo
+                    echo "---- $name stdout ----"
+                    printf '%s\n' "$captured"
+                fi
+            done
+            echo
+            echo "failures:"
+        fi
         printf '%s\n' "$selected" | while IFS=$TAB read -r name st; do
             [ "$st" = FAILED ] && echo "    $name"
         done
         echo
-        echo "test result: FAILED. $passed passed; $failed failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+        echo "test result: FAILED. $passed passed; $failed failed; 0 ignored; 0 measured; 0 filtered out$finished"
         echo
         return 1
     fi
     echo
-    echo "test result: ok. $passed passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    echo "test result: ok. $passed passed; 0 failed; 0 ignored; 0 measured; 0 filtered out$finished"
     echo
     return 0
 }
@@ -110,6 +155,12 @@ if in_src "this does not compile"; then
 fi
 
 if [ "$1" = --workspace ]; then
+    # A `Cargo.lock` with the text `fake: stale lock` is out of date for `--locked` (STP-45).
+    if grep -qF -- "fake: stale lock" Cargo.lock 2>/dev/null; then
+        echo "error: the lock file needs to be updated but --locked was passed to prevent this" >&2
+        echo "because --locked was passed" >&2
+        exit 101
+    fi
     # The whole workspace: every test file; one that does not compile stops the run.
     for file in crates/*/tests/*.rs; do
         [ -f "$file" ] || continue
@@ -117,6 +168,17 @@ if [ "$1" = --workspace ]; then
             name=$(basename "$file" .rs)
             echo "error: could not compile \`fake\` (test \"$name\") due to 1 previous error" >&2
             exit 101
+        fi
+    done
+    # `--no-run`: the build only. A file under `crates/*/src` with the text `fake: build sleeps`
+    # makes it sleep a minute first (STP-45).
+    for arg in "$@"; do
+        if [ "$arg" = --no-run ]; then
+            if in_src "fake: build sleeps"; then
+                sleep 60
+            fi
+            echo "    Finished \`test\` profile [unoptimized + debuginfo] target(s) in 0.00s" >&2
+            exit 0
         fi
     done
     # Like cargo, stop after the first test file with a failure.
@@ -141,6 +203,7 @@ while [ $# -gt 0 ]; do
         *) shift ;;
     esac
 done
+case "$1" in --test-threads=*) shift ;; esac
 [ "$1" = --exact ] && shift
 names=$(printf '%s\n' "$@")
 

@@ -219,6 +219,8 @@ struct Run {
     text: String,
     step_runs: usize,
     suite_runs: usize,
+    /// The `--no-run` builds that precede a suite run (STP-45 AC-6).
+    suite_builds: usize,
 }
 
 /// Runs `stapel check ABC-1` with the args (exit 0 expected).
@@ -238,7 +240,11 @@ fn run_level(dir: &Path, log: &Path, args: &[&str]) -> Run {
     let log = std::fs::read_to_string(log).unwrap();
     Run {
         step_runs: log.lines().filter(|l| l.contains("--exact")).count(),
-        suite_runs: log.lines().filter(|l| l.contains("--workspace")).count(),
+        suite_builds: log.lines().filter(|l| l.contains("--no-run")).count(),
+        suite_runs: log
+            .lines()
+            .filter(|l| l.contains("--workspace") && !l.contains("--no-run"))
+            .count(),
         text,
     }
 }
@@ -295,10 +301,12 @@ fn head_level() {
     let first = run_level(dir, &log, &["--level", "head"]);
     assert_eq!(first.step_runs, 3, "{}", first.text);
     assert_eq!(first.suite_runs, 1, "{}", first.text);
+    assert_eq!(first.suite_builds, 1, "{}", first.text);
 
     let second = run_level(dir, &log, &["--level", "head"]);
     assert_eq!(second.step_runs, 1, "{}", second.text);
     assert_eq!(second.suite_runs, 1, "{}", second.text);
+    assert_eq!(second.suite_builds, 1, "{}", second.text);
     assert!(second.text.contains("cached from"), "{}", second.text);
     assert!(!second.text.contains("skipped: level"), "{}", second.text);
     assert_eq!(line_after_cargo(&second.text), "level: head", "{}", second.text);
@@ -319,6 +327,7 @@ fn full_level() {
     let full = run_level(dir, &log, &["--level", "full"]);
     assert_eq!(full.step_runs, 3, "{}", full.text);
     assert_eq!(full.suite_runs, 1, "{}", full.text);
+    assert_eq!(full.suite_builds, 1, "{}", full.text);
     assert!(!full.text.contains("cached"), "{}", full.text);
     assert_eq!(line_after_cargo(&full.text), "level: full", "{}", full.text);
     let record = last_record(dir);
@@ -342,6 +351,7 @@ fn flag_wins_over_the_key() {
     let run = run_level(repo.path(), &log, &[]);
     assert_eq!(line_after_cargo(&run.text), "level: head", "{}", run.text);
     assert_eq!(run.suite_runs, 1, "{}", run.text);
+    assert_eq!(run.suite_builds, 1, "{}", run.text);
     assert_eq!(last_record(repo.path())["level"], "head");
 
     // Key `steps`, no flag.
@@ -349,12 +359,14 @@ fn flag_wins_over_the_key() {
     let run = run_level(repo.path(), &log, &[]);
     assert_eq!(line_after_cargo(&run.text), "level: steps", "{}", run.text);
     assert_eq!(run.suite_runs, 0, "{}", run.text);
+    assert_eq!(run.suite_builds, 0, "{}", run.text);
     assert_eq!(last_record(repo.path())["level"], "steps");
 
     // Key `steps`, flag `head`: the flag wins.
     let run = run_level(repo.path(), &log, &["--level", "head"]);
     assert_eq!(line_after_cargo(&run.text), "level: head", "{}", run.text);
     assert_eq!(run.suite_runs, 1, "{}", run.text);
+    assert_eq!(run.suite_builds, 1, "{}", run.text);
     assert_eq!(last_record(repo.path())["level"], "head");
 
     // Key `head`, flag `full`.
@@ -374,16 +386,24 @@ fn suite_exclude() {
 
     let head = run_level(dir, &log, &["--level", "head"]);
     let cargo_log = std::fs::read_to_string(&log).unwrap();
-    let suite_run = cargo_log.lines().find(|l| l.contains("--workspace")).unwrap();
+    let suite_run = cargo_log
+        .lines()
+        .find(|l| l.contains("--workspace") && !l.contains("--no-run"))
+        .unwrap();
+    assert_eq!(head.suite_builds, 1, "{}", head.text);
     assert!(
         suite_run.contains("--skip slow_one --skip tests::slow_two"),
         "{suite_run}"
     );
     let suite_line = head.text.lines().find(|l| l.starts_with("suite: ")).unwrap();
+    let (detail, end) = suite_line
+        .split_once("; run ")
+        .unwrap_or_else(|| panic!("no run end: {suite_line}"));
     assert!(
-        suite_line.ends_with("(left out: slow_one, tests::slow_two)"),
+        detail.ends_with("(left out: slow_one, tests::slow_two)"),
         "{suite_line}"
     );
+    assert!(end.contains(" s, last pass "), "{suite_line}");
     assert_eq!(
         last_record(dir)["suite_exclude"],
         serde_json::json!(["slow_one", "tests::slow_two"])

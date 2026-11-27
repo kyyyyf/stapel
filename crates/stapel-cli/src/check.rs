@@ -13,7 +13,7 @@ use stapel_core::outcomes::{
     Analysis, MAX_NAMED, Mode, analyse_in, history_outcome, named, open_red, passing,
 };
 use stapel_core::runner::{
-    Parsed, TestState, cargo_version, parse_run, resolve_cargo, run_cargo, run_program,
+    Parsed, TestState, cargo_version, parse_run_streams, resolve_cargo, run_program,
     summary_counts,
 };
 use stapel_core::rust_tests::test_functions;
@@ -553,10 +553,12 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         Ok(t) => t,
         Err(e) => return refuse(e),
     };
+    let copy_started = std::time::Instant::now();
     let wt = match Worktree::create(&root, &dir, &at, &tmp) {
         Ok(w) => w,
         Err(e) => return refuse(e),
     };
+    let copy_secs = copy_started.elapsed().as_secs();
     // Under junit no cargo is found or checked; the lock is taken as under cargo (AC-40).
     let cargo = if junit {
         PathBuf::new()
@@ -580,14 +582,20 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         }
     }
     // One cargo run at a time on the machine; the lock lives until the check ends (STP-27 AC-11).
+    let slot_started = std::time::Instant::now();
     let _cargo_lock = match crate::cargo::take("stapel check") {
         Ok(l) => l,
         Err(e) => return refuse(e),
     };
+    let slot_wait = slot_started.elapsed().as_secs();
+    // The start of the check for the progress lines (STP-45 AC-9).
+    let check_started = std::time::Instant::now();
     if _cargo_lock.is_some() {
         // SAFETY: the check is still single-threaded here; no cargo run or reader thread has started.
         unsafe { std::env::set_var(crate::cargo::HELD_MARK, std::process::id().to_string()) };
     }
+    // The id of the record is made at the start; the log is named after it (STP-45 AC-1).
+    let check_id = new_id("c");
     let target = dir.join("check-target");
     let timeout = Duration::from_secs(check.timeout_secs);
     // The limit bounds the whole check (STP-35 AC-3), not each program run.
@@ -637,7 +645,25 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         outside: std::cell::RefCell::new(blocked),
         junit: junit_run,
         prepared: std::cell::Cell::new(false),
+        jobs: check.jobs,
+        test_threads: check.test_threads,
+        log: CheckLog::new(&dir, &ticket.key, &check_id),
+        check_started,
+        progress_every: Duration::from_secs(
+            check
+                .progress_secs
+                .and_then(|n| u64::try_from(n).ok())
+                .unwrap_or(300),
+        ),
+        last_progress: std::cell::Cell::new(check_started),
+        times: std::cell::RefCell::new(BTreeMap::new()),
+        suite_times: std::cell::RefCell::new((None, None)),
+        slowest: std::cell::RefCell::new(Vec::new()),
     };
+    if !junit {
+        say!("copy: {copy_secs} s");
+        say!("cargo slot: waited {slot_wait} s");
+    }
     if end.is_some() {
         say!("ticket: {} at {} (closed)", ticket.key, short(&at));
     } else {
@@ -709,6 +735,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         } else {
             runner.outside.borrow().clone()
         };
+        runner.times.borrow_mut().clear();
         let (outcome, reason) = match history_outcome(a, blocked.as_deref()) {
             Some(o) => o,
             None => {
@@ -739,6 +766,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
             }
         };
         ok &= passing(&outcome);
+        let step_times = times_of(&runner.times.borrow());
         // For a cached step the reason is the id of the record that ran it.
         let from = (outcome == "cached").then(|| reason.clone());
         if steps_json.len() < MAX_STEPS {
@@ -756,9 +784,15 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
                 step_json["from"] = serde_json::json!(from);
                 step_json["reason"] = serde_json::json!("");
             }
+            if let Some((_, json)) = &step_times {
+                step_json["times"] = json.clone();
+            }
             steps_json.push(step_json);
         }
         say_step(a, &outcome, &reason);
+        if let Some((line, _)) = &step_times {
+            say!("{line}");
+        }
     }
     // The history commits of the range, before the suite line (STP-37 AC-13).
     let history = match build_inputs::history_commits(&root, &ticket.key, &at, bounds) {
@@ -786,7 +820,21 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         runner.suite(&excluded)
     };
     ok &= suite.outcome == "pass" || suite.outcome == "skipped";
-    say!("suite: {}: {}", suite.outcome, suite.detail);
+    let (suite_build, suite_run) = *runner.suite_times.borrow();
+    if let Some(d) = suite_build {
+        say!("suite build: {} s", d.as_secs());
+    }
+    let run_end = match suite_run {
+        Some(d) if suite.outcome == "pass" || suite.outcome == "fail" => {
+            let last = match last_pass_suite_run(&ticket.dir, &ticket.key) {
+                Some(m) => format!("{m} s"),
+                None => "none".to_string(),
+            };
+            format!("; run {} s, last pass {last}", d.as_secs())
+        }
+        _ => String::new(),
+    };
+    say!("suite: {}: {}{run_end}", suite.outcome, suite.detail);
     if !suite.failing.is_empty() {
         let more = if suite.failing_more > 0 {
             format!(" and {} more", suite.failing_more)
@@ -794,6 +842,11 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
             String::new()
         };
         say!("failing: {}{more}", suite.failing.join(", "));
+    }
+    let slowest: Vec<(String, String)> = runner.slowest.borrow().clone();
+    if !slowest.is_empty() {
+        let parts: Vec<String> = slowest.iter().map(|(t, x)| format!("{t} {x} s")).collect();
+        say!("slowest: {}", parts.join(", "));
     }
     // The project commands run after the suite, at `head` and `full` (STP-37 AC-2, AC-4, AC-5).
     let project_commands: &[String] = check.project.as_deref().unwrap_or(&[]);
@@ -844,7 +897,7 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
     let mut record = serde_json::json!({
         "v": 1,
         "kind": "check",
-        "id": new_id("c"),
+        "id": check_id,
         "at": now_rfc3339(),
         "ticket": ticket.key,
         "head": head,
@@ -854,8 +907,29 @@ pub fn run(key: Option<&str>, list: bool, history: bool, level: Option<&str>) ->
         record["runner"] = serde_json::json!("junit");
     } else {
         record["cargo"] = serde_json::json!(cargo_text);
+        record["times"] = serde_json::json!({"copy": copy_secs});
+        record["slot_wait"] = serde_json::json!(slot_wait);
+        if let Some(d) = suite_build {
+            record["times"]["suite_build"] = serde_json::json!(d.as_secs());
+        }
+        if let Some(d) = suite_run {
+            record["times"]["suite_run"] = serde_json::json!(d.as_secs());
+        }
+        if !slowest.is_empty() {
+            let list: Vec<serde_json::Value> = slowest
+                .iter()
+                .filter_map(|(t, x)| {
+                    let secs: f64 = x.parse().ok()?;
+                    Some(serde_json::json!({"target": t, "secs": secs}))
+                })
+                .collect();
+            record["slowest"] = serde_json::json!(list);
+        }
     }
     // The fields that a later check reads (STP-35 AC-6).
+    if let Some(path) = runner.log.made() {
+        record["log"] = serde_json::json!(path.display().to_string());
+    }
     record["level"] = serde_json::json!(level_now);
     record["lock"] = serde_json::json!(lock_now);
     record["toolchain"] = serde_json::json!(toolchain_now);
@@ -951,7 +1025,71 @@ const MAX_FAILING: usize = 20;
 /// `stdout` that starts with `running <n> tests` belongs to the k-th `Running` or `Doc-tests` line of
 /// `stderr`; a block without such a line gives a bare name.
 fn cargo_failing_names(stdout: &str, stderr: &str) -> Vec<String> {
-    let targets: Vec<String> = stderr
+    let targets = cargo_targets(stderr);
+    let mut names: Vec<String> = Vec::new();
+    let mut block: Option<usize> = None;
+    for line in stapel_core::runner::own_lines(stdout) {
+        if stapel_core::runner::running_count(line).is_some() {
+            block = Some(block.map_or(0, |b| b + 1));
+        } else if let Some(name) = line
+            .strip_prefix("test ")
+            .and_then(|r| r.strip_suffix(" ... FAILED"))
+        {
+            let full = match block.and_then(|b| targets.get(b)) {
+                Some(target) if !target.is_empty() => format!("{target} {name}"),
+                _ => name.to_string(),
+            };
+            if !names.contains(&full) {
+                names.push(full);
+            }
+        }
+    }
+    names
+}
+
+/// The five slowest targets of a cargo run (STP-45 AC-8): `(target, time as printed)`, largest
+/// first, equal ones in output order. A target time is the `finished in <x>s` of the `test result:`
+/// line of a block that ran one or more tests; a block without a target name or with a time that is
+/// not a number is left out.
+fn cargo_slowest(stdout: &str, stderr: &str) -> Vec<(String, String)> {
+    let targets = cargo_targets(stderr);
+    let mut found: Vec<(String, String, f64)> = Vec::new();
+    let mut block: Option<usize> = None;
+    let mut ran = false;
+    for line in stapel_core::runner::own_lines(stdout) {
+        if let Some(n) = stapel_core::runner::running_count(line) {
+            block = Some(block.map_or(0, |b| b + 1));
+            ran = n > 0;
+        } else if line.starts_with("test result: ") && ran {
+            let Some((_, tail)) = line.split_once("finished in ") else {
+                continue;
+            };
+            let Some(text) = tail.trim_end().strip_suffix('s') else {
+                continue;
+            };
+            let Ok(secs) = text.parse::<f64>() else {
+                continue;
+            };
+            if !secs.is_finite() || secs < 0.0 {
+                continue;
+            }
+            match block.and_then(|b| targets.get(b)) {
+                Some(target) if !target.is_empty() => {
+                    found.push((target.clone(), text.to_string(), secs));
+                }
+                _ => {}
+            }
+        }
+    }
+    found.sort_by(|a, b| b.2.total_cmp(&a.2));
+    found.truncate(5);
+    found.into_iter().map(|(t, x, _)| (t, x)).collect()
+}
+
+/// The targets of a cargo run in output order, from the `Running` and `Doc-tests` lines of
+/// `stderr`; a `Running` line without a name gives an empty string.
+fn cargo_targets(stderr: &str) -> Vec<String> {
+    stderr
         .lines()
         .filter_map(|line| {
             let trimmed = line.trim_start();
@@ -978,26 +1116,7 @@ fn cargo_failing_names(stdout: &str, stderr: &str) -> Vec<String> {
                     .map(|rest| format!("doc {}", rest.trim()))
             }
         })
-        .collect();
-    let mut names: Vec<String> = Vec::new();
-    let mut block: Option<usize> = None;
-    for line in stdout.lines() {
-        if line.starts_with("running ") && line.ends_with(" tests") || line == "running 1 test" {
-            block = Some(block.map_or(0, |b| b + 1));
-        } else if let Some(name) = line
-            .strip_prefix("test ")
-            .and_then(|r| r.strip_suffix(" ... FAILED"))
-        {
-            let full = match block.and_then(|b| targets.get(b)) {
-                Some(target) if !target.is_empty() => format!("{target} {name}"),
-                _ => name.to_string(),
-            };
-            if !names.contains(&full) {
-                names.push(full);
-            }
-        }
-    }
-    names
+        .collect()
 }
 
 /// At most this many steps go into a record, and this many bytes of a label.
@@ -1171,6 +1290,136 @@ fn names_of(outcome: &str, reason: &str) -> Vec<String> {
         .collect()
 }
 
+/// The log of a check: the full output of every cargo run (STP-45 AC-1, AC-3).
+/// The logs of the ticket beyond the newest 10 are removed when the log is made (AC-2), with the
+/// warning `warning: old check log not removed: <path>: <error>` for one that stays.
+struct CheckLog {
+    key: String,
+    path: PathBuf,
+    state: std::cell::RefCell<LogState>,
+}
+
+enum LogState {
+    /// No cargo run has started yet.
+    Fresh,
+    Open(std::fs::File),
+    /// The file was made but a write failed.
+    Broken,
+    /// The file could not be made.
+    Off,
+}
+
+impl CheckLog {
+    fn new(dir: &Path, key: &str, id: &str) -> CheckLog {
+        let folder = std::path::absolute(dir.join("check-logs")).unwrap_or(dir.join("check-logs"));
+        CheckLog {
+            key: key.to_string(),
+            path: folder.join(format!("{key}-{id}.log")),
+            state: std::cell::RefCell::new(LogState::Fresh),
+        }
+    }
+
+    /// Makes the file at the first cargo run and prints its path; later calls do nothing.
+    fn begin(&self) {
+        let mut state = self.state.borrow_mut();
+        if !matches!(*state, LogState::Fresh) {
+            return;
+        }
+        let made = self
+            .path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&self.path)
+            });
+        match made {
+            Ok(file) => {
+                *state = LogState::Open(file);
+                say!("log: {}", self.path.display());
+                self.remove_old();
+            }
+            Err(e) => {
+                *state = LogState::Off;
+                warn!("warning: no check log: {e}");
+            }
+        }
+    }
+
+    /// Removes the logs of this ticket beyond the newest 10 (modification time, ties by name).
+    fn remove_old(&self) {
+        const KEEP: usize = 10;
+        let Some(folder) = self.path.parent() else {
+            return;
+        };
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return;
+        };
+        let prefix = format!("{}-c-", self.key);
+        let mut logs: Vec<(std::time::SystemTime, String)> = entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let id = name.strip_prefix(&prefix)?.strip_suffix(".log")?;
+                let hex = id.len() == 12
+                    && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+                if !hex {
+                    return None;
+                }
+                let time = e.metadata().and_then(|m| m.modified()).ok()?;
+                Some((time, name))
+            })
+            .collect();
+        logs.sort();
+        let excess = logs.len().saturating_sub(KEEP);
+        for (_, name) in logs.into_iter().take(excess) {
+            let path = folder.join(&name);
+            if path == self.path {
+                continue;
+            }
+            if let Err(e) = std::fs::remove_file(&path) {
+                warn!("warning: old check log not removed: {}: {e}", path.display());
+            }
+        }
+    }
+
+    /// The path, when the log was made.
+    fn made(&self) -> Option<&Path> {
+        match *self.state.borrow() {
+            LogState::Open(_) | LogState::Broken => Some(&self.path),
+            _ => None,
+        }
+    }
+
+    /// Appends the header and the kept output of one cargo run.
+    fn write_run(
+        &self,
+        stage: &str,
+        cargo: &Path,
+        args: &[String],
+        run: &stapel_core::runner::RunResult,
+    ) {
+        use std::io::Write;
+        let mut state = self.state.borrow_mut();
+        let LogState::Open(file) = &mut *state else {
+            return;
+        };
+        let mut text = format!("== {stage}: {} {}\n", cargo.display(), args.join(" "));
+        for part in [&run.stdout, &run.stderr] {
+            text.push_str(part);
+            if !part.is_empty() && !part.ends_with('\n') {
+                text.push('\n');
+            }
+        }
+        if let Err(e) = file.write_all(text.as_bytes()) {
+            *state = LogState::Broken;
+            warn!("warning: check log write failed: {e}");
+        }
+    }
+}
+
 struct Runner<'a> {
     root: &'a Path,
     wt: &'a Worktree,
@@ -1190,6 +1439,55 @@ struct Runner<'a> {
     junit: Option<JunitRun<'a>>,
     /// Set when the check copy was cleaned and set to HEAD for the project commands.
     prepared: std::cell::Cell<bool>,
+    /// `[check] jobs` and `test_threads` (STP-45 AC-11).
+    jobs: Option<i64>,
+    test_threads: Option<i64>,
+    /// The log of the cargo runs (STP-45 AC-1).
+    log: CheckLog,
+    /// The start of the check, the seconds between progress lines and the instant of the last one
+    /// (STP-45 AC-9).
+    check_started: std::time::Instant,
+    progress_every: Duration,
+    last_progress: std::cell::Cell<std::time::Instant>,
+    /// The time of the cargo runs of the step that runs now, by commit kind `RED`, `GREEN`, `HEAD`
+    /// (STP-45 AC-5).
+    times: std::cell::RefCell<BTreeMap<&'static str, Duration>>,
+    /// The time of the suite build and of the suite run (STP-45 AC-6); `None` for a run that did not
+    /// run.
+    suite_times: std::cell::RefCell<(Option<Duration>, Option<Duration>)>,
+    /// The slowest targets of the suite run, `(target, time as printed)` (STP-45 AC-8).
+    slowest: std::cell::RefCell<Vec<(String, String)>>,
+}
+
+/// The `times:` line of a step and its record object, `None` when the step ran no cargo.
+fn times_of(times: &BTreeMap<&'static str, Duration>) -> Option<(String, serde_json::Value)> {
+    if times.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    let mut json = serde_json::Map::new();
+    for kind in ["RED", "GREEN", "HEAD"] {
+        if let Some(d) = times.get(kind) {
+            parts.push(format!("{kind} {} s", d.as_secs()));
+            json.insert(kind.to_lowercase(), serde_json::json!(d.as_secs()));
+        }
+    }
+    Some((format!("  times: {}", parts.join(", ")), json.into()))
+}
+
+/// The `times.suite_run` of the last passing check record of the ticket that has one (STP-45 AC-7);
+/// a malformed line is skipped.
+fn last_pass_suite_run(dir: &Path, ticket: &str) -> Option<u64> {
+    let text = std::fs::read_to_string(dir.join("runs.jsonl")).ok()?;
+    text.lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|r| {
+            r["kind"].as_str() == Some("check")
+                && r["ticket"].as_str() == Some(ticket)
+                && r["result"].as_str() == Some("pass")
+        })
+        .filter_map(|r| r["times"]["suite_run"].as_u64())
+        .last()
 }
 
 /// The id of the passing record that ran a step with this key, `None` when no record did (STP-35
@@ -1266,6 +1564,69 @@ impl Runner<'_> {
         }
     }
 
+    /// One cargo run with the progress watcher (STP-45 AC-9). `file` is the running file of a step
+    /// run; a suite run reads it from its standard error.
+    fn cargo_run(
+        &self,
+        stage: &str,
+        file: Option<&str>,
+        args: &[String],
+        left: Duration,
+    ) -> Result<stapel_core::runner::RunResult, String> {
+        let report = |stderr: &str| {
+            let running = match file {
+                Some(f) => f.to_string(),
+                None => {
+                    let whole = stderr.rfind('\n').map_or("", |at| &stderr[..at + 1]);
+                    cargo_targets(whole)
+                        .pop()
+                        .filter(|t| !t.is_empty())
+                        .unwrap_or_else(|| "-".into())
+                }
+            };
+            say!(
+                "progress: {stage}, {running}, {} s",
+                self.check_started.elapsed().as_secs()
+            );
+        };
+        let watch = stapel_core::runner::Watch {
+            every: self.progress_every,
+            last: &self.last_progress,
+            report: &report,
+        };
+        stapel_core::runner::run_cargo_watched(
+            self.cargo,
+            &self.wt.path,
+            args,
+            &self.target,
+            left,
+            &watch,
+        )
+    }
+
+    /// What a cargo run that the time limit stopped printed last (STP-45 AC-10): the stage, the
+    /// running file, then the last 20 lines of each kept stream.
+    fn report_limit(&self, stage: &str, file: Option<&str>, run: &stapel_core::runner::RunResult) {
+        let running = match file {
+            Some(f) => f.to_string(),
+            None => {
+                let whole = run.stderr.rfind('\n').map_or("", |at| &run.stderr[..at + 1]);
+                cargo_targets(whole)
+                    .pop()
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or_else(|| "-".into())
+            }
+        };
+        say!("time limit: {stage}, {running}");
+        for (mark, text) in [("out", &run.stdout), ("err", &run.stderr)] {
+            let lines: Vec<&str> = text.lines().collect();
+            for line in &lines[lines.len().saturating_sub(20)..] {
+                let shown: String = printable(line).chars().take(500).collect();
+                say!("  {mark} | {shown}");
+            }
+        }
+    }
+
     fn limit_reason(&self) -> String {
         format!(
             "the time limit of {} s for the check ran out",
@@ -1298,7 +1659,15 @@ impl Runner<'_> {
     }
 
     /// Runs `tests` at `commit`, one cargo run per test file.
-    fn at(&self, commit: &str, tests: &[TestId], at_red: bool, files: &[(String, String)]) -> At {
+    /// `stage` names the runs in the log (`step 1 RED`).
+    fn at(
+        &self,
+        stage: &str,
+        commit: &str,
+        tests: &[TestId],
+        at_red: bool,
+        files: &[(String, String)],
+    ) -> At {
         // After a build-input hit no further cargo run starts (AC-7).
         if let Some(why) = self.outside.borrow().clone() {
             return Err(why);
@@ -1338,22 +1707,40 @@ impl Runner<'_> {
         let mut out = BTreeMap::new();
         for ((dir, file), names) in groups {
             let package = self.package(commit, &dir)?;
-            let mut args: Vec<String> = [
-                "test", "--locked", "-p", &package, "--test", &file, "--", "--exact",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+            let mut args: Vec<String> = ["test", "--locked"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            if let Some(j) = self.jobs {
+                args.push("-j".into());
+                args.push(j.to_string());
+            }
+            args.extend(["-p", &package, "--test", &file, "--"].map(String::from));
+            if let Some(t) = self.test_threads {
+                args.push(format!("--test-threads={t}"));
+            }
+            args.push("--exact".into());
             args.extend(names.iter().cloned());
             let left = self.left()?;
-            let run = run_cargo(self.cargo, &self.wt.path, &args, &self.target, left)?;
+            self.log.begin();
+            let started = std::time::Instant::now();
+            let ran = self.cargo_run(stage, Some(&format!("{dir}/{file}")), &args, left);
+            let kind = ["RED", "GREEN", "HEAD"]
+                .into_iter()
+                .find(|k| stage.ends_with(&format!(" {k}")));
+            if let Some(kind) = kind {
+                *self.times.borrow_mut().entry(kind).or_default() += started.elapsed();
+            }
+            let run = ran?;
+            self.log.write_run(stage, self.cargo, &args, &run);
             if let Some(why) = self.found_outside() {
                 return Err(why);
             }
             if run.timed_out {
+                self.report_limit(stage, Some(&format!("{dir}/{file}")), &run);
                 return Err(self.limit_reason());
             }
-            match parse_run(&run.output, &names, run.exit, &file, at_red) {
+            match parse_run_streams(&run.stdout, &run.stderr, &names, run.exit, &file, at_red) {
                 Parsed::Unverified(r) => return Err(format!("{r} (at {})", short(commit))),
                 Parsed::Counted(states) => {
                     for (name, state) in states {
@@ -1638,8 +2025,8 @@ impl Runner<'_> {
             (Ok(BTreeMap::new()), Ok(BTreeMap::new()))
         } else {
             (
-                self.at(&red.sha, tests, true, &a.red_files),
-                self.at(&green.sha, tests, false, &[]),
+                self.at(&format!("{} RED", a.label), &red.sha, tests, true, &a.red_files),
+                self.at(&format!("{} GREEN", a.label), &green.sha, tests, false, &[]),
             )
         };
         // HEAD: tests missing there are removed; the rest run.
@@ -1659,7 +2046,7 @@ impl Runner<'_> {
             .cloned()
             .collect();
         let missing: Vec<&TestId> = tests.iter().filter(|t| !present.contains(t)).collect();
-        let at_head = self.at(self.head, &present, false, &[]);
+        let at_head = self.at(&format!("{} HEAD", a.label), self.head, &present, false, &[]);
 
         for (state, when) in [(&at_red, "RED"), (&at_green, "GREEN"), (&at_head, "HEAD")] {
             match state {
@@ -2097,8 +2484,15 @@ impl Runner<'_> {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        if !skip.is_empty() {
+        if let Some(j) = self.jobs {
+            args.push("-j".into());
+            args.push(j.to_string());
+        }
+        if self.test_threads.is_some() || !skip.is_empty() {
             args.push("--".into());
+            if let Some(t) = self.test_threads {
+                args.push(format!("--test-threads={t}"));
+            }
             for entry in skip {
                 args.push("--skip".into());
                 args.push(entry.clone());
@@ -2108,16 +2502,64 @@ impl Runner<'_> {
             Ok(l) => l,
             Err(e) => return unverified(e),
         };
-        let run = match run_cargo(self.cargo, &self.wt.path, &args, &self.target, left) {
+        // The build first (STP-45 AC-6); the run follows whatever the build gave, unless the limit
+        // ran out in it.
+        let mut build_args: Vec<String> = args
+            .iter()
+            .take_while(|a| a.as_str() != "--")
+            .cloned()
+            .collect();
+        build_args.push("--no-run".into());
+        self.log.begin();
+        let started = std::time::Instant::now();
+        let built = self.cargo_run("suite build", None, &build_args, left);
+        self.suite_times.borrow_mut().0 = Some(started.elapsed());
+        let built = match built {
             Ok(r) => r,
             Err(e) => return unverified(e),
         };
+        self.log
+            .write_run("suite build", self.cargo, &build_args, &built);
         if let Some(why) = self.found_outside() {
             return unverified(why);
         }
-        if run.timed_out {
+        if built.timed_out {
+            self.report_limit("suite build", None, &built);
             return unverified(self.limit_reason());
         }
+        // A build that fails is judged by its own output and no run starts (STP-45 AC-14): the
+        // suite gets `fail: … the workspace does not compile` or `unverified: Cargo.lock is out
+        // of date`; a build input above the copy was found above.
+        let build_failed = built.exit != Some(0)
+            || built.output.contains("because --locked was passed")
+            || built
+                .output
+                .lines()
+                .any(|l| l.starts_with("error: could not compile"));
+        let run = if build_failed {
+            built
+        } else {
+            let left = match self.left() {
+                Ok(l) => l,
+                Err(e) => return unverified(e),
+            };
+            let started = std::time::Instant::now();
+            let ran = self.cargo_run("suite run", None, &args, left);
+            self.suite_times.borrow_mut().1 = Some(started.elapsed());
+            let run = match ran {
+                Ok(r) => r,
+                Err(e) => return unverified(e),
+            };
+            self.log.write_run("suite run", self.cargo, &args, &run);
+            if let Some(why) = self.found_outside() {
+                return unverified(why);
+            }
+            if run.timed_out {
+                self.report_limit("suite run", None, &run);
+                return unverified(self.limit_reason());
+            }
+            run
+        };
         if run.output.contains("because --locked was passed") {
             return unverified("Cargo.lock is out of date".into());
         }
@@ -2142,6 +2584,7 @@ impl Runner<'_> {
         } else {
             ("fail", detail)
         };
+        *self.slowest.borrow_mut() = cargo_slowest(&run.stdout, &run.stderr);
         let mut failing = cargo_failing_names(&run.stdout, &run.stderr);
         let failing_more = failing.len().saturating_sub(MAX_FAILING);
         failing.truncate(MAX_FAILING);

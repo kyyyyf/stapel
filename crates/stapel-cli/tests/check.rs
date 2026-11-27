@@ -1353,6 +1353,108 @@ fn child_output_cannot_fake_a_result() {
     assert_eq!(outcome(&text, "step 1"), "unverified", "{text}");
 }
 
+#[test]
+fn parse_skips_captured_output() {
+    let out = "running 1 test\n\
+test t ... FAILED\n\
+\n\
+failures:\n\
+\n\
+---- t stdout ----\n\
+running 1 test\n\
+test inner_a ... ok\n\
+\n\
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\
+\n\
+running 1 test\n\
+test inner_b ... ok\n\
+\n\
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\
+\n\
+thread 't' panicked at src/lib.rs:1:1:\n\
+boom\n\
+\n\
+failures:\n\
+    t\n\
+\n\
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    let names = vec!["t".to_string()];
+    for at_red in [true, false] {
+        let parsed = stapel_core::runner::parse_run(out, &names, Some(101), "basic", at_red);
+        let want = std::collections::BTreeMap::from([(
+            "t".to_string(),
+            stapel_core::runner::TestState::Failed,
+        )]);
+        assert_eq!(parsed, stapel_core::runner::Parsed::Counted(want));
+    }
+}
+
+#[test]
+fn captured_output_holds_a_failures_line() {
+    let out = "running 1 test\n\
+test t ... FAILED\n\
+\n\
+failures:\n\
+\n\
+---- t stdout ----\n\
+== step 1 RED: cargo test -p tiny --test basic -- --exact inner\n\
+running 1 test\n\
+test inner ... FAILED\n\
+\n\
+failures:\n\
+    inner\n\
+\n\
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\
+\n\
+thread 't' panicked at src/lib.rs:1:1:\n\
+boom\n\
+\n\
+failures:\n\
+    t\n\
+\n\
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    let names = vec!["t".to_string()];
+    for at_red in [true, false] {
+        let parsed = stapel_core::runner::parse_run(out, &names, Some(101), "basic", at_red);
+        let want = std::collections::BTreeMap::from([(
+            "t".to_string(),
+            stapel_core::runner::TestState::Failed,
+        )]);
+        assert_eq!(parsed, stapel_core::runner::Parsed::Counted(want));
+    }
+}
+
+#[test]
+fn captured_output_and_stderr_do_not_judge() {
+    let stdout = "running 1 test\n\
+test t ... FAILED\n\
+\n\
+failures:\n\
+\n\
+---- t stdout ----\n\
+error: the lock file needs to be updated but --locked was passed, because --locked was passed\n\
+thread 't' panicked at src/lib.rs:1:1:\n\
+boom\n\
+\n\
+failures:\n\
+    t\n\
+\n\
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    let stderr = "note: run with `RUST_BACKTRACE=1`\n\
+failures:\n";
+    let names = vec!["t".to_string()];
+    for at_red in [true, false] {
+        let parsed = stapel_core::runner::parse_run_streams(
+            stdout, stderr, &names, Some(101), "basic", at_red,
+        );
+        let want = std::collections::BTreeMap::from([(
+            "t".to_string(),
+            stapel_core::runner::TestState::Failed,
+        )]);
+        assert_eq!(parsed, stapel_core::runner::Parsed::Counted(want));
+    }
+}
+
 proptest::proptest! {
     #[test]
     fn output_parser_never_panics(out in "\\PC{0,400}", n in 0usize..4, exit in proptest::option::of(-2i32..300)) {
@@ -2220,6 +2322,34 @@ fn without_cargo_line(text: &str) -> String {
         .map(|l| {
             if l.starts_with("cargo: ") {
                 "cargo: <cargo>\n".to_string()
+            } else if l.starts_with("log: ") {
+                "log: <log>\n".to_string()
+            } else if l.starts_with("copy: ") {
+                "copy: <n> s\n".to_string()
+            } else if l.starts_with("cargo slot: waited ") {
+                "cargo slot: waited <n> s\n".to_string()
+            } else if l.starts_with("suite build: ") {
+                "suite build: <n> s\n".to_string()
+            } else if l.starts_with("suite: ") && l.contains("; run ") {
+                let (head, end) = l.split_once("; run ").unwrap();
+                let (secs, rest) = end.split_once(" s, ").unwrap_or((end, ""));
+                assert!(
+                    !secs.is_empty() && secs.chars().all(|c| c.is_ascii_digit()),
+                    "{l}"
+                );
+                format!("{head}; run <n> s, {rest}\n")
+            } else if l.starts_with("  times: ") {
+                let words: Vec<String> = l
+                    .split(' ')
+                    .map(|w| {
+                        if w.chars().all(|c| c.is_ascii_digit()) && !w.is_empty() {
+                            "<n>".to_string()
+                        } else {
+                            w.to_string()
+                        }
+                    })
+                    .collect();
+                format!("{}\n", words.join(" "))
             } else {
                 format!("{l}\n")
             }
@@ -4880,8 +5010,11 @@ fn closed_ticket_is_checked_at_its_last_commit() {
     let dir = repo.path();
     let (code, text) = check_with(dir, Cargo::Real);
     assert_eq!(code, 0, "{text}");
+    let first: Vec<&str> = text.lines().take(3).collect();
+    assert!(first[0].starts_with("copy: "), "{text}");
+    assert!(first[1].starts_with("cargo slot: waited "), "{text}");
     assert_eq!(
-        text.lines().next().unwrap(),
+        first[2],
         format!("ticket: ABC-1 at {} (closed)", &end[..7]),
         "{text}"
     );
@@ -4898,8 +5031,11 @@ fn closed_ticket_is_checked_at_its_last_commit() {
     let dir = repo.path();
     let (code, text) = check_with(dir, Cargo::Real);
     assert_eq!(code, 1, "{text}");
+    let first: Vec<&str> = text.lines().take(3).collect();
+    assert!(first[0].starts_with("copy: "), "{text}");
+    assert!(first[1].starts_with("cargo slot: waited "), "{text}");
     assert_eq!(
-        text.lines().next().unwrap(),
+        first[2],
         format!("ticket: ABC-1 at {}", short_head(dir)),
         "{text}"
     );

@@ -1,0 +1,248 @@
+{
+  "schema_version": 1,
+  "key": "STP-45",
+  "title": "The observability of stapel check",
+  "base": "b5d9549f7e34061b4343c6eb814acd12b3c584ca",
+  "base_branch": "main",
+  "confirmations": [
+    {
+      "section": "description",
+      "by": "kyyyyf",
+      "at": "2026-11-26T06:35:47Z",
+      "hash": "sha256:bbf751fb0faff7f390397d2dc2160d151f3ddf9e9165c96704f71ddf8dcbedd0",
+      "normal_form": 1,
+      "depends_on": {},
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-11-26T06:35:47Z",
+      "hash": "sha256:0baf82a72c0496f8e1e87c9a56d696aedca2b74ee990ca7a86d2705852d2c471",
+      "normal_form": 1,
+      "depends_on": {},
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-11-26T06:35:47Z",
+      "hash": "sha256:874eae1a9c173145e055073aa3e685a59d01b3dab12d46c30a8f01c96d0a4a27",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:0baf82a72c0496f8e1e87c9a56d696aedca2b74ee990ca7a86d2705852d2c471"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-11-26T06:35:47Z",
+      "hash": "sha256:62180874ff024200980ef79994f17363303d53c41e4cdc2d462a731cdc3d5c8c",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:874eae1a9c173145e055073aa3e685a59d01b3dab12d46c30a8f01c96d0a4a27",
+        "spec": "sha256:0baf82a72c0496f8e1e87c9a56d696aedca2b74ee990ca7a86d2705852d2c471"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-11-26T06:35:47Z",
+      "hash": "sha256:34ea67a69c84f9bc744b3ce787863dda65707a558c2a2fdd81c4cf685711adf6",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:874eae1a9c173145e055073aa3e685a59d01b3dab12d46c30a8f01c96d0a4a27",
+        "spec": "sha256:0baf82a72c0496f8e1e87c9a56d696aedca2b74ee990ca7a86d2705852d2c471"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "description",
+      "by": "kyyyyf",
+      "at": "2026-11-26T11:12:14Z",
+      "hash": "sha256:2d0fd02028bd83a01e51ffd888b963e56ad6f4fd7962ca1b6d9f7f1b21d7e4aa",
+      "normal_form": 1,
+      "depends_on": {},
+      "text": "Source: `docs/PLAN.md`, phase 5, item 5.2c, widened by the ledger decision of 2026-11-26.\n\n### Frame\n\n**Problem.** Checks 3 and 4 of STP-44 ran out of the 5400 s limit, and the output did not say where the\ntime went: `stapel check` prints a line only after each step and after the suite, keeps no cargo output,\nand on a time-out says only that the limit ran out. Its suite runs `cargo test --workspace` with no `-j`\nand no `--test-threads`: about 60 min, against about 11 min with `-j 4 --test-threads=4` by hand.\n\n**Plan item:** 5.2c (the whole item, its later part and its widening included).\n\n**Risk tags:** `interface` (new output lines, new `[check]` keys, new fields of `runs.jsonl`), `data`\n(the log files and their removal).\n\n**Non-goals.** The junit runner (it keeps its output and records as now); times of the project commands\nand the guards; a change of the time limit or of the cargo slots; a live copy of cargo output on the\nscreen; a log of a check that `stapel` itself did not end (killed, crashed); the speed of the suite\nbeyond the two run settings.\n\n**Promise (closed list, cargo runner).**\n\n1. Stage times: the output and the record give the seconds of the copy, of the RED and the GREEN runs of\n   each step, of the suite build and of the suite run; a stage that did not run has no time.\n2. Slot wait: the seconds spent waiting for a cargo slot are printed on a line of their own and recorded\n   apart from the stage times, also when the wait is 0.\n3. Progress: while a check runs, a line every `[check] progress_secs` seconds (300 by default) names the\n   stage, the test file that runs (the step's file, or the file of the last `Running` line of the suite),\n   and the seconds since the check started.\n4. Time-out: when the limit runs out, the check names the stage, the running test file and the last 20\n   lines of each output stream of that cargo run, then ends as now (`unverified`, exit 1).\n5. Log: the full output of every cargo run of the check goes to one file\n   `<common folder>/stapel/check-logs/<KEY>-<check id>.log`, made at the first cargo run, whose path\n   the check prints then; a check\n   keeps the newest 10 logs of its ticket and removes older ones of that ticket only.\n6. Slowest files: after a suite run that ran tests, the output and the record name the five test files\n   with the longest run time (from libtest's `finished in` part), slowest first.\n7. Last pass: the suite line gives the suite time and the suite time of the newest passing record of the\n   ticket that has one.\n8. Run settings: `[check] jobs` and `[check] test_threads` (whole numbers from 1) give `-j <n>` and\n   `--test-threads=<n>` to every cargo test run of the check; absent keys keep the runs as now; this\n   repository sets 4 and 4.\n9. Captured output (CK1-1, widened on 2026-11-26): the reading of a step run counts only libtest's own\n   `running` and `test result:` lines, not those inside the captured output of a failing test.\n\nNot promised: times under a second (whole seconds, rounded down); a test file name that libtest does not\nprint; a log on a disk that is full or read-only (the check warns and goes on); times of records written\nbefore this ticket.\n\n**Prior art.** STP-4 and STP-6 (the runner and its time limit), STP-35 (the limit of the whole check and\nthe cache of steps), STP-42 (cargo slots), STP-44 (the time-outs that led to this item).\n\n**Size.** About 500 source and 700 test lines; about 12 Plan steps. Route: full, auto.\n\n### Decisions\n\nTyped lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Assumption, Open question.\n\n- 2026-11-26: Decision (scope, the human): the ticket takes the whole item 5.2c, its later part (the five\n  slowest test files, the suite time against the last pass) included. Rejected (recommended): the first\n  part only.\n- 2026-11-26: Decision (run settings, the human, recommended): item 5.2c is widened by a ledger decision:\n  `[check]` keys give the jobs and the test threads of every cargo run of the check; this repository sets\n  4 and 4. Rejected: a plan item of its own; no change.\n- 2026-11-26: Decision (logs, the human, recommended): the newest 10 logs of each ticket are kept.\n  Rejected: the newest one only; all logs.\n- 2026-11-26: Decision (suite build, agent): the suite runs as two cargo runs, a `--no-run` build and then\n  the run, so the build time and the run time are measured, not guessed from the output.\n- 2026-11-26: Decision (progress period, agent): the period is a `[check] progress_secs` key, 300 by\n  default, so that a test can set it to 1.\n- 2026-11-26: Assumption: libtest prints `finished in <s>s` in each `test result:` line, and cargo prints\n  a `Running <file>` line on standard error before each test binary; both hold for the toolchains in use.",
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-11-26T11:12:14Z",
+      "hash": "sha256:906aa2cda75361ad9f3a46fcc3ce00ff02c1a0efc97716504133df3fa6fb2275",
+      "normal_form": 1,
+      "depends_on": {},
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-11-26T11:12:14Z",
+      "hash": "sha256:eaf6c18dff6bc29c34efdbcf1d8e06d96788199ec8c6db596bb2071f33e396c2",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:906aa2cda75361ad9f3a46fcc3ce00ff02c1a0efc97716504133df3fa6fb2275"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-11-26T11:12:14Z",
+      "hash": "sha256:71d10654b21d4f4b6d82f562c8460dc6369c6d543f9b31f91ebc05509432cb26",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:eaf6c18dff6bc29c34efdbcf1d8e06d96788199ec8c6db596bb2071f33e396c2",
+        "spec": "sha256:906aa2cda75361ad9f3a46fcc3ce00ff02c1a0efc97716504133df3fa6fb2275"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-11-26T11:12:14Z",
+      "hash": "sha256:237d6095bf44bd9598af34978e14e2e98fcec7d4b7a7df1d89675958692abb38",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:eaf6c18dff6bc29c34efdbcf1d8e06d96788199ec8c6db596bb2071f33e396c2",
+        "spec": "sha256:906aa2cda75361ad9f3a46fcc3ce00ff02c1a0efc97716504133df3fa6fb2275"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-11-26T18:00:47Z",
+      "hash": "sha256:75015a1632edee00e58e426d8564a78d2e58d6cfa1da9557c0391753541cfc21",
+      "normal_form": 1,
+      "depends_on": {},
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-11-26T18:00:47Z",
+      "hash": "sha256:5a4d4a01268c48cd95290a670004f49ce1e67f23d0b3c71f749a9470a0855396",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:75015a1632edee00e58e426d8564a78d2e58d6cfa1da9557c0391753541cfc21"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-11-26T18:00:47Z",
+      "hash": "sha256:9902a058c7284b5b08614af54214fd31cc9c38fe120f3003ac97c518653bd2bd",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:5a4d4a01268c48cd95290a670004f49ce1e67f23d0b3c71f749a9470a0855396",
+        "spec": "sha256:75015a1632edee00e58e426d8564a78d2e58d6cfa1da9557c0391753541cfc21"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-11-26T18:00:47Z",
+      "hash": "sha256:057ddbb2c2b63a1fde8b5dfc3b0ae9eb8e1b6b2bb9c333915198307f61718714",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:5a4d4a01268c48cd95290a670004f49ce1e67f23d0b3c71f749a9470a0855396",
+        "spec": "sha256:75015a1632edee00e58e426d8564a78d2e58d6cfa1da9557c0391753541cfc21"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-11-27T10:14:38Z",
+      "hash": "sha256:8a479a81e189128e6ac89ed698a163178f12d01d46fd55de862b5697f10b0955",
+      "normal_form": 1,
+      "depends_on": {},
+      "text": "Terms:\n\n- **Check**: a run of `stapel check KEY` with the cargo runner, at any level; the suite criteria (AC-6\n  to AC-8, AC-14) apply where the suite runs (levels `head` and `full`).\n- **Common folder**: the folder that `git rev-parse --git-common-dir` prints, made absolute.\n- **Log folder**: `<common folder>/stapel/check-logs/`.\n- **Log**: the file `<log folder>/<KEY>-<id>.log`, where `<id>` is the `id` of the check's record in\n  `runs.jsonl` (`c-` and 12 lowercase hex digits); a **log of the ticket** is a file of the log folder\n  whose whole name has that form for KEY.\n- **Cargo run**: one run of the cargo program by the check, `--version` left out.\n- **Start**: the instant right after the check took its cargo slot (or found the held mark).\n- **Stage**: the part of the check a cargo run belongs to: `<label> RED`, `<label> GREEN`, `<label> HEAD`\n  for a step (`<label>` as the step line prints it, `step 2`), `suite build`, `suite run`.\n- **Running file**: for a step run, the test file of that run as `<dir>/<file>` (`tiny/basic`); for a\n  suite run, the target of the newest whole `Running` line of its standard error so far, named as the\n  `failing:` line names it (STP-41); `-` when there is none.\n- **Seconds**: whole seconds, rounded down, of the wall clock; a run cut by the time limit counts until\n  it was killed.\n- **Target time**: the number `<x>` of `finished in <x>s` in a `test result:` line of the suite run whose\n  block ran one or more tests, belonging to the target of its block (the k-th `running <n> tests` block of libtest's own lines, the\n  captured output of AC-15 skipped, to the k-th `Running` or `Doc-tests` line); a doc-test target is\n  `doc <crate>`.\n- **Tail line**: a line of output with each control character replaced as `printable` does it today\n  (STP-37) and cut to 500 characters.\n\n| № | Criterion | Test |\n|---|---|---|\n| AC-1 | WHEN the first cargo run of a check starts THE check makes its log and prints `log: <path>` before anything of that run; the record holds `log`; for each cargo run, the timed-out one included, the log gets `== <stage>: <cargo> <args>` and then the run's kept standard output and standard error. A check with no cargo run makes no log. | `check_times::log_holds_every_run` |\n| AC-2 | WHEN a check creates its log THE it removes the logs of its ticket beyond the newest 10 by modification time, ties by name (the new one counted), and leaves every other file of the log folder. | `check_times::keeps_ten_logs_per_ticket` |\n| AC-3 | IF the log cannot be made THEN the check prints `warning: no check log: <error>` on standard error, no `log:` line and no `log` field, and no later run tries again; IF a later write fails THEN it prints `warning: check log write failed: <error>` once and writes no more; IF an old log cannot be removed THEN `warning: old check log not removed: <path>: <error>`; in each case the check runs and ends as without the fault. | `check_times::unwritable_log_folder` |\n| AC-4 | WHEN a check has made its copy and taken its cargo slot THE it prints `copy: <n> s` and then `cargo slot: waited <n> s` before the `ticket:` line, and the record holds `times.copy` and `slot_wait` in seconds; under the held mark of an outer `stapel cargo` the wait is `0`. | `check_times::copy_and_slot_times` |\n| AC-5 | WHEN a step ran one or more cargo runs, whatever its outcome THE the line after its step line (and its notes) is `  times: RED <n> s, GREEN <n> s, HEAD <n> s`, naming only the commits it ran at, the seconds summed over its test files, and the step of the record holds `times` with the keys `red`, `green`, `head` for them; a step that ran none has neither. | `check_times::step_times` |\n| AC-6 | WHEN the suite runs THE the check first runs `<cargo> test --workspace --locked --no-run` (with `-j` of AC-11), prints `suite build: <n> s` before the `suite:` line and writes `times.suite_build`; then the run as before, with `times.suite_run`; when the build runs out of the time limit, no run starts, the suite is `unverified` as before, and there is no `times.suite_run`. | `check_times::suite_build_and_run` |\n| AC-7 | WHEN the suite run ended `pass` or `fail` THE the `suite:` line ends with `; run <n> s, last pass <m> s`, `<m>` being the `times.suite_run` of the last record of the ticket in `runs.jsonl` (file order) with `result` `pass` and that field, or `; run <n> s, last pass none`; malformed lines are skipped; an `unverified` or `skipped` suite has no such end. | `check_times::last_pass_time` |\n| AC-8 | WHEN the suite run gave one or more target times THE the check prints `slowest: <target> <x> s, …` after the `suite:` and `failing:` lines with the five largest, largest first, equal ones in output order, `<x>` as libtest printed it, and the record holds `slowest` as an array of `{\"target\": <string>, \"secs\": <number>}`; with no target time there is no line and no field. | `check_times::slowest_files`, `check_times::slowest_skips_captured_output` |\n| AC-9 | WHILE a cargo run of the check runs THE the check prints `progress: <stage>, <running file>, <n> s` (`<n>` since the start) each time `[check] progress_secs` seconds (300 when absent) have passed since the start or since its last progress line. | `check_times::progress_lines` |\n| AC-10 | IF the time limit runs out during a cargo run THEN the check prints on standard output `time limit: <stage>, <running file>`, then the last 20 tail lines of the kept standard output of the run, each after `  out | `, then the last 20 of its kept standard error, each after `  err | `, and ends as before (`unverified`, `result: fail`, exit 1). | `check_times::limit_names_the_stage` |\n| AC-11 | WHEN `[check] jobs = J` is set THE every cargo run of the check gets `-j J` after `--locked`; WHEN `[check] test_threads = T` is set THE every run that runs tests gets `--test-threads=T` right after `--` (before `--exact` or `--skip`; a `--` is added where the run had none), the build of AC-6 none; without the keys the arguments are those of before. | `check_times::run_settings` |\n| AC-12 | IF `[check] jobs` or `test_threads` is outside 1 to 1024, or `progress_secs` outside 1 to 86400 THEN every command that loads the config prints `check.<key> must be a whole number from 1 to <max>` and exits 1; IF one of them is set with the junit runner THEN `check.<key> needs the cargo runner`; a value that is not a whole number gives the TOML error, exit 1. | `check_times::refuses_bad_settings` |\n| AC-13 | WHEN this repository's `.stapel/stapel.toml` is loaded THE its `[check]` has `jobs = 4` and `test_threads = 4`. | `check_times::this_repository_sets_four` |\n| AC-14 | IF the build of AC-6 exits non-zero, prints `error: could not compile` or `because --locked was passed`, or a build input above the copy is found after it THEN no run starts and the suite gets the outcome and detail that the run gave for that output before (`fail: … the workspace does not compile`, `unverified: Cargo.lock is out of date`, `unverified: build-input-outside: …`), with counts 0 and no `times.suite_run`. | `check_times::failed_build_judges_the_suite` |\n| AC-15 | WHEN a step run's standard output holds a section `---- <name> stdout ----` of a failing test THE the reading of that run skips every line from the first such heading up to the last line `failures:` of the standard output (to its end when there is none, which reads as unverified), so `running`, `failures:`, `test result:` and `because --locked was passed` lines inside a captured output, and `failures:` lines on standard error, count for nothing, and the step is judged by libtest's own lines. | `check::parse_skips_captured_output`, `check::captured_output_holds_a_failures_line`, `check::captured_output_and_stderr_do_not_judge` |\n\n### Guarantees\n\n- **Promised:** the Frame's promise items: item 1 by AC-4 to AC-6 and AC-14; item 2 by AC-4; item 3 by\n  AC-9; item 4 by AC-10; item 5 by AC-1 to AC-3; item 6 by AC-8; item 7 by AC-7; item 8 by AC-11 to\n  AC-13; item 9 by AC-15. Unchanged: the junit runner (its tests in `check_junit.rs` keep passing), the suite outcomes of\n  before (AC-14), the level `steps` (no suite, no suite lines), `stapel check --list` and `--history`,\n  the hook's step lines, the cache of steps.\n- **Not promised:** the Frame's list; the log of a run past the 16 MB that the runner keeps of a stream\n  (the log holds what was kept); a progress line between two cargo runs; the order of standard output and\n  standard error lines inside the log of one run; a log whose name exists already (ids are unique); a\n  tail of AC-10 for a stream past those 16 MB (the tail is that of the kept part); a\n  log left by a check that ended after its first cargo run but before its record was written (it keeps\n  its id, which `runs.jsonl` lacks, and counts in AC-2); the compile of doc-tests, which cargo does in\n  the run, not in the `--no-run` build (it counts in `suite run`); a line about the wait for a cargo slot\n  while it lasts (SR1-15, deferred).\n\n**Author self-check (item 7).** Done on 2026-11-26: each promise item maps to a criterion; `--no-run`\nbuilds the same test binaries the run then uses, so the run does not build again; the runner already\nkeeps both streams of each run in memory (`RunResult`), so the log and the time-out tail need no change of\nhow output is read, only a look at the buffers while the run waits (AC-9, AC-10); the fake cargo of the\ntests answers `--no-run`, `-j`, `--test-threads`, a sleep marker and `finished in`, so no test runs a\nnested real cargo (STP-4). After the spec review (2026-11-26): the log is made at the first cargo run,\nso a check with only cached steps makes none and pushes no real log out (SR1-3); the shared fake answers\n`--no-run` with the compile result of the workspace and no tests, so the old tests keep their outcomes\nand only those that count `--workspace` runs change (SR1-4).",
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-11-27T10:14:38Z",
+      "hash": "sha256:da449f273c456605bdc8d72f08724015bd1f20a597cf8d2fa3b3711a25c7b807",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:8a479a81e189128e6ac89ed698a163178f12d01d46fd55de862b5697f10b0955"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-11-27T10:14:38Z",
+      "hash": "sha256:fb831b2887fbbd684529c0f99dd06c455a25b0249123ba67354dcd37dfb67818",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:da449f273c456605bdc8d72f08724015bd1f20a597cf8d2fa3b3711a25c7b807",
+        "spec": "sha256:8a479a81e189128e6ac89ed698a163178f12d01d46fd55de862b5697f10b0955"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-11-27T10:14:38Z",
+      "hash": "sha256:075af2cb24032c9c4c4b900f28948e6d34a92de8c7a641d9b84957e2a1732385",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:da449f273c456605bdc8d72f08724015bd1f20a597cf8d2fa3b3711a25c7b807",
+        "spec": "sha256:8a479a81e189128e6ac89ed698a163178f12d01d46fd55de862b5697f10b0955"
+      },
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-11-27T14:14:46Z",
+      "hash": "sha256:5311111c0bc52c89c2fe0d4a543d84cc30724140011d1013a8397d444c8b9add",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:8a479a81e189128e6ac89ed698a163178f12d01d46fd55de862b5697f10b0955"
+      },
+      "text": "### Facts\n\n- F-1: `crates/stapel-cli/src/check.rs` holds `run` and the `Runner`; step runs are in `Runner::at`\n  (one cargo run per test file, at RED, GREEN and HEAD), the suite in `Runner::suite`.\n- F-2: `crates/stapel-core/src/runner.rs` `run_child` reads both streams into shared buffers\n  (`read_capped`) and polls the child every 50 ms until it ends or the time limit runs out.\n- F-3: the record id comes from `new_id(\"c\")` at the end of `run`; the record is appended to\n  `runs.jsonl` of the ticket.\n- F-4: `crate::cargo::take` waits for a slot with no time limit and returns `None` under the held mark.\n- F-5: `cargo_failing_names` already maps `Running` and `Doc-tests` lines of standard error to target\n  names and the `running` blocks of standard output to them.\n- F-6: `Check` in `crates/stapel-core/src/config.rs` has `deny_unknown_fields`; `suite_exclude` is\n  refused with the junit runner at load.\n\n### Shape\n\n- `runner.rs`: `run_child` takes an optional watcher, called from its poll loop with the elapsed time and\n  read access to the two buffers; `run_cargo` passes it through. The watcher of the check prints the\n  progress line (AC-9). The run result is unchanged.\n- `check.rs`: the record id is made at the start; a `CheckLog` (path, open file or `None` after a\n  warning) is made at the first cargo run and written after each cargo run with its stage; the `Runner`\n  holds the log, the start instant, the progress period, the current stage and per-step times; `at`\n  returns the seconds of its runs with the states; `suite` runs the build then the run and returns both\n  times, the target times and the time-out tail; the last pass is read from `runs.jsonl` before the new\n  record is appended.\n- `config.rs`: `jobs`, `test_threads`, `progress_secs` as `Option<i64>` in `Check`, checked at load as\n  `suite_exclude` is.\n- `.stapel/stapel.toml` of this repository: `jobs = 4`, `test_threads = 4`.\n\n### Decisions (before the build)\n\n- 2026-11-26, agent: the time-out prints the last 20 lines of each stream, not 20 of both together,\n  because the runner keeps the two streams apart and their order across streams is lost.\n- 2026-11-26, agent: the step times go on a line of their own after the step line, so the step line that\n  the hook and `--history` share stays the same.\n- 2026-11-26, agent (SR1-3): the log is made at the first cargo run, so a check that runs no cargo\n  makes no log and does not push a real log out of the newest 10.\n- 2026-11-26, agent (SR1-5): `jobs` and `test_threads` are bounded by 1024 and `progress_secs` by 86400,\n  refused above at load, because TOML allows larger numbers than cargo and `Instant` take.\n- 2026-11-26, agent (SR1-12): the seconds of a progress line count from the moment the cargo slot was\n  taken, so a long slot wait does not hide in them; the wait has its own line.\n- 2026-11-26, agent (SR1-14): `--test-threads` comes right after `--`, before `--exact` and `--skip`.\n- 2026-11-26, agent: the last pass compares the suite run time, not the build time, because the build\n  time depends on what the target folder of the check holds.\n\n### Decisions (as built)\n\n- 2026-11-26, agent: the RED of step 1 loaded the config through `stapel status`, which exits 1 with no\n  open ticket whatever the config; its GREEN (a3519ec) runs `stapel inbox` instead, with a `history:` line.\n- 2026-11-26, agent: the removal warning of AC-3 belongs to retention (step 3); `keeps_ten_logs_per_ticket`\n  asserts that a normal run prints none, and the failed removal itself has no test (Review Focus).\n- 2026-11-26, agent: the RED of step 4 was amended in place (3694851), so the old tests broken by the\n  lines before `ticket:` change there and fail at RED.\n- 2026-11-26, agent: the test-only commit 7bc1013 makes `closed_pipe::closed_output_keeps_every_write`\n  drop `log`, `times` and `slot_wait` when it compares two runs' records.\n- 2026-11-26, agent: `timeout_secs` takes 10 at least, so the time-limit tests use 10 s and a fake that\n  sleeps 60 s; the fake cargo gained the markers `fake: sleeps <n>`, `fake: noise <n>`,\n  `fake: finished <x>`, `finished none`, `fake: build sleeps` (in a source file) and `fake: stale lock`\n  (in `Cargo.lock`).\n- 2026-11-26, agent: the step run and the suite build and run go through one `Runner::cargo_run`, which\n  passes a `Watch` to `run_cargo_watched` in `runner.rs`; `run_cargo`, `run_program` and `cargo_version`\n  run as before.\n- 2026-11-26, the person: step 12 needs a `stapel` that knows `jobs`, because the guard loads\n  `.stapel/stapel.toml` with the installed binary; `stapel` was installed from this branch before the\n  GREEN (e0b0f4d). After the merge it is installed again from the pinned checkout.\n- 2026-11-26, the person (CK1-1): the check of c-b0421055b3d3 read step 6 as unverified, because the\n  failure message of `log_holds_every_run` at RED printed the log, whose fake output holds `running` and\n  `test result:` lines; the fix is AC-15 and Plan step 13, and the check runs with `stapel` installed\n  from this branch.\n- 2026-11-26, agent: the check of c-3e8bef6f581d (level steps) still read step 6 as unverified: the\n  captured output held a whole failing fake run with its own `failures:` line, where the skip of step 13\n  ended. AC-15 now ends the skip at the last `failures:` line, which libtest prints after every captured\n  section; Plan step 14 makes that change.\n- 2026-11-26, the person (XR2-4): the widening of 5.2c by CK1-1 and the Plan past 12 steps are recorded as\n  a ledger decision of the same day.\n- 2026-11-26, agent (code review round 2): fix steps 15 and 16 (XR2-1, XR2-2, XR2-3 with CR2-4; the\n  formatting of CR2-2 and DR2-2 and the reference of CR2-6 go with step 15); deferred: XR2-6 (the suite\n  reading of captured output) and CK2-1 (about 3800 s of the suite run pass between test binaries, cause\n  unknown); no change: CR2-1 and DR2-1 (now stated in AC-15), CR2-3, CR2-5, CR2-7 (a non-goal).\n- 2026-11-27, agent (code review round 3): this repository's `[check] timeout_secs` is 9000 (commit\n  3b152bc), because the suite run inside the check takes about 4200 to 4500 s with `jobs = 4` and\n  `test_threads = 4` (CK2-1), not the 11 min of STP-44; check c-c89d908dc547 passed with it. The double\n  blank line after `own_lines` stays (XR3-2, CR3-4; rustfmt is not run on src here). `own_lines` reads\n  one libtest run; over the whole workspace output two failing test binaries would join into one skip,\n  which cannot happen while the suite runs without `--no-fail-fast` (XR3-4, DR3-1). Deferred: XR3-3 (no\n  test pins the skip in the `failing:` line), CR3-3 (no test of a heading without `failures:`), CR3-1.",
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-11-27T14:14:46Z",
+      "hash": "sha256:fb831b2887fbbd684529c0f99dd06c455a25b0249123ba67354dcd37dfb67818",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:5311111c0bc52c89c2fe0d4a543d84cc30724140011d1013a8397d444c8b9add",
+        "spec": "sha256:8a479a81e189128e6ac89ed698a163178f12d01d46fd55de862b5697f10b0955"
+      },
+      "text": "| Criterion | Test |\n|---|---|\n| AC-1 | `check_times::log_holds_every_run` |\n| AC-2 | `check_times::keeps_ten_logs_per_ticket` |\n| AC-3 | `check_times::unwritable_log_folder` |\n| AC-4 | `check_times::copy_and_slot_times` |\n| AC-5 | `check_times::step_times` |\n| AC-6 | `check_times::suite_build_and_run` |\n| AC-7 | `check_times::last_pass_time` |\n| AC-8 | `check_times::slowest_files`, `check_times::slowest_skips_captured_output` |\n| AC-9 | `check_times::progress_lines` |\n| AC-10 | `check_times::limit_names_the_stage` |\n| AC-11 | `check_times::run_settings` |\n| AC-12 | `check_times::refuses_bad_settings` |\n| AC-13 | `check_times::this_repository_sets_four` |\n| AC-14 | `check_times::failed_build_judges_the_suite` |\n| AC-15 | `check::parse_skips_captured_output`, `check::captured_output_holds_a_failures_line`, `check::captured_output_and_stderr_do_not_judge` |\n\nChanged by this ticket: `check::report_matches_golden` (its golden gains the new lines of AC-1, AC-4 to\nAC-7); `check_levels::head_level`, `check_levels::full_level`, `check_levels::flag_wins_over_the_key` and\n`check_levels::suite_exclude`, which count the runs with `--workspace` and now see the build too (AC-6;\n`suite_exclude` again at step 8); `check::closed_ticket_is_checked_at_its_last_commit` and\n`check::config_toolchain_build_script_and_links_are_unverified` with its golden\n`check_report_build_inputs.txt` (AC-4); `check_history::same_lines_as_the_full_check` and\n`check_history_reason::a_source_file_test_and_the_cargo_note` (AC-5); `closed_pipe::closed_output_keeps_every_write`\n(the record fields, commit 7bc1013).",
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-11-27T14:14:46Z",
+      "hash": "sha256:075af2cb24032c9c4c4b900f28948e6d34a92de8c7a641d9b84957e2a1732385",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:5311111c0bc52c89c2fe0d4a543d84cc30724140011d1013a8397d444c8b9add",
+        "spec": "sha256:8a479a81e189128e6ac89ed698a163178f12d01d46fd55de862b5697f10b0955"
+      },
+      "text": "Route: full (tags `interface`, `data`), auto.\n\n1. Settings (AC-11, AC-12; tests `check_times::run_settings`, `check_times::refuses_bad_settings`): the\n   RED adds `check_times.rs` and lets the fake cargo log its arguments and accept `-j` and\n   `--test-threads`; the GREEN adds the three keys, their checks at load, and the arguments of the step\n   and suite runs.\n2. Log (AC-1, AC-3; tests `check_times::log_holds_every_run`, `check_times::unwritable_log_folder`,\n   `check::report_matches_golden`): the RED adds the tests and the `log:` line to the golden; the GREEN\n   makes the id at the start, the log, its header lines and the warning.\n3. Retention (AC-2; test `check_times::keeps_ten_logs_per_ticket`): the RED adds the test; the GREEN\n   removes the old logs of the ticket.\n4. Copy and slot (AC-4; tests `check_times::copy_and_slot_times`, `check::report_matches_golden`): the\n   RED adds the test and the two lines to the golden; the GREEN times the copy and the slot wait.\n5. Step times (AC-5; tests `check_times::step_times`, `check::report_matches_golden`): the RED adds the\n   test and the `times:` line to the golden; the GREEN sums the run times of each step.\n6. Suite build (AC-6; tests `check_times::suite_build_and_run`, `check::report_matches_golden`,\n   `check_levels::head_level`, `check_levels::full_level`, `check_levels::flag_wins_over_the_key`,\n   `check_levels::suite_exclude`): the RED adds the test, the `--no-run` answer and a sleep marker of the\n   fake, the `suite build:` line to the golden, and the build run to the counts of the old tests; the\n   GREEN runs the build and then the run, whatever the build gave.\n7. Failed build (AC-14; test `check_times::failed_build_judges_the_suite`): the RED adds the test; the\n   GREEN judges the suite by the build's output when the build fails.\n8. Last pass (AC-7; tests `check_times::last_pass_time`, `check::report_matches_golden`): the RED adds\n   the test and the end of the `suite:` line to the golden; the GREEN reads the newest passing time.\n9. Slowest (AC-8; test `check_times::slowest_files`): the RED adds the test and `finished in` times to\n   the fake; the GREEN reads the target times and prints the line.\n10. Progress (AC-9; test `check_times::progress_lines`): the RED adds the test; the GREEN adds the\n   watcher of `run_child` and the progress line.\n11. Time-out (AC-10; test `check_times::limit_names_the_stage`): the RED adds the test; the GREEN prints\n    the stage, the running file and the two tails.\n12. This repository (AC-13; test `check_times::this_repository_sets_four`): the RED adds the test; the\n    GREEN sets `jobs = 4` and `test_threads = 4` in `.stapel/stapel.toml`.\n13. Captured output (AC-15; test `check::parse_skips_captured_output`): the RED adds the test; the GREEN\n    makes `parse_run` skip the captured output sections of failing tests.\n14. Captured failures list (AC-15; test `check::captured_output_holds_a_failures_line`): the RED adds the\n    test; the GREEN makes the skip end at the last `failures:` line of the output, not the next one.\n15. Fix XR2-1, XR2-2 (AC-15; test `check::captured_output_and_stderr_do_not_judge`): the RED adds the\n    test; the GREEN looks for the lock text in libtest's own lines and for the last `failures:` line in\n    standard output only, and fixes the formatting of CR2-2 and the reference of CR2-6.\n16. Fix XR2-3 (AC-8; test `check_times::slowest_skips_captured_output`): the RED adds the test and what\n    the fake needs; the GREEN reads target times with the block rule of the `failing:` line, over\n    libtest's own lines.",
+      "via": "grant"
+    }
+  ],
+  "closed": {
+    "by": "kyyyyf",
+    "at": "2026-11-27T14:29:52Z",
+    "reason": "Every criterion has a test that failed at RED and passes at GREEN and HEAD, the check at 3b152bc passes with the suite, and three code review rounds left no open HIGH or MEDIUM finding."
+  }
+}

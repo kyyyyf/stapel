@@ -191,6 +191,15 @@ pub struct Check {
     /// The cargo runner (STP-35 AC-12): `--skip` filters for the local suite below `full`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suite_exclude: Option<Vec<String>>,
+    /// The cargo runner (STP-45 AC-11): `-j <n>` for every cargo test run of the check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jobs: Option<i64>,
+    /// The cargo runner (STP-45 AC-11): `--test-threads=<n>` for every run that runs tests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_threads: Option<i64>,
+    /// The cargo runner (STP-45 AC-9): seconds between the progress lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress_secs: Option<i64>,
     /// Project commands (STP-37 AC-1): shell commands run in the check copy after the suite.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<Vec<String>>,
@@ -591,6 +600,22 @@ impl Config {
                 }
                 if exclude.iter().any(|e| e.trim().is_empty()) {
                     return Err("check.suite_exclude has an empty entry".into());
+                }
+            }
+            for (key, value, max) in [
+                ("jobs", check.jobs, 1024),
+                ("test_threads", check.test_threads, 1024),
+                ("progress_secs", check.progress_secs, 86_400),
+            ] {
+                if let Some(n) = value {
+                    if check.runner == "junit" {
+                        return Err(format!("check.{key} needs the cargo runner"));
+                    }
+                    if !(1..=max).contains(&n) {
+                        return Err(format!(
+                            "check.{key} must be a whole number from 1 to {max}"
+                        ));
+                    }
                 }
             }
             if let Some(project) = &check.project {

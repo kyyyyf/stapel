@@ -29,7 +29,7 @@ pub enum Parsed {
 }
 
 /// `running 1 test` or `running <n> tests`.
-fn running_count(line: &str) -> Option<usize> {
+pub fn running_count(line: &str) -> Option<usize> {
     let rest = line.strip_prefix("running ")?;
     let (n, word) = rest.split_once(' ')?;
     let n: usize = n.parse().ok()?;
@@ -66,6 +66,33 @@ pub fn summary_counts(line: &str) -> Option<(u64, u64, u64)> {
     Some((get("passed")?, get("failed")?, get("ignored")?))
 }
 
+/// The lines of libtest's own output: the captured output of a failing test, from its heading
+/// `---- <name> stdout ----` up to the last `failures:` line of the output, is left out.
+pub fn own_lines(output: &str) -> impl Iterator<Item = &str> {
+    let last_failures = output
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| *l == "failures:")
+        .map(|(i, _)| i)
+        .last();
+    let mut skipping = false;
+    output.lines().enumerate().filter_map(move |(i, l)| {
+        if l.starts_with("---- ") && l.ends_with(" stdout ----") {
+            skipping = true;
+            return None;
+        }
+        if skipping && Some(i) == last_failures {
+            skipping = false;
+        }
+        if skipping {
+            None
+        } else {
+            Some(l)
+        }
+    })
+}
+
+
 fn first_error(output: &str) -> String {
     output
         .lines()
@@ -86,10 +113,27 @@ pub fn parse_run(
     target: &str,
     at_red: bool,
 ) -> Parsed {
-    if output.contains("because --locked was passed") {
+    parse_run_streams(output, "", names, exit, target, at_red)
+}
+
+/// Like `parse_run`, with the two streams apart: libtest's own lines are looked for in the
+/// standard output alone, so a `failures:` line on the standard error moves nothing; the lock text
+/// counts on the standard error and in libtest's own lines, not in a captured output.
+pub fn parse_run_streams(
+    stdout: &str,
+    stderr: &str,
+    names: &[String],
+    exit: Option<i32>,
+    target: &str,
+    at_red: bool,
+) -> Parsed {
+    let locked = |l: &str| l.contains("because --locked was passed");
+    if stderr.lines().any(locked) || own_lines(stdout).any(locked) {
         return Parsed::Unverified("Cargo.lock is out of date".into());
     }
-    let running: Vec<usize> = output.lines().filter_map(running_count).collect();
+    let both = format!("{stdout}{stderr}");
+    let output = both.as_str();
+    let running: Vec<usize> = own_lines(stdout).filter_map(running_count).collect();
     if running.is_empty() {
         let compile: Vec<&str> = output
             .lines()
@@ -115,7 +159,7 @@ pub fn parse_run(
                 .collect(),
         );
     }
-    let summaries: Vec<(u64, u64, u64)> = output.lines().filter_map(summary_counts).collect();
+    let summaries: Vec<(u64, u64, u64)> = own_lines(stdout).filter_map(summary_counts).collect();
     if running.len() != 1 || summaries.len() != 1 {
         return Parsed::Unverified(format!(
             "the output has {} running lines and {} result summaries",
@@ -131,7 +175,7 @@ pub fn parse_run(
         ));
     }
     let mut states: BTreeMap<String, Vec<TestState>> = BTreeMap::new();
-    for (name, state) in output.lines().filter_map(result_line) {
+    for (name, state) in own_lines(stdout).filter_map(result_line) {
         if names.iter().any(|n| n == name) {
             states.entry(name.to_string()).or_default().push(state);
         }
@@ -395,6 +439,31 @@ pub fn run_cargo(
     run_child(cmd, "cargo", timeout)
 }
 
+/// A watcher of one run (STP-45 AC-9): every `every` since `last`, `report` gets the standard error
+/// read so far, and `last` is set to the instant of the report.
+pub struct Watch<'a> {
+    pub every: Duration,
+    pub last: &'a std::cell::Cell<Instant>,
+    pub report: &'a dyn Fn(&str),
+}
+
+/// `run_cargo` with a watcher.
+pub fn run_cargo_watched(
+    cargo: &Path,
+    dir: &Path,
+    args: &[String],
+    target_dir: &Path,
+    timeout: Duration,
+    watch: &Watch<'_>,
+) -> Result<RunResult, String> {
+    let mut cmd = allowed_env_command(cargo);
+    cmd.args(args)
+        .current_dir(dir)
+        .env("CARGO_TARGET_DIR", target_dir)
+        .env("CARGO_TERM_COLOR", "never");
+    run_child_watched(cmd, "cargo", timeout, Some(watch))
+}
+
 /// Runs `program args` in `dir` as `run_cargo` runs cargo: the same environment, process group and
 /// time limit, plus the variables in `extra` (STP-28 AC-10, the junit Per-file run).
 pub fn run_program(
@@ -429,7 +498,16 @@ fn allowed_env_command(program: &Path) -> Command {
 
 /// Starts `cmd` in its own process group with piped output and no input, and waits for it up to
 /// `timeout`; the group is killed after that. `what` names the program in messages.
-fn run_child(mut cmd: Command, what: &str, timeout: Duration) -> Result<RunResult, String> {
+fn run_child(cmd: Command, what: &str, timeout: Duration) -> Result<RunResult, String> {
+    run_child_watched(cmd, what, timeout, None)
+}
+
+fn run_child_watched(
+    mut cmd: Command,
+    what: &str,
+    timeout: Duration,
+    watch: Option<&Watch<'_>>,
+) -> Result<RunResult, String> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -441,6 +519,7 @@ fn run_child(mut cmd: Command, what: &str, timeout: Duration) -> Result<RunResul
     let err = child.stderr.take().expect("piped");
     let out = read_capped(out);
     let err = read_capped(err);
+    let err_so_far = Arc::clone(&err.0);
     let deadline = Instant::now() + timeout;
     let mut timed_out = false;
     let status = loop {
@@ -453,7 +532,16 @@ fn run_child(mut cmd: Command, what: &str, timeout: Duration) -> Result<RunResul
                 let _ = child.kill();
                 break child.wait().ok();
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                if let Some(w) = watch
+                    && w.last.get().elapsed() >= w.every
+                {
+                    w.last.set(Instant::now());
+                    let text = err_so_far.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    (w.report)(&String::from_utf8_lossy(&text));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
             Err(e) => return Err(format!("waiting for {what}: {e}")),
         }
     };
