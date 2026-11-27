@@ -443,7 +443,21 @@ impl Config {
             }
             if matches!(
                 dir.to_lowercase().as_str(),
-                "src" | "tests" | "test" | "docs" | "lib" | "crates" | "app" | "packages" | "spec"
+                "src"
+                    | "tests"
+                    | "test"
+                    | "docs"
+                    | "lib"
+                    | "crates"
+                    | "app"
+                    | "packages"
+                    | "spec"
+                    | "scripts"
+                    | "tools"
+                    | "pkg"
+                    | "cmd"
+                    | "internal"
+                    | "include"
             ) {
                 return Err(format!(
                     "guards.dir {} is a folder that agents write: name a folder of its own, such as guards",
