@@ -980,6 +980,63 @@ fn slowest_files() {
     assert!(records[0].get("slowest").is_none(), "{}", records[0]);
 }
 
+// AC-8 (XR2-3): the captured output of a failing test holds a line `running the suite took too long`
+// and a whole libtest run with `finished in 9.00s`; neither shifts a block or counts as a time.
+#[test]
+fn slowest_skips_captured_output() {
+    let extra = [
+        (
+            "crates/tiny/tests/a_ok.rs".to_string(),
+            "// fake: finished 1.50\n#[test]\nfn it_runs() {}\n".to_string(),
+        ),
+        (
+            "crates/tiny/tests/z_fail.rs".to_string(),
+            "// fake: finished 2.00\n\
+// fake: capture running the suite took too long\n\
+// fake: capture running 1 test\n\
+// fake: capture test inner ... ok\n\
+// fake: capture test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.00s\n\
+#[test]\nfn it_breaks() {\n    // fake: needs pub fn missing_everywhere\n}\n"
+                .to_string(),
+        ),
+    ];
+    let repo = repo_with_a_step_and(&extra);
+    let scripts = tempfile::tempdir().unwrap();
+    configure(repo.path(), &common::fake_cargo(scripts.path()), "");
+    let dir = repo.path();
+    let (code, out, err) = run_check(dir, "head");
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.lines().any(|l| l.starts_with("failing: ")),
+        "no failing line: {out}"
+    );
+    let line = out.lines().find(|l| l.starts_with("slowest: "));
+    assert_eq!(
+        line,
+        Some("slowest: z_fail 2.00 s, a_ok 1.50 s, basic 0.00 s"),
+        "{out}"
+    );
+    assert!(!out.contains("9.00"), "{out}");
+    let records = check_records(dir);
+    let got: Vec<(String, f64)> = records[0]["slowest"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no slowest array: {}", records[0]))
+        .iter()
+        .map(|e| {
+            (
+                e["target"].as_str().unwrap().to_string(),
+                e["secs"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    let want = vec![
+        ("z_fail".to_string(), 2.0),
+        ("a_ok".to_string(), 1.5),
+        ("basic".to_string(), 0.0),
+    ];
+    assert_eq!(got, want, "{}", records[0]);
+}
+
 // AC-9: with `progress_secs = 1` a run that sleeps 3 s prints `progress: <stage>, <file>, <n> s`
 // lines, `<n>` the seconds since the start, rising; a step run names `<dir>/<file>`, a suite run
 // the target of its newest `Running` line.

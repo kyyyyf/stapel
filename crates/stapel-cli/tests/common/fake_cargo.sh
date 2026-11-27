@@ -11,6 +11,8 @@
 # (STP-45).
 # A line `// fake: noise <n>` before the tests makes a run of the file print <n> lines on each
 # stream before it sleeps: `out line <i>` and `err line <i>`, the 25th with an escape byte (STP-45).
+# Lines `// fake: capture <text>` before the tests are printed as the captured output of every failing
+# test, under its `---- <name> stdout ----` heading (STP-45).
 # A test with no marker passes. A file under `crates/*/src` with the text `this does not compile`
 # breaks the library: nothing compiles.
 
@@ -121,6 +123,18 @@ run_file() {
     if [ "$failed" -gt 0 ]; then
         echo
         echo "failures:"
+        captured=$(sed -n 's|^// fake: capture ||p' "$file")
+        if [ -n "$captured" ]; then
+            printf '%s\n' "$selected" | while IFS=$TAB read -r name st; do
+                if [ "$st" = FAILED ]; then
+                    echo
+                    echo "---- $name stdout ----"
+                    printf '%s\n' "$captured"
+                fi
+            done
+            echo
+            echo "failures:"
+        fi
         printf '%s\n' "$selected" | while IFS=$TAB read -r name st; do
             [ "$st" = FAILED ] && echo "    $name"
         done
