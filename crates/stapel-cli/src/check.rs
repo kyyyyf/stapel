@@ -1028,8 +1028,8 @@ fn cargo_failing_names(stdout: &str, stderr: &str) -> Vec<String> {
     let targets = cargo_targets(stderr);
     let mut names: Vec<String> = Vec::new();
     let mut block: Option<usize> = None;
-    for line in stdout.lines() {
-        if line.starts_with("running ") && line.ends_with(" tests") || line == "running 1 test" {
+    for line in stapel_core::runner::own_lines(stdout) {
+        if stapel_core::runner::running_count(line).is_some() {
             block = Some(block.map_or(0, |b| b + 1));
         } else if let Some(name) = line
             .strip_prefix("test ")
@@ -1056,11 +1056,10 @@ fn cargo_slowest(stdout: &str, stderr: &str) -> Vec<(String, String)> {
     let mut found: Vec<(String, String, f64)> = Vec::new();
     let mut block: Option<usize> = None;
     let mut ran = false;
-    for line in stdout.lines() {
-        if let Some(rest) = line.strip_prefix("running ") {
+    for line in stapel_core::runner::own_lines(stdout) {
+        if let Some(n) = stapel_core::runner::running_count(line) {
             block = Some(block.map_or(0, |b| b + 1));
-            let count = rest.split(' ').next().unwrap_or("");
-            ran = count.parse::<u64>().is_ok_and(|n| n > 0);
+            ran = n > 0;
         } else if line.starts_with("test result: ") && ran {
             let Some((_, tail)) = line.split_once("finished in ") else {
                 continue;

@@ -29,7 +29,7 @@ pub enum Parsed {
 }
 
 /// `running 1 test` or `running <n> tests`.
-fn running_count(line: &str) -> Option<usize> {
+pub fn running_count(line: &str) -> Option<usize> {
     let rest = line.strip_prefix("running ")?;
     let (n, word) = rest.split_once(' ')?;
     let n: usize = n.parse().ok()?;
@@ -68,7 +68,7 @@ pub fn summary_counts(line: &str) -> Option<(u64, u64, u64)> {
 
 /// The lines of libtest's own output: the captured output of a failing test, from its heading
 /// `---- <name> stdout ----` up to the last `failures:` line of the output, is left out.
-fn own_lines(output: &str) -> impl Iterator<Item = &str> {
+pub fn own_lines(output: &str) -> impl Iterator<Item = &str> {
     let last_failures = output
         .lines()
         .enumerate()
