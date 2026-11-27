@@ -154,6 +154,55 @@ fn an_overlapping_dir_edit_is_denied() {
     assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "ask");
 }
 
+// STP-46 AC-2: an edit of `stapel.toml` that sets `dir` to a new work folder is denied with the load
+// message; a nested folder asks as before.
+#[test]
+fn a_new_work_folder_edit_is_denied() {
+    let repo = git_repo();
+    let root = repo.path();
+    stapel(root)
+        .args(["init", "--prefix", "ABC"])
+        .assert()
+        .success();
+    let config = read(root, ".stapel/stapel.toml");
+    let config = if config.lines().any(|l| l.trim() == "[check]") {
+        config
+    } else {
+        format!("{config}\n[check]\nrunner = \"cargo\"\ntimeout_secs = 3600\n")
+    };
+    let call = |dir: &str| -> std::process::Output {
+        let payload = json!({
+            "session_id": "test",
+            "hook_event_name": "PreToolUse",
+            "cwd": root,
+            "permission_mode": "default",
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": ".stapel/stapel.toml",
+                "content": format!("{config}\n[guards]\ndir = \"{dir}\"\n"),
+            },
+        });
+        stapel(root)
+            .args(["hook", "pre-tool-use"])
+            .write_stdin(payload.to_string())
+            .output()
+            .unwrap()
+    };
+    let denied = call("scripts");
+    assert_eq!(denied.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&denied.stderr).to_string();
+    assert!(
+        err.contains(
+            ".stapel/stapel.toml would not load: guards.dir scripts is a folder that agents write: name a folder of its own, such as guards"
+        ),
+        "{err}"
+    );
+    let asked = call("tools/guards");
+    assert!(asked.status.success(), "{:?}", asked);
+    let v: serde_json::Value = serde_json::from_slice(&asked.stdout).unwrap();
+    assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "ask");
+}
+
 // AC-13: a subagent and the modes without the dialog are denied; a broken `stapel.toml` and a path
 // beside the folder follow the old write rules.
 #[test]

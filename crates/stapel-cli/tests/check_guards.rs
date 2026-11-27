@@ -132,6 +132,51 @@ fn all_work_folders_refused() {
     }
 }
 
+// STP-46 AC-1: the six new work folders are refused as written; `tools//` keeps the lexical
+// refusal; a nested folder or another name loads with the stderr of `guards`.
+#[test]
+fn six_more_work_folders_refused() {
+    for name in ["scripts", "tools", "pkg", "cmd", "internal", "include"] {
+        let mut upper = name.to_uppercase();
+        if name == "tools" {
+            upper = "Tools".to_string();
+        }
+        for dir in [name.to_string(), format!("{name}/"), upper] {
+            let repo = stapel_repo();
+            add_config(repo.path(), true, &format!("[guards]\ndir = \"{dir}\"\n"));
+            let (code, err) = check(repo.path());
+            let refusal = format!(
+                "guards.dir {dir} is a folder that agents write: name a folder of its own, such as guards"
+            );
+            assert_eq!(code, 2, "{dir}: {err}");
+            assert!(err.contains(&refusal), "{dir}: {err}");
+        }
+    }
+
+    let repo = stapel_repo();
+    add_config(repo.path(), true, "[guards]\ndir = \"tools//\"\n");
+    let (code, err) = check(repo.path());
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains(
+            "guards.dir must be a relative folder of the repository outside .stapel, .git and .claude: tools//"
+        ),
+        "{err}"
+    );
+    assert!(!err.contains("agents write"), "{err}");
+
+    let repo = stapel_repo();
+    add_config(repo.path(), true, "[guards]\ndir = \"guards\"\n");
+    let (_, baseline) = check(repo.path());
+    assert!(baseline.contains("no open ticket"), "{baseline}");
+    for dir in ["tools/guards", "scripts/x", "toolsx"] {
+        let repo = stapel_repo();
+        add_config(repo.path(), true, &format!("[guards]\ndir = \"{dir}\"\n"));
+        let (_, err) = check(repo.path());
+        assert_eq!(err, baseline, "{dir}");
+    }
+}
+
 // AC-2: a guard needs a name and a command, a unique name and a relative baseline.
 #[test]
 fn refuses_bad_entries() {
