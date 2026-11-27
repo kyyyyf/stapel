@@ -157,14 +157,26 @@ fn command_words(command: &str) -> Vec<(String, bool)> {
         *starts = *next_starts;
     };
     let mut previous = ' ';
+    let mut backslashes = 0usize;
     for c in command.chars() {
         let after_redirect = matches!(previous, '<' | '>');
         previous = c;
+        let run = backslashes;
+        backslashes = if c == '\\' { run + 1 } else { 0 };
         if c == '&' && after_redirect {
             // The `&` of `2>&1` is part of the redirection and starts no word.
             continue;
         }
-        if c.is_whitespace() {
+        if c == '\n' {
+            if run % 2 == 1 {
+                // A continuation: the `\` and the newline start no command and no word.
+                piece.pop();
+            } else {
+                flush(&mut piece, &mut starts, &mut next_starts);
+                next_starts = true;
+                starts = true;
+            }
+        } else if c.is_whitespace() {
             flush(&mut piece, &mut starts, &mut next_starts);
         } else if matches!(c, ';' | '|' | '&' | '(' | '`') {
             flush(&mut piece, &mut starts, &mut next_starts);
