@@ -400,4 +400,42 @@ Check runs:
 
 ## Summary
 
-TODO
+Done: `stapel check` writes every cargo run into a log (`log: <path>`, the newest 10 per ticket kept),
+prints the copy and slot wait times, `times:` per step, the suite build and run times with the last pass,
+the five slowest targets, a `progress:` line every 300 s and, at a time-out, the stage with the last 20
+lines of each stream. `[check] jobs` and `test_threads` pass `-j` and `--test-threads` to cargo; this
+repository sets 4 and 4. The reading of a step run counts only libtest's own lines on standard output, so
+captured output of a failing test no longer judges a step (CK1-1, a parser defect from STP-4). The last
+check: build 292 s, suite run 4200 s, 1265 tests passed.
+
+For the person to decide (agent decisions, overrule if wanted):
+
+- The suite runs as a `--no-run` build and then the run, so both times are measured.
+- The progress period is a `[check] progress_secs` key, 300 s by default; progress seconds count from
+  the moment the cargo slot was taken.
+- The time-out prints 20 lines of each stream apart, not 20 of both.
+- Step times go on a line of their own after the step line.
+- The log is made at the first cargo run, so a check without cargo makes no log.
+- Bounds: `jobs` and `test_threads` 1 to 1024, `progress_secs` 1 to 86400.
+- `--test-threads` comes right after `--`, before `--exact` and `--skip`.
+- `last pass` compares the suite run time, not the build time.
+- This repository's `[check] timeout_secs` is 9000 s (was 5400 s).
+- The double blank line after `own_lines` stays; rustfmt is not run on src here.
+
+Deferred, outside the promise (proposals to widen it):
+
+- SR1-15: a line while the cargo slot wait runs.
+- XR2-6, CR3-1: the suite counts, lock text and compile check still read captured output of failing
+  tests; only `slowest:` and `failing:` skip it.
+- CK2-1: the suite run takes about 4200 to 4500 s while libtest reports about 700 s; the gap is between
+  test binaries, and its cause is unknown. A second run took the same time, so a first-launch scan of the
+  binaries is not the cause.
+
+Deferred, inside the promise, LOW:
+
+- XR3-3: no test pins that the `failing:` line skips captured output.
+- CR3-3: no test of a captured heading with no later `failures:` line (reads as unverified).
+- XR3-2, CR3-4: the double blank line above.
+
+Process note: the plan gained 5.2d (test pyramid, with its check points and upkeep) and phase 4b (ACP
+proxy) during this ticket; `stapel-elaborate` for 5.2d comes next.
