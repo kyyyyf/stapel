@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "key": "STP-46",
+  "title": "The guards folder checks after STP-43",
+  "base": "98a5c387373439b00dceeae5d9d22e896def3275",
+  "base_branch": "main",
+  "confirmations": [
+    {
+      "section": "description",
+      "by": "kyyyyf",
+      "at": "2026-11-27T19:29:18Z",
+      "hash": "sha256:1e9fbfcf31582315f700527728d7360e8a861d96031ea90f2da9f4cf5627c45e",
+      "normal_form": 1,
+      "depends_on": {},
+      "text": "Source: `docs/PLAN.md`, phase 5, item 5.2b (ledger decisions of 2026-11-25 and 2026-11-27); the deferred\nfindings STP-43 SR1-9 and XR2-8.\n\n### Frame\n\n**Problem.** A `[guards] dir` named `scripts`, `tools`, `pkg`, `cmd`, `internal` or `include` loads, and then\nevery builder write under it asks the person, because builders write there as work. In a multi-line guard\ncommand, the word after a newline is not a command start, so a script that the second line runs gives no\nreach warning.\n\n**Plan item:** 5.2b.\n\n**Risk tags:** `guard` (what `[guards] dir` may be, the reach warning of a guard), `interface` (a refusal\nof `stapel.toml`, the warning lines of `stapel check` and `stapel init`).\n\n**Non-goals.** Work folders other than the six of the plan item; a work folder found from the project's\ntracked files; a change of the reach warning's text; a shell parser (here-documents, quotes that span\nlines, `if … then`); the deferred findings of STP-43 other than SR1-9 and XR2-8.\n\n**Promise (closed list).**\n\n1. Work folders: loading `stapel.toml` fails, with the refusal of STP-43 AC-1, when `[guards] dir` is one\n   folder part from the list `scripts`, `tools`, `pkg`, `cmd`, `internal`, `include` (any letter case, with\n   or without a trailing `/`), in addition to the nine folders of STP-43. A nested folder such as\n   `tools/guards` loads. An agent's edit of `stapel.toml` that sets such a `dir` is denied, as in STP-43 AC-2.\n2. Newline: in a guard command, a newline separates commands like `;`, so the first word after it is a\n   command start for the reach warning of STP-43 (`stapel check` and `stapel init`); a newline right\n   after an unescaped `\\` is a continuation and separates nothing.\n\nNot promised: what STP-43 did not promise (a path in a variable, a glob, a wrapper, and the rest of its\nlist); a carriage return alone as a separator; a newline inside quotes; the meaning of a word after a\nnewline that a shell would read as data (a here-document body).\n\n**Prior art.** STP-41 (the guards folder and its load checks); STP-43 (the work-folder refusal, the reach\nwords, `command_words` and `guard_reach` in `crates/stapel-cli/src/check.rs`); the list is in\n`crates/stapel-core/src/config.rs`.\n\n**Size.** About 20 source lines and 80 test lines; 2 Plan steps. Route: full, auto (risk tag `guard`).\n\n### Decisions\n\nTyped lines (`docs/decisions/0003-ticket-documents-from-bmad.md`): Decision, Assumption, Open question.\n\n- 2026-11-27: Decision (order, the human): 5.2b is taken now, before the rest of 5.2 (ledger 2026-11-27).\n- 2026-11-27: Decision (backslash, the human, recommended): a newline right after `\\` continues the\n  command, as in a shell; the word after it is not a command start. Rejected: every newline separates.\n- 2026-11-27: Decision (folders, the human, recommended): exactly the six folders of the plan item.\n  Rejected: also `bin`, `benches`, `examples`, `vendor`, `build`.",
+      "via": "grant"
+    },
+    {
+      "section": "spec",
+      "by": "kyyyyf",
+      "at": "2026-11-27T19:29:18Z",
+      "hash": "sha256:ff06e5e3c4b407128f9710870c6b545641958a9ec70d90adf9168254a93c3ae4",
+      "normal_form": 1,
+      "depends_on": {},
+      "text": "Terms (the other terms are those of STP-43: covers, reach word, outside file, reach warning):\n\n- **Work folders**: the nine of STP-43 (`src`, `tests`, `test`, `docs`, `lib`, `crates`, `app`,\n  `packages`, `spec`) and the six new ones `scripts`, `tools`, `pkg`, `cmd`, `internal`, `include`.\n- **Command word**: as in STP-43, and in addition a newline (`\\n`) splits the command like `;`, so the\n  word after it is a command start; a newline right after an odd number of `\\` is a **continuation**:\n  the last `\\` and the newline are white space, so the next word keeps the state of the word before the\n  `\\` (a command start after `&&` or `;`, the script of an interpreter after `sh`); after an even number\n  of `\\` (an escaped `\\`) the newline separates.\n\n| № | Criterion | Test |\n|---|---|---|\n| AC-1 | IF `[guards] dir` is one part that is a new work folder (`scripts`, `tools`, `pkg`, `cmd`, `internal`, `include`; any letter case, with or without a trailing `/`) THEN loading `stapel.toml` fails with the message of STP-43 AC-1, `guards.dir <dir> is a folder that agents write: name a folder of its own, such as guards`; `<dir>` as written (`Tools/`, `INTERNAL`); a `dir` with an empty part (`tools//`) keeps the lexical refusal of STP-41; WHEN `dir` has two or more parts (`tools/guards`, `scripts/x`) or another name (`toolsx`) THE it loads as now, with the same stderr as `dir = \"guards\"`. | `check_guards::six_more_work_folders_refused` |\n| AC-2 | IF an agent's edit of `stapel.toml` sets `dir` to a new work folder THEN the hook denies it with `.stapel/stapel.toml would not load: ` and the AC-1 message. | `hook_guards::a_new_work_folder_edit_is_denied` |\n| AC-3 | WHEN a guard command holds a newline that is not a continuation THE `stapel check` takes the first word after it as a command start, so a script outside `dir` that the next line runs (`sh scripts/cov.sh`, `scripts/cov.sh`, `node scripts/cov.js`) gives the reach warning; empty lines and a `;` before the newline change nothing. | `check_guards::newline_starts_a_command` |\n| AC-4 | IF a newline is a continuation THEN the `\\` and the newline start no command and no word, so the word after them is a reach word exactly when it would be one with the `\\` and the newline replaced by a space: `cargo fmt && \\` then `scripts/cov.sh` and `sh \\` then `scripts/cov.sh` warn, `cargo test \\` then `scripts/cov.sh` does not; IF the newline follows an escaped `\\` (`echo a\\\\`) THEN it separates as in AC-3. | `check_guards::backslash_newline_continues` |\n| AC-5 | WHEN `stapel init` runs in a repository whose guard command runs an outside script on its second line THE it prints the reach warning for it, as in STP-43 AC-4. | `init_process::guard_reach_after_newline` |\n\n### Guarantees\n\n- **Promised:** the Frame's promise items: item 1 by AC-1 and AC-2, item 2 by AC-3 to AC-5. Unchanged:\n  the nine work folders of STP-43 (`check_guards::all_work_folders_refused`); the reach warnings of a\n  one-line command (`check_guards::warns_about_a_file_outside_dir`, `check_guards::reach_word_coverage`,\n  `check_guards::interpreter_only_at_command_start`); the outcome and record of every guard. Changed on\n  purpose: a `stapel.toml` with `dir` set to one of the six folders that loaded before now fails in every\n  command, and the person recovers by a hand edit of `dir` (the hook lets an edit through when the edited\n  text loads); a multi-line guard command can give reach warnings it did not give before.\n- **Not promised:** the Frame's list; a newline inside quotes; a carriage return alone; a `\\` followed by\n  `\\r\\n` (the newline then separates); a continuation inside a word (`scripts/\\` then a newline then\n  `cov.sh` is two words here, one path in a shell).\n\n**Author self-check (item 7).** Done on 2026-11-27: each promise item maps to a criterion; the hook\nalready loads the edited text (STP-38), so AC-2 needs no hook code; `guard_reach` is shared by check and\ninit, so AC-5 needs no init code; a TOML basic multi-line string (`\"\"\"`) removes a line-ending `\\` and the\nnewline before stapel reads the command, so a continuation reaches stapel only from a literal string\n(three single quotes) or an escaped `\\\\n`; no fixture of this repository sets one of the six folders as `dir`.\nAfter the spec review (2026-11-27): today a lone `\\` is pushed as a word and takes the command start or\nthe interpreter's script place, so the `&& \\` and `sh \\` cases fail at RED and pass after the change\n(SR1-1, SR1-2); an escaped `\\` before a newline separates (SR1-3).",
+      "via": "grant"
+    },
+    {
+      "section": "design",
+      "by": "kyyyyf",
+      "at": "2026-11-27T19:29:18Z",
+      "hash": "sha256:42076f763ec520b5ef4e84d422bdb732ef6f0fe59b62731427b35562ffc4adbb",
+      "normal_form": 1,
+      "depends_on": {
+        "spec": "sha256:ff06e5e3c4b407128f9710870c6b545641958a9ec70d90adf9168254a93c3ae4"
+      },
+      "text": "### Facts\n\n- F-1: `Config::validate` in `crates/stapel-core/src/config.rs` refuses a `dir` that is one of the nine\n  work folders, compared lower-cased without a trailing `/`, after the lexical check and before\n  `guards need [check]` (STP-43 step 1).\n- F-2: the hook loads an edited `stapel.toml` and denies it with `.stapel/stapel.toml would not load:\n  <error>` (`crates/stapel-core/src/guard.rs`, STP-38).\n- F-3: `command_words` in `crates/stapel-cli/src/check.rs` splits at white space (a newline included)\n  and at `; | & ( ) < >` and a backtick; only `; | & (` and a backtick start a command.\n- F-4: `guard_reach` (same file) is used by `stapel check` and `stapel init` (STP-43 AC-3, AC-4).\n\n### Shape\n\n- `config.rs`: the six folders join the list of the `matches!` in `validate`.\n- `check.rs`, `command_words`: a `\\n` starts a command like `;`, unless the piece so far ends in an odd\n  number of `\\`; then the last `\\` is dropped and the newline is white space, and when the piece is then\n  empty no word is pushed, so the start and interpreter states of the word before stay (AC-4).\n\n### Decisions (before the build)\n\nNone.\n\n### Decisions (as built)\n\nNone yet.",
+      "via": "grant"
+    },
+    {
+      "section": "proof",
+      "by": "kyyyyf",
+      "at": "2026-11-27T19:29:18Z",
+      "hash": "sha256:ede4e18a03b6f37113721ba25ed988c3875835221c1b38fbb25f7283e1541cca",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:42076f763ec520b5ef4e84d422bdb732ef6f0fe59b62731427b35562ffc4adbb",
+        "spec": "sha256:ff06e5e3c4b407128f9710870c6b545641958a9ec70d90adf9168254a93c3ae4"
+      },
+      "text": "| Criterion | Test |\n|---|---|\n| AC-1 | `check_guards::six_more_work_folders_refused` |\n| AC-2 | `hook_guards::a_new_work_folder_edit_is_denied` |\n| AC-3 | `check_guards::newline_starts_a_command` |\n| AC-4 | `check_guards::backslash_newline_continues` |\n| AC-5 | `init_process::guard_reach_after_newline` |\n\nChanged by this ticket: no existing test.",
+      "via": "grant"
+    },
+    {
+      "section": "plan",
+      "by": "kyyyyf",
+      "at": "2026-11-27T19:29:18Z",
+      "hash": "sha256:cda46083b191b51d031c3186e31aeed3cfc603ca65c1002ac24c06c214b2a5e0",
+      "normal_form": 1,
+      "depends_on": {
+        "design": "sha256:42076f763ec520b5ef4e84d422bdb732ef6f0fe59b62731427b35562ffc4adbb",
+        "spec": "sha256:ff06e5e3c4b407128f9710870c6b545641958a9ec70d90adf9168254a93c3ae4"
+      },
+      "text": "Route: full (tag `guard`), auto.\n\n1. Work folders (AC-1, AC-2; tests `check_guards::six_more_work_folders_refused`,\n   `hook_guards::a_new_work_folder_edit_is_denied`): the RED adds the two tests; the GREEN adds the six\n   folders to the list in `Config::validate`.\n2. Newline (AC-3 to AC-5; tests `check_guards::newline_starts_a_command`,\n   `check_guards::backslash_newline_continues`, `init_process::guard_reach_after_newline`): the RED adds\n   the three tests; the GREEN makes a newline start a command in `command_words`, except after an odd\n   number of `\\`, where the last `\\` is dropped and the state of the word before it stays (Design shape).",
+      "via": "grant"
+    }
+  ]
+}
