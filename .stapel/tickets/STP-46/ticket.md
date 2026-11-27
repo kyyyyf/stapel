@@ -59,16 +59,17 @@ Terms (the other terms are those of STP-43: covers, reach word, outside file, re
   `packages`, `spec`) and the six new ones `scripts`, `tools`, `pkg`, `cmd`, `internal`, `include`.
 - **Command word**: as in STP-43, and in addition a newline (`\n`) splits the command like `;`, so the
   word after it is a command start; a newline right after an odd number of `\` is a **continuation**:
-  the last `\` and the newline are white space, so the next word keeps the state of the word before the
-  `\` (a command start after `&&` or `;`, the script of an interpreter after `sh`); after an even number
-  of `\` (an escaped `\`) the newline separates.
+  the last `\` and the newline are removed, as a shell removes them, so the text on both sides joins
+  (`sh\` then `scripts/cov.sh` is the one word `shscripts/cov.sh`) and a word after white space keeps
+  the state of the word before the `\` (a command start after `&&` or `;`, the script of an interpreter
+  after `sh`); after an even number of `\` (an escaped `\`) the newline separates.
 
 | № | Criterion | Test |
 |---|---|---|
 | AC-1 | IF `[guards] dir` is one part that is a new work folder (`scripts`, `tools`, `pkg`, `cmd`, `internal`, `include`; any letter case, with or without a trailing `/`) THEN loading `stapel.toml` fails with the message of STP-43 AC-1, `guards.dir <dir> is a folder that agents write: name a folder of its own, such as guards`; `<dir>` as written (`Tools/`, `INTERNAL`); a `dir` with an empty part (`tools//`) keeps the lexical refusal of STP-41; WHEN `dir` has two or more parts (`tools/guards`, `scripts/x`) or another name (`toolsx`) THE it loads as now, with the same stderr as `dir = "guards"`. | `check_guards::six_more_work_folders_refused` |
 | AC-2 | IF an agent's edit of `stapel.toml` sets `dir` to a new work folder THEN the hook denies it with `.stapel/stapel.toml would not load: ` and the AC-1 message. | `hook_guards::a_new_work_folder_edit_is_denied` |
 | AC-3 | WHEN a guard command holds a newline that is not a continuation THE `stapel check` takes the first word after it as a command start, so a script outside `dir` that the next line runs (`sh scripts/cov.sh`, `scripts/cov.sh`, `node scripts/cov.js`) gives the reach warning; empty lines and a `;` before the newline change nothing. | `check_guards::newline_starts_a_command` |
-| AC-4 | IF a newline is a continuation THEN the `\` and the newline start no command and no word, so the word after them is a reach word exactly when it would be one with the `\` and the newline replaced by a space: `cargo fmt && \` then `scripts/cov.sh` and `sh \` then `scripts/cov.sh` warn, `cargo test \` then `scripts/cov.sh` does not; IF the newline follows an escaped `\` (`echo a\\`) THEN it separates as in AC-3. | `check_guards::backslash_newline_continues` |
+| AC-4 | IF a newline is a continuation THEN the `\` and the newline start no command and no word, so the words are those of the command with the `\` and the newline removed: `cargo fmt && \` then `scripts/cov.sh` and `sh \` then `scripts/cov.sh` warn, `cargo test \` then `scripts/cov.sh` and `sh\` then `scripts/cov.sh` (one word `shscripts/cov.sh`) do not, and `sh scripts/\` then `cov.sh` warns for `scripts/cov.sh`; an odd run of three `\` is a continuation too; IF the newline follows an escaped `\` (`echo a\\`) THEN it separates as in AC-3. | `check_guards::backslash_newline_continues` |
 | AC-5 | WHEN `stapel init` runs in a repository whose guard command runs an outside script on its second line THE it prints the reach warning for it, as in STP-43 AC-4. | `init_process::guard_reach_after_newline` |
 
 ### Guarantees
@@ -81,8 +82,7 @@ Terms (the other terms are those of STP-43: covers, reach word, outside file, re
   command, and the person recovers by a hand edit of `dir` (the hook lets an edit through when the edited
   text loads); a multi-line guard command can give reach warnings it did not give before.
 - **Not promised:** the Frame's list; a newline inside quotes; a carriage return alone; a `\` followed by
-  `\r\n` (the newline then separates); a continuation inside a word (`scripts/\` then a newline then
-  `cov.sh` is joined into one word, as in a shell, but no test holds it).
+  `\r\n` (the newline then separates).
 
 **Author self-check (item 7).** Done on 2026-11-27: each promise item maps to a criterion; the hook
 already loads the edited text (STP-38), so AC-2 needs no hook code; `guard_reach` is shared by check and
@@ -103,10 +103,10 @@ init_process`); before each GREEN also `--test ticket_drift` (the ticket lint) a
 
 | Category | Cases | Tests |
 |---|---|---|
-| New folders | each of the six refused as written, upper case and with a trailing `/` (`Tools/`, `INTERNAL` among them), the message naming `dir` as written; `tools//`: the lexical refusal of STP-41, not the work-folder one; `tools/guards`, `scripts/x`, `toolsx` load with the same stderr as `guards` | `check_guards::six_more_work_folders_refused` |
+| New folders | each of the six refused as written, upper case and with a trailing `/` (`Tools/`, `INTERNAL` among them), the message naming `dir` as written; `tools//`: the lexical refusal of STP-41, not the work-folder one; `tools/guards`, `scripts/x`, `toolsx` load with the same exit code and stderr as `guards` | `check_guards::six_more_work_folders_refused` |
 | Hook edit | the main agent in a dialog mode edits `stapel.toml` to `dir = "scripts"`: denied with the load message; to `dir = "tools/guards"`: asks as now | `hook_guards::a_new_work_folder_edit_is_denied` |
 | Newline | `cargo fmt --check` then a newline then `sh scripts/cov.sh`: one warning; the second line `scripts/cov.sh` alone and `node scripts/cov.js`: one warning each; an empty line and `true;` before the newline: the same warning; a `\r\n` line end: the same warning; a second line `grep -w sh scripts/x.sh`: none | `check_guards::newline_starts_a_command` |
-| Continuation | `cargo fmt && \` then a newline then `scripts/cov.sh`: one warning; `sh \` then a newline then `scripts/cov.sh`: one warning; `echo a\\` then a newline then `scripts/cov.sh`: one warning; `cargo test \` then a newline then `scripts/cov.sh`: none; `cargo clippy \` then a newline then `--config clippy.toml`: warns for `clippy.toml`; a `\` that ends the whole command: none; no `\r` in this test | `check_guards::backslash_newline_continues` |
+| Continuation | `cargo fmt && \` then a newline then `scripts/cov.sh`: one warning; `sh \` then a newline then `scripts/cov.sh`: one warning; `echo a\\` then a newline then `scripts/cov.sh`: one warning; `cargo test \` then a newline then `scripts/cov.sh`: none; `sh\` then a newline then `scripts/cov.sh`: none (one word); `sh scripts/\` then a newline then `cov.sh`: warns for `scripts/cov.sh`; `echo a\\\` (three `\`) then a newline then `scripts/cov.sh`: none; `cargo clippy \` then a newline then `--config clippy.toml`: warns for `clippy.toml`; a `\` that ends the whole command: none; no `\r` in this test | `check_guards::backslash_newline_continues` |
 | Init | a guard `cargo fmt --check` then a newline then `sh scripts/cov.sh`: init prints the warning and writes its files | `init_process::guard_reach_after_newline` |
 
 ### Inputs
@@ -153,8 +153,9 @@ adds this case); a work folder of another name (not promised, Frame).
 
 - `config.rs`: the six folders join the list of the `matches!` in `validate`.
 - `check.rs`, `command_words`: a `\n` starts a command like `;`, unless the piece so far ends in an odd
-  number of `\`; then the last `\` is dropped and the newline is white space, and when the piece is then
-  empty no word is pushed, so the start and interpreter states of the word before stay (AC-4).
+  number of `\`; then the last `\` is dropped and the newline is removed, so the piece goes on and joins
+  the text after it; when only white space was before the `\`, the piece is empty and no word is
+  pushed, so the start and interpreter states of the word before stay (AC-4).
 
 ### Decisions (before the build)
 
@@ -170,6 +171,10 @@ None.
   continuation after a space leaves an empty piece, whose flush keeps the start and interpreter state
   (AC-4). 2026-11-27, agent: the Guarantees line on a continuation inside a word now says so (it said
   two words before).
+- 2026-11-27, agent (XR1-1): the code stays, since it removes the `\` and the newline as a shell does;
+  AC-4, the term **Command word**, the Shape and Plan step 2 said "replaced by a space" or "white space"
+  and now say "removed"; `sh\` then a newline then `scripts/cov.sh` is the one word `shscripts/cov.sh`
+  and gives no warning. The person may overrule this at the close.
 - 2026-11-27, agent: the RED tests of step 2 first asserted exit 0 of the check; the guard commands of
   the fixtures fail, so the builder removed that assert in its own RED before the GREEN; the warning
   list assert is the one that failed at RED.
@@ -198,7 +203,12 @@ Route: full (tag `guard`), auto.
 2. Newline (AC-3 to AC-5; tests `check_guards::newline_starts_a_command`,
    `check_guards::backslash_newline_continues`, `init_process::guard_reach_after_newline`): the RED adds
    the three tests; the GREEN makes a newline start a command in `command_words`, except after an odd
-   number of `\`, where the last `\` is dropped and the state of the word before it stays (Design shape).
+   number of `\`, where the last `\` and the newline are removed (Design shape).
+3. Fix after code review round 1 (XR1-1, XR1-2, CR1-2, XR1-4, CR1-3, XR1-3, XR1-5; tests
+   `check_guards::backslash_newline_continues`, `check_guards::six_more_work_folders_refused`): a
+   coverage commit adds to the two tests the cases `sh\` and `sh scripts/\` before a newline, a run of
+   three `\`, and the exit code of the loading dirs; a second commit updates the doc comment of
+   `command_words` for the newline and the continuation.
 
 ## Review
 
@@ -213,6 +223,7 @@ Findings:
 |---|---|---|---|---|---|---|---|
 | spec-review | 1 | reviewer | 2 | 2 | 3 | 0 | defer 1, open 1, patch 5 |
 | spec-review | 2 | reviewer | 0 | 0 | 3 | 0 | open 3 |
+| code-review | 1 | external, reviewer | 0 | 3 | 7 | 0 | no-change 2, patch 8 |
 
 Check runs:
 
