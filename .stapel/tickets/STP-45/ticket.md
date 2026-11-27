@@ -95,8 +95,9 @@ Terms:
 - **Seconds**: whole seconds, rounded down, of the wall clock; a run cut by the time limit counts until
   it was killed.
 - **Target time**: the number `<x>` of `finished in <x>s` in a `test result:` line of the suite run whose
-  block ran one or more tests, belonging to the target of its block (the k-th `running` block to the k-th
-  `Running` or `Doc-tests` line, as for the `failing:` line); a doc-test target is `doc <crate>`.
+  block ran one or more tests, belonging to the target of its block (the k-th `running <n> tests` block of libtest's own lines, the
+  captured output of AC-15 skipped, to the k-th `Running` or `Doc-tests` line); a doc-test target is
+  `doc <crate>`.
 - **Tail line**: a line of output with each control character replaced as `printable` does it today
   (STP-37) and cut to 500 characters.
 
@@ -109,14 +110,14 @@ Terms:
 | AC-5 | WHEN a step ran one or more cargo runs, whatever its outcome THE the line after its step line (and its notes) is `  times: RED <n> s, GREEN <n> s, HEAD <n> s`, naming only the commits it ran at, the seconds summed over its test files, and the step of the record holds `times` with the keys `red`, `green`, `head` for them; a step that ran none has neither. | `check_times::step_times` |
 | AC-6 | WHEN the suite runs THE the check first runs `<cargo> test --workspace --locked --no-run` (with `-j` of AC-11), prints `suite build: <n> s` before the `suite:` line and writes `times.suite_build`; then the run as before, with `times.suite_run`; when the build runs out of the time limit, no run starts, the suite is `unverified` as before, and there is no `times.suite_run`. | `check_times::suite_build_and_run` |
 | AC-7 | WHEN the suite run ended `pass` or `fail` THE the `suite:` line ends with `; run <n> s, last pass <m> s`, `<m>` being the `times.suite_run` of the last record of the ticket in `runs.jsonl` (file order) with `result` `pass` and that field, or `; run <n> s, last pass none`; malformed lines are skipped; an `unverified` or `skipped` suite has no such end. | `check_times::last_pass_time` |
-| AC-8 | WHEN the suite run gave one or more target times THE the check prints `slowest: <target> <x> s, …` after the `suite:` and `failing:` lines with the five largest, largest first, equal ones in output order, `<x>` as libtest printed it, and the record holds `slowest` as an array of `{"target": <string>, "secs": <number>}`; with no target time there is no line and no field. | `check_times::slowest_files` |
+| AC-8 | WHEN the suite run gave one or more target times THE the check prints `slowest: <target> <x> s, …` after the `suite:` and `failing:` lines with the five largest, largest first, equal ones in output order, `<x>` as libtest printed it, and the record holds `slowest` as an array of `{"target": <string>, "secs": <number>}`; with no target time there is no line and no field. | `check_times::slowest_files`, `check_times::slowest_skips_captured_output` |
 | AC-9 | WHILE a cargo run of the check runs THE the check prints `progress: <stage>, <running file>, <n> s` (`<n>` since the start) each time `[check] progress_secs` seconds (300 when absent) have passed since the start or since its last progress line. | `check_times::progress_lines` |
 | AC-10 | IF the time limit runs out during a cargo run THEN the check prints on standard output `time limit: <stage>, <running file>`, then the last 20 tail lines of the kept standard output of the run, each after `  out | `, then the last 20 of its kept standard error, each after `  err | `, and ends as before (`unverified`, `result: fail`, exit 1). | `check_times::limit_names_the_stage` |
 | AC-11 | WHEN `[check] jobs = J` is set THE every cargo run of the check gets `-j J` after `--locked`; WHEN `[check] test_threads = T` is set THE every run that runs tests gets `--test-threads=T` right after `--` (before `--exact` or `--skip`; a `--` is added where the run had none), the build of AC-6 none; without the keys the arguments are those of before. | `check_times::run_settings` |
 | AC-12 | IF `[check] jobs` or `test_threads` is outside 1 to 1024, or `progress_secs` outside 1 to 86400 THEN every command that loads the config prints `check.<key> must be a whole number from 1 to <max>` and exits 1; IF one of them is set with the junit runner THEN `check.<key> needs the cargo runner`; a value that is not a whole number gives the TOML error, exit 1. | `check_times::refuses_bad_settings` |
 | AC-13 | WHEN this repository's `.stapel/stapel.toml` is loaded THE its `[check]` has `jobs = 4` and `test_threads = 4`. | `check_times::this_repository_sets_four` |
 | AC-14 | IF the build of AC-6 exits non-zero, prints `error: could not compile` or `because --locked was passed`, or a build input above the copy is found after it THEN no run starts and the suite gets the outcome and detail that the run gave for that output before (`fail: … the workspace does not compile`, `unverified: Cargo.lock is out of date`, `unverified: build-input-outside: …`), with counts 0 and no `times.suite_run`. | `check_times::failed_build_judges_the_suite` |
-| AC-15 | WHEN a step run's standard output holds a section `---- <name> stdout ----` of a failing test THE the reading of that run skips every line from the first such heading up to the last line `failures:` of the output, so `running`, `failures:` and `test result:` lines inside a captured output count neither as blocks nor as summaries, and the step is judged by libtest's own lines. | `check::parse_skips_captured_output`, `check::captured_output_holds_a_failures_line` |
+| AC-15 | WHEN a step run's standard output holds a section `---- <name> stdout ----` of a failing test THE the reading of that run skips every line from the first such heading up to the last line `failures:` of the standard output (to its end when there is none, which reads as unverified), so `running`, `failures:`, `test result:` and `because --locked was passed` lines inside a captured output, and `failures:` lines on standard error, count for nothing, and the step is judged by libtest's own lines. | `check::parse_skips_captured_output`, `check::captured_output_holds_a_failures_line`, `check::captured_output_and_stderr_do_not_judge` |
 
 ### Guarantees
 
@@ -171,6 +172,8 @@ and the seconds made neutral. Light tests: `stapel cargo test -j 4 -p stapel-cli
 | Failed build | a workspace that does not compile: one `--no-run` run, no suite run, `fail: … the workspace does not compile`, counts 0, no `suite_run`; a stale lock file: `unverified: Cargo.lock is out of date` | `check_times::failed_build_judges_the_suite` |
 | Golden | the full output of the golden fixture with the new lines | `check::report_matches_golden` |
 | Captured output | a run output with one failing test whose captured stdout holds two `running 1 test` blocks and their `test result:` lines, then libtest's own `failures:` list and summary: the names are counted from libtest's lines only, not unverified | `check::parse_skips_captured_output` |
+| Lock text and stderr | a captured output that holds `because --locked was passed`, and a standard error with a line `failures:`: counted from libtest's own lines, not unverified | `check::captured_output_and_stderr_do_not_judge` |
+| Slowest and captured output | a failing suite target whose captured output holds a line `running the suite took too long` and a whole fake libtest run with `finished in 9.00s`: the `slowest:` line names each target with its own time | `check_times::slowest_skips_captured_output` |
 | Captured failures list | a captured output that holds a whole failing libtest run of its own (`running 1 test`, `failures:`, a name, `test result: FAILED`) before the real `failures:` list and summary: one block and one summary are counted | `check::captured_output_holds_a_failures_line` |
 
 ### Inputs
@@ -194,7 +197,8 @@ and the seconds made neutral. Light tests: `stapel cargo test -j 4 -p stapel-cli
 | cargo build | compiles; does not compile; lock file stale; build input found above the copy after it | the run follows; AC-14 outcomes, no run | `check_times::failed_build_judges_the_suite` |
 | time limit | runs out in a step run; in the suite build; in the suite run; between runs | AC-10 names the stage; the build: no run (AC-6); the run: AC-10; between runs: as before | `check_times::limit_names_the_stage`, `check_times::suite_build_and_run` |
 
-**Review Focus:** a failed removal of an old log (the AC-3 warning; no test); a real cargo run with `--no-run` and then the run (no test runs a real cargo: the
+**Review Focus:** a failed removal of an old log and a log write that fails after the log was made (the
+AC-3 warnings; no test); a real cargo run with `--no-run` and then the run (no test runs a real cargo: the
 check of this ticket at review is the stand, and its output is quoted in Review); a progress line while
 cargo builds and prints nothing (the running file `-`, covered by the suite build case only through the
 code review); a log line that holds bytes that are not UTF-8 (written as the runner kept them, lossy;
@@ -275,6 +279,12 @@ no test); the clock going back during a check (seconds saturate at 0; no test).
   captured output held a whole failing fake run with its own `failures:` line, where the skip of step 13
   ended. AC-15 now ends the skip at the last `failures:` line, which libtest prints after every captured
   section; Plan step 14 makes that change.
+- 2026-11-26, the person (XR2-4): the widening of 5.2c by CK1-1 and the Plan past 12 steps are recorded as
+  a ledger decision of the same day.
+- 2026-11-26, agent (code review round 2): fix steps 15 and 16 (XR2-1, XR2-2, XR2-3 with CR2-4; the
+  formatting of CR2-2 and DR2-2 and the reference of CR2-6 go with step 15); deferred: XR2-6 (the suite
+  reading of captured output) and CK2-1 (about 3800 s of the suite run pass between test binaries, cause
+  unknown); no change: CR2-1 and DR2-1 (now stated in AC-15), CR2-3, CR2-5, CR2-7 (a non-goal).
 
 ## Proof
 
@@ -287,14 +297,14 @@ no test); the clock going back during a check (seconds saturate at 0; no test).
 | AC-5 | `check_times::step_times` |
 | AC-6 | `check_times::suite_build_and_run` |
 | AC-7 | `check_times::last_pass_time` |
-| AC-8 | `check_times::slowest_files` |
+| AC-8 | `check_times::slowest_files`, `check_times::slowest_skips_captured_output` |
 | AC-9 | `check_times::progress_lines` |
 | AC-10 | `check_times::limit_names_the_stage` |
 | AC-11 | `check_times::run_settings` |
 | AC-12 | `check_times::refuses_bad_settings` |
 | AC-13 | `check_times::this_repository_sets_four` |
 | AC-14 | `check_times::failed_build_judges_the_suite` |
-| AC-15 | `check::parse_skips_captured_output`, `check::captured_output_holds_a_failures_line` |
+| AC-15 | `check::parse_skips_captured_output`, `check::captured_output_holds_a_failures_line`, `check::captured_output_and_stderr_do_not_judge` |
 
 Changed by this ticket: `check::report_matches_golden` (its golden gains the new lines of AC-1, AC-4 to
 AC-7); `check_levels::head_level`, `check_levels::full_level`, `check_levels::flag_wins_over_the_key` and
@@ -343,6 +353,12 @@ Route: full (tags `interface`, `data`), auto.
     makes `parse_run` skip the captured output sections of failing tests.
 14. Captured failures list (AC-15; test `check::captured_output_holds_a_failures_line`): the RED adds the
     test; the GREEN makes the skip end at the last `failures:` line of the output, not the next one.
+15. Fix XR2-1, XR2-2 (AC-15; test `check::captured_output_and_stderr_do_not_judge`): the RED adds the
+    test; the GREEN looks for the lock text in libtest's own lines and for the last `failures:` line in
+    standard output only, and fixes the formatting of CR2-2 and the reference of CR2-6.
+16. Fix XR2-3 (AC-8; test `check_times::slowest_skips_captured_output`): the RED adds the test and what
+    the fake needs; the GREEN reads target times with the block rule of the `failing:` line, over
+    libtest's own lines.
 
 ## Review
 
@@ -358,13 +374,14 @@ Findings:
 | spec-review | 1 | external | 1 | 8 | 7 | 0 | defer 1, no-change 1, patch 14 |
 | spec-review | 2 | reviewer | 0 | 3 | 5 | 0 | no-change 1, patch 7 |
 | code-review | 1 | reviewer | 1 | 0 | 0 | 0 | patch 1 |
+| code-review | 2 | drift, external, reviewer | 0 | 5 | 11 | 0 | defer 2, no-change 5, patch 9 |
 
 Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| steps | fail | efae2f9 | 2026-11-26T16:53:32Z | pass 12, unverified 1 |
-| head | fail | 4691109 | 2026-11-26T10:59:00Z | pass 11, unverified 1 |
+| steps | pass | 90cac22 | 2026-11-26T22:10:15Z | pass 14 |
+| head | pass | 90cac22 | 2026-11-27T10:03:21Z | cached 14 |
 <!-- stapel:review:end -->
 
 ## Summary
