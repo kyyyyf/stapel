@@ -82,7 +82,7 @@ Terms (the other terms are those of STP-43: covers, reach word, outside file, re
   text loads); a multi-line guard command can give reach warnings it did not give before.
 - **Not promised:** the Frame's list; a newline inside quotes; a carriage return alone; a `\` followed by
   `\r\n` (the newline then separates); a continuation inside a word (`scripts/\` then a newline then
-  `cov.sh` is two words here, one path in a shell).
+  `cov.sh` is joined into one word, as in a shell, but no test holds it).
 
 **Author self-check (item 7).** Done on 2026-11-27: each promise item maps to a criterion; the hook
 already loads the edited text (STP-38), so AC-2 needs no hook code; `guard_reach` is shared by check and
@@ -162,7 +162,19 @@ None.
 
 ### Decisions (as built)
 
-None yet.
+- Step 1 (d0ed610, b66e99f): the six folders join the `matches!` list in `Config::validate`; the hook
+  needed no code (AC-2).
+- Step 2 (c4f2aa2, 47e9fbb): `command_words` counts the run of `\` before each character; at a `\n`
+  after an odd run it pops the last `\` from the piece and goes on with the same piece, so the newline
+  is no white space at all: a continuation inside a word joins its two pieces, as a shell does, and a
+  continuation after a space leaves an empty piece, whose flush keeps the start and interpreter state
+  (AC-4). 2026-11-27, agent: the Guarantees line on a continuation inside a word now says so (it said
+  two words before).
+- 2026-11-27, agent: the RED tests of step 2 first asserted exit 0 of the check; the guard commands of
+  the fixtures fail, so the builder removed that assert in its own RED before the GREEN; the warning
+  list assert is the one that failed at RED.
+- `stapel check` at 47e9fbb (level head): pass; steps 1 and 2 failed at RED by assert and pass at GREEN
+  and HEAD; the suite 1270 passed, run 5032 s.
 
 ## Proof
 
@@ -202,7 +214,11 @@ Findings:
 | spec-review | 1 | reviewer | 2 | 2 | 3 | 0 | defer 1, open 1, patch 5 |
 | spec-review | 2 | reviewer | 0 | 0 | 3 | 0 | open 3 |
 
-Check runs: none
+Check runs:
+
+| Level | Result | Commit | At | Steps |
+|---|---|---|---|---|
+| head | pass | 47e9fbb | 2026-11-27T21:39:18Z | pass 2 |
 <!-- stapel:review:end -->
 
 ## Summary
