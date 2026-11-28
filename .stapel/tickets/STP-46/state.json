@@ -151,5 +151,10 @@
       "text": "Route: full (tag `guard`), auto.\n\n1. Work folders (AC-1, AC-2; tests `check_guards::six_more_work_folders_refused`,\n   `hook_guards::a_new_work_folder_edit_is_denied`): the RED adds the two tests; the GREEN adds the six\n   folders to the list in `Config::validate`.\n2. Newline (AC-3 to AC-5; tests `check_guards::newline_starts_a_command`,\n   `check_guards::backslash_newline_continues`, `init_process::guard_reach_after_newline`): the RED adds\n   the three tests; the GREEN makes a newline start a command in `command_words`, except after an odd\n   number of `\\`, where the last `\\` and the newline are removed (Design shape).\n3. Fix after code review round 1 (XR1-1, XR1-2, CR1-2, XR1-4, CR1-3, XR1-3, XR1-5; tests\n   `check_guards::backslash_newline_continues`, `check_guards::six_more_work_folders_refused`): a\n   coverage commit adds to the two tests the cases `sh\\` and `sh scripts/\\` before a newline, a run of\n   three `\\`, and the exit code of the loading dirs; a second commit updates the doc comment of\n   `command_words` for the newline and the continuation.",
       "via": "grant"
     }
-  ]
+  ],
+  "closed": {
+    "by": "kyyyyf",
+    "at": "2026-11-28T17:31:17Z",
+    "reason": "The guards folder refuses the six work folders of plan item 5.2b, a newline in a guard command starts a command for the reach warning, both checks passed and code review round 2 left no HIGH or MEDIUM finding."
+  }
 }

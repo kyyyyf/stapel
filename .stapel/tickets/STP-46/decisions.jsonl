@@ -11,3 +11,4 @@
 {"v":1,"id":"d-b449518e4109","at":"2026-11-28T16:01:14Z","by":"kyyyyf","action":"ok","section":"design","hash":"sha256:b2ddb49da5565e25a95fdacff3545d575e2d7d857fd90bcbced6123e1e8a99b1","via":"grant"}
 {"v":1,"id":"d-fc71d837ace4","at":"2026-11-28T16:01:14Z","by":"kyyyyf","action":"ok","section":"proof","hash":"sha256:ede4e18a03b6f37113721ba25ed988c3875835221c1b38fbb25f7283e1541cca","via":"grant"}
 {"v":1,"id":"d-f17213a6ce3b","at":"2026-11-28T16:01:14Z","by":"kyyyyf","action":"ok","section":"plan","hash":"sha256:a1e548ef93f01b0394fbe5a8d512c5b2bb5a88ed301f8103564c74b5b7c5f742","via":"grant"}
+{"v":1,"id":"d-c3e6d9c2a5d5","at":"2026-11-28T17:31:17Z","by":"kyyyyf","action":"close","reason":"The guards folder refuses the six work folders of plan item 5.2b, a newline in a guard command starts a command for the reach warning, both checks passed and code review round 2 left no HIGH or MEDIUM finding."}
