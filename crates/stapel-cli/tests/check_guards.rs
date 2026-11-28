@@ -132,6 +132,52 @@ fn all_work_folders_refused() {
     }
 }
 
+// STP-46 AC-1: the six new work folders are refused as written; `tools//` keeps the lexical
+// refusal; a nested folder or another name loads with the stderr of `guards`.
+#[test]
+fn six_more_work_folders_refused() {
+    for name in ["scripts", "tools", "pkg", "cmd", "internal", "include"] {
+        let mut upper = name.to_uppercase();
+        if name == "tools" {
+            upper = "Tools".to_string();
+        }
+        for dir in [name.to_string(), format!("{name}/"), upper] {
+            let repo = stapel_repo();
+            add_config(repo.path(), true, &format!("[guards]\ndir = \"{dir}\"\n"));
+            let (code, err) = check(repo.path());
+            let refusal = format!(
+                "guards.dir {dir} is a folder that agents write: name a folder of its own, such as guards"
+            );
+            assert_eq!(code, 2, "{dir}: {err}");
+            assert!(err.contains(&refusal), "{dir}: {err}");
+        }
+    }
+
+    let repo = stapel_repo();
+    add_config(repo.path(), true, "[guards]\ndir = \"tools//\"\n");
+    let (code, err) = check(repo.path());
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains(
+            "guards.dir must be a relative folder of the repository outside .stapel, .git and .claude: tools//"
+        ),
+        "{err}"
+    );
+    assert!(!err.contains("agents write"), "{err}");
+
+    let repo = stapel_repo();
+    add_config(repo.path(), true, "[guards]\ndir = \"guards\"\n");
+    let (base_code, baseline) = check(repo.path());
+    assert!(baseline.contains("no open ticket"), "{baseline}");
+    for dir in ["tools/guards", "scripts/x", "toolsx"] {
+        let repo = stapel_repo();
+        add_config(repo.path(), true, &format!("[guards]\ndir = \"{dir}\"\n"));
+        let (code, err) = check(repo.path());
+        assert_eq!(code, base_code, "{dir}");
+        assert_eq!(err, baseline, "{dir}");
+    }
+}
+
 // AC-2: a guard needs a name and a command, a unique name and a relative baseline.
 #[test]
 fn refuses_bad_entries() {
@@ -1426,4 +1472,110 @@ fn interpreter_only_at_command_start() {
         "{err}"
     );
     assert_eq!(out.status.code(), Some(0), "{err}");
+}
+
+// STP-46 AC-3: a newline that is not a continuation starts a command, like `;`.
+#[test]
+fn newline_starts_a_command() {
+    let toml_guard = |name: &str, command: &str| {
+        let escaped = command
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r");
+        format!("[[guards.check]]\nname = \"{name}\"\ncommand = \"{escaped}\"\n")
+    };
+    let cases = [
+        ("sh", "cargo fmt --check\nsh scripts/cov.sh", "scripts/cov.sh"),
+        ("bare", "cargo fmt --check\nscripts/cov.sh", "scripts/cov.sh"),
+        ("node", "cargo fmt --check\nnode scripts/cov.js", "scripts/cov.js"),
+        ("empty", "cargo fmt --check\n\nsh scripts/cov.sh", "scripts/cov.sh"),
+        ("semi", "true;\nsh scripts/cov.sh", "scripts/cov.sh"),
+        ("crlf", "cargo fmt --check\r\nsh scripts/cov.sh", "scripts/cov.sh"),
+        ("subject", "cargo fmt --check\ngrep -w sh scripts/x.sh", ""),
+    ];
+    let guards: String = cases.iter().map(|(n, c, _)| toml_guard(n, c)).collect();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    for f in ["cov.sh", "cov.js", "x.sh"] {
+        write(dir, &format!("scripts/{f}"), "exit 0\n");
+    }
+    commit(dir, "ABC-1: guard files");
+
+    let out = stapel(dir)
+        .args(["check", "ABC-1", "--level", "head"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    let seen: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("warning: guard "))
+        .collect();
+    let expected: Vec<String> = cases
+        .iter()
+        .filter(|(_, _, w)| !w.is_empty())
+        .map(|(n, _, w)| {
+            format!(
+                "warning: guard {n} reads {w} outside guards; a guard's scripts and configs belong in guards"
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        expected.iter().map(String::as_str).collect::<Vec<_>>(),
+        "{err}"
+    );
+}
+
+// STP-46 AC-4: a newline after an unescaped `\` is a continuation and separates nothing.
+#[test]
+fn backslash_newline_continues() {
+    let toml_guard = |name: &str, command: &str| {
+        let escaped = command
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n");
+        format!("[[guards.check]]\nname = \"{name}\"\ncommand = \"{escaped}\"\n")
+    };
+    let cases = [
+        ("and", "cargo fmt && \\\nscripts/cov.sh", "scripts/cov.sh"),
+        ("interp", "sh \\\nscripts/cov.sh", "scripts/cov.sh"),
+        ("escaped", "echo a\\\\\nscripts/cov.sh", "scripts/cov.sh"),
+        ("plain", "cargo test \\\nscripts/cov.sh", ""),
+        ("config", "cargo clippy \\\n--config clippy.toml", "clippy.toml"),
+        ("end", "cargo fmt --check \\", ""),
+        ("word", "sh\\\nscripts/cov.sh", ""),
+        ("joined", "sh scripts/\\\ncov.sh", "scripts/cov.sh"),
+        ("three", "echo a\\\\\\\nscripts/cov.sh", ""),
+    ];
+    let guards: String = cases.iter().map(|(n, c, _)| toml_guard(n, c)).collect();
+    let (repo, _scripts) = guards_repo("", 3600, &guards);
+    let dir = repo.path();
+    write(dir, "scripts/cov.sh", "exit 0\n");
+    write(dir, "clippy.toml", "\n");
+    commit(dir, "ABC-1: guard files");
+
+    let out = stapel(dir)
+        .args(["check", "ABC-1", "--level", "head"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    let seen: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("warning: guard "))
+        .collect();
+    let expected: Vec<String> = cases
+        .iter()
+        .filter(|(_, _, w)| !w.is_empty())
+        .map(|(n, _, w)| {
+            format!(
+                "warning: guard {n} reads {w} outside guards; a guard's scripts and configs belong in guards"
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        expected.iter().map(String::as_str).collect::<Vec<_>>(),
+        "{err}"
+    );
 }
