@@ -180,6 +180,9 @@ None.
   list assert is the one that failed at RED.
 - `stapel check` at 47e9fbb (level head): pass; steps 1 and 2 failed at RED by assert and pass at GREEN
   and HEAD; the suite 1270 passed, run 5032 s.
+- Step 3 (69c0c6a): one coverage commit with a `history:` line; the doc comment of `command_words` is
+  the commit 5339013 of no step (no behaviour change), as STP-30 did, because a step GREEN with no RED
+  is unpaired. `stapel check` at 5339013: pass; the suite 1270 passed, run 5123 s.
 
 ## Proof
 
@@ -229,7 +232,7 @@ Check runs:
 
 | Level | Result | Commit | At | Steps |
 |---|---|---|---|---|
-| head | pass | 47e9fbb | 2026-11-27T21:39:18Z | pass 2 |
+| head | pass | 5339013 | 2026-11-28T12:32:18Z | pass 2 |
 <!-- stapel:review:end -->
 
 ## Summary
