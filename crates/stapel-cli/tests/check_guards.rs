@@ -167,12 +167,13 @@ fn six_more_work_folders_refused() {
 
     let repo = stapel_repo();
     add_config(repo.path(), true, "[guards]\ndir = \"guards\"\n");
-    let (_, baseline) = check(repo.path());
+    let (base_code, baseline) = check(repo.path());
     assert!(baseline.contains("no open ticket"), "{baseline}");
     for dir in ["tools/guards", "scripts/x", "toolsx"] {
         let repo = stapel_repo();
         add_config(repo.path(), true, &format!("[guards]\ndir = \"{dir}\"\n"));
-        let (_, err) = check(repo.path());
+        let (code, err) = check(repo.path());
+        assert_eq!(code, base_code, "{dir}");
         assert_eq!(err, baseline, "{dir}");
     }
 }
@@ -1543,6 +1544,9 @@ fn backslash_newline_continues() {
         ("plain", "cargo test \\\nscripts/cov.sh", ""),
         ("config", "cargo clippy \\\n--config clippy.toml", "clippy.toml"),
         ("end", "cargo fmt --check \\", ""),
+        ("word", "sh\\\nscripts/cov.sh", ""),
+        ("joined", "sh scripts/\\\ncov.sh", "scripts/cov.sh"),
+        ("three", "echo a\\\\\\\nscripts/cov.sh", ""),
     ];
     let guards: String = cases.iter().map(|(n, c, _)| toml_guard(n, c)).collect();
     let (repo, _scripts) = guards_repo("", 3600, &guards);
