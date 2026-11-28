@@ -140,6 +140,9 @@ fn refuse(message: impl std::fmt::Display) -> ExitCode {
 
 /// The command words of a guard's command, each with whether it starts a command (STP-43 AC-3): the
 /// command is split at white space and at `; | & ( ) < >` and a backtick, then each `'` and `"` goes.
+/// A newline separates commands like `;` (STP-46 AC-3), so the first word after it starts a command. A
+/// newline right after an odd run of `\` is a continuation (STP-46 AC-4): the last `\` and the newline
+/// go and separate nothing, and the pieces on both sides join into one word when no space is beside them.
 fn command_words(command: &str) -> Vec<(String, bool)> {
     let mut words: Vec<(String, bool)> = Vec::new();
     let mut piece = String::new();
