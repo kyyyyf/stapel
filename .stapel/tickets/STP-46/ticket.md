@@ -243,4 +243,29 @@ Check runs:
 
 ## Summary
 
-TODO
+Done: `[guards] dir` now refuses the six work folders `scripts`, `tools`, `pkg`, `cmd`, `internal` and
+`include` (any letter case, with or without a trailing `/`) with the refusal of STP-43, and the hook
+denies an agent's edit that sets one. In a guard command a newline starts a command like `;`, so a
+script on a later line gets the reach warning in `stapel check` and `stapel init`; a newline after an
+odd run of `\` is a continuation, and the `\` and the newline are removed as a shell removes them. The
+last check: suite 1270 passed, run 5123 s.
+
+For the person to decide (agent decisions, overrule if wanted):
+
+- XR1-1: the `\` and the newline of a continuation are removed, not replaced by a space; `sh\` then a
+  newline then `scripts/cov.sh` is one word and gives no warning, as in a shell.
+- The doc comment of `command_words` is a commit of no step (5339013), as STP-30 did, because a step
+  with a coverage commit and a GREEN with no RED is unpaired.
+- CR1-4 and XR2-2 (LOW, no-change): the copied `toml_guard` helper stays; `Tools/` (mixed case with a
+  slash) has no case of its own.
+
+Deferred, outside the promise (proposals to widen it):
+
+- SR1-7: further work folders (`bin`, `benches`, `examples`, `vendor`, `build`); the person rejected them
+  for this ticket on 2026-11-27.
+
+Not promised and open: a newline inside quotes, a here-document, a `\` before `\r\n` (the newline then
+separates), a carriage return alone.
+
+Process note: the plan builder's step 3 first had a GREEN commit with no RED; the brief should say that
+a fix step with only coverage and a comment has no GREEN.
