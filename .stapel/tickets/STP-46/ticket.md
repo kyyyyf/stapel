@@ -39,7 +39,8 @@ newline that a shell would read as data (a here-document body).
 words, `command_words` and `guard_reach` in `crates/stapel-cli/src/check.rs`); the list is in
 `crates/stapel-core/src/config.rs`.
 
-**Size.** About 20 source lines and 80 test lines; 2 Plan steps. Route: full, auto (risk tag `guard`).
+**Size.** About 20 source lines and 80 test lines; 2 Plan steps, 3 after the fix step of code review
+round 1. Route: full, auto (risk tag `guard`).
 
 ### Decisions
 
@@ -169,8 +170,8 @@ None.
   after an odd run it pops the last `\` from the piece and goes on with the same piece, so the newline
   is no white space at all: a continuation inside a word joins its two pieces, as a shell does, and a
   continuation after a space leaves an empty piece, whose flush keeps the start and interpreter state
-  (AC-4). 2026-11-27, agent: the Guarantees line on a continuation inside a word now says so (it said
-  two words before).
+  (AC-4). 2026-11-27, agent: the Guarantees no longer list a continuation inside a word as not
+  promised; AC-4 and the term **Command word** promise the join (XR1-1, XR2-1).
 - 2026-11-27, agent (XR1-1): the code stays, since it removes the `\` and the newline as a shell does;
   AC-4, the term **Command word**, the Shape and Plan step 2 said "replaced by a space" or "white space"
   and now say "removed"; `sh\` then a newline then `scripts/cov.sh` is the one word `shscripts/cov.sh`
@@ -224,9 +225,10 @@ Findings:
 
 | Stage | Round | Roles | HIGH | MEDIUM | LOW | False | Fates |
 |---|---|---|---|---|---|---|---|
-| spec-review | 1 | reviewer | 2 | 2 | 3 | 0 | defer 1, open 1, patch 5 |
-| spec-review | 2 | reviewer | 0 | 0 | 3 | 0 | open 3 |
+| spec-review | 1 | reviewer | 2 | 2 | 3 | 0 | defer 1, no-change 1, patch 5 |
+| spec-review | 2 | reviewer | 0 | 0 | 3 | 0 | patch 3 |
 | code-review | 1 | external, reviewer | 0 | 3 | 7 | 0 | no-change 2, patch 8 |
+| code-review | 2 | external | 0 | 0 | 4 | 0 | no-change 1, patch 3 |
 
 Check runs:
 
